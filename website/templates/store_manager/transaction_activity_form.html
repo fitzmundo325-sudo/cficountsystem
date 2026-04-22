@@ -1,0 +1,458 @@
+{% extends "base.html" %}
+{% block title %}Transaction Activity Form - {{ store.name }}{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span>Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Transaction Activity Form</span>
+    </nav>
+  </div>
+  <div class="text-sm font-medium text-slate-600">
+    <span class="text-slate-900">{{ store.name }}</span>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  <section class="rounded-none border border-slate-200 bg-white shadow-sm">
+    <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-cyan-50 to-blue-50 border-b border-slate-200">
+      <h3 class="text-sm md:text-base font-bold text-slate-900">Transaction Activity Form (TAF)</h3>
+      <p class="text-xs text-slate-500 mt-0.5">Product Transfer is now enabled for submission.</p>
+    </div>
+
+    <form id="taf-form" class="p-4 md:p-5 space-y-3" method="post">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="md:col-span-2 flex flex-wrap items-center gap-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <label for="taf_date" class="text-sm font-semibold text-slate-700">Date:</label>
+            <input id="taf_date" name="taf_date" type="date" value="{{ selected_report_date if selected_report_date else today }}" class="w-[180px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+          </div>
+          <div class="flex flex-wrap items-center gap-2 sm:ml-auto">
+            <label for="control_no" class="text-sm font-semibold text-slate-700">Control No:</label>
+            <input id="control_no" name="control_no" type="text" placeholder="Enter control number" value="{{ request.form.get('control_no', '') if request.form else '' }}" required class="w-[230px] px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+          </div>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-xs font-medium text-slate-700 mb-1">Transaction Type</label>
+          <input id="transaction_type" name="transaction_type" type="hidden" value="Product Transfer">
+          <div id="transaction_type_cards" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+            <button type="button" data-transaction-type="Product Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
+                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-cyan-100 text-cyan-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M5 12h14"></path>
+                    <path d="m12 5 7 7-7 7"></path>
+                  </svg>
+                </span>
+                <span class="text-sm font-semibold text-slate-800">Product Transfer</span>
+            </button>
+            <button type="button" data-transaction-type="Wastage Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
+                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-amber-100 text-amber-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 6h18"></path>
+                    <path d="M8 6V4h8v2"></path>
+                    <path d="M19 6l-1 14H6L5 6"></path>
+                  </svg>
+                </span>
+                <span class="text-sm font-semibold text-slate-800">Wastage Transfer</span>
+            </button>
+            <button type="button" data-transaction-type="Supplies Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
+                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="7" width="18" height="13" rx="2"></rect>
+                    <path d="M8 7V5h8v2"></path>
+                  </svg>
+                </span>
+                <span class="text-sm font-semibold text-slate-800">Supplies Transfer</span>
+            </button>
+            <button type="button" data-transaction-type="Supplies Request" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
+                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <path d="M12 8v8"></path>
+                    <path d="M8 12h8"></path>
+                  </svg>
+                </span>
+                <span class="text-sm font-semibold text-slate-800">Supplies Request</span>
+            </button>
+          </div>
+        </div>
+        <div>
+          <label for="transfer_from" class="block text-xs font-medium text-slate-700 mb-1">Transfer From</label>
+          <input id="transfer_from" name="transfer_from" type="text" placeholder="Source store/location" value="{{ store.name }}" data-current-store="{{ store.name }}" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+        </div>
+        <div>
+          <label for="transfer_to" class="block text-xs font-medium text-slate-700 mb-1">Transfer To</label>
+          <input id="transfer_to" name="transfer_to" type="text" placeholder="Destination store/location" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+          <select id="transfer_to_store" class="hidden w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+            <option value="" selected disabled>Select destination store</option>
+            {% for store_option in all_stores %}
+            <option value="{{ store_option.name }}">{{ store_option.name }}</option>
+            {% endfor %}
+          </select>
+          <select id="transfer_to_wastage" class="hidden w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+            <option value="Main Office">Main Office</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-slate-200 overflow-hidden">
+        <div class="bg-slate-100 px-3 py-2 flex items-center justify-between">
+          <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Items</p>
+          <button id="add-item-row-btn" type="button" class="px-3 py-1.5 text-xs font-semibold bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors">
+            Add Row
+          </button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-white">
+              <tr>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Item Name</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Unit Cost</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Qty</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Total</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Remarks</th>
+                <th class="px-3 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+              </tr>
+            </thead>
+            <tbody id="taf-items-body" class="divide-y divide-slate-100 bg-white"></tbody>
+            <tfoot class="bg-slate-50">
+              <tr>
+                <td colspan="3" class="px-3 py-2 text-right text-sm font-semibold text-slate-700">Grand Total</td>
+                <td class="px-3 py-2 text-right text-sm font-bold text-slate-900" id="taf-grand-total">0.00</td>
+                <td colspan="2"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-slate-200 overflow-hidden">
+        <div class="bg-slate-100 px-3 py-2">
+          <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Signatories</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-white">
+              <tr>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Prepared By</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Received By</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 bg-white">
+              <tr>
+                <td class="px-3 py-2">
+                  <input id="prepared_by_name" name="prepared_by_name" type="text" placeholder="Name" required class="w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+                </td>
+                <td class="px-3 py-2">
+                  <input id="received_by_name" name="received_by_name" type="text" placeholder="Disabled for sender side" disabled class="w-full px-2.5 py-1.5 text-sm bg-slate-100 border border-slate-200 rounded-md outline-none text-slate-500 cursor-not-allowed">
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-1">
+        <button id="taf-submit-btn" type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors">
+          Submit Product Transfer
+        </button>
+      </div>
+
+      <datalist id="taf-product-options">
+        {% for product_name in product_names %}
+        <option value="{{ product_name }}"></option>
+        {% endfor %}
+      </datalist>
+    </form>
+  </section>
+</div>
+
+<script>
+  (function() {
+    const productPriceMapRaw = {{ product_price_map | default({}, true) | tojson }};
+    const productPriceMap = {};
+    Object.keys(productPriceMapRaw || {}).forEach((key) => {
+      const normalizedKey = String(key || '').trim().toLowerCase();
+      if (!normalizedKey) return;
+      const value = Number(productPriceMapRaw[key]);
+      if (Number.isFinite(value)) {
+        productPriceMap[normalizedKey] = value;
+      }
+    });
+    const body = document.getElementById('taf-items-body');
+    const addBtn = document.getElementById('add-item-row-btn');
+    const formEl = document.getElementById('taf-form');
+    const submitBtnEl = document.getElementById('taf-submit-btn');
+    const tafDateEl = document.getElementById('taf_date');
+    const grandTotalEl = document.getElementById('taf-grand-total');
+    const transactionTypeEl = document.getElementById('transaction_type');
+    const transactionTypeCardEls = document.querySelectorAll('.transaction-type-card');
+    const controlNoEl = document.getElementById('control_no');
+    const transferFromEl = document.getElementById('transfer_from');
+    const transferToEl = document.getElementById('transfer_to');
+    const transferToStoreEl = document.getElementById('transfer_to_store');
+    const transferToWastageEl = document.getElementById('transfer_to_wastage');
+    const preparedByEl = document.getElementById('prepared_by_name');
+    let hasConfirmedSubmit = false;
+
+    function asNumber(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function rowTemplate() {
+      return `
+        <tr class="taf-row odd:bg-white even:bg-slate-50">
+          <td class="px-3 py-2">
+            <input type="text" name="item_name[]" placeholder="Item name" class="taf-item-name w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="unit_cost[]" min="0" step="0.01" placeholder="0.00" class="taf-unit-cost w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="qty[]" min="0" step="1" placeholder="0" class="taf-qty w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2 text-right text-sm font-semibold text-slate-900 taf-row-total">0.00</td>
+          <td class="px-3 py-2">
+            <input type="text" name="remarks[]" placeholder="Remarks" class="taf-remarks w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2 text-center">
+            <button type="button" class="taf-remove-row px-2.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md hover:bg-rose-100">Remove</button>
+          </td>
+        </tr>
+      `;
+    }
+
+    function refreshTotals() {
+      let grand = 0;
+      body.querySelectorAll('.taf-row').forEach((row) => {
+        const unitCost = asNumber(row.querySelector('.taf-unit-cost')?.value);
+        const qty = asNumber(row.querySelector('.taf-qty')?.value);
+        const rowTotal = unitCost * qty;
+        row.querySelector('.taf-row-total').textContent = rowTotal.toFixed(2);
+        grand += rowTotal;
+      });
+      grandTotalEl.textContent = grand.toFixed(2);
+    }
+
+    function usesProductMasterLookup(transactionType) {
+      return transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer';
+    }
+
+    function syncItemNameMode() {
+      const transactionType = transactionTypeEl?.value || '';
+      const shouldUseProductMaster = usesProductMasterLookup(transactionType);
+      body.querySelectorAll('.taf-item-name').forEach((input) => {
+        if (shouldUseProductMaster) {
+          input.setAttribute('list', 'taf-product-options');
+          input.placeholder = 'Search product name';
+        } else {
+          input.removeAttribute('list');
+          input.placeholder = 'Item name';
+        }
+      });
+      if (shouldUseProductMaster) {
+        body.querySelectorAll('.taf-row').forEach((row) => {
+          const itemName = row.querySelector('.taf-item-name')?.value || '';
+          autoFillUnitCostForRow(row, itemName);
+        });
+        refreshTotals();
+      }
+    }
+
+    function syncTransferMode() {
+      const transactionType = transactionTypeEl?.value || '';
+      const isProductTransfer = transactionType === 'Product Transfer';
+      const isWastageTransfer = transactionType === 'Wastage Transfer';
+      const currentStoreName = transferFromEl?.dataset?.currentStore || '';
+      if (!transferFromEl || !transferToEl || !transferToStoreEl || !transferToWastageEl) return;
+
+      if (isProductTransfer) {
+        transferFromEl.value = currentStoreName;
+        transferFromEl.readOnly = true;
+        transferFromEl.classList.add('cursor-not-allowed', 'text-slate-600');
+
+        transferToEl.classList.add('hidden');
+        transferToEl.removeAttribute('name');
+        transferToEl.required = false;
+        transferToStoreEl.classList.remove('hidden');
+        transferToStoreEl.setAttribute('name', 'transfer_to');
+        transferToStoreEl.required = true;
+        transferToWastageEl.classList.add('hidden');
+        transferToWastageEl.removeAttribute('name');
+        transferToWastageEl.required = false;
+      } else if (isWastageTransfer) {
+        transferFromEl.value = currentStoreName;
+        transferFromEl.readOnly = true;
+        transferFromEl.classList.add('cursor-not-allowed', 'text-slate-600');
+
+        transferToEl.classList.add('hidden');
+        transferToEl.removeAttribute('name');
+        transferToEl.required = false;
+        transferToStoreEl.classList.add('hidden');
+        transferToStoreEl.removeAttribute('name');
+        transferToStoreEl.required = false;
+        transferToWastageEl.classList.remove('hidden');
+        transferToWastageEl.setAttribute('name', 'transfer_to');
+        transferToWastageEl.required = true;
+      } else {
+        transferFromEl.readOnly = false;
+        transferFromEl.classList.remove('cursor-not-allowed', 'text-slate-600');
+
+        transferToStoreEl.classList.add('hidden');
+        transferToStoreEl.removeAttribute('name');
+        transferToStoreEl.required = false;
+        transferToWastageEl.classList.add('hidden');
+        transferToWastageEl.removeAttribute('name');
+        transferToWastageEl.required = false;
+        transferToEl.classList.remove('hidden');
+        transferToEl.setAttribute('name', 'transfer_to');
+        transferToEl.required = true;
+      }
+    }
+
+    function syncSubmitMode() {
+      const transactionType = transactionTypeEl?.value || '';
+      const canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer';
+      if (submitBtnEl) {
+        submitBtnEl.disabled = !canSubmit;
+        submitBtnEl.classList.toggle('opacity-60', !canSubmit);
+        submitBtnEl.classList.toggle('cursor-not-allowed', !canSubmit);
+        submitBtnEl.textContent = canSubmit ? `Submit ${transactionType}` : 'Submission Disabled';
+      }
+      if (preparedByEl) {
+        preparedByEl.required = canSubmit;
+      }
+    }
+
+    function autoFillUnitCostForRow(row, itemName) {
+      const normalizedName = String(itemName || '').trim().toLowerCase();
+      if (!normalizedName) return;
+      const unitCostInput = row.querySelector('.taf-unit-cost');
+      if (!unitCostInput) return;
+      const matchedPrice = productPriceMap[normalizedName];
+      if (!Number.isFinite(matchedPrice)) return;
+      unitCostInput.value = matchedPrice.toFixed(2);
+    }
+
+    function renderTransactionTypeCards() {
+      const selectedType = transactionTypeEl?.value || '';
+      transactionTypeCardEls.forEach((card) => {
+        const isActive = (card.dataset.transactionType || '') === selectedType;
+        card.classList.toggle('border-cyan-500', isActive);
+        card.classList.toggle('bg-cyan-50', isActive);
+        card.classList.toggle('ring-2', isActive);
+        card.classList.toggle('ring-cyan-200', isActive);
+      });
+    }
+
+    function selectTransactionType(typeValue) {
+      if (!transactionTypeEl) return;
+      if ((transactionTypeEl.value || '') === typeValue) return;
+      transactionTypeEl.value = typeValue;
+      renderTransactionTypeCards();
+      transactionTypeEl.dispatchEvent(new Event('change'));
+    }
+
+    function addRow() {
+      body.insertAdjacentHTML('beforeend', rowTemplate());
+      syncItemNameMode();
+      refreshTotals();
+    }
+
+    addBtn?.addEventListener('click', addRow);
+    transactionTypeCardEls.forEach((card) => {
+      card.addEventListener('click', () => {
+        const selectedValue = card.dataset.transactionType || '';
+        selectTransactionType(selectedValue);
+      });
+    });
+    transactionTypeEl?.addEventListener('change', () => {
+      syncItemNameMode();
+      syncTransferMode();
+      syncSubmitMode();
+      renderTransactionTypeCards();
+    });
+
+    body?.addEventListener('input', (event) => {
+      const target = event.target;
+      if (target.classList.contains('taf-unit-cost') || target.classList.contains('taf-qty')) {
+        refreshTotals();
+        return;
+      }
+      if (target.classList.contains('taf-item-name')) {
+        const transactionType = transactionTypeEl?.value || '';
+        if (!usesProductMasterLookup(transactionType)) return;
+        const row = target.closest('.taf-row');
+        if (!row) return;
+        autoFillUnitCostForRow(row, target.value);
+        refreshTotals();
+      }
+    });
+
+    body?.addEventListener('click', (event) => {
+      const button = event.target.closest('.taf-remove-row');
+      if (!button) return;
+      const rows = body.querySelectorAll('.taf-row');
+      if (rows.length <= 1) {
+        const row = rows[0];
+        if (row) {
+          row.querySelectorAll('input').forEach((input) => { input.value = ''; });
+        }
+      } else {
+        button.closest('.taf-row')?.remove();
+      }
+      refreshTotals();
+    });
+
+    formEl?.addEventListener('submit', (event) => {
+      if (hasConfirmedSubmit) {
+        return;
+      }
+      event.preventDefault();
+      const transactionType = transactionTypeEl?.value || '';
+      const canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer';
+      if (!canSubmit) {
+        return;
+      }
+
+      if (!preparedByEl?.value?.trim()) {
+        preparedByEl?.focus();
+        return;
+      }
+
+      if (typeof showConfirmationModal !== 'function') {
+        hasConfirmedSubmit = true;
+        formEl.submit();
+        return;
+      }
+
+      showConfirmationModal({
+        title: `Submit ${transactionType}`,
+        cancelText: 'No, Go Back',
+        confirmText: 'Yes, Submit',
+        message: 'Are you sure you want to submit?',
+        onConfirm: () => {
+          hasConfirmedSubmit = true;
+          formEl.submit();
+        },
+      });
+    });
+
+    addRow();
+    syncItemNameMode();
+    syncTransferMode();
+    syncSubmitMode();
+    renderTransactionTypeCards();
+  })();
+</script>
+{% endblock %}

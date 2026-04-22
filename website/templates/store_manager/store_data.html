@@ -1,0 +1,1295 @@
+{% extends "base.html" %}
+{% block title %}Store Data - {{ store.name }}{% endblock %}
+
+{% block content %}
+<style>
+  /* Store manager view is read-only: keep pending visuals but disable actions. */
+  #store-data-readonly .approve-btn {
+    display: none !important;
+  }
+  #store-data-readonly .editable-cell {
+    pointer-events: none !important;
+    cursor: default !important;
+  }
+</style>
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Store Data</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <div class="text-sm font-medium text-slate-600">
+      <span class="text-slate-900">{{ store.name }}</span>
+    </div>
+    <button class="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-emerald-700 transition-all shadow-lg">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      <span>Export Excel</span>
+    </button>
+  </div>
+</header>
+
+<!-- Content -->
+<div id="store-data-readonly" class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-full w-full mx-auto">
+
+  <!-- Filters -->
+  <section>
+    <form method="GET" class="flex flex-wrap items-center gap-2">
+      <div class="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-700">
+        {{ store.name }}
+      </div>
+      
+      <select name="month" class="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+        <option value="01" {% if current_month == '01' %}selected{% endif %}>January</option>
+        <option value="02" {% if current_month == '02' %}selected{% endif %}>February</option>
+        <option value="03" {% if current_month == '03' %}selected{% endif %}>March</option>
+        <option value="04" {% if current_month == '04' %}selected{% endif %}>April</option>
+        <option value="05" {% if current_month == '05' %}selected{% endif %}>May</option>
+        <option value="06" {% if current_month == '06' %}selected{% endif %}>June</option>
+        <option value="07" {% if current_month == '07' %}selected{% endif %}>July</option>
+        <option value="08" {% if current_month == '08' %}selected{% endif %}>August</option>
+        <option value="09" {% if current_month == '09' %}selected{% endif %}>September</option>
+        <option value="10" {% if current_month == '10' %}selected{% endif %}>October</option>
+        <option value="11" {% if current_month == '11' %}selected{% endif %}>November</option>
+        <option value="12" {% if current_month == '12' %}selected{% endif %}>December</option>
+      </select>
+
+      <select name="year" class="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+        <option value="2024" {% if current_year == '2024' %}selected{% endif %}>2024</option>
+        <option value="2025" {% if current_year == '2025' %}selected{% endif %}>2025</option>
+        <option value="2026" {% if current_year == '2026' %}selected{% endif %}>2026</option>
+        <option value="2027" {% if current_year == '2027' %}selected{% endif %}>2027</option>
+      </select>
+      
+      <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 transition-all">
+        Filter
+      </button>
+      <button type="button" id="open-pos-sold-modal-btn" class="px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 transition-all">
+        POS Sold
+      </button>
+    </form>
+  </section>
+
+  <!-- Mini Overview Card -->
+  <section class="mt-4 bg-gradient-to-br from-indigo-50 to-slate-50 rounded-2xl border border-indigo-100 shadow-sm overflow-hidden">
+    <div class="px-6 py-4 bg-white/60 backdrop-blur-sm border-b border-indigo-100">
+      <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+        <svg class="w-5 h-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="7" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+        Performance Overview
+      </h2>
+    </div>
+    <div class="p-6">
+      <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <!-- MTD Sales -->
+        <div class="bg-white rounded-xl p-4 border border-emerald-200 shadow-sm">
+          <div class="text-xs font-medium text-emerald-600 uppercase mb-1">MTD Sales</div>
+          <div id="mtd-sales-value" class="text-lg font-bold text-emerald-700">
+            &#8369;{{ "{:,.2f}".format(summary.overview.mtd_sales) }}
+          </div>
+        </div>
+
+        <!-- Target -->
+        <div class="bg-white rounded-xl p-4 border border-indigo-200 shadow-sm">
+          <div class="text-xs font-medium text-indigo-600 uppercase mb-1">Target</div>
+          <div id="target-value" class="text-lg font-bold text-indigo-700">
+            &#8369;{{ "{:,.2f}".format(summary.overview.total_target) }}
+          </div>
+          <div id="target-variance" class="text-xs mt-1 {% if summary.overview.total_target > 0 %}{{ "text-emerald-600" if summary.overview.variance_percent >= 0 else "text-red-600" }}{% endif %} font-semibold">
+            {% if summary.overview.total_target > 0 %}
+              {{ "{:.1f}".format(summary.overview.variance_percent) }}%
+            {% else %}
+              -
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Variance -->
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+          <div class="text-xs font-medium text-slate-500 uppercase mb-1">Variance</div>
+          <div id="variance-value" class="text-lg font-bold {% if summary.overview.variance_amount >= 0 %}text-emerald-700{% else %}text-red-700{% endif %}">
+            &#8369;{{ "{:,.2f}".format(summary.overview.variance_amount) }}
+          </div>
+        </div>
+
+        <!-- SBI % Sales -->
+        <div class="bg-white rounded-xl p-4 border border-amber-200 shadow-sm">
+          <div class="text-xs font-medium text-amber-600 uppercase mb-1">SBI Sales</div>
+          <div class="text-lg font-bold text-amber-700" id="performance-sbi-value">
+            &#8369;{{ "{:,.2f}".format(summary.overview.sbi_sales) }}
+          </div>
+          <div class="text-xs mt-1 text-amber-600 font-semibold" id="performance-sbi-percentage">
+            {{ "{:.2f}%".format(summary.overview.sbi_percent) }}
+          </div>
+        </div>
+        
+        <!-- MTD Wastage -->
+        <div class="bg-white rounded-xl p-4 border border-red-200 shadow-sm">
+          <div class="text-xs font-medium text-red-600 uppercase mb-1">MTD Wastage</div>
+          <div class="text-lg font-bold text-red-700" id="performance-mtd-wastage">
+            &#8369;{{ "{:,.2f}".format(summary.overview.wastage_amount) }}
+          </div>
+          <div class="text-xs mt-1 {% if summary.overview.wastage_percent >= 3 %}text-red-600{% elif summary.overview.wastage_percent >= 1.5 %}text-amber-600{% else %}text-emerald-600{% endif %} font-semibold" id="performance-mtd-wastage-percent">
+            {{ "{:.2f}%".format(summary.overview.wastage_percent) }}
+          </div>
+        </div>
+        
+        <!-- MTD Discount -->
+        <div class="bg-white rounded-xl p-4 border border-purple-200 shadow-sm">
+          <div class="text-xs font-medium text-purple-600 uppercase mb-1">MTD Discount</div>
+          <div class="text-lg font-bold text-purple-700" id="performance-mtd-discount">
+            &#8369;{{ "{:,.2f}".format(summary.overview.discount_amount) }}
+          </div>
+          <div class="text-xs mt-1 {% if summary.overview.discount_percent >= 5 %}text-red-600{% elif summary.overview.discount_percent >= 2 %}text-amber-600{% else %}text-emerald-600{% endif %} font-semibold" id="performance-mtd-discount-percent">
+            {{ "{:.2f}%".format(summary.overview.discount_percent) }}
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tabs -->
+  <div id="main-content" class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden mt-6">
+    <div class="border-b border-slate-200 flex items-center justify-between">
+      <nav class="flex px-6" role="tablist">
+        <button onclick="switchTab('sales')" id="tab-sales" class="tab-button px-4 py-3 text-sm font-medium border-b-2 border-indigo-600 text-indigo-600" role="tab">
+          Sales Data
+        </button>
+        <button onclick="switchTab('aggregators')" id="tab-aggregators" class="tab-button px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300" role="tab">
+          Aggregators
+        </button>
+        <button onclick="switchTab('sbi')" id="tab-sbi" class="tab-button px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300" role="tab">
+          SBI
+        </button>
+        <button onclick="switchTab('cost')" id="tab-cost" class="tab-button px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300" role="tab">
+          Cost Monitoring
+        </button>
+        <button onclick="switchTab('inventory')" id="tab-inventory" class="tab-button px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300" role="tab">
+          Inventory Monitoring
+        </button>
+      </nav>
+      <div class="px-6">
+        <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-all">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+          </svg>
+          <span>Fullscreen</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Sales Data Tab Content -->
+    <div id="content-sales" class="tab-content">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sticky left-0 bg-slate-50 z-10">Date</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Gross Sales</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">C.I</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-indigo-50">Total Gross Sales</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Target (Net)</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Last Year (Net)</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">vs. Tgt</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Net Sales</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Acc Net Sales</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Acc Target Net</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Acc LY Net</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">MTD vs. Tgt</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">MTD vs. LY</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">GBI Target</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">GBI Acc</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">AR</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">vs. LY</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">AC</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 bg-white">
+          <!-- Generate day-by-day rows for the selected month -->
+          {% set month_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] %}
+          {% set days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] %}
+          {% set month_num = current_month|int %}
+          {% set year_num = current_year|int %}
+          {% set is_leap = (year_num % 4 == 0 and year_num % 100 != 0) or (year_num % 400 == 0) %}
+          {% set total_days = days_in_month[month_num] if month_num != 2 else (29 if is_leap else 28) %}
+          {% set cutoff_day = total_days %}
+          {% if year_num == today_year and month_num == today_month %}{% set cutoff_day = today_day %}{% endif %}
+          
+          <!-- Initialize accumulators -->
+          
+          <!-- First, show all pending reports pinned at top -->
+          {% for day in range(1, total_days + 1) %}
+          {% set date_str = current_year + '-' + '%02d'|format(month_num) + '-' + '%02d'|format(day) %}
+          {% set day_reports = reports_by_date.get(date_str, []) %}
+          {% for report in day_reports %}
+            {% if report.status == 'Pending' %}
+            <tr class="transition-colors">
+              <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white date-cell-pending">
+                {{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}
+              </td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400">&#8369;{{ "{:,.2f}".format(report.pos_gross_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400">&#8369;{{ "{:,.2f}".format(report.ci_regular_gross_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">&#8369;{{ "{:,.2f}".format(report.calc.total_gross_sales) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format((daily_targets.get(date_str, {}).get('target_net', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format((daily_targets.get(date_str, {}).get('last_year_net', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm {% if report.calc.vs_tgt >= 0 %}text-emerald-600{% else %}text-red-600{% endif %} text-right whitespace-nowrap">{{ "%.1f"|format(report.calc.vs_tgt) }}%</td>
+              <td class="px-3 py-2 text-sm font-semibold text-emerald-700 text-right whitespace-nowrap bg-emerald-50 border-2 border-yellow-400">&#8369;{{ "{:,.2f}".format(report.calc.net_sales) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format((acc_daily_sales.get(date_str, {}).get('net_sales', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format((acc_daily_targets.get(date_str, {}).get('target_net', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format((acc_daily_targets.get(date_str, {}).get('last_year_net', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm {% set mtd_vs_tgt = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_tgt') %}{% if mtd_vs_tgt is not none %}{{ 'text-emerald-600' if mtd_vs_tgt >= 0 else 'text-red-600' }}{% else %}text-slate-500{% endif %} text-right whitespace-nowrap">{{ "{:.1f}%".format(mtd_vs_tgt) if mtd_vs_tgt is not none else '-' }}</td>
+              <td class="px-3 py-2 text-sm {% set mtd_vs_ly = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_ly') %}{% if mtd_vs_ly is not none %}{{ 'text-emerald-600' if mtd_vs_ly >= 0 else 'text-red-600' }}{% else %}text-slate-500{% endif %} text-right whitespace-nowrap">{{ "{:.1f}%".format(mtd_vs_ly) if mtd_vs_ly is not none else '-' }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format((daily_targets.get(date_str, {}).get('gbi_target', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format((acc_daily_targets.get(date_str, {}).get('gbi_target', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ "%.1f"|format(report.calc.ar) }}%</td>
+              <td class="px-3 py-2 text-sm {% if report.calc.vs_ly >= 0 %}text-emerald-600{% else %}text-red-600{% endif %} text-right whitespace-nowrap">{{ "%.1f"|format(report.calc.vs_ly) }}%</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400">{{ report.calc.tc_total }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ "{:,.0f}".format(report.calc.ac) }}</td>
+            </tr>
+            {% endif %}
+          {% endfor %}
+          {% endfor %}
+
+          <!-- Then show all dates with approved/rejected reports or no data -->
+          {% for day in range(1, total_days + 1) %}
+          {% set date_str = current_year + '-' + '%02d'|format(month_num) + '-' + '%02d'|format(day) %}
+          {% set day_reports = reports_by_date.get(date_str, []) %}
+          {% set day_reports = day_reports|selectattr('status', 'in', ['Approved', 'Rejected'])|list %}
+          
+          {% if day_reports %}
+            {% for report in day_reports %}
+            <tr class="hover:bg-slate-50 transition-colors">
+              <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white">
+                {{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}
+              </td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format(report.pos_gross_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format(report.ci_regular_gross_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">₱{{ "{:,.2f}".format(report.calc.total_gross_sales) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((daily_targets.get(date_str, {}).get('target_net', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((daily_targets.get(date_str, {}).get('last_year_net', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm {% if report.calc.vs_tgt >= 0 %}text-emerald-600{% else %}text-red-600{% endif %} text-right whitespace-nowrap">{{ "%.1f"|format(report.calc.vs_tgt) }}%</td>
+              <td class="px-3 py-2 text-sm font-semibold text-emerald-700 text-right whitespace-nowrap bg-emerald-50">₱{{ "{:,.2f}".format(report.calc.net_sales) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((acc_daily_sales.get(date_str, {}).get('net_sales', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((acc_daily_targets.get(date_str, {}).get('target_net', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((acc_daily_targets.get(date_str, {}).get('last_year_net', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm {% set mtd_vs_tgt = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_tgt') %}{% if mtd_vs_tgt is not none %}{{ 'text-emerald-600' if mtd_vs_tgt >= 0 else 'text-red-600' }}{% else %}text-slate-500{% endif %} text-right whitespace-nowrap">{{ "{:.1f}%".format(mtd_vs_tgt) if mtd_vs_tgt is not none else '-' }}</td>
+              <td class="px-3 py-2 text-sm {% set mtd_vs_ly = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_ly') %}{% if mtd_vs_ly is not none %}{{ 'text-emerald-600' if mtd_vs_ly >= 0 else 'text-red-600' }}{% else %}text-slate-500{% endif %} text-right whitespace-nowrap">{{ "{:.1f}%".format(mtd_vs_ly) if mtd_vs_ly is not none else '-' }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((daily_targets.get(date_str, {}).get('gbi_target', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((acc_daily_targets.get(date_str, {}).get('gbi_target', 0.0))) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ "%.1f"|format(report.calc.ar) }}%</td>
+              <td class="px-3 py-2 text-sm {% if report.calc.vs_ly >= 0 %}text-emerald-600{% else %}text-red-600{% endif %} text-right whitespace-nowrap">{{ "%.1f"|format(report.calc.vs_ly) }}%</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ report.calc.tc_total }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ "{:,.0f}".format(report.calc.ac) }}</td>
+            </tr>
+            {% endfor %}
+          {% elif not day_reports or day_reports|selectattr('status', 'equalto', 'Pending')|list|length == day_reports|length %}
+          <tr class="hover:bg-slate-50 transition-colors">
+            <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white">
+              <div class="flex items-center gap-2">
+                <span class="{% if day <= cutoff_day %}text-red-700 font-semibold{% endif %}">{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</span>
+                {% if day <= cutoff_day %}
+                <span class="inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700" title="Missing report">?</span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((daily_targets.get(date_str, {}).get('target_net', 0.0))) }}</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((daily_targets.get(date_str, {}).get('last_year_net', 0.0))) }}</td>
+            <td class="px-3 py-2 text-sm text-slate-500 text-right whitespace-nowrap">-</td>
+            <td class="px-3 py-2 text-sm font-semibold text-emerald-700 text-right whitespace-nowrap bg-emerald-50">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((acc_daily_sales.get(date_str, {}).get('net_sales', 0.0))) }}</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((acc_daily_targets.get(date_str, {}).get('target_net', 0.0))) }}</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((acc_daily_targets.get(date_str, {}).get('last_year_net', 0.0))) }}</td>
+            <td class="px-3 py-2 text-sm {% set mtd_vs_tgt = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_tgt') %}{% if mtd_vs_tgt is not none %}{{ 'text-emerald-600' if mtd_vs_tgt >= 0 else 'text-red-600' }}{% else %}text-slate-500{% endif %} text-right whitespace-nowrap">{{ "{:.1f}%".format(mtd_vs_tgt) if mtd_vs_tgt is not none else '-' }}</td>
+            <td class="px-3 py-2 text-sm {% set mtd_vs_ly = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_ly') %}{% if mtd_vs_ly is not none %}{{ 'text-emerald-600' if mtd_vs_ly >= 0 else 'text-red-600' }}{% else %}text-slate-500{% endif %} text-right whitespace-nowrap">{{ "{:.1f}%".format(mtd_vs_ly) if mtd_vs_ly is not none else '-' }}</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((daily_targets.get(date_str, {}).get('gbi_target', 0.0))) }}</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format((acc_daily_targets.get(date_str, {}).get('gbi_target', 0.0))) }}</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">-</td>
+            <td class="px-3 py-2 text-sm text-slate-500 text-right whitespace-nowrap">-</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+        
+        <!-- Summary/Total Row -->
+                <tfoot class="bg-slate-100 border-t-2 border-slate-300">
+          <tr class="font-bold">
+            <td class="px-3 py-3 text-sm text-slate-900 sticky left-0 bg-slate-100">TOTAL / AVG</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sales.gross_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sales.ci_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-indigo-100">&#8369;{{ "{:,.2f}".format(summary.sales.total_gross_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sales.target_net) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sales.last_year_net) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:.1f}%".format(summary.sales.vs_tgt_percent) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100">&#8369;{{ "{:,.2f}".format(summary.sales.net_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-700 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sales.acc_net_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-700 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sales.acc_target_net) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-700 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sales.acc_ly_net) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:.1f}%".format(summary.sales.mtd_vs_tgt_percent) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:.1f}%".format(summary.sales.mtd_vs_ly_percent) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sales.gbi_target) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sales.acc_gbi) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:.1f}%".format(summary.sales.ar_percent) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:.1f}%".format(summary.sales.vs_ly_percent) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.sales.tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,.0f}".format(summary.sales.ac) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    </div>
+    <!-- End Sales Data Tab -->
+
+    <!-- Aggregators Tab Content -->
+    <div id="content-aggregators" class="tab-content hidden">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sticky left-0 bg-slate-50 z-10">Date</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">GDS</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Grabfood</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">FoodPanda</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Maxim</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-indigo-50">Total Agg</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-indigo-50">TC</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 bg-white">
+          <!-- Generate day-by-day rows for the selected month -->
+          {% set month_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] %}
+          {% set days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] %}
+          {% set month_num = current_month|int %}
+          {% set year_num = current_year|int %}
+          {% set is_leap = (year_num % 4 == 0 and year_num % 100 != 0) or (year_num % 400 == 0) %}
+          {% set total_days = days_in_month[month_num] if month_num != 2 else (29 if is_leap else 28) %}
+          {% set cutoff_day = total_days %}
+          {% if year_num == today_year and month_num == today_month %}{% set cutoff_day = today_day %}{% endif %}
+          
+          <!-- First, show all pending reports pinned at top -->
+          {% for day in range(1, total_days + 1) %}
+          {% set date_str = current_year + '-' + '%02d'|format(month_num) + '-' + '%02d'|format(day) %}
+          {% set day_reports = reports_by_date.get(date_str, []) %}
+          {% for report in day_reports %}
+            {% if report.status == 'Pending' %}
+            <tr class="transition-colors editable-row" data-report-id="{{ report.id }}">
+              <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white date-cell-pending" data-report-id="{{ report.id }}">
+                <div class="flex items-center justify-between group">
+                  <span>{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</span>
+                  <button class="approve-btn opacity-0 group-hover:opacity-100 transition-opacity ml-2 p-1 rounded-lg hover:bg-emerald-100" title="Approve report">
+                    <svg class="w-4 h-4 text-emerald-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  </button>
+                </div>
+              </td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="gds_sales" title="Pending (read-only)">₱{{ "{:,.2f}".format(report.gds_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="gds_tc" title="Pending (read-only)">{{ report.gds_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="grab_sales" title="Pending (read-only)">₱{{ "{:,.2f}".format(report.grab_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="grab_tc" title="Pending (read-only)">{{ report.grab_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="foodpanda_sales" title="Pending (read-only)">₱{{ "{:,.2f}".format(report.foodpanda_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="foodpanda_tc" title="Pending (read-only)">{{ report.foodpanda_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">₱{{ "{:,.2f}".format((report.gds_sales or 0) + (report.grab_sales or 0) + (report.foodpanda_sales or 0)) }}</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">{{ (report.gds_tc or 0) + (report.grab_tc or 0) + (report.foodpanda_tc or 0) }}</td>
+            </tr>
+            {% endif %}
+          {% endfor %}
+          {% endfor %}
+          
+          <!-- Then show all dates with approved/rejected reports or no data -->
+          {% for day in range(1, total_days + 1) %}
+          {% set date_str = current_year + '-' + '%02d'|format(month_num) + '-' + '%02d'|format(day) %}
+          {% set day_reports = reports_by_date.get(date_str, []) %}
+          {% set day_reports = day_reports|selectattr('status', 'in', ['Approved', 'Rejected'])|list %}
+          
+          {% if day_reports %}
+            {% for report in day_reports %}
+            <tr class="hover:bg-slate-50 transition-colors">
+              <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white">{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format(report.gds_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ report.gds_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format(report.grab_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ report.grab_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format(report.foodpanda_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ report.foodpanda_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">₱{{ "{:,.2f}".format((report.gds_sales or 0) + (report.grab_sales or 0) + (report.foodpanda_sales or 0)) }}</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">{{ (report.gds_tc or 0) + (report.grab_tc or 0) + (report.foodpanda_tc or 0) }}</td>
+            </tr>
+            {% endfor %}
+          {% elif not day_reports or day_reports|selectattr('status', 'equalto', 'Pending')|list|length == day_reports|length %}
+          <tr class="hover:bg-slate-50 transition-colors">
+            <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white">
+              <div class="flex items-center gap-2">
+                <span class="{% if day <= cutoff_day %}text-red-700 font-semibold{% endif %}">{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</span>
+                {% if day <= cutoff_day %}
+                <span class="inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700" title="Missing report">?</span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">₱0.00</td>
+            <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">0</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+        
+        <!-- Summary/Total Row -->
+                <tfoot class="bg-slate-100 border-t-2 border-slate-300">
+          <tr class="font-bold">
+            <td class="px-3 py-3 text-sm text-slate-900 sticky left-0 bg-slate-100">TOTAL / AVG</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.aggregators.gds_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.aggregators.gds_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.aggregators.grab_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.aggregators.grab_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.aggregators.foodpanda_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.aggregators.foodpanda_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.aggregators.maxim_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.aggregators.maxim_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-indigo-100">&#8369;{{ "{:,.2f}".format(summary.aggregators.total_agg_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-indigo-100">{{ "{:,}".format(summary.aggregators.total_agg_tc) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    </div>
+    <!-- End Aggregators Tab -->
+
+    <!-- SBI Tab Content -->
+    <div id="content-sbi" class="tab-content hidden">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sticky left-0 bg-slate-50 z-10">Date</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Booth Selling</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Bulk Order</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Reseller</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Company Tie-up</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">GOW</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Ambulant/OOT</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Other SBI</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-indigo-50">Total SBI</th>
+            <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-indigo-50">TC</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 bg-white">
+          <!-- Generate day-by-day rows for the selected month -->
+          {% set month_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] %}
+          {% set days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] %}
+          {% set month_num = current_month|int %}
+          {% set year_num = current_year|int %}
+          {% set is_leap = (year_num % 4 == 0 and year_num % 100 != 0) or (year_num % 400 == 0) %}
+          {% set total_days = days_in_month[month_num] if month_num != 2 else (29 if is_leap else 28) %}
+          {% set cutoff_day = total_days %}
+          {% if year_num == today_year and month_num == today_month %}{% set cutoff_day = today_day %}{% endif %}
+          
+          <!-- First, show all pending reports pinned at top -->
+          {% for day in range(1, total_days + 1) %}
+          {% set date_str = current_year + '-' + '%02d'|format(month_num) + '-' + '%02d'|format(day) %}
+          {% set day_reports = reports_by_date.get(date_str, []) %}
+          {% for report in day_reports %}
+            {% if report.status == 'Pending' %}
+            <tr class="transition-colors editable-row" data-report-id="{{ report.id }}">
+              <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white date-cell-pending" data-report-id="{{ report.id }}">
+                <div class="flex items-center justify-between group">
+                  <span>{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</span>
+                  <button class="approve-btn opacity-0 group-hover:opacity-100 transition-opacity ml-2 p-1 rounded-lg hover:bg-emerald-100" title="Approve report">
+                    <svg class="w-4 h-4 text-emerald-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  </button>
+                </div>
+              </td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="boothselling_sales" title="Pending (read-only)">₱{{ "{:,.2f}".format(report.boothselling_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="boothselling_tc" title="Pending (read-only)">{{ report.boothselling_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="bulk_order_sales" title="Pending (read-only)">₱{{ "{:,.2f}".format(report.bulk_order_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="bulk_order_tc" title="Pending (read-only)">{{ report.bulk_order_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="reseller_sales" title="Pending (read-only)">₱{{ "{:,.2f}".format(report.reseller_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="reseller_tc" title="Pending (read-only)">{{ report.reseller_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="tieup_sales" title="Pending (read-only)">₱{{ "{:,.2f}".format(report.tieup_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="tieup_tc" title="Pending (read-only)">{{ report.tieup_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="ambulant_sales" title="Pending (read-only)">₱{{ "{:,.2f}".format(report.ambulant_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-2 border-yellow-400 editable-cell" data-field="ambulant_tc" title="Pending (read-only)">{{ report.ambulant_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">₱{{ "{:,.2f}".format((report.boothselling_sales or 0) + (report.bulk_order_sales or 0) + (report.reseller_sales or 0) + (report.tieup_sales or 0) + (report.ambulant_sales or 0)) }}</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">{{ (report.boothselling_tc or 0) + (report.bulk_order_tc or 0) + (report.reseller_tc or 0) + (report.tieup_tc or 0) + (report.ambulant_tc or 0) }}</td>
+            </tr>
+            {% endif %}
+          {% endfor %}
+          {% endfor %}
+          
+          <!-- Then show all dates with approved/rejected reports or no data -->
+          {% for day in range(1, total_days + 1) %}
+          {% set date_str = current_year + '-' + '%02d'|format(month_num) + '-' + '%02d'|format(day) %}
+          {% set day_reports = reports_by_date.get(date_str, []) %}
+          {% set day_reports = day_reports|selectattr('status', 'in', ['Approved', 'Rejected'])|list %}
+          
+          {% if day_reports %}
+            {% for report in day_reports %}
+            <tr class="hover:bg-slate-50 transition-colors">
+              <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white">{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format(report.boothselling_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ report.boothselling_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format(report.bulk_order_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ report.bulk_order_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format(report.reseller_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ report.reseller_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format(report.tieup_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ report.tieup_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱{{ "{:,.2f}".format(report.ambulant_sales or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">{{ report.ambulant_tc or 0 }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">₱{{ "{:,.2f}".format((report.boothselling_sales or 0) + (report.bulk_order_sales or 0) + (report.reseller_sales or 0) + (report.tieup_sales or 0) + (report.ambulant_sales or 0)) }}</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">{{ (report.boothselling_tc or 0) + (report.bulk_order_tc or 0) + (report.reseller_tc or 0) + (report.tieup_tc or 0) + (report.ambulant_tc or 0) }}</td>
+            </tr>
+            {% endfor %}
+          {% elif not day_reports or day_reports|selectattr('status', 'equalto', 'Pending')|list|length == day_reports|length %}
+          <tr class="hover:bg-slate-50 transition-colors">
+            <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white">
+              <div class="flex items-center gap-2">
+                <span class="{% if day <= cutoff_day %}text-red-700 font-semibold{% endif %}">{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</span>
+                {% if day <= cutoff_day %}
+                <span class="inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700" title="Missing report">?</span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">₱0.00</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap">0</td>
+            <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">₱0.00</td>
+            <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50">0</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+        
+        <!-- Summary/Total Row -->
+                <tfoot class="bg-slate-100 border-t-2 border-slate-300">
+          <tr class="font-bold">
+            <td class="px-3 py-3 text-sm text-slate-900 sticky left-0 bg-slate-100">TOTAL / AVG</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sbi.boothselling_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.sbi.boothselling_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sbi.bulk_order_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.sbi.bulk_order_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sbi.reseller_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.sbi.reseller_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sbi.tieup_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.sbi.tieup_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sbi.ambulant_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.sbi.ambulant_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sbi.gow_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.sbi.gow_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">&#8369;{{ "{:,.2f}".format(summary.sbi.other_sbi_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap">{{ "{:,}".format(summary.sbi.other_sbi_tc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-indigo-100">&#8369;{{ "{:,.2f}".format(summary.sbi.total_sbi_sales) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-indigo-100">{{ "{:,}".format(summary.sbi.total_sbi_tc) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    </div>
+    <!-- End SBI Tab -->
+
+    <!-- Cost Monitoring Tab Content -->
+    <div id="content-cost" class="tab-content hidden">
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-50">
+            <tr>
+              <th rowspan="2" class="px-3 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sticky left-0 bg-slate-50 z-10 border-r border-slate-200">Date</th>
+              <th colspan="2" class="px-3 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider bg-amber-50 border-r border-slate-200">Wastage Performance</th>
+              <th colspan="5" class="px-3 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">Discount Monitoring</th>
+            </tr>
+            <tr>
+              <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-amber-50">Amount</th>
+              <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-amber-50 border-r border-slate-200">Daily%</th>
+              <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Senior / PWD</th>
+              <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Promo (LDTS)</th>
+              <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Bulk Orders</th>
+              <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Total Disc Peso</th>
+              <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Daily %</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 bg-white">
+            <!-- Generate day-by-day rows for the selected month -->
+            {% set month_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] %}
+            {% set days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] %}
+            {% set month_num = current_month|int %}
+            {% set year_num = current_year|int %}
+            {% set is_leap = (year_num % 4 == 0 and year_num % 100 != 0) or (year_num % 400 == 0) %}
+            {% set total_days = days_in_month[month_num] if month_num != 2 else (29 if is_leap else 28) %}
+            {% set cutoff_day = total_days %}
+            {% if year_num == today_year and month_num == today_month %}{% set cutoff_day = today_day %}{% endif %}
+            
+            <!-- First, show all pending reports pinned at top -->
+            {% for day in range(1, total_days + 1) %}
+            {% set date_str = current_year + '-' + '%02d'|format(month_num) + '-' + '%02d'|format(day) %}
+            {% set day_reports = reports_by_date.get(date_str, []) %}
+            {% for report in day_reports %}
+              {% if report.status == 'Pending' %}
+              <tr class="transition-colors editable-row" data-report-id="{{ report.id }}">
+                <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white border-r border-slate-100 date-cell-pending" data-report-id="{{ report.id }}">
+                  <div class="flex items-center justify-between group">
+                    <span>{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</span>
+                    <button class="approve-btn opacity-0 group-hover:opacity-100 transition-opacity ml-2 p-1 rounded-lg hover:bg-emerald-100" title="Approve report">
+                      <svg class="w-4 h-4 text-emerald-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                    </button>
+                  </div>
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-amber-50 border-2 border-yellow-400 editable-cell" data-field="spoilage_gc" data-field2="spoilage_rolls" data-field3="spoilage_premium" data-field4="spoilage_others" title="Pending (read-only)">
+                  {{ "{:,.2f}".format(report.calc.wastage_amount) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-amber-50 border-r border-slate-100 editable-cell" data-field="spoilage_percentage" title="Pending (read-only)">
+                  {{ "{:.2f}%".format(report.calc.wastage_percent) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50 border-2 border-yellow-400 editable-cell" data-field="senior_pwd_discount" title="Pending (read-only)">
+                  {{ "{:,.2f}".format(report.senior_pwd_discount or 0) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50 border-2 border-yellow-400 editable-cell" data-field="promo_ldts_discount" title="Pending (read-only)">
+                  {{ "{:,.2f}".format(report.promo_ldts_discount or 0) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50 border-2 border-yellow-400 editable-cell" data-field="bulk_orders_discount" title="Pending (read-only)">
+                  {{ "{:,.2f}".format(report.bulk_orders_discount or 0) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50 editable-cell" data-field="total_discount" title="Pending (read-only)">
+                  {{ "{:,.2f}".format(report.calc.total_discount) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50 editable-cell" data-field="discount_percentage" title="Pending (read-only)">
+                  {{ "{:.2f}%".format(report.calc.discount_percent) }}
+                </td>
+              </tr>
+              {% endif %}
+            {% endfor %}
+            {% endfor %}
+            
+            <!-- Then show all dates with approved/rejected reports or no data -->
+            {% for day in range(1, total_days + 1) %}
+            {% set date_str = current_year + '-' + '%02d'|format(month_num) + '-' + '%02d'|format(day) %}
+            {% set day_reports = reports_by_date.get(date_str, []) %}
+            {% set day_reports = day_reports|selectattr('status', 'in', ['Approved', 'Rejected'])|list %}
+            
+            {% if day_reports %}
+              {% for report in day_reports %}
+              <tr class="hover:bg-slate-50 transition-colors">
+                <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white border-r border-slate-100">
+                  {{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-amber-50">
+                  {{ "{:,.2f}".format(report.calc.wastage_amount) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-amber-50 border-r border-slate-100">
+                  {{ "{:.2f}%".format(report.calc.wastage_percent) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50">
+                  {{ "{:,.2f}".format(report.senior_pwd_discount or 0) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50">
+                  {{ "{:,.2f}".format(report.promo_ldts_discount or 0) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50">
+                  {{ "{:,.2f}".format(report.bulk_orders_discount or 0) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50">
+                  {{ "{:,.2f}".format(report.calc.total_discount) }}
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50">
+                  {{ "{:.2f}%".format(report.calc.discount_percent) }}
+                </td>
+              </tr>
+              {% endfor %}
+            {% else %}
+            <tr class="hover:bg-slate-50 transition-colors">
+              <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white border-r border-slate-100">
+                <div class="flex items-center gap-2">
+                  <span class="{% if day <= cutoff_day %}text-red-700 font-semibold{% endif %}">{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</span>
+                  {% if day <= cutoff_day %}
+                  <span class="inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700" title="Missing report">?</span>
+                  {% endif %}
+                </div>
+              </td>
+              <td class="px-3 py-2 text-sm text-slate-900 text-right bg-amber-50">0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-900 text-right bg-amber-50 border-r border-slate-100">0.00%</td>
+              <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50">0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50">0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50">0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50">0.00</td>
+              <td class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50">0.00%</td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+          </tbody>
+                    <tfoot class="bg-slate-50 font-semibold">
+            <tr>
+              <td class="px-3 py-3 text-sm font-semibold text-slate-900 sticky left-0 bg-slate-50 border-r border-slate-200">Total</td>
+              <td class="px-3 py-3 text-sm text-slate-900 text-right bg-amber-100">{{ "{:,.2f}".format(summary.cost.wastage_amount) }}</td>
+              <td class="px-3 py-3 text-sm text-slate-900 text-right bg-amber-100 border-r border-slate-200">{{ "{:.2f}%".format(summary.cost.wastage_daily_percent) }}</td>
+              <td class="px-3 py-3 text-sm text-slate-900 text-right bg-emerald-100">{{ "{:,.2f}".format(summary.cost.senior_pwd_discount) }}</td>
+              <td class="px-3 py-3 text-sm text-slate-900 text-right bg-emerald-100">{{ "{:,.2f}".format(summary.cost.promo_ldts_discount) }}</td>
+              <td class="px-3 py-3 text-sm text-slate-900 text-right bg-emerald-100">{{ "{:,.2f}".format(summary.cost.bulk_orders_discount) }}</td>
+              <td class="px-3 py-3 text-sm text-slate-900 text-right bg-emerald-100">{{ "{:,.2f}".format(summary.cost.total_discount) }}</td>
+              <td class="px-3 py-3 text-sm text-slate-900 text-right bg-emerald-100">{{ "{:.2f}%".format(summary.cost.discount_daily_percent) }}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+    <!-- End Cost Monitoring Tab -->
+
+    <!-- Inventory Monitoring Tab Content -->
+    <div id="content-inventory" class="tab-content hidden">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th rowspan="2" class="px-3 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sticky left-0 bg-slate-50 z-10 border-r border-slate-200">Date</th>
+            <th colspan="6" class="px-3 py-2 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider border-r border-slate-200 bg-emerald-50">QTY SOLD</th>
+            <th colspan="3" class="px-3 py-2 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider bg-amber-50">Ending Inventory</th>
+          </tr>
+          <tr>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">GC</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">Rolls</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">Premium</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">Cheesy Ensay</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">Slices</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider border-r border-slate-200 bg-emerald-50">Mamon Sold</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-amber-50">GC</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-amber-50">Rolls</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-amber-50">Premium</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 bg-white">
+          <!-- Generate day-by-day rows for the selected month -->
+          {% set month_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] %}
+          {% set days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] %}
+          {% set month_num = current_month|int %}
+          {% set year_num = current_year|int %}
+          {% set is_leap = (year_num % 4 == 0 and year_num % 100 != 0) or (year_num % 400 == 0) %}
+          {% set total_days = days_in_month[month_num] if month_num != 2 else (29 if is_leap else 28) %}
+          {% set cutoff_day = total_days %}
+          {% if year_num == today_year and month_num == today_month %}{% set cutoff_day = today_day %}{% endif %}
+          
+          <!-- First, show all pending reports pinned at top -->
+          {% for day in range(1, total_days + 1) %}
+          {% set date_str = current_year + '-' + '%02d'|format(month_num) + '-' + '%02d'|format(day) %}
+          {% set day_reports = reports_by_date.get(date_str, []) %}
+          {% for report in day_reports %}
+            {% if report.status == 'Pending' %}
+            <tr class="transition-colors editable-row" data-report-id="{{ report.id }}">
+              <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white border-r border-slate-100 date-cell-pending" data-report-id="{{ report.id }}">
+                <div class="flex items-center justify-between group">
+                  <span>{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</span>
+                  <button class="approve-btn opacity-0 group-hover:opacity-100 transition-opacity ml-2 p-1 rounded-lg hover:bg-emerald-100" title="Approve report">
+                    <svg class="w-4 h-4 text-emerald-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  </button>
+                </div>
+              </td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">{{ report.pos_qty_gc }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">{{ report.pos_qty_rolls }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">{{ report.pos_qty_premium }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">{{ report.pos_qty_cheesy_ensay }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">{{ report.pos_qty_slices }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-r border-slate-100 bg-emerald-50/30">{{ report.pos_qty_mamon }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30 border-2 border-yellow-400 editable-cell" data-field="ending_inv_gc" title="Pending (read-only)">{{ report.ending_inv_gc }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30 border-2 border-yellow-400 editable-cell" data-field="ending_inv_rolls" title="Pending (read-only)">{{ report.ending_inv_rolls }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30 border-2 border-yellow-400 editable-cell" data-field="ending_inv_premium" title="Pending (read-only)">{{ report.ending_inv_premium }}</td>
+            </tr>
+            {% endif %}
+          {% endfor %}
+          {% endfor %}
+          
+          <!-- Then show all dates with approved/rejected reports or no data -->
+          {% for day in range(1, total_days + 1) %}
+          {% set date_str = current_year + '-' + '%02d'|format(month_num) + '-' + '%02d'|format(day) %}
+          {% set day_reports = reports_by_date.get(date_str, []) %}
+          {% set day_reports = day_reports|selectattr('status', 'in', ['Approved', 'Rejected'])|list %}
+          
+          {% if day_reports %}
+            {% for report in day_reports %}
+            <tr class="hover:bg-slate-50 transition-colors">
+              <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white border-r border-slate-100">{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">{{ report.pos_qty_gc }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">{{ report.pos_qty_rolls }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">{{ report.pos_qty_premium }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">{{ report.pos_qty_cheesy_ensay }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">{{ report.pos_qty_slices }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-r border-slate-100 bg-emerald-50/30">{{ report.pos_qty_mamon }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30">{{ report.ending_inv_gc }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30">{{ report.ending_inv_rolls }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30">{{ report.ending_inv_premium }}</td>
+            </tr>
+            {% endfor %}
+          {% elif not day_reports or day_reports|selectattr('status', 'equalto', 'Pending')|list|length == day_reports|length %}
+          <tr class="hover:bg-slate-50 transition-colors">
+            <td class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white border-r border-slate-100">
+              <div class="flex items-center gap-2">
+                <span class="{% if day <= cutoff_day %}text-red-700 font-semibold{% endif %}">{{ month_names[month_num] }} {{ '%02d'|format(day) }}, {{ current_year }}</span>
+                {% if day <= cutoff_day %}
+                <span class="inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700" title="Missing report">?</span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-r border-slate-100 bg-emerald-50/30">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30">0</td>
+            <td class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30">0</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+        
+        <!-- Summary/Total Row -->
+                <tfoot class="bg-slate-100 border-t-2 border-slate-300">
+          <tr class="font-bold">
+            <td class="px-3 py-3 text-sm text-slate-900 sticky left-0 bg-slate-100 border-r border-slate-200">TOTAL / AVG</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100">{{ "{:,}".format(summary.inventory.pos_qty_gc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100">{{ "{:,}".format(summary.inventory.pos_qty_rolls) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100">{{ "{:,}".format(summary.inventory.pos_qty_premium) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100">{{ "{:,}".format(summary.inventory.pos_qty_cheesy_ensay) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100">{{ "{:,}".format(summary.inventory.pos_qty_slices) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap border-r border-slate-200 bg-emerald-100">{{ "{:,}".format(summary.inventory.pos_qty_mamon) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-amber-100">{{ "{:,}".format(summary.inventory.ending_inv_gc) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-amber-100">{{ "{:,}".format(summary.inventory.ending_inv_rolls) }}</td>
+            <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-amber-100">{{ "{:,}".format(summary.inventory.ending_inv_premium) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    </div>
+    <!-- End Inventory Monitoring Tab -->
+
+  </div>
+
+  <div id="pos-sold-modal" class="fixed inset-0 z-50 hidden">
+    <div id="pos-sold-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+    <div class="relative z-10 min-h-full flex items-center justify-center p-4 md:p-6">
+      <div class="w-full max-w-4xl bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+        <div class="px-5 py-4 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-bold text-slate-900">POS Sold</h3>
+            <p id="pos-sold-caption" class="text-xs text-slate-500 mt-1">
+              {% if pos_modal_report %}
+                Showing {{ pos_modal_report.report_date.strftime('%B %d, %Y') }}
+              {% else %}
+                No submitted POS sold data yet
+              {% endif %}
+            </p>
+          </div>
+          <button id="pos-sold-close" type="button" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="px-5 py-4 space-y-4 overflow-y-auto min-h-0">
+          <div class="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <select id="pos-filter-month" class="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none">
+              <option value="1">January</option>
+              <option value="2">February</option>
+              <option value="3">March</option>
+              <option value="4">April</option>
+              <option value="5">May</option>
+              <option value="6">June</option>
+              <option value="7">July</option>
+              <option value="8">August</option>
+              <option value="9">September</option>
+              <option value="10">October</option>
+              <option value="11">November</option>
+              <option value="12">December</option>
+            </select>
+            <select id="pos-filter-day" class="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"></select>
+            <select id="pos-filter-year" class="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"></select>
+            <button type="button" id="pos-filter-apply" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-all">Apply</button>
+            <button type="button" id="pos-filter-latest" class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-300 transition-all">Latest</button>
+          </div>
+
+          <div id="pos-sold-results"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fullscreen Modal -->
+  <div id="fullscreen-modal" class="hidden fixed inset-0 z-50 bg-white">
+    <div class="h-full flex flex-col">
+      <!-- Modal Header -->
+      <div class="flex-none bg-white border-b border-slate-200 px-6 h-16 flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-4">
+          <h2 class="text-lg font-bold text-slate-900 transition-all duration-300" id="fullscreen-title">Sales Data</h2>
+          <div class="text-sm text-slate-600" id="fullscreen-subtitle">
+            <!-- Will be updated dynamically -->
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <!-- Previous Tab Button -->
+          <button onclick="navigateTab('prev')" class="flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-xl text-sm font-medium hover:bg-indigo-200 transition-all">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            <span>Previous</span>
+          </button>
+          <!-- Next Tab Button -->
+          <button onclick="navigateTab('next')" class="flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-xl text-sm font-medium hover:bg-indigo-200 transition-all">
+            <span>Next</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+          <!-- Exit Fullscreen Button -->
+          <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-700 transition-all">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+            </svg>
+            <span>Exit Fullscreen</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Modal Content (Single Tab Only) -->
+      <div class="flex-1 overflow-auto bg-white">
+        <div id="modal-content" class="transition-all duration-300 ease-in-out">
+          <!-- Content will be cloned here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% if missing_dates %}
+<div id="missing-dates-modal" class="fixed inset-0 z-50 hidden">
+  <div id="missing-dates-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+    <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200">
+        <h3 class="text-lg font-bold text-slate-900">Missing Report Dates</h3>
+        <p class="text-sm text-red-600 mt-1">
+          {{ missing_dates|length }} missing date{{ '' if missing_dates|length == 1 else 's' }} found for this month.
+        </p>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to open Daily Report on the oldest missing date.</p>
+        <div class="max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100">
+          {% for missing in missing_dates %}
+          <div class="px-3 py-2 flex items-center justify-between">
+            <span class="text-sm font-semibold text-red-700">{{ missing.label }}</span>
+            <span class="text-xs text-red-500">{{ missing.iso }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
+        <button id="missing-dates-go" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm">
+          Go
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const openBtn = document.getElementById('open-pos-sold-modal-btn');
+  const modal = document.getElementById('pos-sold-modal');
+  const overlay = document.getElementById('pos-sold-overlay');
+  const closeBtn = document.getElementById('pos-sold-close');
+  const caption = document.getElementById('pos-sold-caption');
+  const monthSelect = document.getElementById('pos-filter-month');
+  const daySelect = document.getElementById('pos-filter-day');
+  const yearSelect = document.getElementById('pos-filter-year');
+  const applyBtn = document.getElementById('pos-filter-apply');
+  const latestBtn = document.getElementById('pos-filter-latest');
+  const results = document.getElementById('pos-sold-results');
+  const posPayload = {{ pos_modal_payload|tojson }};
+  const todayYear = {{ today_year|tojson }};
+  const todayMonth = {{ today_month|tojson }};
+  const todayDay = {{ today_day|tojson }};
+
+  function openPosModal() {
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    document.body.classList.add('overflow-hidden');
+  }
+
+  function closePosModal() {
+    if (!modal) return;
+    modal.classList.add('hidden');
+    document.body.classList.remove('overflow-hidden');
+  }
+
+  function pad2(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  function daysInMonth(year, month) {
+    return new Date(year, month, 0).getDate();
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function findReportByDate(isoDate) {
+    return posPayload.find(item => item.date === isoDate) || null;
+  }
+
+  function setCaption(report) {
+    if (!caption) return;
+    if (report) {
+      caption.textContent = `Showing ${report.label}`;
+    } else {
+      caption.textContent = 'No submitted POS sold data found for selected date';
+    }
+  }
+
+  function renderResults(report) {
+    if (!results) return;
+    if (!report) {
+      results.innerHTML = '<div class="px-3 py-3 rounded-lg bg-slate-50 border border-slate-200 text-sm text-slate-600">No submitted POS sold data available for selected date.</div>';
+      return;
+    }
+    if (!Array.isArray(report.items) || report.items.length === 0) {
+      results.innerHTML = `<div class="px-3 py-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800">No POS sold rows found for ${escapeHtml(report.label)}.</div>`;
+      return;
+    }
+
+    const rows = report.items.map(item => `
+      <tr class="odd:bg-white even:bg-slate-50">
+        <td class="px-4 py-2 text-sm text-slate-700">${escapeHtml(item.product_name)}</td>
+        <td class="px-4 py-2 text-sm text-slate-900 text-right font-semibold">${Number(item.quantity || 0).toLocaleString('en-US')}</td>
+      </tr>
+    `).join('');
+
+    results.innerHTML = `
+      <div class="overflow-auto border border-slate-200 rounded-lg max-h-[56vh]">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-100 sticky top-0 z-10">
+            <tr>
+              <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product</th>
+              <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Qty</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function setDayOptions(selectedYear, selectedMonth, selectedDay) {
+    if (!daySelect) return;
+    const totalDays = daysInMonth(selectedYear, selectedMonth);
+    const safeSelectedDay = Math.min(selectedDay, totalDays);
+    let html = '';
+    for (let day = 1; day <= totalDays; day += 1) {
+      const selected = day === safeSelectedDay ? ' selected' : '';
+      html += `<option value="${day}"${selected}>${day}</option>`;
+    }
+    daySelect.innerHTML = html;
+  }
+
+  function applyFilter() {
+    if (!yearSelect || !monthSelect || !daySelect) return;
+    const year = parseInt(yearSelect.value, 10);
+    const month = parseInt(monthSelect.value, 10);
+    const day = parseInt(daySelect.value, 10);
+    const dateIso = `${year}-${pad2(month)}-${pad2(day)}`;
+    const report = findReportByDate(dateIso);
+    setCaption(report);
+    renderResults(report);
+  }
+
+  function initFilterControls() {
+    if (!yearSelect || !monthSelect || !daySelect) return;
+
+    const yearsFromData = Array.from(new Set(posPayload
+      .map(item => Number((item.date || '').slice(0, 4)))
+      .filter(value => Number.isFinite(value))))
+      .sort((a, b) => a - b);
+
+    if (!yearsFromData.length) {
+      for (let y = todayYear - 2; y <= todayYear + 2; y += 1) yearsFromData.push(y);
+    } else {
+      if (!yearsFromData.includes(todayYear)) yearsFromData.push(todayYear);
+      yearsFromData.sort((a, b) => a - b);
+    }
+
+    yearSelect.innerHTML = yearsFromData
+      .map(year => `<option value="${year}">${year}</option>`)
+      .join('');
+
+    const latest = posPayload.length ? posPayload[0] : null;
+    let baseYear = todayYear;
+    let baseMonth = todayMonth;
+    let baseDay = todayDay;
+    if (latest && latest.date) {
+      const parts = latest.date.split('-');
+      if (parts.length === 3) {
+        baseYear = parseInt(parts[0], 10);
+        baseMonth = parseInt(parts[1], 10);
+        baseDay = parseInt(parts[2], 10);
+      }
+    }
+
+    yearSelect.value = String(baseYear);
+    monthSelect.value = String(baseMonth);
+    setDayOptions(baseYear, baseMonth, baseDay);
+    applyFilter();
+
+    yearSelect.addEventListener('change', function() {
+      setDayOptions(parseInt(yearSelect.value, 10), parseInt(monthSelect.value, 10), parseInt(daySelect.value, 10));
+      applyFilter();
+    });
+    monthSelect.addEventListener('change', function() {
+      setDayOptions(parseInt(yearSelect.value, 10), parseInt(monthSelect.value, 10), parseInt(daySelect.value, 10));
+      applyFilter();
+    });
+    daySelect.addEventListener('change', applyFilter);
+    if (applyBtn) applyBtn.addEventListener('click', applyFilter);
+    if (latestBtn) {
+      latestBtn.addEventListener('click', function() {
+        if (!(latest && latest.date)) {
+          applyFilter();
+          return;
+        }
+        const parts = latest.date.split('-');
+        if (parts.length !== 3) return;
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+        const d = parseInt(parts[2], 10);
+        yearSelect.value = String(y);
+        monthSelect.value = String(m);
+        setDayOptions(y, m, d);
+        applyFilter();
+      });
+    }
+  }
+
+  if (openBtn) openBtn.addEventListener('click', openPosModal);
+  if (overlay) overlay.addEventListener('click', closePosModal);
+  if (closeBtn) closeBtn.addEventListener('click', closePosModal);
+  initFilterControls();
+});
+</script>
+
+<script>
+window.clusterDataConfig = {
+  name: {{ store.name|tojson }},
+  month: {{ (current_month|int)|tojson }},
+  year: {{ current_year|tojson }},
+  storeFilter: {{ store.name|tojson }}
+};
+</script>
+<script src="{{ url_for('static', filename='js/cluster_data.js') }}"></script>
+{% if missing_dates %}
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const modal = document.getElementById('missing-dates-modal');
+    const goBtn = document.getElementById('missing-dates-go');
+    const nextMissingDate = {{ next_missing_date|tojson }};
+
+    function showModal() {
+      if (!modal) return;
+      modal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+    }
+
+    function hideModal() {
+      if (!modal) return;
+      modal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    if (goBtn) {
+      goBtn.addEventListener('click', function() {
+        if (nextMissingDate) {
+          window.location.href = `/store-manager/daily-report?date=${encodeURIComponent(nextMissingDate)}`;
+          return;
+        }
+        hideModal();
+      });
+    }
+
+    showModal();
+  });
+</script>
+{% endif %}
+
+{% endblock %}
+
+

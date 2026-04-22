@@ -1,0 +1,307 @@
+{% extends "admin_base.html" %}
+{% block title %}Manage {{ cluster.name }}{% endblock %}
+
+{% block content %}
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <a href="/admin/clusters" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m15 18-6-6 6-6"/>
+      </svg>
+    </a>
+
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <a href="/admin/clusters" class="hover:text-slate-900">Clusters</a>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">{{ cluster.name }}</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <button id="addStoreBtn" class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 active:scale-95">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 5v14" />
+        <path d="M5 12h14" />
+      </svg>
+      <span>Add Stores</span>
+    </button>
+  </div>
+</header>
+
+<!-- Content -->
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <!-- Cluster Info Card -->
+  <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-lg p-6 text-white">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div class="flex items-center gap-4">
+        <div class="w-12 h-12 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center shrink-0">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="7" height="9" x="3" y="3" rx="1"/>
+            <rect width="7" height="5" x="14" y="3" rx="1"/>
+            <rect width="7" height="9" x="14" y="12" rx="1"/>
+            <rect width="7" height="5" x="3" y="16" rx="1"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold">{{ cluster.name }}</h1>
+          <p class="text-white/70 text-sm">{{ cluster.description or 'No description' }}</p>
+        </div>
+      </div>
+
+      <div class="flex gap-3">
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl px-4 py-2 text-center">
+          <div class="text-2xl font-bold">{{ cluster.stores|length }}</div>
+          <div class="text-xs text-white/70">Stores</div>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl px-4 py-2">
+          <div class="text-xs text-white/70">Manager</div>
+          {% if cluster.manager %}
+          <div class="text-sm font-semibold">{{ cluster.manager.full_name }}</div>
+          {% else %}
+          <button id="assignManagerBtn" class="text-sm font-semibold text-white hover:text-white/80 flex items-center gap-1 border-2 border-red-500 rounded-lg px-2 py-1 animate-pulse shadow-lg shadow-red-500/50">
+            <span>Unassigned</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14"/>
+              <path d="M5 12h14"/>
+            </svg>
+          </button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stores in Cluster -->
+  <section>
+    <div class="flex items-center justify-between mb-6">
+      <h2 class="text-2xl font-bold text-slate-900">Stores in this Cluster</h2>
+    </div>
+
+    <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">ID</th>
+              <th class="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Store Name</th>
+              <th class="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Address</th>
+              <th class="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Date Added</th>
+              <th class="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+          {% for store in cluster.stores %}
+          <tr class="hover:bg-slate-50 transition-colors">
+              
+              <!-- ID -->
+              <td class="px-6 py-4 text-sm text-slate-500 whitespace-nowrap">
+              #{{ store.id }}
+              </td>
+
+              <!-- Store Name -->
+              <td class="px-6 py-4">
+              <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 shrink-0 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 font-bold text-sm">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+                    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+                    <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+                    <path d="M2 7h20"/>
+                  </svg>
+                  </div>
+                  <p class="text-sm font-semibold text-slate-900">{{ store.name }}</p>
+              </div>
+              </td>
+
+              <!-- Address -->
+              <td class="px-6 py-4 text-sm text-slate-600">
+              {{ store.address }}
+              </td>
+
+              <!-- Date Added -->
+              <td class="px-6 py-4 text-sm text-slate-500 whitespace-nowrap">
+              {{ store.date_added.strftime('%b %d, %Y') if store.date_added else '—' }}
+              </td>
+
+              <!-- Actions -->
+              <td class="px-6 py-4 text-right whitespace-nowrap">
+              <form action="/admin/clusters/{{ cluster.id }}/remove-store/{{ store.id }}" method="POST" class="inline" onsubmit="return confirm('Remove this store from cluster?')">
+                  <button type="submit"
+                          class="px-3 py-1.5 text-xs font-medium rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition">
+                      Remove
+                  </button>
+              </form>
+              </td>
+
+          </tr>
+          {% else %}
+          <tr>
+              <td colspan="5" class="px-6 py-12 text-center text-slate-400 text-sm">
+              No stores in this cluster yet. Add some stores to get started!
+              </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- Add Stores Modal -->
+<div id="addStoreModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <!-- Backdrop -->
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+  
+  <!-- Modal Container -->
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-lg font-bold text-slate-900">Add Stores to Cluster</h3>
+          <p class="text-xs text-slate-500 mt-1">Select stores to add to {{ cluster.name }}</p>
+        </div>
+        <button data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <form id="addStoreForm" action="/admin/clusters/{{ cluster.id }}/add-stores" method="POST" class="px-6 py-4">
+        <div class="space-y-2 max-h-80 overflow-y-auto pr-2">
+          {% for store in available_stores %}
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer transition-all duration-200">
+            <input type="checkbox" name="store_ids" value="{{ store.id }}" class="mt-1 w-4 h-4 text-slate-900 border-slate-300 rounded focus:ring-2 focus:ring-slate-500">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold text-slate-900 truncate">{{ store.name }}</div>
+              <div class="text-xs text-slate-500 truncate">{{ store.address }}</div>
+            </div>
+          </label>
+          {% else %}
+          <div class="text-center py-8 text-slate-400">
+            <p class="text-sm">No available stores to add. All stores are already assigned.</p>
+          </div>
+          {% endfor %}
+        </div>
+      </form>
+
+      <!-- Modal Footer -->
+      <div class="flex items-center justify-end gap-3 px-6 py-3 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+        <button 
+          type="button" 
+          data-modal-close
+          class="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 rounded-lg transition-all duration-200"
+        >
+          Cancel
+        </button>
+        <button 
+          type="submit" 
+          form="addStoreForm"
+          class="px-4 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-all duration-200"
+        >
+          Add Selected
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Assign Manager Modal -->
+<div id="assignManagerModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <!-- Backdrop -->
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+  
+  <!-- Modal Container -->
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-lg font-bold text-slate-900">Assign Cluster Manager</h3>
+          <p class="text-xs text-slate-500 mt-1">Select a manager for {{ cluster.name }}</p>
+        </div>
+        <button data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <form id="assignManagerForm" action="/admin/clusters/{{ cluster.id }}/assign-manager" method="POST" class="px-6 py-4 space-y-4">
+        
+        <!-- Manager Selection -->
+        <div>
+          <label for="manager_id" class="block text-sm font-semibold text-slate-700 mb-2">
+            Select Cluster Manager <span class="text-red-500">*</span>
+          </label>
+          <select 
+            id="manager_id" 
+            name="manager_id" 
+            required
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-slate-500 focus:border-slate-500 outline-none transition-all duration-200 hover:border-slate-300"
+          >
+            <option value="">Select a manager</option>
+            {% for manager in available_managers %}
+            <option value="{{ manager.id }}">{{ manager.full_name }} ({{ manager.username }})</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-slate-500 mt-1">Only users with "Cluster Manager" role are shown</p>
+        </div>
+
+      </form>
+
+      <!-- Modal Footer -->
+      <div class="flex items-center justify-end gap-3 px-6 py-3 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+        <button 
+          type="button" 
+          data-modal-close
+          class="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 rounded-lg transition-all duration-200"
+        >
+          Cancel
+        </button>
+        <button 
+          type="submit" 
+          form="assignManagerForm"
+          class="px-4 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-all duration-200"
+        >
+          Assign Manager
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // Initialize Modals
+  const addStoreModal = new Modal('addStoreModal');
+  const assignManagerModal = new Modal('assignManagerModal');
+  
+  // Open add store modal
+  document.getElementById('addStoreBtn').addEventListener('click', () => {
+    addStoreModal.open();
+  });
+  
+  // Open assign manager modal (only if button exists)
+  const assignManagerBtn = document.getElementById('assignManagerBtn');
+  if (assignManagerBtn) {
+    assignManagerBtn.addEventListener('click', () => {
+      assignManagerModal.open();
+    });
+  }
+</script>
+
+{% endblock %}

@@ -1,0 +1,747 @@
+{% extends "base.html" %}
+{% block title %}Daily Report - {{ store.name }}{% endblock %}
+
+{% block content %}
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Daily Report</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <div class="text-sm font-medium text-slate-600">
+      <span class="text-slate-900">{{ store.name }}</span>
+    </div>
+  </div>
+</header>
+
+<!-- Content -->
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <!-- Page Header -->
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Daily Report</h1>
+      <p class="mt-1 text-slate-600">Submit your daily store report for {{ store.name }}</p>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap justify-end">
+      <a
+        href="{{ url_for('views.store_manager_pos_sold', date=(selected_report_date if selected_report_date else today)) }}"
+        class="inline-flex items-center px-4 py-2.5 text-sm font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl hover:bg-amber-100 transition-colors"
+      >
+        POS Sold
+      </a>
+      <label for="report_date" class="text-sm font-semibold text-slate-700 whitespace-nowrap">
+        Report Date <span class="text-rose-500">*</span>
+      </label>
+      <input
+        type="date"
+        id="report_date"
+        name="report_date"
+        form="daily-report-form"
+        required
+        value="{{ selected_report_date if selected_report_date else today }}"
+        class="w-full max-w-xs px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none shadow-sm"
+      >
+    </div>
+  </section>
+
+  <!-- Report Form -->
+  <div class="relative overflow-hidden rounded-none border border-slate-200 bg-white shadow-lg shadow-slate-200/70">
+    <form id="daily-report-form" action="/store-manager/daily-report/submit" method="POST" class="space-y-0 bg-gradient-to-b from-slate-50/80 to-white">
+
+      <div class="rounded-none border border-slate-200 overflow-hidden bg-white shadow-sm">
+        <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-sky-50 to-cyan-50 border-b border-slate-200">
+          <h3 class="text-sm md:text-base font-bold text-slate-900">Sales Summary</h3>
+          <p class="text-xs text-slate-500 mt-0.5">Use these fields for total POS and CI performance.</p>
+        </div>
+        <div class="p-4 md:p-5 space-y-5">
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">POS Sales</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">POS Gross Sales</label>
+                <input type="number" step="0.01" name="pos_gross_sales" id="pos_gross_sales" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">POS Net Sales</label>
+                <input type="number" step="0.01" name="pos_net_sales" id="pos_net_sales" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">TC (Transaction Count)</label>
+                <input type="number" name="pos_tc" id="pos_tc" placeholder="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+          </div>
+
+          <div class="h-px bg-slate-200"></div>
+
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">CI Regular Sales</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">CI Regular Gross Sales</label>
+                <input type="number" step="0.01" name="ci_regular_gross_sales" id="ci_regular_gross_sales" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">CI Regular Net Sales</label>
+                <input type="number" step="0.01" name="ci_regular_net_sales" id="ci_regular_net_sales" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">CI TC</label>
+                <input type="number" name="ci_tc" id="ci_tc" placeholder="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">CI Number</label>
+                <input type="text" name="ci_number" placeholder="--" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">CI Sales Discount</label>
+                <input type="number" step="0.01" name="ci_sales_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-none border border-slate-200 overflow-hidden bg-white shadow-sm">
+        <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-indigo-50 to-sky-50 border-b border-slate-200">
+          <h3 class="text-sm md:text-base font-bold text-slate-900">Sales Channels</h3>
+          <p class="text-xs text-slate-500 mt-0.5">Breakdown of SGA and aggregator sales that are already in net sales.</p>
+        </div>
+        <div class="p-4 md:p-5 space-y-5">
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">SGA (Should be in Net Sales)</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Boothselling</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="boothselling_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="boothselling_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Bulk Order</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="bulk_order_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="bulk_order_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Reseller</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="reseller_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="reseller_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Tie-up</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="tieup_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="tieup_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Ambulant Sales</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="ambulant_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="ambulant_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Extended Hours</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="extended_hours_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="extended_hours_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="h-px bg-slate-200"></div>
+
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Aggregators (Should be in Net Sales)</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">GDS</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="gds_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="gds_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Grab</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="grab_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="grab_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Foodpanda</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="foodpanda_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="foodpanda_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Paymaya</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="paymaya_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="paymaya_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Gcash</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="gcash_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="gcash_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-none border border-slate-200 overflow-hidden bg-white shadow-sm">
+        <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-slate-200">
+          <h3 class="text-sm md:text-base font-bold text-slate-900">Inventory & Quantities</h3>
+        </div>
+        <div class="p-4 md:p-5 space-y-5">
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">LDTS (Last Day to Sell) - Tomorrow</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">GC</label>
+                <input type="number" name="ldts_gc" placeholder="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">ROLLS</label>
+                <input type="number" name="ldts_rolls" placeholder="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">Premium</label>
+                <input type="number" name="ldts_premium" placeholder="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+          </div>
+
+          <div class="h-px bg-slate-200"></div>
+
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Ending Inventory</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">GC</label>
+                <input type="number" name="ending_inv_gc" placeholder="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">ROLLS</label>
+                <input type="number" name="ending_inv_rolls" placeholder="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">Premium</label>
+                <input type="number" name="ending_inv_premium" placeholder="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+          </div>
+
+          <div class="h-px bg-slate-200"></div>
+        </div>
+      </div>
+
+      <div class="rounded-none border border-slate-200 overflow-hidden bg-white shadow-sm">
+        <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-slate-200">
+          <h3 class="text-sm md:text-base font-bold text-slate-900">Spoilage & Discounts</h3>
+        </div>
+        <div class="p-4 md:p-5 space-y-5">
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Spoilage (Amount Only)</h4>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">GC</label>
+                <input type="number" step="0.01" name="spoilage_gc" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">ROLLS</label>
+                <input type="number" step="0.01" name="spoilage_rolls" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">Premium</label>
+                <input type="number" step="0.01" name="spoilage_premium" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">Others</label>
+                <input type="number" step="0.01" name="spoilage_others" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+          </div>
+
+          <div class="h-px bg-slate-200"></div>
+
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Total Net Spoilage & Percentages</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">Total Net Spoilage</label>
+                <input type="number" step="0.01" name="total_net_spoilage" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">Spoilage % of Sales</label>
+                <input type="number" step="0.01" name="spoilage_percentage" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">MTD %</label>
+                <input type="number" step="0.01" name="mtd_percentage" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+          </div>
+
+          <div class="h-px bg-slate-200"></div>
+
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Discount Monitoring</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">Senior / PWD Discount</label>
+                <input type="number" step="0.01" name="senior_pwd_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">Promo (LDTS) Discount</label>
+                <input type="number" step="0.01" name="promo_ldts_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">Bulk Orders Discount</label>
+                <input type="number" step="0.01" name="bulk_orders_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-slate-200 px-4 md:px-5 pt-4 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <p class="text-xs text-slate-500">Review values before submitting. Empty fields are treated as blank entries.</p>
+        <div class="flex items-center justify-end gap-3">
+          <a href="/" class="px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-xl transition-all">
+            Cancel
+          </a>
+           <button id="submit-daily-report-btn" type="submit" class="px-5 py-2.5 text-sm font-medium bg-sky-600 text-white rounded-xl hover:bg-sky-700 transition-all shadow-md shadow-sky-600/25">
+             Submit Report
+           </button>
+        </div>
+      </div>
+
+    </form>
+  </div>
+
+  <!-- Recent Reports -->
+  {% if recent_reports %}
+  <div class="bg-white rounded-none shadow-sm border border-slate-200 overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200">
+      <h2 class="text-lg font-bold text-slate-900">Recent Reports</h2>
+      <p class="text-sm text-slate-600">Your last 10 submitted reports</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-gradient-to-r from-slate-100 to-slate-50">
+          <tr>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase border-r border-slate-200">Date</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase border-r border-slate-200">Status</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase border-r border-slate-200">Total Sales</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase border-r border-slate-200">Total TC</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Submitted At</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for report in recent_reports %}
+          <tr class="odd:bg-white even:bg-slate-50 hover:bg-slate-100">
+            <td class="px-4 py-3 text-sm font-medium text-slate-900 border-r border-slate-200">
+              {{ report.report_date.strftime('%b %d, %Y') if report.report_date else '-' }}
+            </td>
+            <td class="px-4 py-3 border-r border-slate-200">
+              {% if report.status == 'Pending' %}
+              <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-amber-100 text-amber-700">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                Pending
+              </span>
+              {% elif report.status == 'Approved' %}
+              <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-emerald-100 text-emerald-700">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1"><polyline points="20 6 9 17 4 12"/></svg>
+                Approved
+              </span>
+              {% elif report.status == 'Rejected' %}
+              <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-rose-100 text-rose-700">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                Rejected
+              </span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-sm text-slate-600 border-r border-slate-200">&#8369;{{ "{:,.2f}".format((report.pos_net_sales or 0) + (report.ci_regular_net_sales or 0)) }}</td>
+            <td class="px-4 py-3 text-sm text-slate-600 border-r border-slate-200">{{ (report.pos_tc or 0) + (report.ci_tc or 0) }}</td>
+            <td class="px-4 py-3 text-sm text-slate-500">{{ report.submitted_at.strftime('%b %d, %Y %I:%M %p') if report.submitted_at else '-' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+{% if missing_dates %}
+<div id="missing-dates-modal" class="fixed inset-0 z-50 hidden">
+  <div id="missing-dates-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+    <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200">
+        <h3 class="text-lg font-bold text-slate-900">Missing Report Dates</h3>
+        <p class="text-sm text-red-600 mt-1">
+          {{ missing_dates|length }} missing date{{ '' if missing_dates|length == 1 else 's' }} found for this month.
+        </p>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to auto-select the oldest missing date and lock the report date field.</p>
+        <div class="max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100">
+          {% for missing in missing_dates %}
+          <div class="px-3 py-2 flex items-center justify-between">
+            <span class="text-sm font-semibold text-red-700">{{ missing.label }}</span>
+            <span class="text-xs text-red-500">{{ missing.iso }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
+        <button id="missing-dates-go" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-slate-700 hover:bg-slate-800 rounded-lg transition-colors shadow-sm">
+          Go
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>
+  // Auto-calculate Total Sales based on POS and CI Regular Sales
+  function calculateTotals() {
+    // Get values from POS Sales
+    const posGross = parseFloat(document.getElementById('pos_gross_sales').value) || 0;
+    const posNet = parseFloat(document.getElementById('pos_net_sales').value) || 0;
+    const posTc = parseInt(document.getElementById('pos_tc').value) || 0;
+    
+    // Get values from CI Regular Sales
+    const ciGross = parseFloat(document.getElementById('ci_regular_gross_sales').value) || 0;
+    const ciNet = parseFloat(document.getElementById('ci_regular_net_sales').value) || 0;
+    const ciTc = parseInt(document.getElementById('ci_tc').value) || 0;
+    
+    // Calculate totals
+    const totalGross = posGross + ciGross;
+    const totalNet = posNet + ciNet;
+    const totalTc = posTc + ciTc;
+    // Update total fields when present
+    const totalGrossField = document.getElementById('total_gross_sales');
+    const totalNetField = document.getElementById('total_net_sales');
+    const totalTcField = document.getElementById('total_tc');
+    if (totalGrossField) totalGrossField.value = totalGross.toFixed(2);
+    if (totalNetField) totalNetField.value = totalNet.toFixed(2);
+    if (totalTcField) totalTcField.value = totalTc;
+  }
+
+  function hasAnyReportValue(form) {
+    const fields = form.querySelectorAll('input, select, textarea');
+    for (const field of fields) {
+      if (!field.name || field.disabled) continue;
+      if (field.name === 'report_date') continue;
+      if (field.type === 'submit' || field.type === 'button' || field.type === 'reset' || field.type === 'hidden') continue;
+      if ((field.type === 'checkbox' || field.type === 'radio')) {
+        if (field.checked) return true;
+        continue;
+      }
+      if (field.value && field.value.trim() !== '') return true;
+    }
+    return false;
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function getRawValue(form, fieldName) {
+    const el = form.querySelector(`[name="${fieldName}"]`);
+    if (!el) return '';
+    return String(el.value || '').trim();
+  }
+
+  function formatAmount(raw) {
+    if (raw === '') return '--';
+    const value = Number(raw);
+    if (Number.isNaN(value)) return '--';
+    const isInteger = Number.isInteger(value);
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: isInteger ? 0 : 2,
+      maximumFractionDigits: isInteger ? 0 : 2
+    }).format(value);
+  }
+
+  function formatCount(raw) {
+    if (raw === '') return '--';
+    const value = Number(raw);
+    if (Number.isNaN(value)) return '--';
+    return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+  }
+
+  function formatDateLong(isoDate) {
+    if (!isoDate) return '--';
+    const dt = new Date(`${isoDate}T00:00:00`);
+    if (Number.isNaN(dt.getTime())) return isoDate;
+    return dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  }
+
+  function formatMonthShort(isoDate) {
+    if (!isoDate) return '--';
+    const dt = new Date(`${isoDate}T00:00:00`);
+    if (Number.isNaN(dt.getTime())) return '--';
+    return dt.toLocaleDateString('en-US', { month: 'short' });
+  }
+
+  function formatPair(form, salesField, tcField) {
+    const sales = formatAmount(getRawValue(form, salesField));
+    const tc = formatCount(getRawValue(form, tcField));
+    return `${sales} / ${tc}`;
+  }
+
+  function buildSubmitSummary(form, storeName, reportDate) {
+    const posGrossRaw = getRawValue(form, 'pos_gross_sales');
+    const posNetRaw = getRawValue(form, 'pos_net_sales');
+    const posTcRaw = getRawValue(form, 'pos_tc');
+    const ciGrossRaw = getRawValue(form, 'ci_regular_gross_sales');
+    const ciNetRaw = getRawValue(form, 'ci_regular_net_sales');
+    const ciTcRaw = getRawValue(form, 'ci_tc');
+
+    const totalGross = (Number(posGrossRaw || 0) + Number(ciGrossRaw || 0));
+    const totalNet = (Number(posNetRaw || 0) + Number(ciNetRaw || 0));
+    const totalTc = (Number(posTcRaw || 0) + Number(ciTcRaw || 0));
+    const hasTotals = [posGrossRaw, ciGrossRaw, posNetRaw, ciNetRaw, posTcRaw, ciTcRaw].some(Boolean);
+
+    const lines = [
+      `📌Store: ${storeName || '--'}`,
+      `📌Date: ${formatDateLong(reportDate)}`,
+      '',
+      `👉POS GROSS SALES: ${formatAmount(posGrossRaw)}`,
+      `👉POS NET SALES: ${formatAmount(posNetRaw)}`,
+      `👉TC: ${formatCount(posTcRaw)}`,
+      '',
+      `👉C.I Regular Gross Sales: ${formatAmount(ciGrossRaw)}`,
+      `👉C.I Regular Net Sale: ${formatAmount(ciNetRaw)}`,
+      `👉C.I. Tc: ${formatCount(ciTcRaw)}`,
+      '',
+      `✅CI Number: ${getRawValue(form, 'ci_number') || '--'}`,
+      `✅CI Sales Discount: ${formatAmount(getRawValue(form, 'ci_sales_discount'))}`,
+      '',
+      `➡️Total Gross Sales: ${hasTotals ? formatAmount(String(totalGross)) : '--'}`,
+      `➡️Total Net Sales: ${hasTotals ? formatAmount(String(totalNet)) : '--'}`,
+      `➡️Total Tc: ${hasTotals ? formatCount(String(totalTc)) : '--'}`,
+      `👉Total Tgt Sales: --`,
+      `👉Total LY Sales: --`,
+      `👉Total Tc LY: --`,
+      '',
+      `🔴SGA (Should be in Net Sales)`,
+      `✅Boothselling/TC: ${formatPair(form, 'boothselling_sales', 'boothselling_tc')}`,
+      `✅Bulk Order/TC: ${formatPair(form, 'bulk_order_sales', 'bulk_order_tc')}`,
+      `✅Reseller/TC: ${formatPair(form, 'reseller_sales', 'reseller_tc')}`,
+      `✅Tie-up/TC: ${formatPair(form, 'tieup_sales', 'tieup_tc')}`,
+      `✅Ambulant Sales/TC: ${formatPair(form, 'ambulant_sales', 'ambulant_tc')}`,
+      `✅Extended Hours/TC: ${formatPair(form, 'extended_hours_sales', 'extended_hours_tc')}`,
+      '',
+      `🔴Aggregators (Should be in Net Sales)`,
+      `✅GDS/TC: ${formatPair(form, 'gds_sales', 'gds_tc')}`,
+      `✅Grab/TC: ${formatPair(form, 'grab_sales', 'grab_tc')}`,
+      `✅Foodpanda/TC: ${formatPair(form, 'foodpanda_sales', 'foodpanda_tc')}`,
+      `✅Paymaya/TC: ${formatPair(form, 'paymaya_sales', 'paymaya_tc')}`,
+      `✅Gcash/TC: ${formatPair(form, 'gcash_sales', 'gcash_tc')}`,
+      '',
+      `🔴LDTS (${formatMonthShort(reportDate)})`,
+      `GC: ${formatCount(getRawValue(form, 'ldts_gc'))}`,
+      `ROLLS: ${formatCount(getRawValue(form, 'ldts_rolls'))}`,
+      `Premium: ${formatCount(getRawValue(form, 'ldts_premium'))}`,
+      '',
+      `🔴ENDING INVENTORY`,
+      `GC: ${formatCount(getRawValue(form, 'ending_inv_gc'))}`,
+      `ROLLS: ${formatCount(getRawValue(form, 'ending_inv_rolls'))}`,
+      `Premium: ${formatCount(getRawValue(form, 'ending_inv_premium'))}`,
+      '',
+      `🔴SPOILAGE (Amt only)`,
+      `GC: ${formatAmount(getRawValue(form, 'spoilage_gc'))}`,
+      `ROLLS: ${formatAmount(getRawValue(form, 'spoilage_rolls'))}`,
+      `Premium: ${formatAmount(getRawValue(form, 'spoilage_premium'))}`,
+      `Others: ${formatAmount(getRawValue(form, 'spoilage_others'))}`,
+      '',
+      `🔴Total Net Spoilage: ${formatAmount(getRawValue(form, 'total_net_spoilage'))}`,
+      `Spoilage% of Sales: ${formatAmount(getRawValue(form, 'spoilage_percentage'))}`,
+      `MTD%: ${formatAmount(getRawValue(form, 'mtd_percentage'))}`,
+      '',
+      `🔴Discount Monitoring`,
+      `Senior/PWD Discount: ${formatAmount(getRawValue(form, 'senior_pwd_discount'))}`,
+      `Promo (LDTS) Discount: ${formatAmount(getRawValue(form, 'promo_ldts_discount'))}`,
+      `Bulk Orders Discount: ${formatAmount(getRawValue(form, 'bulk_orders_discount'))}`
+    ];
+
+    return lines.join('\n');
+  }
+  
+  // Add event listeners to all input fields that affect totals
+  document.addEventListener('DOMContentLoaded', function() {
+    const reportForm = document.getElementById('daily-report-form');
+    const reportDateInput = document.getElementById('report_date');
+    const storeName = {{ store.name|tojson }};
+    const initialFormValues = {{ initial_form_values|tojson }};
+    const missingDates = {{ missing_dates|tojson }};
+    const nextMissingDate = {{ next_missing_date|tojson }};
+    const reportBaseUrl = {{ url_for('views.store_manager_report')|tojson }};
+    const posSoldBaseUrl = {{ url_for('views.store_manager_pos_sold')|tojson }};
+    const lockReportDateOnLoad = {{ lock_report_date|tojson }};
+
+    function applyInitialFormValues(values) {
+      if (!reportForm || !values || typeof values !== 'object') return;
+      Object.entries(values).forEach(function([fieldName, rawValue]) {
+        if (!fieldName || fieldName === 'report_date') return;
+        const field = reportForm.querySelector(`[name="${fieldName}"]`);
+        if (!field) return;
+        if (field.type === 'file' || field.type === 'hidden' || field.type === 'submit' || field.type === 'button' || field.type === 'reset') return;
+
+        if (rawValue === null || rawValue === undefined) {
+          field.value = '';
+          return;
+        }
+        field.value = String(rawValue);
+      });
+      calculateTotals();
+    }
+
+    function lockReportDate(dateValue) {
+      if (!reportForm || !reportDateInput || !dateValue) return;
+      reportDateInput.value = dateValue;
+      reportDateInput.disabled = true;
+      reportDateInput.classList.add('bg-slate-100', 'text-slate-500', 'cursor-not-allowed');
+      reportDateInput.setAttribute('aria-disabled', 'true');
+
+      let hiddenDateInput = document.getElementById('report_date_hidden');
+      if (!hiddenDateInput) {
+        hiddenDateInput = document.createElement('input');
+        hiddenDateInput.type = 'hidden';
+        hiddenDateInput.id = 'report_date_hidden';
+        hiddenDateInput.name = 'report_date';
+        reportForm.appendChild(hiddenDateInput);
+      }
+      hiddenDateInput.value = dateValue;
+    }
+
+    function showMissingDatesModal() {
+      const modal = document.getElementById('missing-dates-modal');
+      if (!modal) return;
+      modal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+    }
+
+    function hideMissingDatesModal() {
+      const modal = document.getElementById('missing-dates-modal');
+      if (!modal) return;
+      modal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    const goMissingBtn = document.getElementById('missing-dates-go');
+    if (goMissingBtn) {
+      goMissingBtn.addEventListener('click', function() {
+        if (!nextMissingDate) {
+          hideMissingDatesModal();
+          return;
+        }
+        window.location.href = `${posSoldBaseUrl}?date=${encodeURIComponent(nextMissingDate)}&guide=1`;
+      });
+    }
+
+    if (Array.isArray(missingDates) && missingDates.length > 0) {
+      showMissingDatesModal();
+    }
+
+    if (lockReportDateOnLoad && reportDateInput && reportDateInput.value) {
+      lockReportDate(reportDateInput.value);
+    }
+
+    applyInitialFormValues(initialFormValues);
+
+    if (reportDateInput) {
+      reportDateInput.addEventListener('change', function() {
+        const selectedDate = reportDateInput.value || '';
+        if (!selectedDate) return;
+        window.location.href = `${reportBaseUrl}?date=${encodeURIComponent(selectedDate)}`;
+      });
+    }
+
+    if (reportForm) {
+      reportForm.addEventListener('submit', function(event) {
+        event.preventDefault();
+        if (!hasAnyReportValue(reportForm)) {
+          const message = 'Please enter at least one report value before submitting.';
+          if (typeof toast !== 'undefined' && typeof toast.show === 'function') {
+            toast.show(message, 'error');
+          }
+          return;
+        }
+        const summaryText = buildSubmitSummary(
+          reportForm,
+          storeName,
+          reportDateInput ? reportDateInput.value : ''
+        );
+        showConfirmationModal({
+          title: 'Submit Daily Report',
+          modalWidth: '780px',
+          messageHtml: `
+            <p class="text-sm text-slate-700 mb-3">Are you sure you want to submit this report? Please review the summary below:</p>
+            <pre style="white-space: pre-wrap; margin: 0; padding: 12px; border: 1px solid #e2e8f0; background: #f8fafc; border-radius: 10px; font-size: 12px; line-height: 1.45; color: #1e293b;">${escapeHtml(summaryText)}</pre>
+          `,
+          onConfirm: function() {
+            reportForm.submit();
+          }
+        });
+      });
+    }
+
+    const fieldsToWatch = [
+      'pos_gross_sales', 'pos_net_sales', 'pos_tc',
+      'ci_regular_gross_sales', 'ci_regular_net_sales', 'ci_tc'
+    ];
+    
+    fieldsToWatch.forEach(function(fieldId) {
+      const field = document.getElementById(fieldId);
+      if (field) {
+        field.addEventListener('input', calculateTotals);
+        field.addEventListener('change', calculateTotals);
+      }
+    });
+
+  });
+</script>
+
+{% endblock %}

@@ -1,0 +1,1851 @@
+﻿{% extends layout_template|default("base.html") %}
+
+{% block title %}Cluster Dashboard{% endblock %}
+
+{% block content %}
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <!-- Mobile Menu Trigger -->
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Cluster Dashboard</span>
+    </nav>
+  </div>
+  <div class="flex items-center gap-4">
+    {% set dashboard_action_endpoint = dashboard_action_endpoint|default('views.cluster_dashboard') %}
+    {% set entity_label = entity_label|default('Store') %}
+    {% set entity_label_plural = entity_label_plural|default('Stores') %}
+    <form method="GET" action="{{ url_for(dashboard_action_endpoint) }}" class="hidden lg:flex items-end gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+      {% if force_cluster_sidebar|default(false) %}
+      <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+      {% endif %}
+      <div class="flex flex-col">
+        <label for="start_date" class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">From</label>
+        <input id="start_date" name="start_date" type="date" value="{{ selected_start_date }}" class="mt-0.5 h-8 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700">
+      </div>
+      <div class="flex flex-col">
+        <label for="end_date" class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">To</label>
+        <input id="end_date" name="end_date" type="date" value="{{ selected_end_date }}" class="mt-0.5 h-8 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700">
+      </div>
+      <button type="submit" class="h-8 rounded-md bg-indigo-600 px-3 text-xs font-semibold text-white hover:bg-indigo-700">Apply</button>
+      <a href="{{ url_for(dashboard_action_endpoint, cluster_id=cluster.id) if force_cluster_sidebar|default(false) else url_for(dashboard_action_endpoint) }}" class="h-8 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 inline-flex items-center">Reset</a>
+    </form>
+    <!-- Notification -->
+    <button class="p-2 text-slate-400 hover:text-slate-600 relative rounded-full hover:bg-slate-100 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+      </svg>
+      <span class="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+    </button>
+    <!-- Logout Button -->
+    <a href="/logout" class="hidden sm:flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-red-700 transition-all shadow-lg shadow-red-600/10 active:scale-95">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+        <polyline points="16 17 21 12 16 7"></polyline>
+        <line x1="21" y1="12" x2="9" y2="12"></line>
+      </svg>
+      <span>Logout</span>
+    </a>
+  </div>
+</header>
+
+<!-- Main Dashboard Content -->
+<div class="p-4 md:p-6 lg:p-8 bg-slate-50 min-h-screen">
+  
+  <!-- Cluster Info Header -->
+  <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 mb-6">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">{{ team_name }}</h1>
+        <p class="text-slate-600 mt-1">{{ cluster.name }} Dashboard</p>
+      </div>
+      <div class="mt-4 md:mt-0">
+        <div class="flex items-center gap-3">
+          <div class="flex flex-col text-right">
+            <span class="text-sm text-slate-500">Selected Period</span>
+            {% if selected_start_date == selected_end_date %}
+            <span class="text-2xl font-bold text-slate-900">{{ selected_start_date_display }}</span>
+            {% else %}
+            <span class="text-2xl font-bold text-slate-900">{{ selected_start_date_display }} - {{ selected_end_date_display }}</span>
+            {% endif %}
+            <span class="text-sm text-slate-500">Filter applied to all dashboard cards/charts</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Percentage Rate Gauges -->
+  <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+      <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">MTD</div>
+      <div class="relative w-full max-w-[340px] h-[240px] mx-auto">
+          <canvas id="percentageRateGauge"></canvas>
+          <div class="absolute inset-x-0 bottom-6 flex flex-col items-center justify-center pointer-events-none">
+            {% set pct_rate = ((summary.overview.mtd_sales / summary.overview.total_target) * 100) if summary.overview.total_target > 0 else 0 %}
+            <span id="percentageRateValue" class="text-3xl font-bold text-slate-500">{{ "{:.1f}".format(pct_rate) }}%</span>
+          </div>
+          <div class="absolute inset-x-4 -bottom-2 flex items-center justify-between text-[11px] font-semibold text-slate-500">
+            <span>0%</span>
+            <span>80%</span>
+            <span>90%</span>
+            <span>100%+</span>
+          </div>
+      </div>
+    </div>
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+      <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">YTD</div>
+      <div class="relative w-full max-w-[340px] h-[240px] mx-auto">
+          <canvas id="ytdRateGauge"></canvas>
+          <div class="absolute inset-x-0 bottom-6 flex flex-col items-center justify-center pointer-events-none">
+            {% set ytd_pct_rate = ((summary.overview.ytd_sales / summary.overview.ytd_target) * 100) if (summary.overview.ytd_target or 0) > 0 else 0 %}
+            <span id="ytdRateValue" class="text-3xl font-bold text-slate-500">{{ "{:.1f}".format(ytd_pct_rate) }}%</span>
+          </div>
+          <div class="absolute inset-x-4 -bottom-2 flex items-center justify-between text-[11px] font-semibold text-slate-500">
+            <span>0%</span>
+            <span>80%</span>
+            <span>90%</span>
+            <span>100%+</span>
+          </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Key Metrics Cards -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+    <!-- MTD Sales Card -->
+    <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-all">
+      <div class="flex items-center justify-between mb-3">
+        <div class="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="1" x2="12" y2="23"></line>
+            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+          </svg>
+        </div>
+        <span class="text-xs font-medium px-2 py-0.5 rounded-md {% if summary.overview.variance_percent >= 0 %}text-emerald-600 bg-emerald-50{% else %}text-red-600 bg-red-50{% endif %}">
+          {{ "{:+.1f}%".format(summary.overview.variance_percent) }}
+        </span>
+      </div>
+      <h3 class="text-xs font-medium text-slate-500 mb-1">MTD Sales</h3>
+      <p class="text-xl font-bold text-slate-900">&#8369;{{ "{:,.2f}".format(summary.overview.mtd_sales) }}</p>
+      <p class="text-xs text-slate-400 mt-1">month-to-date net sales</p>
+    </div>
+
+    <!-- Target Card -->
+    <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-all">
+      <div class="flex items-center justify-between mb-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+            <line x1="1" y1="10" x2="23" y2="10"></line>
+          </svg>
+        </div>
+        <span class="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">Monthly</span>
+      </div>
+      <h3 class="text-xs font-medium text-slate-500 mb-1">Target</h3>
+      <p class="text-xl font-bold text-slate-900">&#8369;{{ "{:,.2f}".format(summary.overview.total_target) }}</p>
+      <p class="text-xs text-slate-400 mt-1">month-to-date target</p>
+    </div>
+
+    <!-- Last Year Net Card -->
+    <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-all">
+      <div class="flex items-center justify-between mb-3">
+        <div class="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12a9 9 0 1 1-9-9"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+          </svg>
+        </div>
+        <span class="text-xs font-medium px-2 py-0.5 rounded-md {% if summary.sales.mtd_vs_ly_percent >= 0 %}text-emerald-600 bg-emerald-50{% else %}text-red-600 bg-red-50{% endif %}">
+          {{ "{:+.1f}%".format(summary.sales.mtd_vs_ly_percent) }}
+        </span>
+      </div>
+      <h3 class="text-xs font-medium text-slate-500 mb-1">Last Year Net</h3>
+      <p class="text-xl font-bold text-slate-900">&#8369;{{ "{:,.2f}".format(summary.sales.last_year_net) }}</p>
+      <p class="text-xs text-slate-400 mt-1">same selected period</p>
+    </div>
+
+    <!-- Wastage Amount Card -->
+    <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-all">
+      <div class="flex items-center justify-between mb-3">
+        <div class="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18"></path>
+            <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"></path>
+            <path d="M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"></path>
+            <line x1="10" y1="11" x2="10" y2="17"></line>
+            <line x1="14" y1="11" x2="14" y2="17"></line>
+          </svg>
+        </div>
+        <span class="text-xs font-medium px-2 py-0.5 rounded-md {% if summary.overview.wastage_percent >= 3 %}text-red-600 bg-red-50{% elif summary.overview.wastage_percent >= 1.5 %}text-amber-600 bg-amber-50{% else %}text-emerald-600 bg-emerald-50{% endif %}">
+          {{ "{:.2f}%".format(summary.overview.wastage_percent) }}
+        </span>
+      </div>
+      <h3 class="text-xs font-medium text-slate-500 mb-1">Wastage Amount</h3>
+      <p class="text-xl font-bold text-slate-900">&#8369;{{ "{:,.2f}".format(summary.overview.wastage_amount) }}</p>
+      <p class="text-xs text-slate-400 mt-1">month-to-date wastage</p>
+    </div>
+
+    <!-- MTD Discount Card -->
+    <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-all">
+      <div class="flex items-center justify-between mb-3">
+        <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2v20"></path>
+            <path d="M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H7"></path>
+          </svg>
+        </div>
+        <span class="text-xs font-medium px-2 py-0.5 rounded-md {% if summary.overview.discount_percent >= 5 %}text-red-600 bg-red-50{% elif summary.overview.discount_percent >= 2 %}text-amber-600 bg-amber-50{% else %}text-emerald-600 bg-emerald-50{% endif %}">
+          {{ "{:.2f}%".format(summary.overview.discount_percent) }}
+        </span>
+      </div>
+      <h3 class="text-xs font-medium text-slate-500 mb-1">MTD Discount</h3>
+      <p class="text-xl font-bold text-slate-900">&#8369;{{ "{:,.2f}".format(summary.overview.discount_amount) }}</p>
+      <p class="text-xs text-slate-400 mt-1">month-to-date discounts</p>
+    </div>
+  </div>
+
+  <!-- Main Charts Section -->
+  <div class="grid grid-cols-1 gap-6 mb-6">
+    
+    <!-- Sales Trend Chart (now full width) -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900">Sales Trend</h2>
+          <p class="text-sm text-slate-500 mt-1">Daily net sales</p>
+        </div>
+        <div id="sales-range-toggle" class="flex gap-2">
+          <button class="px-3 py-1.5 text-xs font-medium bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors">Day</button>
+          <button class="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 rounded-lg transition-colors">Week</button>
+          <button class="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 rounded-lg transition-colors">Month</button>
+        </div>
+      </div>
+      <!-- Bar Chart with Dynamic Data -->
+      <div class="relative h-80">
+        <canvas id="salesChart" width="800" height="320"></canvas>
+      </div>
+      <!-- X-axis Labels will be handled by Chart.js -->
+    </div>
+  </div>
+  
+  <!-- Per Entity Performance Card -->
+  <div class="grid grid-cols-1 gap-6 mb-6">
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+      <div class="mb-6">
+        <h2 class="text-lg font-bold text-slate-900">Per {{ entity_label }} Performance (Net Sales)</h2>
+        <p class="text-sm text-slate-500 mt-1">Monthly performance by {{ entity_label.lower() }}</p>
+      </div>
+      
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-50">
+            <tr>
+               <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">{{ entity_label }} Name</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Act</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">ADS</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Ly</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">AR % Tgt</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">% Gr</th>
+              <th class="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
+            </tr>
+          </thead>
+          <tbody class="bg-white divide-y divide-slate-200">
+            {% for store_data in store_performance_data %}
+            <tr>
+              <td class="px-4 py-3 text-sm font-medium text-slate-900">{{ store_data.store_name }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700 text-right">&#8369;{{ "{:,.2f}".format(store_data.act) }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700 text-right">&#8369;{{ "{:,.2f}".format(store_data.ads) }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700 text-right">&#8369;{{ "{:,.2f}".format(store_data.ly) }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700 text-right">{{ "{:.1f}%".format(store_data.ar_tgt_percent) }}</td>
+              <td class="px-4 py-3 text-sm text-slate-700 text-right">
+                {% if store_data.ly > 0 %}
+                  {% set growth_ratio = (store_data.act / store_data.ly) - 1.0 %}
+                  {{ "{:.1f}%".format(growth_ratio * 100) }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-sm text-center">
+                <span class="px-2 py-1 text-xs font-medium rounded-full 
+                  {% if store_data.status == 'Excellent' %}bg-emerald-100 text-emerald-800
+                  {% elif store_data.status == 'Good' %}bg-green-100 text-green-800
+                  {% elif store_data.status == 'Recovery' %}bg-yellow-100 text-yellow-800
+                  {% elif store_data.status == 'Critical' %}bg-orange-100 text-orange-800
+                  {% else %}bg-red-100 text-red-800{% endif %}">
+                  {{ store_data.status }}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Second Row - Product Mix -->
+  <div class="grid grid-cols-1 gap-6 mb-6">
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+      <div class="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900">Product Mix</h2>
+           <p class="text-sm text-slate-500 mt-1">Peso mix (pie) and qty mix (bar) per {{ entity_label.lower() }}</p>
+        </div>
+        <div class="text-right flex flex-col items-end gap-2">
+          <button id="openProductMixLabelsBtn" type="button" class="inline-flex items-center rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200">
+            Show Labels
+          </button>
+          <p class="text-[11px] uppercase tracking-wide text-slate-400">Total Peso Value</p>
+          <p id="storePieTotalUnits" class="text-xl font-bold text-slate-900">0</p>
+        </div>
+      </div>
+      {% if store_product_mix %}
+      <div id="storePieToggleGroup" class="mb-4 flex flex-wrap gap-2">
+        <button type="button" class="store-pie-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-indigo-600 bg-indigo-600 text-white" data-store-index="all">All</button>
+        {% for store_data in store_product_mix %}
+        <button type="button" class="store-pie-toggle inline-flex max-w-[180px] items-center truncate rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200" data-store-index="{{ loop.index0 }}" title="{{ store_data.store_name }}">{{ store_data.store_name }}</button>
+        {% endfor %}
+      </div>
+      <div id="productMixCategoryFilter" class="mb-4 flex flex-wrap gap-2"></div>
+      <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+        <div id="storeProductsPieChartPanel" class="relative rounded-xl border border-slate-200 bg-slate-50/50 p-3">
+          <button
+            type="button"
+            class="chart-zoom-trigger absolute right-2 top-2 inline-flex items-center rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-100"
+            data-panel-id="storeProductsPieChartPanel"
+            data-panel-title="Product Mix Peso (Pie)"
+            aria-label="Zoom product mix pie chart"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M3 4.75A1.75 1.75 0 0 1 4.75 3h3.5a.75.75 0 0 1 0 1.5h-3A.25.25 0 0 0 5 4.75v3a.75.75 0 0 1-1.5 0v-3Zm10.25-1A1.75 1.75 0 0 1 15 4.75v3a.75.75 0 0 1-1.5 0v-3a.25.25 0 0 0-.25-.25h-3a.75.75 0 0 1 0-1.5h3.5ZM4.25 11.5a.75.75 0 0 1 .75.75v3a.25.25 0 0 0 .25.25h3a.75.75 0 0 1 0 1.5h-3.5A1.75 1.75 0 0 1 3 15.25v-3a.75.75 0 0 1 .75-.75Zm10.5 0a.75.75 0 0 1 .75.75v3a1.75 1.75 0 0 1-1.75 1.75h-3.5a.75.75 0 0 1 0-1.5h3a.25.25 0 0 0 .25-.25v-3a.75.75 0 0 1 .75-.75Z" clip-rule="evenodd" />
+            </svg>
+          </button>
+          <div id="storeProductsPieChartWrap" class="mx-auto h-60 w-full max-w-[260px]">
+            <canvas id="storeProductsPieChart"></canvas>
+          </div>
+        </div>
+        <div id="storeProductsQtyBarChartPanel" class="relative rounded-xl border border-slate-200 bg-slate-50/50 p-3">
+          <button
+            type="button"
+            class="chart-zoom-trigger absolute right-2 top-2 inline-flex items-center rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-100"
+            data-panel-id="storeProductsQtyBarChartPanel"
+            data-panel-title="Product Mix Qty (Bar)"
+            aria-label="Zoom product mix qty chart"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M3 4.75A1.75 1.75 0 0 1 4.75 3h3.5a.75.75 0 0 1 0 1.5h-3A.25.25 0 0 0 5 4.75v3a.75.75 0 0 1-1.5 0v-3Zm10.25-1A1.75 1.75 0 0 1 15 4.75v3a.75.75 0 0 1-1.5 0v-3a.25.25 0 0 0-.25-.25h-3a.75.75 0 0 1 0-1.5h3.5ZM4.25 11.5a.75.75 0 0 1 .75.75v3a.25.25 0 0 0 .25.25h3a.75.75 0 0 1 0 1.5h-3.5A1.75 1.75 0 0 1 3 15.25v-3a.75.75 0 0 1 .75-.75Zm10.5 0a.75.75 0 0 1 .75.75v3a1.75 1.75 0 0 1-1.75 1.75h-3.5a.75.75 0 0 1 0-1.5h3a.25.25 0 0 0 .25-.25v-3a.75.75 0 0 1 .75-.75Z" clip-rule="evenodd" />
+            </svg>
+          </button>
+          <div id="storeProductsQtyBarChartWrap" class="h-72 w-full">
+            <canvas id="storeProductsQtyBarChart"></canvas>
+          </div>
+          <div id="storePieLegend" class="hidden ml-auto space-y-2 max-w-[340px]"></div>
+        </div>
+      </div>
+      {% else %}
+      <div class="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+        No qty sold data available for this month.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- POS Sold Products (Separate Cards) -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+      <div class="mb-5 space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-lg font-bold text-slate-900">Products Sold (POS)</h2>
+          <div class="flex items-center gap-2">
+            <button type="button" class="pos-sold-metric-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-indigo-600 bg-indigo-600 text-white" data-metric="volume">Volume</button>
+            <button type="button" class="pos-sold-metric-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200" data-metric="peso">Peso Value</button>
+          </div>
+        </div>
+        <div class="flex items-center justify-between gap-3 whitespace-nowrap">
+          <p class="text-sm text-slate-500">Top 10 products sold per {{ entity_label.lower() }}</p>
+          <p id="posSoldTotalUnits" class="text-xl font-bold text-slate-900">Total: _____</p>
+        </div>
+      </div>
+      {% if pos_sold_products_by_store %}
+      <div class="mb-4 flex flex-wrap gap-2">
+        <button type="button" class="pos-sold-store-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-indigo-600 bg-indigo-600 text-white" data-entity-index="all">All</button>
+        {% for entity_data in pos_sold_products_by_store %}
+        <button type="button" class="pos-sold-store-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200" data-entity-index="{{ loop.index0 }}">{{ entity_data.store_name }}</button>
+        {% endfor %}
+      </div>
+      <div class="relative h-96">
+        <canvas id="posSoldProductsBarChart"></canvas>
+      </div>
+      {% else %}
+      <div class="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+        No POS sold data available for this period.
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+      <div class="mb-5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900">Product Mix Category</h2>
+          <p class="text-sm text-slate-500 mt-1">Products pie chart with all categories</p>
+        </div>
+        <div class="text-right">
+          <p class="text-[11px] uppercase tracking-wide text-slate-400">Total Pcs</p>
+          <p id="posMixCategoryTotalUnits" class="text-xl font-bold text-slate-900">0</p>
+        </div>
+      </div>
+      {% if pos_sold_products_by_store %}
+      <div class="mb-4 flex flex-wrap gap-2">
+        <button type="button" class="pos-mix-cat-store-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-indigo-600 bg-indigo-600 text-white" data-entity-index="all">All</button>
+        {% for entity_data in pos_sold_products_by_store %}
+        <button type="button" class="pos-mix-cat-store-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200" data-entity-index="{{ loop.index0 }}">{{ entity_data.store_name }}</button>
+        {% endfor %}
+      </div>
+      <div class="grid grid-cols-1 items-start gap-4 md:grid-cols-5">
+        <div class="md:col-span-2">
+          <div class="mx-auto h-72 w-full max-w-[320px]">
+            <canvas id="posMixCategoryPieChart"></canvas>
+          </div>
+        </div>
+        <div class="md:col-span-3">
+          <div id="posMixCategoryLegend" class="space-y-2 max-w-[190px] ml-auto"></div>
+        </div>
+      </div>
+      {% else %}
+      <div class="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+        No category data available for this period.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Third Row - Ranking, Attainment & ICU -->
+  <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-5 shadow-sm">
+      <div class="mb-4 flex items-start justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900">{{ 'Store Ranking' if entity_label == 'Store' else 'Cluster Ranking' }}</h2>
+          <p class="mt-1 text-sm text-slate-500">Highest average daily sales</p>
+        </div>
+        <span class="inline-flex items-center rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">Top 3</span>
+      </div>
+      <div class="space-y-2.5">
+        {% if top_stores_ads %}
+          {% for store in top_stores_ads %}
+          <div class="rounded-xl border border-slate-200 bg-white p-3">
+            <div class="mb-2 flex items-center justify-between">
+              <h3 class="truncate pr-3 text-sm font-bold text-slate-900">{{ store.store_name }}</h3>
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold {% if loop.index == 1 %}bg-amber-100 text-amber-700{% elif loop.index == 2 %}bg-slate-200 text-slate-700{% else %}bg-orange-100 text-orange-700{% endif %}">
+                {{ store.rank }}
+              </span>
+            </div>
+            <div class="flex items-end justify-between">
+              <p class="text-xl font-extrabold leading-none text-slate-900">&#8369;{{ "{:,.2f}".format(store.ads) }}</p>
+              <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-400">ADS</p>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
+            No ADS data available for the selected period.
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/70 to-white p-5 shadow-sm">
+      <div class="mb-4 flex items-start justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900">Top 3 Attainment Rate AR</h2>
+          <p class="mt-1 text-sm text-slate-500">Achievement rate percentage</p>
+        </div>
+        <span class="inline-flex items-center rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">Leaders</span>
+      </div>
+      <div class="space-y-2.5">
+        {% if top_attainment_ar %}
+          {% for store in top_attainment_ar %}
+          <div class="rounded-xl border border-emerald-200/70 bg-white p-3">
+            <div class="mb-2 flex items-start justify-between gap-2">
+              <h3 class="truncate text-sm font-bold text-slate-900">{{ store.store_name }}</h3>
+              <span class="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700">{{ "{:.1f}".format(store.ar_tgt_percent) }}%</span>
+            </div>
+            <div class="mb-2 flex items-center justify-between text-xs">
+              <span class="text-slate-500">Target: &#8369;{{ "{:,.2f}".format(store.target_mtd) }}</span>
+              <span class="font-semibold text-slate-700">Actual: &#8369;{{ "{:,.2f}".format(store.act) }}</span>
+            </div>
+            <div class="h-1.5 overflow-hidden rounded-full bg-emerald-100">
+              <div class="h-full rounded-full bg-emerald-500" style="width: {{ "{:.1f}".format(store.progress_percent) }}%"></div>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="rounded-xl border border-dashed border-emerald-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
+            No attainment data available for the selected period.
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-rose-200 bg-gradient-to-b from-rose-50/70 to-white p-5 shadow-sm">
+      <div class="mb-4 flex items-start justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900">ICU {{ entity_label_plural }}</h2>
+          <p class="mt-1 text-sm text-slate-500">{{ entity_label_plural }} needing attention</p>
+        </div>
+        <span class="inline-flex items-center rounded-full bg-rose-600 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">Urgent</span>
+      </div>
+      <div class="space-y-2.5">
+        {% if icu_stores %}
+          {% for store in icu_stores %}
+          <div class="rounded-xl border border-rose-200/70 bg-white p-3">
+            <div class="mb-2 flex items-start justify-between gap-2">
+              <div>
+                <h3 class="text-sm font-bold text-slate-900">{{ store.store_name }}</h3>
+                <p class="mt-0.5 text-xs text-slate-500">{{ store.note }}</p>
+              </div>
+              <span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold {{ store.tone_badge }}">{{ store.status }}</span>
+            </div>
+            <div class="space-y-1 text-xs">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500">Actual</span>
+                <span class="font-semibold {{ store.tone_value }}">&#8369;{{ "{:,.2f}".format(store.act) }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500">Target</span>
+                <span class="font-semibold text-slate-800">&#8369;{{ "{:,.2f}".format(store.target_mtd) }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500">Attainment</span>
+                <span class="font-bold {{ store.tone_value }}">{{ "{:.1f}".format(store.attainment_percent) }}%</span>
+              </div>
+              <div class="mt-1.5 h-1.5 overflow-hidden rounded-full {{ store.tone_bar_bg }}">
+                <div class="h-full rounded-full {{ store.tone_bar_fill }}" style="width: {{ "{:.1f}".format(store.progress_percent) }}%"></div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="rounded-xl border border-dashed border-emerald-300 bg-white px-4 py-6 text-center text-sm text-emerald-700">
+            No ICU/Critical {{ entity_label_plural.lower() }} for the selected range.
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Wastage Performance -->
+  <div class="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="mb-4 flex items-start justify-between gap-3">
+      <div>
+        <h2 class="text-lg font-bold text-slate-900">{{ cluster.name }} Wastage Performance</h2>
+        <p class="mt-1 text-sm text-slate-500">Weekly and per-store MTD wastage breakdown</p>
+      </div>
+      <span class="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700">{{ wastage_performance.month_label if wastage_performance else '' }}</span>
+    </div>
+
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div class="rounded-xl border border-slate-200">
+        <div class="border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+          <h3 class="text-sm font-bold text-slate-800">{{ wastage_performance.title_label if wastage_performance else 'Wastage Performance' }}</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Week #</th>
+                <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Gross Sales</th>
+                <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Wastage</th>
+                <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">%</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 bg-white">
+              {% if wastage_performance and wastage_performance.rows %}
+                {% for row in wastage_performance.rows %}
+                <tr>
+                  <td class="px-4 py-2.5 font-medium text-slate-700">{{ row.label }}</td>
+                  <td class="px-4 py-2.5 text-right text-slate-900">&#8369;{{ "{:,.0f}".format(row.gross_sales or 0) }}</td>
+                  <td class="px-4 py-2.5 text-right text-slate-900">&#8369;{{ "{:,.0f}".format(row.wastage or 0) }}</td>
+                  <td class="px-4 py-2.5 text-right font-semibold {% if (row.percent or 0) > 2 %}text-red-600{% elif (row.percent or 0) > 1 %}text-amber-600{% else %}text-emerald-600{% endif %}">
+                    {{ "{:.1f}".format(row.percent or 0) }}%
+                  </td>
+                </tr>
+                {% endfor %}
+                <tr class="bg-slate-50">
+                  <td class="px-4 py-2.5 font-bold text-slate-900">{{ wastage_performance.mtd.label }}</td>
+                  <td class="px-4 py-2.5 text-right font-bold text-slate-900">&#8369;{{ "{:,.0f}".format(wastage_performance.mtd.gross_sales or 0) }}</td>
+                  <td class="px-4 py-2.5 text-right font-bold text-slate-900">&#8369;{{ "{:,.0f}".format(wastage_performance.mtd.wastage or 0) }}</td>
+                  <td class="px-4 py-2.5 text-right font-extrabold {% if (wastage_performance.mtd.percent or 0) > 2 %}text-red-700{% elif (wastage_performance.mtd.percent or 0) > 1 %}text-amber-700{% else %}text-emerald-700{% endif %}">
+                    {{ "{:.1f}".format(wastage_performance.mtd.percent or 0) }}%
+                  </td>
+                </tr>
+              {% else %}
+                <tr>
+                  <td colspan="4" class="px-4 py-6 text-center text-sm text-slate-500">No wastage data available for the selected period.</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="rounded-xl border border-slate-200">
+        <div class="border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+          <h3 class="text-sm font-bold text-slate-800">{{ wastage_performance.per_store.title_label if wastage_performance and wastage_performance.per_store else 'MTD Wastage Performance Per Store' }}</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Store</th>
+                <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Gross Sales</th>
+                <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Wastage</th>
+                <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">%</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 bg-white">
+              {% if wastage_performance and wastage_performance.per_store and wastage_performance.per_store.rows %}
+                {% for row in wastage_performance.per_store.rows %}
+                <tr>
+                  <td class="px-4 py-2.5 font-medium text-slate-700">{{ row.store_name }}</td>
+                  <td class="px-4 py-2.5 text-right text-slate-900">&#8369;{{ "{:,.0f}".format(row.gross_sales or 0) }}</td>
+                  <td class="px-4 py-2.5 text-right text-slate-900">&#8369;{{ "{:,.0f}".format(row.wastage or 0) }}</td>
+                  <td class="px-4 py-2.5 text-right font-semibold {% if (row.percent or 0) > 2 %}text-red-600{% elif (row.percent or 0) > 1 %}text-amber-600{% else %}text-emerald-600{% endif %}">
+                    {{ "{:.1f}".format(row.percent or 0) }}%
+                  </td>
+                </tr>
+                {% endfor %}
+                <tr class="bg-slate-50">
+                  <td class="px-4 py-2.5 font-bold text-slate-900">Total</td>
+                  <td class="px-4 py-2.5 text-right font-bold text-slate-900">&#8369;{{ "{:,.0f}".format(wastage_performance.per_store.total.gross_sales or 0) }}</td>
+                  <td class="px-4 py-2.5 text-right font-bold text-slate-900">&#8369;{{ "{:,.0f}".format(wastage_performance.per_store.total.wastage or 0) }}</td>
+                  <td class="px-4 py-2.5 text-right font-extrabold {% if (wastage_performance.per_store.total.percent or 0) > 2 %}text-red-700{% elif (wastage_performance.per_store.total.percent or 0) > 1 %}text-amber-700{% else %}text-emerald-700{% endif %}">
+                    {{ "{:.1f}".format(wastage_performance.per_store.total.percent or 0) }}%
+                  </td>
+                </tr>
+              {% else %}
+                <tr>
+                  <td colspan="4" class="px-4 py-6 text-center text-sm text-slate-500">No per-store wastage data available for the selected period.</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="mt-4 max-w-xl rounded-xl border border-slate-200">
+      <div class="border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+        <h3 class="text-sm font-bold text-slate-800">{{ discount_performance.title_label if discount_performance else 'Discount Performance Breakdown' }}</h3>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200 text-sm">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Disc Type</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">% Cont</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 bg-white">
+            {% if discount_performance and discount_performance.rows %}
+              {% for row in discount_performance.rows %}
+              <tr>
+                <td class="px-4 py-2.5 font-medium text-slate-700">{{ row.label }}</td>
+                <td class="px-4 py-2.5 text-right text-slate-900">&#8369;{{ "{:,.0f}".format(row.amount or 0) }}</td>
+                <td class="px-4 py-2.5 text-right font-semibold text-slate-700">{{ "{:.1f}".format(row.percent or 0) }}%</td>
+              </tr>
+              {% endfor %}
+              <tr class="bg-slate-50">
+                <td class="px-4 py-2.5 font-bold text-slate-900">{{ discount_performance.mtd.label }}</td>
+                <td class="px-4 py-2.5 text-right font-bold text-slate-900">&#8369;{{ "{:,.0f}".format(discount_performance.mtd.amount or 0) }}</td>
+                <td class="px-4 py-2.5 text-right font-extrabold text-slate-900">{{ "{:.1f}".format(discount_performance.mtd.percent or 0) }}%</td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="3" class="px-4 py-6 text-center text-sm text-slate-500">No discount data available for the selected period.</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Product Mix Labels Right Modal -->
+  <div id="productMixLabelsModal" class="fixed inset-0 z-50 hidden">
+    <button id="productMixLabelsBackdrop" type="button" class="absolute inset-0 bg-slate-900/30" aria-label="Close labels modal"></button>
+    <aside class="absolute inset-y-0 right-0 w-full max-w-md bg-white shadow-2xl border-l border-slate-200 p-4 overflow-y-auto">
+      <div class="mb-4 flex items-center justify-between">
+        <h3 class="text-base font-bold text-slate-900">Product Mix Labels</h3>
+        <button id="closeProductMixLabelsBtn" type="button" class="inline-flex items-center rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200">
+          Close
+        </button>
+      </div>
+      <div id="storePieLegendModal" class="space-y-2"></div>
+    </aside>
+  </div>
+
+  <div id="chartZoomModal" class="fixed inset-0 z-[70] hidden">
+    <button id="chartZoomBackdrop" type="button" class="absolute inset-0 bg-slate-900/55" aria-label="Close chart zoom"></button>
+    <div class="absolute inset-0 flex items-center justify-center p-4 lg:p-8">
+      <div class="relative w-full max-w-6xl rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <h3 id="chartZoomTitle" class="text-sm font-bold text-slate-900">Chart</h3>
+          <button id="closeChartZoomBtn" type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-sm font-bold text-slate-700 hover:bg-slate-200" aria-label="Close chart zoom">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div id="chartZoomHost" class="p-3 sm:p-4"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Load Chart.js library -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.4/dist/Chart.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-gauge@0.3.0/dist/chartjs-gauge.min.js"></script>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    function renderRateGauge(canvasId, salesValue, targetValue) {
+      const gaugeCanvas = document.getElementById(canvasId);
+      if (!gaugeCanvas) return;
+
+      const rate = targetValue > 0 ? (salesValue / targetValue) * 100 : 0;
+      const gaugeMax = Math.max(120, Math.ceil(Math.max(rate, 100.01) / 10) * 10);
+      const clampedRate = Math.max(0, Math.min(rate, gaugeMax));
+
+      new Chart(gaugeCanvas.getContext('2d'), {
+        type: 'gauge',
+        data: {
+          labels: ['Below 80%', '80-89.99%', '90-99.99%', '100%+'],
+          datasets: [{
+            value: clampedRate,
+            minValue: 0,
+            data: [80, 90, 99.99, gaugeMax],
+            backgroundColor: ['#ef4444', '#f59e0b', '#10b981', '#f97316'],
+            borderWidth: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          rotation: -Math.PI,
+          circumference: Math.PI,
+          cutoutPercentage: 72,
+          legend: {
+            display: true,
+            position: 'top',
+            labels: {
+              boxWidth: 14,
+              fontColor: '#475569',
+              generateLabels: function(chart) {
+                const labels = chart.data.labels || [];
+                const colors = (chart.data.datasets[0] && chart.data.datasets[0].backgroundColor) || [];
+                return labels.map(function(label, i) {
+                  return {
+                    text: label,
+                    fillStyle: colors[i],
+                    strokeStyle: colors[i],
+                    lineWidth: 0,
+                    hidden: false,
+                    index: i
+                  };
+                });
+              }
+            }
+          },
+          tooltips: {
+            callbacks: {
+              label: function(tooltipItem, data) {
+                const label = data.labels[tooltipItem.index] || '';
+                if (!label) return '';
+                if (tooltipItem.index === 0) return label + ' (<80%)';
+                if (tooltipItem.index === 1) return label + ' (80%-89.99%)';
+                if (tooltipItem.index === 2) return label + ' (90%-99.99%)';
+                return label + ' (100%+)';
+              }
+            }
+          },
+          needle: {
+            radiusPercentage: 2.5,
+            widthPercentage: 3.2,
+            lengthPercentage: 80,
+            color: '#0f172a'
+          },
+          valueLabel: {
+            display: false
+          }
+        }
+      });
+    }
+
+    const mtdSales = Number({{ summary.overview.mtd_sales | tojson }});
+    const mtdTarget = Number({{ summary.overview.total_target | tojson }});
+    renderRateGauge('percentageRateGauge', mtdSales, mtdTarget);
+
+    const ytdSales = Number({{ (summary.overview.ytd_sales or 0) | tojson }});
+    const ytdTarget = Number({{ (summary.overview.ytd_target or 0) | tojson }});
+    renderRateGauge('ytdRateGauge', ytdSales, ytdTarget);
+
+    const ctx = document.getElementById('salesChart').getContext('2d');
+    
+    // Define the sales data, target data, last year data and labels as JavaScript variables
+    var originalSalesData = [];
+    var originalSbaseSalesData = [];
+    var originalTargetData = [];
+    var originalLastYearData = [];
+    var originalLabels = [];
+    
+    // Check if data is available
+    {% if sales_data %}
+    originalSalesData = {{ sales_data | tojson }};
+    originalSbaseSalesData = {{ sbase_sales_data | default([], true) | tojson }};
+    originalTargetData = {{ target_data | tojson }};
+    originalLastYearData = {{ last_year_data | tojson }};
+    originalLabels = {{ labels | tojson }};
+    {% endif %}
+    
+    // Variables to hold the current chart data
+    let currentSalesData = [...originalSalesData];
+    let currentSbaseSalesData = [...originalSbaseSalesData];
+    let currentTargetData = [...originalTargetData];
+    let currentLastYearData = [...originalLastYearData];
+    let currentLabels = [...originalLabels];
+    
+    // Function to create/update the chart
+    function updateChart() {
+      const salesBarColors = currentSalesData.map((salesValue, index) => {
+        const targetValue = currentTargetData[index] || 0;
+        if (targetValue <= 0) {
+          return 'rgba(16, 185, 129, 0.65)';
+        }
+        if (salesValue >= targetValue) {
+          return 'rgba(16, 185, 129, 0.65)'; // green when hitting target
+        }
+        if (salesValue >= targetValue * 0.97) {
+          return 'rgba(250, 204, 21, 0.85)'; // yellow when within 3% below target
+        }
+        return 'rgba(99, 102, 241, 0.6)'; // indigo otherwise
+      });
+
+      // Destroy existing chart if it exists
+      if (window.myChart) {
+        window.myChart.destroy();
+      }
+      
+      window.myChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: currentLabels,
+          datasets: [
+          {
+            label: 'Net Sales',
+            data: currentSalesData,
+            backgroundColor: salesBarColors,
+            borderColor: salesBarColors,
+            borderWidth: 1,
+            order: 10,
+            type: 'bar'
+          },
+          {
+            label: 'ACT Sbase',
+            data: currentSbaseSalesData,
+            borderColor: '#f97316',
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            pointBackgroundColor: '#f97316',
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            fill: false,
+            lineTension: 0.3,
+            order: 3,
+            type: 'line'
+          },
+          {
+            label: 'Target (Net)',
+            data: currentTargetData,
+            borderColor: '#ef4444', // red color for target line
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            pointBackgroundColor: '#ef4444',
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            fill: false,
+            lineTension: 0.3,
+            order: 1,
+            type: 'line'
+          },
+          {
+            label: 'Last Year (Net)',
+            data: currentLastYearData,
+            borderColor: '#64748b', // slate/grey color for last year line
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderDash: [5, 5], // dashed line for last year
+            pointBackgroundColor: '#64748b',
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            fill: false,
+            lineTension: 0.3,
+            order: 2,
+            type: 'line'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          legend: {
+            display: true,
+            position: 'top',
+          },
+          tooltips: {
+            callbacks: {
+                label: function(tooltipItem) {
+                  const context = { parsed: { y: tooltipItem.yLabel } };
+                  return '\u20B1' + Number(context.parsed.y).toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                  });
+                }
+            }
+          },
+          scales: {
+            yAxes: [{
+              beginAtZero: true,
+              gridLines: {
+                color: 'rgba(226, 232, 240, 0.5)'
+              },
+              ticks: {
+                callback: function(value) {
+                  return '\u20B1' + value.toLocaleString();
+                }
+              }
+            }],
+            xAxes: [{
+              gridLines: {
+                display: false
+              },
+              ticks: {
+                maxRotation: 45,
+                minRotation: 0,
+                maxTicksLimit: 31,  // Show all possible ticks (max days in a month)
+                autoSkip: false,    // Ensure all labels are shown
+                autoSkipPadding: 10
+              }
+            }]
+          }
+        }
+      });
+    }
+    
+    // Function to group data by week (simple aggregation - sum every 7 days)
+    function groupByWeek(sales, sbaseSales, targets, lastYear, labels) {
+      const groupedSales = [];
+      const groupedSbaseSales = [];
+      const groupedTargets = [];
+      const groupedLastYear = [];
+      const groupedLabels = [];
+      
+      // Create weekly groups
+      for (let i = 0; i < sales.length; i += 7) {
+        let weekSales = 0;
+        let weekSbaseSales = 0;
+        let weekTargets = 0;
+        let weekLastYear = 0;
+        
+        // Sum data for 7 days
+        for (let j = 0; j < 7 && (i + j) < sales.length; j++) {
+          weekSales += sales[i + j] || 0;
+          weekSbaseSales += sbaseSales[i + j] || 0;
+          weekTargets += targets[i + j] || 0;
+          weekLastYear += lastYear[i + j] || 0;
+        }
+        
+        // Create week label (e.g., "Week 1", "Week 2", etc.)
+        const weekNumber = Math.floor(i / 7) + 1;
+        groupedLabels.push(`Week ${weekNumber}`);
+        groupedSales.push(weekSales);
+        groupedSbaseSales.push(weekSbaseSales);
+        groupedTargets.push(weekTargets);
+        groupedLastYear.push(weekLastYear);
+      }
+      
+      return {
+        sales: groupedSales,
+        sbaseSales: groupedSbaseSales,
+        targets: groupedTargets,
+        lastYear: groupedLastYear,
+        labels: groupedLabels
+      };
+    }
+
+    // Function to aggregate all data into a single month value
+    function groupByMonth(sales, sbaseSales, targets, lastYear, labels) {
+      // Sum all values
+      const totalSales = sales.reduce((sum, val) => sum + val, 0);
+      const totalSbaseSales = sbaseSales.reduce((sum, val) => sum + val, 0);
+      const totalTargets = targets.reduce((sum, val) => sum + val, 0);
+      const totalLastYear = lastYear.reduce((sum, val) => sum + val, 0);
+      
+      return {
+        sales: [totalSales],
+        sbaseSales: [totalSbaseSales],
+        targets: [totalTargets],
+        lastYear: [totalLastYear],
+        labels: ['Monthly Total']
+      };
+    }
+    
+    // Set up button event listeners
+    const buttons = document.querySelectorAll('#sales-range-toggle button');
+    
+    buttons.forEach(button => {
+      button.addEventListener('click', function() {
+        // Reset button styles
+        buttons.forEach(btn => {
+          if (btn.classList.contains('bg-indigo-50')) {
+            btn.classList.remove('bg-indigo-50', 'text-indigo-600');
+            btn.classList.add('text-slate-600');
+          }
+        });
+        
+        // Highlight clicked button
+        this.classList.remove('text-slate-600');
+        this.classList.add('bg-indigo-50', 'text-indigo-600');
+        
+        const buttonText = this.textContent.trim();
+        
+        if (buttonText === 'Day') {
+          // Show daily data (original data)
+          currentSalesData = [...originalSalesData];
+          currentSbaseSalesData = [...originalSbaseSalesData];
+          currentTargetData = [...originalTargetData];
+          currentLastYearData = [...originalLastYearData];
+          currentLabels = [...originalLabels];
+        } else if (buttonText === 'Week') {
+          // Group data by week
+          const weeklyData = groupByWeek(originalSalesData, originalSbaseSalesData, originalTargetData, originalLastYearData, originalLabels);
+          currentSalesData = weeklyData.sales;
+          currentSbaseSalesData = weeklyData.sbaseSales;
+          currentTargetData = weeklyData.targets;
+          currentLastYearData = weeklyData.lastYear;
+          currentLabels = weeklyData.labels;
+        } else if (buttonText === 'Month') {
+          // Group all data into single month value
+          const monthlyData = groupByMonth(originalSalesData, originalSbaseSalesData, originalTargetData, originalLastYearData, originalLabels);
+          currentSalesData = monthlyData.sales;
+          currentSbaseSalesData = monthlyData.sbaseSales;
+          currentTargetData = monthlyData.targets;
+          currentLastYearData = monthlyData.lastYear;
+          currentLabels = monthlyData.labels;
+        }
+        
+        updateChart();
+      });
+    });
+    
+    // Initially show the chart with daily data
+    if (originalSalesData && originalSalesData.length > 0) {
+      updateChart();
+    } else {
+      // If no data, show a message
+      ctx.font = '16px Arial';
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'center';
+      ctx.fillText('No sales data available for the selected period', ctx.canvas.width / 2, ctx.canvas.height / 2);
+    }
+
+    const storeProductMix = {{ store_product_mix | default([], true) | tojson }};
+    const storePieCanvas = document.getElementById('storeProductsPieChart');
+    const storeQtyBarCanvas = document.getElementById('storeProductsQtyBarChart');
+    const storePieLegend = document.getElementById('storePieLegend');
+    const storePieLegendModal = document.getElementById('storePieLegendModal');
+    const storePieTotalUnits = document.getElementById('storePieTotalUnits');
+    const storePieButtons = document.querySelectorAll('.store-pie-toggle');
+    const productMixCategoryFilter = document.getElementById('productMixCategoryFilter');
+    const openProductMixLabelsBtn = document.getElementById('openProductMixLabelsBtn');
+    const closeProductMixLabelsBtn = document.getElementById('closeProductMixLabelsBtn');
+    const productMixLabelsBackdrop = document.getElementById('productMixLabelsBackdrop');
+    const productMixLabelsModal = document.getElementById('productMixLabelsModal');
+    const chartZoomButtons = document.querySelectorAll('.chart-zoom-trigger');
+    const chartZoomModal = document.getElementById('chartZoomModal');
+    const chartZoomBackdrop = document.getElementById('chartZoomBackdrop');
+    const closeChartZoomBtn = document.getElementById('closeChartZoomBtn');
+    const chartZoomHost = document.getElementById('chartZoomHost');
+    const chartZoomTitle = document.getElementById('chartZoomTitle');
+    const storeProductsPieChartWrap = document.getElementById('storeProductsPieChartWrap');
+    const storeProductsQtyBarChartWrap = document.getElementById('storeProductsQtyBarChartWrap');
+    const PRODUCT_MIX_ALLOWED_CATEGORIES = ['Greeting Cakes', 'Premium', 'Rolls', 'Tray Product'];
+    let activeStoreIndex = 'all';
+    let activeProductMixCategory = 'all';
+    let storePieChart = null;
+    let storeQtyBarChart = null;
+    let activeZoomState = null;
+    const piePercentLabelsPlugin = {
+      id: 'piePercentLabels',
+      afterDatasetsDraw(chart, args, pluginOptions) {
+        const dataset = chart.data && chart.data.datasets ? chart.data.datasets[0] : null;
+        if (!dataset || !dataset.data) return;
+        const values = dataset.data.map((item) => Number(item || 0));
+        const total = values.reduce((sum, value) => sum + value, 0);
+        if (total <= 0) return;
+
+        const minShare = Number((pluginOptions && pluginOptions.minShare) || 4);
+        const meta = chart.getDatasetMeta(0);
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.font = '600 11px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        values.forEach((value, index) => {
+          if (!value || !meta.data[index]) return;
+          const share = (value / total) * 100;
+          if (share < minShare) return;
+          const position = meta.data[index].tooltipPosition();
+          const label = `${share.toFixed(1)}%`;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.lineWidth = 3;
+          ctx.strokeText(label, position.x, position.y);
+          ctx.fillStyle = '#0f172a';
+          ctx.fillText(label, position.x, position.y);
+        });
+        ctx.restore();
+      }
+    };
+
+    function updateStoreButtonState(activeIndex) {
+      storePieButtons.forEach((button) => {
+        if (String(button.dataset.storeIndex || '') === String(activeIndex)) {
+          button.classList.remove('border-slate-200', 'bg-slate-100', 'text-slate-700', 'hover:bg-slate-200');
+          button.classList.add('border-indigo-600', 'bg-indigo-600', 'text-white');
+        } else {
+          button.classList.remove('border-indigo-600', 'bg-indigo-600', 'text-white');
+          button.classList.add('border-slate-200', 'bg-slate-100', 'text-slate-700', 'hover:bg-slate-200');
+        }
+      });
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function normalizeProductMixCategory(rawCategory, rawName) {
+      const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const categoryKey = normalize(rawCategory);
+      const nameKey = normalize(rawName);
+      const merged = `${categoryKey} ${nameKey}`;
+
+      if (merged.includes('tray')) return 'Tray Product';
+      if (merged.includes('greetingcake') || merged.includes('greetingcakes') || categoryKey === 'gc' || nameKey.startsWith('gc')) return 'Greeting Cakes';
+      if (merged.includes('premium')) return 'Premium';
+      if (merged.includes('roll')) return 'Rolls';
+      return null;
+    }
+
+    function renderProductMixCategoryFilterButtons() {
+      if (!productMixCategoryFilter) return;
+      const categories = PRODUCT_MIX_ALLOWED_CATEGORIES;
+
+      if (activeProductMixCategory !== 'all' && !categories.includes(activeProductMixCategory)) {
+        activeProductMixCategory = 'all';
+      }
+
+      const allButtonClass = activeProductMixCategory === 'all'
+        ? 'border-indigo-600 bg-indigo-600 text-white'
+        : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200';
+
+      const categoryButtons = categories.map((category) => {
+        const isActive = activeProductMixCategory === category;
+        const buttonClass = isActive
+          ? 'border-indigo-600 bg-indigo-600 text-white'
+          : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200';
+        const encodedCategory = encodeURIComponent(category);
+        return `<button type="button" class="product-mix-category-toggle inline-flex max-w-[180px] items-center truncate rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${buttonClass}" data-category="${encodedCategory}" title="${escapeHtml(category)}">${escapeHtml(category)}</button>`;
+      }).join('');
+
+      productMixCategoryFilter.innerHTML = `
+        <button type="button" class="product-mix-category-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${allButtonClass}" data-category="all">All</button>
+        ${categoryButtons}
+      `;
+    }
+
+    function renderStoreProductPie(index) {
+      if (!storeProductMix.length || !storePieCanvas || !storePieLegend || !storePieTotalUnits) {
+        return;
+      }
+
+      if (String(index) === 'all') {
+        activeStoreIndex = 'all';
+      } else {
+        const parsedIndex = parseInt(index, 10);
+        activeStoreIndex = Number.isFinite(parsedIndex)
+          ? Math.min(Math.max(parsedIndex, 0), storeProductMix.length - 1)
+          : 0;
+      }
+
+      const products = [];
+      if (activeStoreIndex === 'all') {
+        const aggregatedByProduct = {};
+        storeProductMix.forEach((storeItem) => {
+          const itemProducts = Array.isArray(storeItem.products) ? storeItem.products : [];
+          itemProducts.forEach((product) => {
+            const key = `${String(product.name || '').trim().toLowerCase()}|${String(product.category || '').trim().toLowerCase()}`;
+            if (!aggregatedByProduct[key]) {
+              aggregatedByProduct[key] = {
+                name: String(product.name || '').trim() || 'Unnamed Product',
+                category: String(product.category || '').trim() || 'Uncategorized',
+                qty: 0,
+                net_sales: 0,
+              };
+            }
+            aggregatedByProduct[key].qty += Number(product.qty || 0);
+            aggregatedByProduct[key].net_sales += Number(product.net_sales || 0);
+          });
+        });
+        Object.values(aggregatedByProduct).forEach((product) => products.push(product));
+      } else {
+        const storeData = storeProductMix[activeStoreIndex];
+        const storeProducts = Array.isArray(storeData && storeData.products) ? storeData.products : [];
+        storeProducts.forEach((product) => products.push(product));
+      }
+      renderProductMixCategoryFilterButtons();
+      const normalizedProducts = products
+        .map((product) => ({
+          ...product,
+          normalizedCategory: normalizeProductMixCategory(product.category, product.name),
+        }))
+        .filter((product) => !!product.normalizedCategory);
+      const filteredProducts = activeProductMixCategory === 'all'
+        ? normalizedProducts
+        : normalizedProducts.filter((product) => String(product.normalizedCategory || '').trim() === activeProductMixCategory);
+      const totalPesoValue = filteredProducts.reduce((sum, product) => sum + Number(product.net_sales || 0), 0);
+      const totalUnits = filteredProducts.reduce((sum, product) => sum + Number(product.qty || 0), 0);
+
+      storePieTotalUnits.textContent = `\u20B1${totalPesoValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const legendHtml = filteredProducts.map((product, idx) => {
+        const pesoValue = Number(product.net_sales || 0);
+        const qtyValue = Number(product.qty || 0);
+        const share = totalPesoValue > 0 ? (pesoValue / totalPesoValue) * 100 : 0;
+        const color = `hsl(${(idx * 41) % 360}, 72%, 52%)`;
+        return `
+          <div class="w-full max-w-[340px] flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <div class="flex items-center gap-2">
+              <span class="h-2.5 w-2.5 rounded-full" style="background-color: ${color};"></span>
+              <span class="max-w-[170px] truncate text-xs font-medium text-slate-700" title="${escapeHtml(product.name)}">${product.name}</span>
+            </div>
+            <div class="text-right">
+              <div class="text-xs font-semibold text-slate-900">\u20B1${pesoValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              <div class="text-[11px] text-slate-500">${qtyValue.toLocaleString()} pcs</div>
+              <div class="text-[11px] text-slate-500">${share.toFixed(1)}%</div>
+            </div>
+          </div>
+        `;
+      }).join('') || '<div class="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500">No products in this category.</div>';
+      if (storePieLegend) {
+        storePieLegend.innerHTML = legendHtml;
+      }
+      if (storePieLegendModal) {
+        storePieLegendModal.innerHTML = legendHtml;
+      }
+
+      if (typeof Chart !== 'undefined') {
+        if (storePieChart) {
+          storePieChart.destroy();
+        }
+
+        storePieChart = new Chart(storePieCanvas.getContext('2d'), {
+          plugins: [piePercentLabelsPlugin],
+          type: 'doughnut',
+          data: {
+            labels: filteredProducts.map((product) => product.name),
+            datasets: [{
+              data: filteredProducts.map((product) => Number(product.net_sales || 0)),
+              backgroundColor: filteredProducts.map((_, idx) => `hsl(${(idx * 41) % 360}, 72%, 52%)`),
+              borderColor: '#ffffff',
+              borderWidth: 2
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutoutPercentage: 58,
+            cutout: '58%',
+            legend: {
+              display: false
+            },
+            plugins: {
+              piePercentLabels: {
+                minShare: 4
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    const value = Number((context && context.parsed) ?? 0);
+                    const share = totalPesoValue > 0 ? (value / totalPesoValue) * 100 : 0;
+                    const productName = String((context && context.label) || '');
+                    return `${productName}: \u20B1${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${share.toFixed(1)}%)`;
+                  }
+                }
+              },
+              legend: {
+                display: false
+              }
+            },
+            tooltips: {
+              callbacks: {
+                label: function(tooltipItem, data) {
+                  const value = Number((data.datasets[tooltipItem.datasetIndex].data[tooltipItem.index]) || 0);
+                  const share = totalPesoValue > 0 ? (value / totalPesoValue) * 100 : 0;
+                  const productName = String((data.labels && data.labels[tooltipItem.index]) || '');
+                  return `${productName}: \u20B1${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${share.toFixed(1)}%)`;
+                }
+              }
+            }
+          }
+        });
+      }
+
+      if (typeof Chart !== 'undefined' && storeQtyBarCanvas) {
+        if (storeQtyBarChart) {
+          storeQtyBarChart.destroy();
+        }
+
+        const qtyLabels = filteredProducts.length ? filteredProducts.map((product) => product.name) : ['No products'];
+        const qtyValues = filteredProducts.length ? filteredProducts.map((product) => Number(product.qty || 0)) : [0];
+        const barColors = qtyLabels.map((_, idx) => `hsl(${220 - (idx * 7)}, 76%, ${Math.max(35, 60 - idx)}%)`);
+
+        storeQtyBarChart = new Chart(storeQtyBarCanvas.getContext('2d'), {
+          type: 'horizontalBar',
+          data: {
+            labels: qtyLabels,
+            datasets: [{
+              label: 'Qty Sold',
+              data: qtyValues,
+              backgroundColor: barColors,
+              borderColor: barColors,
+              borderWidth: 1,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            legend: {
+              display: false
+            },
+            tooltips: {
+              callbacks: {
+                label: function(tooltipItem) {
+                  const value = Number(tooltipItem.xLabel || 0);
+                  return `${value.toLocaleString()} pcs`;
+                }
+              }
+            },
+            scales: {
+              xAxes: [{
+                ticks: {
+                  beginAtZero: true,
+                  callback: function(value) {
+                    return Number(value || 0).toLocaleString();
+                  }
+                },
+                gridLines: {
+                  color: 'rgba(226, 232, 240, 0.7)'
+                }
+              }],
+              yAxes: [{
+                gridLines: {
+                  display: false
+                }
+              }]
+            }
+          }
+        });
+      }
+
+      updateStoreButtonState(activeStoreIndex);
+    }
+
+    storePieButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        renderStoreProductPie(button.dataset.storeIndex || 'all');
+      });
+    });
+
+    if (productMixCategoryFilter) {
+      productMixCategoryFilter.addEventListener('click', (event) => {
+        const targetButton = event.target.closest('.product-mix-category-toggle');
+        if (!targetButton) return;
+        const rawCategory = targetButton.dataset.category || 'all';
+        activeProductMixCategory = rawCategory === 'all' ? 'all' : decodeURIComponent(rawCategory);
+        renderStoreProductPie(activeStoreIndex);
+      });
+    }
+
+    function openProductMixLabelsModal() {
+      if (!productMixLabelsModal) return;
+      productMixLabelsModal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+    }
+
+    function closeProductMixLabelsModal() {
+      if (!productMixLabelsModal) return;
+      productMixLabelsModal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    function resizeProductMixCharts() {
+      if (storePieChart) {
+        storePieChart.resize();
+      }
+      if (storeQtyBarChart) {
+        storeQtyBarChart.resize();
+      }
+    }
+
+    function openChartZoom(panelId, panelTitle) {
+      if (!chartZoomModal || !chartZoomHost) return;
+      const panel = document.getElementById(panelId);
+      if (!panel) return;
+
+      if (activeZoomState) {
+        closeChartZoom();
+      }
+
+      const originParent = panel.parentElement;
+      const originNextSibling = panel.nextElementSibling;
+      activeZoomState = { panelId, panel, originParent, originNextSibling };
+
+      if (storeProductsPieChartWrap) {
+        storeProductsPieChartWrap.classList.remove('h-[72vh]', 'max-w-[900px]');
+        storeProductsPieChartWrap.classList.add('h-60', 'max-w-[260px]');
+      }
+      if (storeProductsQtyBarChartWrap) {
+        storeProductsQtyBarChartWrap.classList.remove('h-[72vh]');
+        storeProductsQtyBarChartWrap.classList.add('h-72');
+      }
+
+      if (panelId === 'storeProductsPieChartPanel' && storeProductsPieChartWrap) {
+        storeProductsPieChartWrap.classList.remove('h-60', 'max-w-[260px]');
+        storeProductsPieChartWrap.classList.add('h-[72vh]', 'max-w-[900px]');
+      }
+      if (panelId === 'storeProductsQtyBarChartPanel' && storeProductsQtyBarChartWrap) {
+        storeProductsQtyBarChartWrap.classList.remove('h-72');
+        storeProductsQtyBarChartWrap.classList.add('h-[72vh]');
+      }
+
+      chartZoomHost.innerHTML = '';
+      chartZoomHost.appendChild(panel);
+      chartZoomTitle.textContent = panelTitle || 'Chart';
+      chartZoomModal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+
+      window.setTimeout(resizeProductMixCharts, 80);
+    }
+
+    function closeChartZoom() {
+      if (!activeZoomState || !chartZoomHost) return;
+      const { panel, originParent, originNextSibling } = activeZoomState;
+      if (originParent) {
+        if (originNextSibling && originNextSibling.parentElement === originParent) {
+          originParent.insertBefore(panel, originNextSibling);
+        } else {
+          originParent.appendChild(panel);
+        }
+      }
+
+      if (storeProductsPieChartWrap) {
+        storeProductsPieChartWrap.classList.remove('h-[72vh]', 'max-w-[900px]');
+        storeProductsPieChartWrap.classList.add('h-60', 'max-w-[260px]');
+      }
+      if (storeProductsQtyBarChartWrap) {
+        storeProductsQtyBarChartWrap.classList.remove('h-[72vh]');
+        storeProductsQtyBarChartWrap.classList.add('h-72');
+      }
+
+      chartZoomHost.innerHTML = '';
+      chartZoomModal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+      activeZoomState = null;
+
+      window.setTimeout(resizeProductMixCharts, 80);
+    }
+
+    if (openProductMixLabelsBtn) {
+      openProductMixLabelsBtn.addEventListener('click', openProductMixLabelsModal);
+    }
+    if (closeProductMixLabelsBtn) {
+      closeProductMixLabelsBtn.addEventListener('click', closeProductMixLabelsModal);
+    }
+    if (productMixLabelsBackdrop) {
+      productMixLabelsBackdrop.addEventListener('click', closeProductMixLabelsModal);
+    }
+    chartZoomButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        openChartZoom(button.dataset.panelId || '', button.dataset.panelTitle || 'Chart');
+      });
+    });
+    if (chartZoomBackdrop) {
+      chartZoomBackdrop.addEventListener('click', closeChartZoom);
+    }
+    if (closeChartZoomBtn) {
+      closeChartZoomBtn.addEventListener('click', closeChartZoom);
+    }
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && activeZoomState) {
+        closeChartZoom();
+      }
+    });
+
+    renderStoreProductPie('all');
+
+    const posSoldProductsByStore = {{ pos_sold_products_by_store | default([], true) | tojson }};
+    const posSoldCanvas = document.getElementById('posSoldProductsBarChart');
+    const posSoldButtons = document.querySelectorAll('.pos-sold-store-toggle');
+    const posSoldMetricButtons = document.querySelectorAll('.pos-sold-metric-toggle');
+    const posSoldTotalUnits = document.getElementById('posSoldTotalUnits');
+    const posMixCategoryPieCanvas = document.getElementById('posMixCategoryPieChart');
+    const posMixCategoryLegend = document.getElementById('posMixCategoryLegend');
+    const posMixCategoryTotalUnits = document.getElementById('posMixCategoryTotalUnits');
+    const posMixCategoryButtons = document.querySelectorAll('.pos-mix-cat-store-toggle');
+    const POS_MIX_CATEGORY_EXCLUDED_KEY = 'cmapp_pos_mix_category_excluded_v1';
+    let activePosSoldStoreIndex = 'all';
+    let activePosSoldMetric = 'volume';
+    let activePosMixCategoryStoreIndex = 'all';
+    let posSoldChart = null;
+    let posMixCategoryPieChart = null;
+    let excludedPosMixCategories = new Set();
+
+    try {
+      const rawExcluded = localStorage.getItem(POS_MIX_CATEGORY_EXCLUDED_KEY);
+      const parsedExcluded = rawExcluded ? JSON.parse(rawExcluded) : [];
+      if (Array.isArray(parsedExcluded)) {
+        excludedPosMixCategories = new Set(parsedExcluded.map((value) => String(value || '').trim()).filter((value) => value));
+      }
+    } catch (error) {
+      excludedPosMixCategories = new Set();
+    }
+
+    function persistExcludedPosMixCategories() {
+      try {
+        localStorage.setItem(POS_MIX_CATEGORY_EXCLUDED_KEY, JSON.stringify(Array.from(excludedPosMixCategories)));
+      } catch (error) {
+        // Ignore storage errors (quota/private mode) and keep runtime-only state.
+      }
+    }
+
+    function updateButtonState(buttons, activeIndex) {
+      buttons.forEach((button, index) => {
+        if (String(button.dataset.entityIndex || '') === String(activeIndex)) {
+          button.classList.remove('border-slate-200', 'bg-slate-100', 'text-slate-700', 'hover:bg-slate-200');
+          button.classList.add('border-indigo-600', 'bg-indigo-600', 'text-white');
+        } else {
+          button.classList.remove('border-indigo-600', 'bg-indigo-600', 'text-white');
+          button.classList.add('border-slate-200', 'bg-slate-100', 'text-slate-700', 'hover:bg-slate-200');
+        }
+      });
+    }
+
+    function normalizePosProductsByStore(index) {
+      function normalizeProducts(products) {
+        return (Array.isArray(products) ? products : []).map((product) => ({
+          name: String(product.name || '').trim() || 'Unnamed Product',
+          qty: Number(product.qty || 0),
+          net_sales: Number(product.net_sales || 0),
+          category: String(product.category || '').trim() || 'Uncategorized'
+        }));
+      }
+
+      if (String(index) === 'all') {
+        const consolidatedMap = {};
+        posSoldProductsByStore.forEach((storeItem) => {
+          normalizeProducts(storeItem.products).forEach((product) => {
+            const mapKey = product.name.toLowerCase();
+            if (!consolidatedMap[mapKey]) {
+              consolidatedMap[mapKey] = { name: product.name, qty: 0, net_sales: 0, category: product.category };
+            }
+            consolidatedMap[mapKey].qty += Number(product.qty || 0);
+            consolidatedMap[mapKey].net_sales += Number(product.net_sales || 0);
+          });
+        });
+        const allProducts = Object.values(consolidatedMap);
+        return { safeIndex: 'all', allProducts };
+      }
+
+      const parsedIndex = parseInt(index, 10);
+      const safeIndex = Number.isFinite(parsedIndex)
+        ? Math.min(Math.max(parsedIndex, 0), posSoldProductsByStore.length - 1)
+        : 0;
+      const currentData = posSoldProductsByStore[safeIndex] || {};
+      const allProducts = normalizeProducts(currentData.products);
+      return { safeIndex, allProducts };
+    }
+
+    function renderPosSoldProducts(index) {
+      if (!posSoldProductsByStore.length || !posSoldCanvas || typeof Chart === 'undefined') {
+        return;
+      }
+
+      const { safeIndex, allProducts } = normalizePosProductsByStore(index);
+      activePosSoldStoreIndex = safeIndex;
+      const metricKey = activePosSoldMetric === 'peso' ? 'net_sales' : 'qty';
+      const allProductsSorted = [...allProducts].sort((a, b) => Number(b[metricKey] || 0) - Number(a[metricKey] || 0));
+      const totalMetricValue = allProductsSorted.reduce((sum, product) => sum + Number(product[metricKey] || 0), 0);
+      if (posSoldTotalUnits) {
+        posSoldTotalUnits.textContent = activePosSoldMetric === 'peso'
+          ? `Total: \u20B1${totalMetricValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : `Total: ${totalMetricValue.toLocaleString()} pc/s`;
+      }
+
+      const displayProducts = allProductsSorted.slice(0, 10);
+      if (posSoldChart) {
+        posSoldChart.destroy();
+      }
+
+      const labels = displayProducts.length ? displayProducts.map((product) => product.name) : ['No POS sold data'];
+      const values = displayProducts.length ? displayProducts.map((product) => Number(product[metricKey] || 0)) : [0];
+      const colors = labels.map((_, idx) => `hsl(${220 - (idx * 7)}, 76%, ${Math.max(35, 60 - idx)}%)`);
+
+      posSoldChart = new Chart(posSoldCanvas.getContext('2d'), {
+        type: 'horizontalBar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: activePosSoldMetric === 'peso' ? 'POS Sold Net Sales' : 'POS Sold Qty',
+            data: values,
+            backgroundColor: colors,
+            borderColor: colors,
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          legend: {
+            display: false
+          },
+          tooltips: {
+            callbacks: {
+              label: function(tooltipItem) {
+                const value = Number(tooltipItem.xLabel || 0);
+                const row = displayProducts[tooltipItem.index] || {};
+                const rowCategory = String(row.category || 'Uncategorized');
+                if (activePosSoldMetric === 'peso') {
+                  return `\u20B1${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${rowCategory})`;
+                }
+                return `${value.toLocaleString()} pcs (${rowCategory})`;
+              }
+            }
+          },
+          scales: {
+            xAxes: [{
+              ticks: {
+                beginAtZero: true,
+                callback: function(value) {
+                  const numericValue = Number(value || 0);
+                  if (activePosSoldMetric === 'peso') {
+                    return `\u20B1${numericValue.toLocaleString()}`;
+                  }
+                  return numericValue.toLocaleString();
+                }
+              },
+              gridLines: {
+                color: 'rgba(226, 232, 240, 0.7)'
+              }
+            }],
+            yAxes: [{
+              gridLines: {
+                display: false
+              }
+            }]
+          }
+        }
+      });
+
+      updateButtonState(posSoldButtons, activePosSoldStoreIndex);
+      posSoldMetricButtons.forEach((button) => {
+        const metric = button.dataset.metric || 'volume';
+        if (metric === activePosSoldMetric) {
+          button.classList.remove('border-slate-200', 'bg-slate-100', 'text-slate-700', 'hover:bg-slate-200');
+          button.classList.add('border-indigo-600', 'bg-indigo-600', 'text-white');
+        } else {
+          button.classList.remove('border-indigo-600', 'bg-indigo-600', 'text-white');
+          button.classList.add('border-slate-200', 'bg-slate-100', 'text-slate-700', 'hover:bg-slate-200');
+        }
+      });
+    }
+
+    function renderPosMixCategoryPie(index) {
+      if (!posSoldProductsByStore.length || !posMixCategoryPieCanvas || !posMixCategoryLegend || typeof Chart === 'undefined') {
+        return;
+      }
+
+      const { safeIndex, allProducts } = normalizePosProductsByStore(index);
+      activePosMixCategoryStoreIndex = safeIndex;
+
+      const categoryMap = {};
+      allProducts.forEach((product) => {
+        const category = String(product.category || '').trim() || 'Uncategorized';
+        categoryMap[category] = Number(categoryMap[category] || 0) + Number(product.qty || 0);
+      });
+
+      const allCategoryRows = Object.keys(categoryMap)
+        .map((name) => ({ name, qty: Number(categoryMap[name] || 0) }))
+        .filter((row) => row.qty > 0)
+        .sort((a, b) => Number(b.qty || 0) - Number(a.qty || 0));
+      const categoryRows = allCategoryRows.filter((row) => !excludedPosMixCategories.has(String(row.name || '').trim()));
+
+      const totalUnits = categoryRows.reduce((sum, row) => sum + Number(row.qty || 0), 0);
+      if (posMixCategoryTotalUnits) {
+        posMixCategoryTotalUnits.textContent = totalUnits.toLocaleString();
+      }
+
+      const categoryColorMap = {};
+      allCategoryRows.forEach((row, idx) => {
+        categoryColorMap[row.name] = `hsl(${(idx * 41) % 360}, 72%, 52%)`;
+      });
+      const pieColors = categoryRows.map((row) => categoryColorMap[row.name]);
+      posMixCategoryLegend.innerHTML = allCategoryRows.map((row) => {
+        const categoryName = String(row.name || '').trim();
+        const isExcluded = excludedPosMixCategories.has(categoryName);
+        const includedShare = totalUnits > 0 ? (Number(row.qty || 0) / totalUnits) * 100 : 0;
+        const cardClass = isExcluded
+          ? 'opacity-45 border-dashed cursor-pointer'
+          : 'cursor-pointer';
+        const shareText = isExcluded ? 'Excluded' : `${includedShare.toFixed(1)}%`;
+        const encodedCategory = encodeURIComponent(categoryName);
+        return `
+          <button type="button" class="pos-mix-category-legend-item w-full max-w-[190px] flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 ${cardClass}" data-category="${encodedCategory}">
+            <div class="flex items-center gap-2">
+              <span class="h-2.5 w-2.5 rounded-full" style="background-color: ${categoryColorMap[categoryName]};"></span>
+              <span class="text-xs font-medium text-slate-700">${escapeHtml(categoryName)}</span>
+            </div>
+            <span class="text-[11px] text-slate-500">${shareText}</span>
+          </button>
+        `;
+      }).join('') || '<div class="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500">No category data available.</div>';
+
+      if (posMixCategoryPieChart) {
+        posMixCategoryPieChart.destroy();
+      }
+
+      posMixCategoryPieChart = new Chart(posMixCategoryPieCanvas.getContext('2d'), {
+        plugins: [piePercentLabelsPlugin],
+        type: 'doughnut',
+        data: {
+          labels: categoryRows.map((row) => row.name),
+          datasets: [{
+            data: categoryRows.map((row) => Number(row.qty || 0)),
+            backgroundColor: pieColors,
+            borderColor: '#ffffff',
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutoutPercentage: 58,
+          cutout: '58%',
+          legend: {
+            display: false
+          },
+          plugins: {
+            piePercentLabels: {
+              minShare: 4
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  const value = Number((context && context.parsed) ?? 0);
+                  const share = totalUnits > 0 ? (value / totalUnits) * 100 : 0;
+                  const category = String((context && context.label) || '');
+                  return `${category}: ${value.toLocaleString()} pcs (${share.toFixed(1)}%)`;
+                }
+              }
+            },
+            legend: {
+              display: false
+            }
+          },
+          tooltips: {
+            callbacks: {
+              label: function(tooltipItem, data) {
+                const value = Number((data.datasets[tooltipItem.datasetIndex].data[tooltipItem.index]) || 0);
+                const share = totalUnits > 0 ? (value / totalUnits) * 100 : 0;
+                const category = String((data.labels && data.labels[tooltipItem.index]) || '');
+                return `${category}: ${value.toLocaleString()} pcs (${share.toFixed(1)}%)`;
+              }
+            }
+          }
+        }
+      });
+
+      updateButtonState(posMixCategoryButtons, activePosMixCategoryStoreIndex);
+    }
+
+    posSoldButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        renderPosSoldProducts(button.dataset.entityIndex || 'all');
+      });
+    });
+
+    posSoldMetricButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        activePosSoldMetric = button.dataset.metric || 'volume';
+        renderPosSoldProducts(activePosSoldStoreIndex);
+      });
+    });
+
+    posMixCategoryButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        renderPosMixCategoryPie(button.dataset.entityIndex || 'all');
+      });
+    });
+
+    if (posMixCategoryLegend) {
+      posMixCategoryLegend.addEventListener('click', (event) => {
+        const targetButton = event.target.closest('.pos-mix-category-legend-item');
+        if (!targetButton) return;
+        const rawCategory = targetButton.dataset.category || '';
+        const category = decodeURIComponent(rawCategory);
+        if (!category) return;
+        if (excludedPosMixCategories.has(category)) {
+          excludedPosMixCategories.delete(category);
+        } else {
+          excludedPosMixCategories.add(category);
+        }
+        persistExcludedPosMixCategories();
+        renderPosMixCategoryPie(activePosMixCategoryStoreIndex);
+      });
+    }
+
+    if (posSoldProductsByStore.length) {
+      renderPosSoldProducts('all');
+      renderPosMixCategoryPie('all');
+    }
+  });
+</script>
+
+{% endblock %}
+
+
+
+
