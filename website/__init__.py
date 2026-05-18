@@ -222,6 +222,11 @@ def create_app():
         MenuInventoryItem,
         StoreTarget,
         AuditLog,
+        GlobalInvenSyncConfig,
+        DailyForecasting,
+        DailyForecastingItem,
+        DailyEndingInventory,
+        DailyEndingInventoryItem,
     )
 
     with app.app_context():

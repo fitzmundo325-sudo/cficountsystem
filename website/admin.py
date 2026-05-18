@@ -1,5 +1,5 @@
 from flask import Blueprint, redirect, render_template, request, url_for, flash, jsonify
-from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, PosSold, MenuInventoryItem, DailyForecasting, DailyEndingInventory, DailyForecastingItem, DailyEndingInventoryItem, TafTransfer, TafTransferItem
+from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, PosSold, MenuInventoryItem, DailyForecasting, DailyEndingInventory, DailyForecastingItem, DailyEndingInventoryItem, TafTransfer, TafTransferItem
 from . import db
 from .audit import log_audit_event, verify_audit_chain
 from werkzeug.security import generate_password_hash
@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, date
 from werkzeug.utils import secure_filename
 import os
 import re
+import json
 from difflib import SequenceMatcher
 
 
@@ -2662,6 +2663,38 @@ def upload_product_masterlist():
     return redirect(url_for('admin.product_masterlist'))
 
 
+def _get_global_invensync_config():
+    config = GlobalInvenSyncConfig.query.first()
+    if not config:
+        default_data = {
+            'hidden_rows': [],
+            'hidden_columns': [],
+            'hidden_cells': [],
+            'locked_rows': [],
+            'locked_columns': [],
+            'locked_cells': [],
+            'editable_columns': []
+        }
+        config = GlobalInvenSyncConfig(config_data=json.dumps(default_data))
+        db.session.add(config)
+        db.session.commit()
+
+    try:
+        config_data = json.loads(config.config_data or '{}')
+    except ValueError:
+        config_data = {
+            'hidden_rows': [],
+            'hidden_columns': [],
+            'hidden_cells': [],
+            'locked_rows': [],
+            'locked_columns': [],
+            'locked_cells': [],
+            'editable_columns': []
+        }
+
+    return config, config_data
+
+
 @admin.route('/admin/invensync')
 @login_required
 def invensync():
@@ -2669,6 +2702,8 @@ def invensync():
     if current_user.role not in ('Superadmin', 'Admin'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
+
+    selected_tab = request.args.get('tab', 'summary')
 
     # Get selected date (default to today)
     selected_date_str = request.args.get('date', '')
@@ -2709,14 +2744,84 @@ def invensync():
             'has_data': bool(forecasting or inventory)
         })
 
+    products = ProductMaster.query.order_by(ProductMaster.category.asc(), ProductMaster.description.asc()).all()
+    config, config_data = _get_global_invensync_config()
+    preview_store = stores[0] if stores else None
+
+    config_fields = [
+        {'value': 'must_have', 'label': 'MH'},
+        {'value': 'pre_ending', 'label': 'Pre-End'},
+        {'value': 'adq_adequate', 'label': 'ADQ'},
+        {'value': 'initial_order', 'label': 'Initial'},
+        {'value': 'final_order', 'label': 'Final Order'},
+        {'value': 'delivery_tomorrow_qty', 'label': 'Del Tmrw'},
+        {'value': 'delivery_tomorrow_peso', 'label': 'Del Peso'},
+        {'value': 'beginning_qty', 'label': 'Beg'},
+        {'value': 'delivery_qty', 'label': 'Delivery'},
+        {'value': 'trans_in_qty', 'label': 'Trans-In'},
+        {'value': 'bo_qty', 'label': 'BO'},
+        {'value': 'adv_del_qty', 'label': 'Adv'},
+        {'value': 'trans_out_qty', 'label': 'Trans-Out'},
+        {'value': 'wastage_qty', 'label': 'Waste Qty'},
+        {'value': 'wastage_amount', 'label': 'Waste Amt'},
+        {'value': 'csi_qty', 'label': 'CSI'},
+        {'value': 'quantity_sold', 'label': 'Sold'},
+        {'value': 'ending_d5_qty', 'label': 'D+5'},
+        {'value': 'ending_d4_qty', 'label': 'D+4'},
+        {'value': 'ending_d3_qty', 'label': 'D+3'},
+        {'value': 'total_ending_qty', 'label': 'Total EI'},
+        {'value': 'total_peso_srp', 'label': 'Total Peso'},
+        {'value': 'theo_ending_qty', 'label': 'THEO'},
+        {'value': 'variance_qty', 'label': 'Var'},
+        {'value': 'variance_peso', 'label': 'Var Peso'},
+        {'value': 'remarks', 'label': 'Remarks'},
+        {'value': 'discount_qty', 'label': 'Discount Qty'},
+        {'value': 'discount_percent', 'label': 'Discount %'},
+        {'value': 'total_amount_with_discount', 'label': 'Discount Amt'},
+    ]
+
     return render_template(
         'admin/invensync.html',
         user=current_user,
         stores=stores,
         store_summaries=store_summaries,
+        products=products,
+        preview_store=preview_store,
+        selected_tab=selected_tab,
         selected_date=selected_date.strftime('%Y-%m-%d'),
-        today=date.today().strftime('%Y-%m-%d')
+        today=date.today().strftime('%Y-%m-%d'),
+        global_invensync_config=config_data,
+        config_fields=config_fields,
     )
+
+
+@admin.route('/admin/invensync/config', methods=['POST'])
+@login_required
+def update_invensync_config():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    try:
+        data = request.get_json(force=True) or {}
+        config, _ = _get_global_invensync_config()
+
+        normalized_data = {
+            'hidden_rows': [str(item).strip() for item in data.get('hidden_rows', []) if str(item).strip()],
+            'hidden_columns': [str(item).strip() for item in data.get('hidden_columns', []) if str(item).strip()],
+            'hidden_cells': [str(item).strip() for item in data.get('hidden_cells', []) if str(item).strip()],
+            'locked_rows': [str(item).strip() for item in data.get('locked_rows', []) if str(item).strip()],
+            'locked_columns': [str(item).strip() for item in data.get('locked_columns', []) if str(item).strip()],
+            'locked_cells': [str(item).strip() for item in data.get('locked_cells', []) if str(item).strip()],
+            'editable_columns': [str(item).strip() for item in data.get('editable_columns', []) if str(item).strip()]
+        }
+
+        config.config_data = json.dumps(normalized_data)
+        db.session.commit()
+
+        return jsonify({'success': True, 'message': 'Global Invensync settings updated.'})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(exc)}), 500
 
 
 @admin.route('/admin/update-store-pricing', methods=['POST'], endpoint='update_store_pricing')

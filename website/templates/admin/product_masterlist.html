@@ -54,7 +54,7 @@
       </form>
     </div>
 
-    <div class="overflow-x-auto">
+    <div id="product-table-scroll" class="overflow-x-auto">
       <table class="w-full">
         <thead class="bg-slate-50 border-b border-slate-200">
           <tr>
@@ -650,6 +650,17 @@
 
     searchInput.addEventListener('input', applyLiveSearch);
     applyLiveSearch();
+
+    const productTableScroll = document.getElementById('product-table-scroll');
+    if (productTableScroll) {
+      productTableScroll.addEventListener('wheel', function (e) {
+        if (e.altKey) {
+          e.preventDefault();
+          const scrollAmount = e.deltaY > 0 ? 50 : -50;
+          productTableScroll.scrollLeft += scrollAmount;
+        }
+      });
+    }
   })();
 </script>
 

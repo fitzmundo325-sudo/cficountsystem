@@ -1,0 +1,466 @@
+{% extends "base.html" %}
+{% block title %}Charges - {{ store.name }}{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span>Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Charges</span>
+    </nav>
+  </div>
+  <div class="text-sm font-medium text-slate-600">
+    <span class="text-slate-900">{{ store.name }}</span>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  {% if can_submit_charges %}
+  <section class="rounded-none border border-slate-200 bg-white shadow-sm">
+    <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-cyan-50 to-blue-50 border-b border-slate-200">
+      <h3 class="text-sm md:text-base font-bold text-slate-900">Charges</h3>
+      <p class="text-xs text-slate-500 mt-0.5">
+        Price source: <span class="font-semibold text-slate-700">{{ 'SP_NP (Non-Premium)' if store_group == 'non_premium' else 'SP_P (Premium)' }}</span>
+      </p>
+    </div>
+
+    <form id="charges-form" class="p-4 md:p-5 space-y-3" method="post">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label for="csi_no" class="block text-xs font-medium text-slate-700 mb-1">CSI #</label>
+          <input id="csi_no" name="csi_no" type="text" value="{{ form_state.csi_no if form_state else '' }}" placeholder="Enter CSI number" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none" required>
+        </div>
+        <div>
+          <label for="charge_to" class="block text-xs font-medium text-slate-700 mb-1">Charge To</label>
+          <input id="charge_to" name="charge_to" type="text" value="{{ form_state.charge_to if form_state else '' }}" placeholder="Enter charge recipient" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none" required>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-slate-200 overflow-hidden">
+        <div class="bg-slate-100 px-3 py-2 flex items-center justify-between">
+          <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Charge Items</p>
+          <button id="add-charge-row-btn" type="button" class="px-3 py-1.5 text-xs font-semibold bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors">
+            Add Row
+          </button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-white">
+              <tr>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Item Description</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product Type</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Price</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">%Discount</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Qty</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Discount Price</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Total Cost</th>
+                <th class="px-3 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+              </tr>
+            </thead>
+            <tbody id="charges-items-body" class="divide-y divide-slate-100 bg-white"></tbody>
+            <tfoot class="bg-slate-50">
+              <tr>
+                <td colspan="6" class="px-3 py-2 text-right text-sm font-semibold text-slate-700">Grand Total</td>
+                <td class="px-3 py-2 text-right text-sm font-bold text-slate-900" id="charges-grand-total">0.00</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-1">
+        <button id="charges-submit-btn" type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors">
+          Save Charges
+        </button>
+      </div>
+
+      <datalist id="charge-product-options">
+        {% for product in product_catalog.values() %}
+        <option value="{{ product.name }}"></option>
+        {% endfor %}
+      </datalist>
+    </form>
+  </section>
+  {% endif %}
+
+  <section class="rounded-none border border-slate-200 bg-white shadow-sm">
+    <div class="px-4 md:px-5 py-3 bg-slate-50 border-b border-slate-200">
+      <h3 class="text-sm md:text-base font-bold text-slate-900">{{ 'Store Charges' if can_submit_charges else (store.name ~ ' Store Charges') }}</h3>
+      <p class="mt-1 text-xs text-slate-500">
+        Records: <span class="font-semibold text-slate-700">{{ charges_total_count or 0 }}</span>
+        <span class="mx-2">|</span>
+        Total Amount: <span class="font-semibold text-slate-700">{{ "{:,.2f}".format(charges_total_amount or 0) }}</span>
+      </p>
+    </div>
+    <div class="px-4 md:px-5 py-3 border-b border-slate-200 bg-white">
+      <form method="get" class="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr_1fr_auto_auto_auto] gap-2 items-end">
+        <div>
+          <label for="charges-q" class="block text-xs font-semibold text-slate-600 mb-1">Filter</label>
+          <input id="charges-q" name="q" type="text" value="{{ filter_state.q if filter_state else '' }}" placeholder="Search CSI, charge to, item, type" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400 outline-none">
+        </div>
+        <div>
+          <label for="charges-date-from" class="block text-xs font-semibold text-slate-600 mb-1">Date From</label>
+          <input id="charges-date-from" name="date_from" type="date" value="{{ filter_state.date_from if filter_state else '' }}" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400 outline-none">
+        </div>
+        <div>
+          <label for="charges-date-to" class="block text-xs font-semibold text-slate-600 mb-1">Date To</label>
+          <input id="charges-date-to" name="date_to" type="date" value="{{ filter_state.date_to if filter_state else '' }}" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400 outline-none">
+        </div>
+        <button type="submit" class="h-10 px-4 rounded-lg bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700 transition-colors">
+          Apply
+        </button>
+        <a href="{{ url_for('views.store_manager_charges') }}" class="h-10 px-4 rounded-lg border border-slate-300 text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-colors inline-flex items-center justify-center">
+          Reset
+        </a>
+        <a href="{{ export_url }}" class="h-10 px-4 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors inline-flex items-center justify-center">
+          Download Excel
+        </a>
+      </form>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-white">
+          <tr>
+            <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Record #</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">CSI #</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Charge To</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Items</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Grand Total</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Created</th>
+            <th class="px-3 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 bg-white">
+          {% if recent_charges %}
+            {% for charge in recent_charges %}
+            <tr class="odd:bg-white even:bg-slate-50">
+              <td class="px-3 py-2 text-sm text-slate-700">{{ charge.id }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700">{{ charge.csi_no }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700">{{ charge.charge_to }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700 text-right">{{ charge.items|length }}</td>
+              <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right">{{ "{:,.2f}".format(charge.grand_total or 0) }}</td>
+              <td class="px-3 py-2 text-sm text-slate-700">{{ charge.created_at.strftime('%Y-%m-%d %I:%M %p') if charge.created_at else '' }}</td>
+              <td class="px-3 py-2 text-center">
+                <button type="button" class="view-charge-btn px-2.5 py-1.5 text-xs font-semibold text-cyan-700 bg-cyan-50 border border-cyan-200 rounded-md hover:bg-cyan-100" data-charge-id="{{ charge.id }}">View</button>
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7" class="px-3 py-6 text-center text-sm text-slate-400">No charges found for the selected filters.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<div id="charge-view-modal" class="fixed inset-0 z-50 hidden">
+  <div id="charge-view-backdrop" class="absolute inset-0 bg-black/50"></div>
+  <div class="relative h-full w-full flex items-center justify-center p-4">
+    <div class="w-full max-w-4xl bg-white rounded-2xl shadow-2xl overflow-hidden">
+      <div class="px-4 md:px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+        <h3 class="text-base font-bold text-slate-900">Charge Record Details</h3>
+        <button type="button" id="charge-view-close-top" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors" aria-label="Close modal" title="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6 6 18"></path>
+            <path d="m6 6 12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="p-4 md:p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label for="view-csi-no" class="block text-xs font-medium text-slate-700 mb-1">CSI #</label>
+            <input id="view-csi-no" type="text" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 cursor-not-allowed">
+          </div>
+          <div>
+            <label for="view-charge-to" class="block text-xs font-medium text-slate-700 mb-1">Charge To</label>
+            <input id="view-charge-to" type="text" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 cursor-not-allowed">
+          </div>
+        </div>
+        <div class="rounded-lg border border-slate-200 overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+              <thead class="bg-white">
+                <tr>
+                  <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Item Description</th>
+                  <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product Type</th>
+                  <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Price</th>
+                  <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">%Discount</th>
+                  <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Qty</th>
+                  <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Discount Price</th>
+                  <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Total Cost</th>
+                </tr>
+              </thead>
+              <tbody id="charge-view-items-body" class="divide-y divide-slate-100 bg-white"></tbody>
+              <tfoot class="bg-slate-50">
+                <tr>
+                  <td colspan="6" class="px-3 py-2 text-right text-sm font-semibold text-slate-700">Grand Total</td>
+                  <td id="view-grand-total" class="px-3 py-2 text-right text-sm font-bold text-slate-900">0.00</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+        <div class="text-xs text-slate-500">
+          Record #: <span id="view-record-id" class="font-semibold text-slate-700">-</span>
+          <span class="mx-2">|</span>
+          Created: <span id="view-created-at" class="font-semibold text-slate-700">-</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    const catalogRaw = {{ product_catalog | default({}, true) | tojson }};
+    const initialFormState = {{ form_state | default({'csi_no': '', 'charge_to': '', 'items': []}, true) | tojson }};
+    const chargePayloads = {{ recent_charge_payloads | default({}, true) | tojson }};
+    const catalog = {};
+    Object.keys(catalogRaw || {}).forEach((key) => {
+      const normalizedKey = String(key || '').trim().toLowerCase();
+      if (!normalizedKey) return;
+      catalog[normalizedKey] = catalogRaw[key] || {};
+    });
+
+    const body = document.getElementById('charges-items-body');
+    const addBtn = document.getElementById('add-charge-row-btn');
+    const grandTotalEl = document.getElementById('charges-grand-total');
+    const formEl = document.getElementById('charges-form');
+    const viewModalEl = document.getElementById('charge-view-modal');
+    const viewBackdropEl = document.getElementById('charge-view-backdrop');
+    const viewCloseTopEl = document.getElementById('charge-view-close-top');
+    const viewItemsBodyEl = document.getElementById('charge-view-items-body');
+    let hasConfirmedSubmit = false;
+
+    function asNumber(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function rowTemplate(rowData = {}) {
+      const itemDescription = escapeHtml(rowData.item_description || '');
+      const productType = escapeHtml(rowData.product_type || '');
+      const price = escapeHtml(rowData.price || '');
+      const discountPct = escapeHtml(rowData.discount_pct || '');
+      const qty = escapeHtml(rowData.qty || '');
+      return `
+        <tr class="charges-row odd:bg-white even:bg-slate-50">
+          <td class="px-3 py-2">
+            <input type="text" name="item_description[]" value="${itemDescription}" list="charge-product-options" placeholder="Search item description" class="charges-item-description w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2">
+            <input type="text" name="product_type[]" value="${productType}" placeholder="Write product type" class="charges-product-type w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="price[]" value="${price}" min="0" step="0.01" placeholder="0.00" class="charges-price w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="discount_pct[]" value="${discountPct}" min="0" max="100" step="0.01" placeholder="0" class="charges-discount-pct w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="qty[]" value="${qty}" min="0" step="1" placeholder="0" class="charges-qty w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2 text-right text-sm font-semibold text-slate-900 charges-discount-price">0.00</td>
+          <td class="px-3 py-2 text-right text-sm font-semibold text-slate-900 charges-total-cost">0.00</td>
+          <td class="px-3 py-2 text-center">
+            <button type="button" class="charges-remove-row px-2.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md hover:bg-rose-100">Remove</button>
+          </td>
+        </tr>
+      `;
+    }
+
+    function autoFillFromProduct(row, itemName) {
+      const normalizedName = String(itemName || '').trim().toLowerCase();
+      const priceEl = row.querySelector('.charges-price');
+      if (!normalizedName) {
+        return;
+      }
+      const matched = catalog[normalizedName];
+      if (!matched) {
+        return;
+      }
+      if (priceEl) {
+        const price = Number(matched.price);
+        if (Number.isFinite(price)) {
+          priceEl.value = price.toFixed(2);
+        }
+      }
+    }
+
+    function refreshTotals() {
+      if (!body || !grandTotalEl) return;
+      let grandTotal = 0;
+      body.querySelectorAll('.charges-row').forEach((row) => {
+        const price = asNumber(row.querySelector('.charges-price')?.value);
+        const discountPct = asNumber(row.querySelector('.charges-discount-pct')?.value);
+        const qty = asNumber(row.querySelector('.charges-qty')?.value);
+        const normalizedDiscount = Math.max(0, Math.min(100, discountPct));
+        const discountPrice = price - (price * normalizedDiscount / 100);
+        const totalCost = discountPrice * qty;
+        row.querySelector('.charges-discount-price').textContent = discountPrice.toFixed(2);
+        row.querySelector('.charges-total-cost').textContent = totalCost.toFixed(2);
+        grandTotal += totalCost;
+      });
+      grandTotalEl.textContent = grandTotal.toFixed(2);
+    }
+
+    function addRow(rowData = {}) {
+      if (!body) return;
+      body.insertAdjacentHTML('beforeend', rowTemplate(rowData));
+      refreshTotals();
+    }
+
+    addBtn?.addEventListener('click', addRow);
+    body?.addEventListener('input', (event) => {
+      const target = event.target;
+      if (!target) return;
+      if (target.classList.contains('charges-item-description')) {
+        const row = target.closest('.charges-row');
+        if (row) {
+          autoFillFromProduct(row, target.value);
+        }
+      }
+      refreshTotals();
+    });
+
+    body?.addEventListener('click', (event) => {
+      const removeBtn = event.target.closest('.charges-remove-row');
+      if (!removeBtn) return;
+      const rows = body.querySelectorAll('.charges-row');
+      if (rows.length <= 1) {
+        rows[0]?.querySelectorAll('input').forEach((input) => { input.value = ''; });
+      } else {
+        removeBtn.closest('.charges-row')?.remove();
+      }
+      refreshTotals();
+    });
+
+    formEl?.addEventListener('submit', (event) => {
+      if (hasConfirmedSubmit) return;
+      event.preventDefault();
+
+      if (typeof showConfirmationModal !== 'function') {
+        hasConfirmedSubmit = true;
+        formEl.submit();
+        return;
+      }
+
+      showConfirmationModal({
+        title: 'Submit Charges',
+        message: 'Are you sure you want to submit?',
+        confirmText: 'Yes, Submit',
+        cancelText: 'No, Go Back',
+        onConfirm: () => {
+          hasConfirmedSubmit = true;
+          formEl.submit();
+        },
+      });
+    });
+
+    function formatMoney(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n.toFixed(2) : '0.00';
+    }
+
+    function formatPercent(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n.toFixed(2) : '0.00';
+    }
+
+    function closeViewModal() {
+      if (!viewModalEl) return;
+      viewModalEl.classList.add('hidden');
+      document.body.style.overflow = 'auto';
+    }
+
+    function openViewModalById(chargeId) {
+      const payload = chargePayloads[String(chargeId)] || null;
+      if (!payload || !viewModalEl) return;
+
+      const setText = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = String(value || '-');
+      };
+      const setValue = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = String(value || '');
+      };
+      setText('view-record-id', payload.id);
+      setText('view-created-at', payload.created_at);
+      setValue('view-csi-no', payload.csi_no);
+      setValue('view-charge-to', payload.charge_to);
+      setText('view-grand-total', formatMoney(payload.grand_total));
+
+      if (viewItemsBodyEl) {
+        viewItemsBodyEl.innerHTML = '';
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        if (items.length === 0) {
+          viewItemsBodyEl.innerHTML = `<tr><td colspan="7" class="px-3 py-5 text-center text-sm text-slate-400">No items found.</td></tr>`;
+        } else {
+          items.forEach((item) => {
+            const rowHtml = `
+              <tr class="odd:bg-white even:bg-slate-50">
+                <td class="px-3 py-2 text-sm text-slate-700">${escapeHtml(item.item_description || '')}</td>
+                <td class="px-3 py-2 text-sm text-slate-700">${escapeHtml(item.product_type || '')}</td>
+                <td class="px-3 py-2 text-sm text-slate-700 text-right">${formatMoney(item.price)}</td>
+                <td class="px-3 py-2 text-sm text-slate-700 text-right">${formatPercent(item.discount_pct)}</td>
+                <td class="px-3 py-2 text-sm text-slate-700 text-right">${Number(item.quantity || 0)}</td>
+                <td class="px-3 py-2 text-sm text-slate-700 text-right">${formatMoney(item.discount_price)}</td>
+                <td class="px-3 py-2 text-sm font-semibold text-slate-900 text-right">${formatMoney(item.total_cost)}</td>
+              </tr>
+            `;
+            viewItemsBodyEl.insertAdjacentHTML('beforeend', rowHtml);
+          });
+        }
+      }
+
+      viewModalEl.classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+    }
+
+    document.querySelectorAll('.view-charge-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        openViewModalById(btn.dataset.chargeId || '');
+      });
+    });
+    viewBackdropEl?.addEventListener('click', closeViewModal);
+    viewCloseTopEl?.addEventListener('click', closeViewModal);
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && viewModalEl && !viewModalEl.classList.contains('hidden')) {
+        closeViewModal();
+      }
+    });
+
+    if (formEl && body) {
+      const initialItems = Array.isArray(initialFormState?.items) ? initialFormState.items : [];
+      if (initialItems.length > 0) {
+        initialItems.forEach((item) => addRow(item || {}));
+      } else {
+        addRow();
+      }
+    }
+  })();
+</script>
+{% endblock %}

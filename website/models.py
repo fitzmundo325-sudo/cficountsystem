@@ -296,6 +296,15 @@ class AuditLog(db.Model):
     actor = db.relationship('User', foreign_keys=[actor_user_id])
 
 
+class GlobalInvenSyncConfig(db.Model):
+    __tablename__ = 'global_invensync_config'
+
+    id = db.Column(db.Integer, primary_key=True)
+    config_data = db.Column(db.Text, nullable=False, default='{}')
+    created_at = db.Column(db.DateTime(timezone=True), default=func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+
 class DailyForecasting(db.Model):
     """Daily Forecasting Tool - Stores order and sales data by product"""
     __tablename__ = 'daily_forecasting'

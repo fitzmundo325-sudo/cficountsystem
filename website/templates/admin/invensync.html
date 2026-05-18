@@ -44,6 +44,19 @@
     </div>
   </section>
 
+  <!-- Tabs -->
+  <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+    <div class="flex flex-wrap gap-2">
+      <button id="summaryTabBtn" onclick="switchAdminInvenSyncTab('summary')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'summary' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'summary' else 'false' }}">
+        Summary
+      </button>
+      <button id="configTabBtn" onclick="switchAdminInvenSyncTab('config')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'config' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'config' else 'false' }}">
+        Global Config
+      </button>
+    </div>
+  </div>
+
+  <div id="summaryTab" style="display: {{ 'block' if selected_tab == 'summary' else 'none' }};">
     <!-- Stats Overview -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
@@ -185,15 +198,186 @@
         <p class="text-sm text-slate-600">There are no stores in the system yet.</p>
       </div>
     {% endif %}
+  </div>
 
+  <div id="configTab" style="display: {{ 'block' if selected_tab == 'config' else 'none' }};">
+    <div class="grid gap-6">
+      <section class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Global Invensync Configuration</h2>
+          <p class="mt-1 text-slate-600">Manage locking and visibility rules for store-level Invensync inputs across all stores.</p>
+        </div>
+
+        <div class="grid gap-4 lg:grid-cols-2">
+          <div class="space-y-4">
+            <div>
+              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Hidden Rows</h3>
+              <p class="text-xs text-slate-500">Enter product IDs to hide entire rows. One per line.</p>
+              <textarea id="hiddenRowsInput" rows="5" class="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-800 bg-slate-50">{{ global_invensync_config.hidden_rows|default([])|join('\n') }}</textarea>
+            </div>
+            <div>
+              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Hidden Cells</h3>
+              <p class="text-xs text-slate-500">Enter specific cells to hide in the format <code>product_id|field_name</code>. One per line.</p>
+              <textarea id="hiddenCellsInput" rows="5" class="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-800 bg-slate-50">{{ global_invensync_config.hidden_cells|default([])|join('\n') }}</textarea>
+            </div>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Locked Rows</h3>
+              <p class="text-xs text-slate-500">Enter product IDs to lock entire rows. One per line.</p>
+              <textarea id="lockedRowsInput" rows="5" class="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-800 bg-slate-50">{{ global_invensync_config.locked_rows|default([])|join('\n') }}</textarea>
+            </div>
+            <div>
+              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Locked Cells</h3>
+              <p class="text-xs text-slate-500">Enter specific cells to lock in the format <code>product_id|field_name</code>. One per line.</p>
+              <textarea id="lockedCellsInput" rows="5" class="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-800 bg-slate-50">{{ global_invensync_config.locked_cells|default([])|join('\n') }}</textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid gap-4 lg:grid-cols-2">
+          <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Hidden Columns</h3>
+            <div class="grid grid-cols-2 gap-3 mt-3">
+              {% for field in config_fields %}
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" value="{{ field.value }}" class="hidden-column-checkbox" {% if field.value in global_invensync_config.hidden_columns %}checked{% endif %}>
+                <span>{{ field.label }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Locked Columns</h3>
+            <div class="grid grid-cols-2 gap-3 mt-3">
+              {% for field in config_fields %}
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" value="{{ field.value }}" class="locked-column-checkbox" {% if field.value in global_invensync_config.locked_columns %}checked{% endif %}>
+                <span>{{ field.label }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+          <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Editable Columns</h3>
+          <p class="text-xs text-slate-500">Choose columns that should remain editable in the store-level Invensync view.</p>
+          <div class="grid grid-cols-2 gap-3 mt-3">
+            {% for field in config_fields %}
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" value="{{ field.value }}" class="editable-column-checkbox" {% if field.value in global_invensync_config.editable_columns %}checked{% endif %}>
+              <span>{{ field.label }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3">
+          <button type="button" id="saveConfigBtn" onclick="saveInvensyncConfig()" class="px-5 py-3 rounded-2xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition">
+            Save Global Config
+          </button>
+          <span id="configSaveMessage" class="text-sm text-slate-600"></span>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200 p-4">
+          <h3 class="text-sm font-semibold text-slate-700">Available Product IDs</h3>
+          <p class="text-xs text-slate-500 mt-2">Use product IDs when creating specific row or cell rules. Example: <code>42|initial_order</code>.</p>
+          <div class="grid gap-2 mt-3 text-[11px] text-slate-600 max-h-40 overflow-y-auto">
+            {% for product in products[:25] %}
+            <div>{{ product.id }} — {{ product.description }}</div>
+            {% endfor %}
+            {% if products|length > 25 %}
+              <div class="text-slate-400 italic">...and {{ products|length - 25 }} more products</div>
+            {% endif %}
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
 </div>
 
 <script>
 function updateDate() {
     const dateInput = document.getElementById('dateInput').value;
     if (dateInput) {
-        window.location.href = `{{ url_for('admin.invensync') }}?date=${dateInput}`;
+        const tab = document.querySelector('#summaryTab').style.display === 'block' ? 'summary' : 'config';
+        window.location.href = `{{ url_for('admin.invensync') }}?date=${dateInput}&tab=${tab}`;
     }
+}
+
+function switchAdminInvenSyncTab(tab) {
+    const summaryTab = document.getElementById('summaryTab');
+    const configTab = document.getElementById('configTab');
+    const summaryBtn = document.getElementById('summaryTabBtn');
+    const configBtn = document.getElementById('configTabBtn');
+
+    if (tab === 'config') {
+        summaryTab.style.display = 'none';
+        configTab.style.display = 'block';
+        summaryBtn.classList.remove('bg-slate-900', 'text-white');
+        summaryBtn.classList.add('bg-slate-100', 'text-slate-700');
+        configBtn.classList.remove('bg-slate-100', 'text-slate-700');
+        configBtn.classList.add('bg-slate-900', 'text-white');
+    } else {
+        summaryTab.style.display = 'block';
+        configTab.style.display = 'none';
+        summaryBtn.classList.remove('bg-slate-100', 'text-slate-700');
+        summaryBtn.classList.add('bg-slate-900', 'text-white');
+        configBtn.classList.remove('bg-slate-900', 'text-white');
+        configBtn.classList.add('bg-slate-100', 'text-slate-700');
+    }
+}
+
+function saveInvensyncConfig() {
+    const url = `{{ url_for('admin.update_invensync_config') }}`;
+    const hiddenRows = document.getElementById('hiddenRowsInput').value.split('\n').map(v => v.trim()).filter(Boolean);
+    const hiddenCells = document.getElementById('hiddenCellsInput').value.split('\n').map(v => v.trim()).filter(Boolean);
+    const lockedRows = document.getElementById('lockedRowsInput').value.split('\n').map(v => v.trim()).filter(Boolean);
+    const lockedCells = document.getElementById('lockedCellsInput').value.split('\n').map(v => v.trim()).filter(Boolean);
+    const hiddenColumns = Array.from(document.querySelectorAll('.hidden-column-checkbox:checked')).map(el => el.value);
+    const lockedColumns = Array.from(document.querySelectorAll('.locked-column-checkbox:checked')).map(el => el.value);
+    const editableColumns = Array.from(document.querySelectorAll('.editable-column-checkbox:checked')).map(el => el.value);
+
+    const saveBtn = document.getElementById('saveConfigBtn');
+    const message = document.getElementById('configSaveMessage');
+    
+    // Disable button and show loading state
+    saveBtn.disabled = true;
+    saveBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    saveBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Saving...';
+    message.textContent = '';
+
+    fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({hidden_rows: hiddenRows, hidden_columns: hiddenColumns, hidden_cells: hiddenCells, locked_rows: lockedRows, locked_columns: lockedColumns, locked_cells: lockedCells, editable_columns: editableColumns})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            message.textContent = 'Global config saved.';
+            message.classList.remove('text-red-600');
+            message.classList.add('text-emerald-600');
+        } else {
+            message.textContent = data.message || 'Unable to save config.';
+            message.classList.remove('text-emerald-600');
+            message.classList.add('text-red-600');
+        }
+    })
+    .catch(error => {
+        console.error(error);
+        message.textContent = 'Error saving config.';
+        message.classList.remove('text-emerald-600');
+        message.classList.add('text-red-600');
+    })
+    .finally(() => {
+        // Re-enable button after request completes
+        saveBtn.disabled = false;
+        saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        saveBtn.innerHTML = 'Save Global Config';
+    });
 }
 
 // Allow Enter key to submit date

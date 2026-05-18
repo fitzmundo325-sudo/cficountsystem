@@ -14,6 +14,7 @@ from .models import (
     DailyEndingInventory,
     DailyEndingInventoryItem,
     StoreTarget,
+    GlobalInvenSyncConfig,
 )
 from . import db
 from .audit import log_audit_event
@@ -1700,6 +1701,119 @@ def _pop_pos_sold_draft(store_id, report_date):
     return _sanitize_pos_sold_items(items if isinstance(items, list) else [])
 
 
+def _normalize_product_text(value):
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+
+def _build_pos_sold_master_lookups():
+    alias_lookup = {}
+    master_lookup = {}
+
+    for normalized_alias, product_master_id in (
+        db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
+        .all()
+    ):
+        alias_text = str(normalized_alias or '').strip()
+        if alias_text:
+            alias_lookup[alias_text] = int(product_master_id)
+
+    for product_id, description in (
+        db.session.query(ProductMaster.id, ProductMaster.description).all()
+    ):
+        normalized_description = _normalize_product_text(description)
+        if normalized_description:
+            master_lookup[normalized_description] = int(product_id)
+
+    return alias_lookup, master_lookup
+
+
+def _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup, similarity_threshold=0.85):
+    normalized_name = _normalize_product_text(product_name)
+    if not normalized_name:
+        return None
+    if normalized_name in alias_lookup:
+        return alias_lookup[normalized_name]
+    if normalized_name in master_lookup:
+        return master_lookup[normalized_name]
+
+    best_score = 0.0
+    best_master_id = None
+    for normalized_master, product_master_id in master_lookup.items():
+        if not normalized_master:
+            continue
+        score = SequenceMatcher(None, normalized_name, normalized_master).ratio()
+        if score > best_score:
+            best_score = score
+            best_master_id = product_master_id
+
+    return best_master_id if best_score >= similarity_threshold else None
+
+
+def _build_pos_sold_quantities_by_master_id(items):
+    if not items:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+
+    for item in items:
+        master_id = _resolve_pos_sold_master_id(item.get('product_name', ''), alias_lookup, master_lookup)
+        if not master_id:
+            continue
+        quantity = int(item.get('quantity', 0) or 0)
+        if quantity <= 0:
+            continue
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+def _build_pos_sold_draft_quantity_by_master_id(store_id, report_date):
+    return _build_pos_sold_quantities_by_master_id(_get_pos_sold_draft(store_id, report_date))
+
+
+def _build_pos_sold_quantity_by_master_id_for_report(report_id):
+    if not report_id:
+        return {}
+
+    pos_items = PosSold.query.filter_by(daily_report_id=report_id).all()
+    if not pos_items:
+        return {}
+
+    return _build_pos_sold_quantities_by_master_id([
+        {
+            'product_name': item.product_name,
+            'quantity': item.quantity,
+        }
+        for item in pos_items
+    ])
+
+
+def _apply_pos_sold_quantities_to_inventory(store_id, report_date, master_quantities):
+    if not master_quantities:
+        return
+
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store_id,
+        inventory_date=report_date
+    ).first()
+    if not inventory:
+        return
+
+    for item in inventory.items:
+        if not item.product_master_id:
+            continue
+        if item.product_master_id not in master_quantities:
+            continue
+        if item.quantity_sold:
+            continue
+
+        item.quantity_sold = int(master_quantities[item.product_master_id] or 0)
+        _recalculate_inventory_item(item)
+
+    db.session.flush()
+
+
 def _sanitize_rso_items(items):
     if not isinstance(items, list):
         return []
@@ -3139,36 +3253,99 @@ def _update_inventory_trans_quantities(transfer_record, parsed_items):
                 )
 
 
+def _update_inventory_wastage_on_receive(transfer, transfer_items):
+    """Update source store Wastage Qty when a Wastage Transfer is received."""
+    from datetime import date as date_type
+
+    transfer_from = str(getattr(transfer, 'transfer_from', '') or '').strip()
+    if not transfer_from:
+        return
+
+    source_store = Store.query.filter_by(name=transfer_from).first()
+    if not source_store:
+        return
+
+    transaction_date = getattr(transfer, 'transaction_date', None)
+    if not transaction_date:
+        return
+
+    source_inventory = DailyEndingInventory.query.filter_by(
+        store_id=source_store.id,
+        inventory_date=transaction_date
+    ).first()
+
+    if not source_inventory:
+        source_inventory = DailyEndingInventory(
+            store_id=source_store.id,
+            inventory_date=transaction_date,
+            created_by=getattr(transfer, 'submitted_by', None) or current_user.id
+        )
+        db.session.add(source_inventory)
+        db.session.flush()
+
+    for item in transfer_items:
+        item_name = str(getattr(item, 'item_name', '') or '').strip()
+        received_qty = int(getattr(item, 'received_quantity', None) or getattr(item, 'quantity', 0) or 0)
+
+        if not item_name or received_qty <= 0:
+            continue
+
+        source_inventory_item = DailyEndingInventoryItem.query.filter_by(
+            inventory_id=source_inventory.id,
+            product_description=item_name
+        ).first()
+
+        if not source_inventory_item:
+            product = ProductMaster.query.filter_by(description=item_name).first()
+            source_inventory_item = DailyEndingInventoryItem(
+                inventory_id=source_inventory.id,
+                product_master_id=product.id if product else None,
+                product_code=product.code if product else None,
+                product_description=item_name,
+                srp_price=product.sp_p if product else 0.0,
+                wastage_qty=received_qty
+            )
+            db.session.add(source_inventory_item)
+        else:
+            source_inventory_item.wastage_qty = (source_inventory_item.wastage_qty or 0) + received_qty
+
+        _recalculate_inventory_item(source_inventory_item)
+
+
 def _update_inventory_trans_in_on_receive(transfer, transfer_items):
     """Update invensync Trans-In quantity when transfer receiving is confirmed.
     This function is called when the store clicks 'Confirm Receiving' button."""
     from datetime import date as date_type
-    
+
     # Only update for Product Transfer and Wastage Transfer
     transaction_type = str(getattr(transfer, 'transaction_type', '') or '').strip().lower()
     if transaction_type not in ('product transfer', 'wastage transfer'):
         return
-    
+
+    if transaction_type == 'wastage transfer':
+        _update_inventory_wastage_on_receive(transfer, transfer_items)
+        return
+
     # Get the destination store (transfer_to)
     transfer_to = str(getattr(transfer, 'transfer_to', '') or '').strip()
     if not transfer_to:
         return
-    
+
     dest_store = Store.query.filter_by(name=transfer_to).first()
     if not dest_store:
         return
-    
+
     # Use the transfer transaction date
     transaction_date = getattr(transfer, 'transaction_date', None)
     if not transaction_date:
         return
-    
+
     # Find or create inventory record for destination store
     dest_inventory = DailyEndingInventory.query.filter_by(
         store_id=dest_store.id,
         inventory_date=transaction_date
     ).first()
-    
+
     if not dest_inventory:
         # Create new inventory record if it doesn't exist
         dest_inventory = DailyEndingInventory(
@@ -3178,26 +3355,26 @@ def _update_inventory_trans_in_on_receive(transfer, transfer_items):
         )
         db.session.add(dest_inventory)
         db.session.flush()
-    
+
     # Update Trans-In quantities for destination store using received_quantity
     for item in transfer_items:
         item_name = str(getattr(item, 'item_name', '') or '').strip()
         # Use received_quantity (confirmed amount) instead of sent quantity
         received_qty = int(getattr(item, 'received_quantity', None) or getattr(item, 'quantity', 0) or 0)
-        
+
         if not item_name or received_qty <= 0:
             continue
-        
+
         # Find or create inventory item for destination store
         dest_inventory_item = DailyEndingInventoryItem.query.filter_by(
             inventory_id=dest_inventory.id,
             product_description=item_name
         ).first()
-        
+
         if not dest_inventory_item:
             # Try to find product in ProductMaster to get more details
             product = ProductMaster.query.filter_by(description=item_name).first()
-            
+
             dest_inventory_item = DailyEndingInventoryItem(
                 inventory_id=dest_inventory.id,
                 product_master_id=product.id if product else None,
@@ -3212,7 +3389,7 @@ def _update_inventory_trans_in_on_receive(transfer, transfer_items):
             # This prevents double-counting if receiving is confirmed multiple times
             if dest_inventory_item.trans_in_qty == 0:
                 dest_inventory_item.trans_in_qty = received_qty
-        
+
         # Recalculate theoretical ending quantity
         dest_inventory_item.theo_ending_qty = (
             (dest_inventory_item.beginning_qty or 0) +
@@ -4014,6 +4191,8 @@ def submit_pos_sold_report():
                 )
             )
 
+        saved_quantities = _build_pos_sold_quantities_by_master_id(draft_pos_sold_items)
+        _apply_pos_sold_quantities_to_inventory(store.id, report_date, saved_quantities)
         _pop_pos_sold_draft(store.id, report_date)
 
         log_audit_event(
@@ -5187,6 +5366,8 @@ def save_daily_ending_inventory():
             item_id = item_data.get('item_id')
             item = DailyEndingInventoryItem.query.get(item_id)
             if item:
+                if 'beginning_qty' in item_data:
+                    item.beginning_qty = int(item_data.get('beginning_qty', 0))
                 item.delivery_qty = int(item_data.get('delivery_qty', 0))
                 item.trans_in_qty = int(item_data.get('trans_in_qty', 0))
                 item.bo_qty = int(item_data.get('bo_qty', 0))
@@ -5486,7 +5667,38 @@ def invensync():
     _recalculate_forecasting_totals(forecasting)
     for item in inventory_items.values():
         _recalculate_inventory_item(item)
+    saved_sales_map = _build_pos_sold_quantity_by_master_id_for_report(
+        DailyReport.query.filter_by(store_id=store.id, report_date=selected_date).with_entities(DailyReport.id).scalar()
+    )
+    if saved_sales_map:
+        for inv_item in inventory_items.values():
+            if inv_item.product_master_id and not inv_item.quantity_sold and inv_item.product_master_id in saved_sales_map:
+                inv_item.quantity_sold = saved_sales_map[inv_item.product_master_id]
+                inv_item.pos_reviewed_source = 'saved'
+                inv_item.pos_reviewed_date = selected_date
+                _recalculate_inventory_item(inv_item)
+
     db.session.commit()
+
+    draft_sales_map = {}
+    if current_user.role == 'Store Manager':
+        draft_sales_map = _build_pos_sold_draft_quantity_by_master_id(store.id, selected_date)
+
+    if draft_sales_map:
+        for inv_item in inventory_items.values():
+            if inv_item.product_master_id and inv_item.product_master_id in draft_sales_map:
+                inv_item.draft_quantity_sold = draft_sales_map[inv_item.product_master_id]
+                inv_item.pos_reviewed_source = 'draft'
+                inv_item.pos_reviewed_date = selected_date
+                _recalculate_inventory_item(inv_item, sold_override=inv_item.draft_quantity_sold)
+
+    global_config = GlobalInvenSyncConfig.query.first()
+    global_config_data = {}
+    if global_config:
+        try:
+            global_config_data = json.loads(global_config.config_data or '{}')
+        except ValueError:
+            global_config_data = {}
 
     return render_template(
         'store_manager/invensync.html',
@@ -5498,7 +5710,8 @@ def invensync():
         forecasting_items=forecasting_items,
         inventory_items=inventory_items,
         selected_date=selected_date.strftime('%Y-%m-%d'),
-        today=date.today().strftime('%Y-%m-%d')
+        today=date.today().strftime('%Y-%m-%d'),
+        global_config_data=global_config_data,
     )
 
 
@@ -5748,8 +5961,10 @@ def sync_invensync_products():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-def _recalculate_inventory_item(item):
+def _recalculate_inventory_item(item, sold_override=None):
     """Recalculate all derived fields for an inventory item"""
+    sold_qty = int(sold_override) if sold_override is not None else int(item.quantity_sold or 0)
+
     # Wastage amount
     item.wastage_amount = item.wastage_qty * item.srp_price
     
@@ -5767,7 +5982,7 @@ def _recalculate_inventory_item(item):
         item.trans_out_qty - 
         item.wastage_qty - 
         item.csi_qty - 
-        item.quantity_sold
+        sold_qty
     )
     
     # Variance

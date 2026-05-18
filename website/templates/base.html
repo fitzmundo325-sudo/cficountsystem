@@ -8,7 +8,19 @@
   
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link href="{{ url_for('static', filename='css/styles.css') }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/styles.css') }}?v=sidebar-scroll-2" rel="stylesheet">
+  <style>
+    #sidebar nav.custom-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    #sidebar nav.custom-scrollbar::-webkit-scrollbar,
+    #sidebar nav.custom-scrollbar::-webkit-scrollbar-button {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+  </style>
   <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
   <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 </head>
