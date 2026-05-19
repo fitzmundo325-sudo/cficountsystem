@@ -236,42 +236,43 @@
           </div>
         </div>
 
-        <div class="grid gap-4 lg:grid-cols-2">
-          <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
-            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Hidden Columns</h3>
-            <div class="grid grid-cols-2 gap-3 mt-3">
-              {% for field in config_fields %}
-              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" value="{{ field.value }}" class="hidden-column-checkbox" {% if field.value in global_invensync_config.hidden_columns %}checked{% endif %}>
-                <span>{{ field.label }}</span>
-              </label>
-              {% endfor %}
-            </div>
-          </div>
-          <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
-            <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Locked Columns</h3>
-            <div class="grid grid-cols-2 gap-3 mt-3">
-              {% for field in config_fields %}
-              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" value="{{ field.value }}" class="locked-column-checkbox" {% if field.value in global_invensync_config.locked_columns %}checked{% endif %}>
-                <span>{{ field.label }}</span>
-              </label>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
-
         <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
-          <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Editable Columns</h3>
-          <p class="text-xs text-slate-500">Choose columns that should remain editable in the store-level Invensync view.</p>
-          <div class="grid grid-cols-2 gap-3 mt-3">
-            {% for field in config_fields %}
-            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" value="{{ field.value }}" class="editable-column-checkbox" {% if field.value in global_invensync_config.editable_columns %}checked{% endif %}>
-              <span>{{ field.label }}</span>
-            </label>
-            {% endfor %}
-          </div>
+          <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">Hidden, Locked &amp; Editable Columns</h3>
+          <table class="w-full text-sm text-slate-700">
+            <thead>
+              <tr class="text-xs text-slate-500 uppercase">
+                <th class="text-left pb-2 font-semibold">Column</th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Hidden
+                  <button type="button" onclick="toggleSelectAll('hidden-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Locked
+                  <button type="button" onclick="toggleSelectAll('locked-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Editable
+                  <button type="button" onclick="toggleSelectAll('editable-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+              {% for field in config_fields %}
+              <tr>
+                <td class="py-1.5">{{ field.label }}</td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="hidden-column-checkbox" {% if field.value in global_invensync_config.hidden_columns %}checked{% endif %}>
+                </td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="locked-column-checkbox" {% if field.value in global_invensync_config.locked_columns %}checked{% endif %}>
+                </td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="editable-column-checkbox" {% if field.value in global_invensync_config.editable_columns %}checked{% endif %}>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
 
         <div class="flex flex-wrap items-center gap-3">
@@ -378,6 +379,13 @@ function saveInvensyncConfig() {
         saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
         saveBtn.innerHTML = 'Save Global Config';
     });
+}
+
+function toggleSelectAll(cls, btn) {
+    const checkboxes = document.querySelectorAll('.' + cls);
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    checkboxes.forEach(cb => cb.checked = !allChecked);
+    btn.textContent = allChecked ? 'Select All' : 'Deselect All';
 }
 
 // Allow Enter key to submit date
