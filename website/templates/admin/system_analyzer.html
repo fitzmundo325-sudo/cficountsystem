@@ -1,0 +1,249 @@
+{% extends "admin_base.html" %}
+{% block title %}System Analyzer{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 bg-white/85 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="4" x2="20" y1="12" y2="12"></line>
+        <line x1="4" x2="20" y1="6" y2="6"></line>
+        <line x1="4" x2="20" y1="18" y2="18"></line>
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span>Admin</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">System Analyzer</span>
+    </nav>
+  </div>
+  <a href="{{ url_for('admin.product_masterlist') }}" class="text-xs font-semibold text-slate-600 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors">Open Masterlist</a>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">System Analyzer</h1>
+      <p class="text-slate-600 mt-1">Detect POS Sold items that are not yet in Product Masterlist.</p>
+    </div>
+    <form method="GET" class="grid grid-cols-1 sm:grid-cols-[auto_auto_auto] gap-2 items-end">
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Start Date</label>
+        <input type="date" name="start_date" value="{{ start_date }}" class="px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">End Date</label>
+        <input type="date" name="end_date" value="{{ end_date }}" class="px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+      </div>
+      <button type="submit" class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors">Analyze</button>
+    </form>
+  </section>
+
+  <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Unique POS Items</p>
+      <p class="text-2xl font-bold text-slate-900 mt-2">{{ summary.total_unique_pos_products }}</p>
+    </div>
+    <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+      <p class="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Matched In Masterlist</p>
+      <p class="text-2xl font-bold text-emerald-800 mt-2">{{ summary.matched_unique_products }}</p>
+    </div>
+    <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+      <p class="text-xs font-semibold text-amber-700 uppercase tracking-wider">New / Unmatched</p>
+      <p class="text-2xl font-bold text-amber-800 mt-2">{{ summary.unmatched_unique_products }}</p>
+    </div>
+    <div class="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+      <p class="text-xs font-semibold text-indigo-700 uppercase tracking-wider">Unmatched Total Qty</p>
+      <p class="text-2xl font-bold text-indigo-800 mt-2">{{ summary.unmatched_total_qty }}</p>
+    </div>
+  </section>
+
+  <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+      <div>
+        <h2 class="text-lg font-bold text-slate-900">Unmatched POS Products</h2>
+        <p class="text-xs text-slate-500">Date Range: {{ start_date }} to {{ end_date }}</p>
+      </div>
+      <p class="text-xs text-slate-600 font-medium">Unmatched Net Sales: {{ "{:,.2f}".format(summary.unmatched_total_net_sales or 0) }}</p>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Product Name</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Qty</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Net Sales</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Stores</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Entries</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Latest Date</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for item in unmatched_items %}
+          <tr class="hover:bg-slate-50 transition-colors">
+            <td class="px-4 py-3 text-sm text-slate-900 font-semibold">{{ item.product_name }}</td>
+            <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ item.total_qty }}</td>
+            <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ "{:,.2f}".format(item.total_net_sales or 0) }}</td>
+            <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ item.store_count }}</td>
+            <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ item.entry_count }}</td>
+            <td class="px-4 py-3 text-sm text-slate-700">{{ item.latest_report_date.strftime('%Y-%m-%d') if item.latest_report_date else '-' }}</td>
+            <td class="px-4 py-3 text-sm">
+              <button type="button" class="open-link-modal inline-flex items-center justify-center w-8 h-8 rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors" data-alias="{{ item.product_name }}" title="Link to Master" aria-label="Link to Master">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 1 0-7.07-7.07L11 4" />
+                  <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 1 0 7.07 7.07L13 20" />
+                </svg>
+              </button>
+              <a href="{{ url_for('admin.product_masterlist', q=item.product_name) }}" class="inline-flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-colors ml-1" title="Search Masterlist" aria-label="Search Masterlist">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="7"></circle>
+                  <path d="m21 21-4.3-4.3"></path>
+                </svg>
+              </a>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="7" class="px-4 py-8 text-center text-sm text-slate-500">No new POS items detected for this date range.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<div id="link-product-modal" class="fixed inset-0 z-50 hidden">
+  <div id="link-product-backdrop" class="absolute inset-0 bg-black/40"></div>
+  <div class="relative z-10 h-full w-full flex items-center justify-center p-4">
+    <div class="w-full max-w-2xl rounded-2xl border border-amber-300 bg-white shadow-xl">
+      <div class="px-5 py-4 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="text-sm md:text-base font-bold text-amber-900">Link POS Name To Master Product</h2>
+          <p class="text-xs text-amber-800 mt-1">Use this when POS item name is different but should count to one master product.</p>
+        </div>
+        <button type="button" id="link-product-close-x" class="text-amber-700 hover:text-amber-900 text-sm font-semibold">Close</button>
+      </div>
+      <form id="link-product-form" method="POST" action="{{ url_for('admin.link_system_analyzer_product') }}" class="px-5 py-4 space-y-3">
+        <input type="hidden" name="start_date" value="{{ start_date }}">
+        <input type="hidden" name="end_date" value="{{ end_date }}">
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Detected POS Name</label>
+          <input
+            id="link-alias-name"
+            type="text"
+            name="alias_name"
+            value="{{ link_alias }}"
+            placeholder="example: siopai asado"
+            required
+            class="w-full px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+          >
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Master Product Name</label>
+          <input
+            type="text"
+            name="master_product_name"
+            list="master-product-options"
+            placeholder="example: chicken asado siopao"
+            required
+            class="w-full px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+          >
+          <datalist id="master-product-options">
+            {% for option in master_name_options %}
+            <option value="{{ option }}"></option>
+            {% endfor %}
+          </datalist>
+        </div>
+        <div class="pt-1 flex items-center justify-end gap-2">
+          <button type="button" id="link-product-cancel" class="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-sm rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
+          <button type="submit" class="px-4 py-2 bg-amber-600 text-white text-sm rounded-lg font-medium hover:bg-amber-700 transition-colors">Link Product</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const modal = document.getElementById('link-product-modal');
+    const backdrop = document.getElementById('link-product-backdrop');
+    const closeX = document.getElementById('link-product-close-x');
+    const cancelBtn = document.getElementById('link-product-cancel');
+    const linkForm = document.getElementById('link-product-form');
+    const aliasInput = document.getElementById('link-alias-name');
+    const masterInput = document.querySelector('input[name="master_product_name"]');
+    const openButtons = Array.from(document.querySelectorAll('.open-link-modal'));
+    const presetAlias = {{ (link_alias or '')|tojson }};
+
+    function openModal(aliasValue) {
+      if (aliasInput) aliasInput.value = aliasValue || '';
+      if (modal) modal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+      if (aliasInput) aliasInput.focus();
+    }
+
+    function closeModal() {
+      if (modal) modal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    openButtons.forEach((btn) => {
+      btn.addEventListener('click', function () {
+        openModal(btn.getAttribute('data-alias') || '');
+      });
+    });
+
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if (closeX) closeX.addEventListener('click', closeModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') closeModal();
+    });
+
+    if (presetAlias) {
+      openModal(presetAlias);
+    }
+
+    if (linkForm) {
+      linkForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        const aliasValue = (aliasInput && aliasInput.value ? aliasInput.value : '').trim();
+        const masterValue = (masterInput && masterInput.value ? masterInput.value : '').trim();
+        if (!aliasValue || !masterValue) {
+          if (typeof toast !== 'undefined' && typeof toast.show === 'function') {
+            toast.show('Please fill POS name and master product name first.', 'error');
+          }
+          return;
+        }
+
+        const openGlobalConfirm = (typeof window !== 'undefined' && typeof window.showConfirmationModal === 'function')
+          ? window.showConfirmationModal
+          : (typeof showConfirmationModal === 'function' ? showConfirmationModal : null);
+
+        if (!openGlobalConfirm) {
+          if (confirm(`Link "${aliasValue}" to "${masterValue}"?`)) {
+            linkForm.submit();
+          }
+          return;
+        }
+
+        openGlobalConfirm({
+          title: 'Confirm Product Link',
+          messageHtml: `
+            <p class="text-sm text-slate-700 mb-2">Please confirm this product mapping.</p>
+            <p class="text-xs text-slate-600"><strong>POS Name:</strong> ${aliasValue}</p>
+            <p class="text-xs text-slate-600"><strong>Master Product:</strong> ${masterValue}</p>
+          `,
+          onConfirm: function () {
+            linkForm.submit();
+          }
+        });
+      });
+    }
+  })();
+</script>
+{% endblock %}

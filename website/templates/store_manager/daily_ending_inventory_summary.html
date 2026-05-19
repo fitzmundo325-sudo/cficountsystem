@@ -1,0 +1,692 @@
+{% extends "base.html" %}
+{% block title %}Daily Ending Inventory Summary - {{ store.name }}{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div class="flex items-center gap-3 sm:gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="4" x2="20" y1="12" y2="12"></line>
+        <line x1="4" x2="20" y1="6" y2="6"></line>
+        <line x1="4" x2="20" y1="18" y2="18"></line>
+      </svg>
+    </button>
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span>Inventory</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Daily Ending Inventory Summary</span>
+    </nav>
+  </div>
+  <form method="GET" class="flex flex-wrap items-center gap-3 sm:justify-end">
+    <input type="hidden" name="list_source" value="{{ list_source if list_source else 'masterlist' }}">
+    <label for="report_date" class="text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">Report Date</label>
+    <input
+      type="date"
+      id="report_date"
+      name="date"
+      value="{{ selected_report_date if selected_report_date else today }}"
+      class="w-40 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 outline-none shadow-sm"
+    >
+    <button type="submit" class="px-3 py-2 text-sm font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+      Load
+    </button>
+    <div class="text-sm font-medium text-slate-600">
+      <span class="text-slate-900">{{ store.name }}</span>
+    </div>
+  </form>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  {% set show_item_code = false %}
+  {% set show_variance = ((user.role or '') == 'Inventory Staff') %}
+  {% set table_column_count = 10 + (1 if show_item_code else 0) + (1 if show_variance else 0) %}
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Daily Ending Inventory Summary</h1>
+      <p class="mt-1 text-slate-600">Computed from previous day ending plus Delivery, Trans In, Trans Out, Wastage, CI, and POS Sold for the selected report date.</p>
+      <p class="mt-1 text-xs font-semibold text-slate-500">List Source: {{ 'Inventory Menu' if list_source == 'menu' else 'Product Masterlist' }}</p>
+      <div class="mt-2 inline-flex rounded-lg border border-slate-300 overflow-hidden">
+        <a href="{{ url_for('views.store_scope_daily_ending_inventory_summary', date=selected_report_date, list_source='masterlist') }}" class="px-3 py-1.5 text-xs font-semibold {% if list_source != 'menu' %}bg-slate-900 text-white{% else %}bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+          Masterlist
+        </a>
+        <a href="{{ url_for('views.store_scope_daily_ending_inventory_summary', date=selected_report_date, list_source='menu') }}" class="px-3 py-1.5 text-xs font-semibold border-l border-slate-300 {% if list_source == 'menu' %}bg-slate-900 text-white{% else %}bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+          Inventory Menu
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="rounded-none border border-slate-200 bg-white shadow-sm overflow-hidden">
+    <form method="POST" action="{{ url_for('views.store_scope_daily_ending_inventory_summary_save_baseline') }}">
+      <input type="hidden" name="report_date" value="{{ selected_report_date if selected_report_date else today }}">
+      <input type="hidden" name="list_source" value="{{ list_source if list_source else 'masterlist' }}">
+    <div class="px-4 md:px-5 py-3 bg-slate-50 border-b border-slate-200">
+      <h2 class="text-sm md:text-base font-bold text-slate-900">Inventory Computation</h2>
+      <p class="text-xs text-slate-500 mt-0.5">Formula: TheoEnd = Beginning Qty + Delivery + Trans In - Trans Out - Wastage - CI - POS Sold.</p>
+      <div class="mt-3 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+        <div class="w-full md:max-w-md">
+          <label for="inventory-live-search" class="block text-xs font-semibold text-slate-600 mb-1">Live Search</label>
+          <input
+            id="inventory-live-search"
+            type="text"
+            placeholder="Search item code or product name..."
+            class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+          >
+        </div>
+        {% if can_edit_beginning %}
+        <div class="flex items-end md:justify-end">
+          <button id="open-baseline-confirm-modal" type="button" class="px-4 py-2 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors whitespace-nowrap">
+            Save BEG Baseline
+          </button>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full inventory-sheet">
+        <thead class="bg-white">
+          <tr>
+            {% if show_item_code %}
+            <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Item Code</th>
+            {% endif %}
+            <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product Name</th>
+            <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">BEG</th>
+            <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">DEL</th>
+            <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">T.I.</th>
+            <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">T.O.</th>
+            <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">WTG</th>
+            <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">CI</th>
+            <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">SOLD</th>
+            <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">TheoEnd</th>
+            <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">ACT END</th>
+            {% if show_variance %}
+            <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">VAR</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody id="inventory-summary-body">
+          {% for row in summary_rows %}
+          <tr
+            class="summary-row bg-white"
+            data-search="{{ (row.item_code ~ ' ' ~ row.product_name)|lower }}"
+            data-row-key="{{ row.row_key }}"
+            data-beg-initial="{{ row.beginning_qty }}"
+            data-delivery="{{ row.delivery_qty }}"
+            data-trans-in="{{ row.trans_in_qty }}"
+            data-trans-out="{{ row.trans_out_qty }}"
+            data-wastage="{{ row.wastage_qty }}"
+            data-ci="{{ row.ci_qty }}"
+            data-sold="{{ row.pos_sold_qty }}"
+          >
+            {% if show_item_code %}
+            <td class="px-4 py-2 text-sm text-slate-700">{{ row.item_code if row.item_code else '-' }}</td>
+            {% endif %}
+            <td class="px-4 py-2 text-sm text-slate-800">{{ row.product_name }}</td>
+            <td class="px-4 py-2 text-sm text-right">
+              {% if can_edit_beginning %}
+              <div class="beg-cell ml-auto w-24" data-row-index="{{ loop.index0 }}">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  name="beg_{{ row.row_key }}"
+                  value="{{ row.beginning_qty }}"
+                  class="beg-input w-full px-2 py-1 text-sm text-right outline-none"
+                >
+                <button type="button" class="beg-display hidden w-full px-2 py-1 text-sm text-right text-slate-900 font-semibold rounded" title="Click to edit">
+                  {{ row.beginning_qty }}
+                </button>
+              </div>
+              {% else %}
+              <span class="text-slate-800">{{ row.beginning_qty }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2 text-sm text-slate-800 text-right">{{ row.delivery_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-800 text-right">{{ row.trans_in_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-800 text-right">{{ row.trans_out_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-800 text-right">{{ row.wastage_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-800 text-right">{{ row.ci_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-800 text-right">{{ row.pos_sold_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-900 text-right font-bold ending-qty">{{ row.ending_qty }}</td>
+            <td class="px-4 py-2 text-sm text-right">
+              <div class="actual-cell ml-auto w-24" data-row-index="{{ loop.index0 }}">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  name="actual_{{ row.row_key }}"
+                  value="{{ row.ending_qty }}"
+                  class="actual-input w-full px-2 py-1 text-sm text-right outline-none"
+                >
+                <button type="button" class="actual-display hidden w-full px-2 py-1 text-sm text-right text-slate-900 font-semibold rounded" title="Click to edit">
+                  {{ row.ending_qty }}
+                </button>
+              </div>
+            </td>
+            {% if show_variance %}
+            <td class="px-4 py-2 text-sm text-right font-semibold variance-qty text-slate-700">0</td>
+            {% endif %}
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="{{ table_column_count }}" class="px-4 py-8 text-center text-sm text-slate-500">No inventory data found for the selected date.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        {% if summary_rows %}
+        <tfoot class="bg-slate-100 border-t border-slate-300">
+          <tr>
+            {% if show_item_code %}
+            <td class="px-4 py-2 text-xs font-bold text-slate-700 uppercase">Total</td>
+            <td class="px-4 py-2"></td>
+            {% else %}
+            <td class="px-4 py-2 text-xs font-bold text-slate-700 uppercase">Total</td>
+            {% endif %}
+            <td class="px-4 py-2 text-sm text-slate-900 text-right font-bold">{{ summary_totals.beginning_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-900 text-right font-bold">{{ summary_totals.delivery_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-900 text-right font-bold">{{ summary_totals.trans_in_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-900 text-right font-bold">{{ summary_totals.trans_out_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-900 text-right font-bold">{{ summary_totals.wastage_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-900 text-right font-bold">{{ summary_totals.ci_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-900 text-right font-bold">{{ summary_totals.pos_sold_qty }}</td>
+            <td class="px-4 py-2 text-sm text-slate-900 text-right font-extrabold">{{ summary_totals.ending_qty }}</td>
+            <td id="actual-total-cell" class="px-4 py-2 text-sm text-slate-900 text-right font-extrabold">{{ summary_totals.ending_qty }}</td>
+            {% if show_variance %}
+            <td id="variance-total-cell" class="px-4 py-2 text-sm text-right font-extrabold text-slate-700">0</td>
+            {% endif %}
+          </tr>
+        </tfoot>
+        {% endif %}
+      </table>
+    </div>
+    </form>
+  </section>
+</div>
+<style>
+  .inventory-sheet th,
+  .inventory-sheet td {
+    border: 0 !important;
+  }
+
+  .inventory-sheet .summary-row {
+    border-bottom: 1px solid transparent;
+  }
+
+  .beg-input,
+  .actual-input {
+    border: 0;
+    border-bottom: 1px solid #cbd5e1;
+    border-radius: 0;
+    background: transparent;
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .beg-input::-webkit-outer-spin-button,
+  .beg-input::-webkit-inner-spin-button,
+  .actual-input::-webkit-outer-spin-button,
+  .actual-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .beg-cell.is-active .beg-input {
+    border-bottom-color: #059669;
+    box-shadow: inset 0 -1px 0 #059669;
+  }
+
+  .beg-display:hover {
+    background: #f1f5f9;
+    cursor: pointer;
+  }
+
+  .actual-display:hover {
+    background: #f1f5f9;
+    cursor: pointer;
+  }
+</style>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const canEditBeginning = {{ 'true' if can_edit_beginning else 'false' }};
+    const totalColumns = {{ table_column_count }};
+    const pageScopeKey = String({{ store.id }}) + ':' + String('{{ selected_report_date if selected_report_date else today }}') + ':' + String('{{ list_source if list_source else "masterlist" }}');
+    const begDraftStorageKey = 'deis-beg-draft:' + pageScopeKey;
+    const actualDraftStorageKey = 'deis-actual-draft:' + pageScopeKey;
+    const searchInput = document.getElementById('inventory-live-search');
+    const tbody = document.getElementById('inventory-summary-body');
+    if (searchInput && tbody) {
+      const rows = Array.from(tbody.querySelectorAll('tr.summary-row'));
+      if (rows.length) {
+        let emptyRow = null;
+
+        function renderFilter() {
+          const query = (searchInput.value || '').toLowerCase().trim();
+          let visibleCount = 0;
+
+          rows.forEach((row) => {
+            const haystack = (row.getAttribute('data-search') || '').toLowerCase();
+            const visible = !query || haystack.includes(query);
+            row.style.display = visible ? '' : 'none';
+            if (visible) visibleCount += 1;
+          });
+
+          if (visibleCount === 0) {
+            if (!emptyRow) {
+              emptyRow = document.createElement('tr');
+              emptyRow.innerHTML = '<td colspan="' + String(totalColumns) + '" class="px-4 py-8 text-center text-sm text-slate-500">No matching items found.</td>';
+              tbody.appendChild(emptyRow);
+            }
+          } else if (emptyRow) {
+            emptyRow.remove();
+            emptyRow = null;
+          }
+        }
+
+        searchInput.addEventListener('input', renderFilter);
+      }
+    }
+
+    const openBaselineConfirmModalBtn = document.getElementById('open-baseline-confirm-modal');
+    const baselineForm = openBaselineConfirmModalBtn
+      ? openBaselineConfirmModalBtn.closest('form')
+      : document.querySelector('form[action*="/store-manager/daily-ending-inventory-summary/baseline"]');
+    if (baselineForm) {
+      const rowElements = Array.from(baselineForm.querySelectorAll('tr.summary-row'));
+      const rowByKey = {};
+      rowElements.forEach((rowEl) => {
+        const rowKey = String(rowEl.getAttribute('data-row-key') || '');
+        if (rowKey) {
+          rowByKey[rowKey] = rowEl;
+        }
+      });
+
+      function parseNonNegativeInt(rawValue) {
+        const parsed = Number.parseInt(String(rawValue || '').trim(), 10);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+      }
+
+      function parseIntSafe(rawValue) {
+        const parsed = Number.parseInt(String(rawValue || '').trim(), 10);
+        return Number.isFinite(parsed) ? parsed : 0;
+      }
+
+      function parseRowMetric(rowEl, attrName) {
+        return parseIntSafe(rowEl.getAttribute(attrName));
+      }
+
+      function computeTheoreticalEnding(rowEl, beginQty) {
+        const del = parseRowMetric(rowEl, 'data-delivery');
+        const transIn = parseRowMetric(rowEl, 'data-trans-in');
+        const transOut = parseRowMetric(rowEl, 'data-trans-out');
+        const wastage = parseRowMetric(rowEl, 'data-wastage');
+        const ci = parseRowMetric(rowEl, 'data-ci');
+        const sold = parseRowMetric(rowEl, 'data-sold');
+        return beginQty + del + transIn - transOut - wastage - ci - sold;
+      }
+
+      function loadDraftMapFromStorage(storageKey) {
+        try {
+          const raw = localStorage.getItem(storageKey);
+          if (!raw) return {};
+          const parsed = JSON.parse(raw);
+          return (parsed && typeof parsed === 'object') ? parsed : {};
+        } catch (error) {
+          return {};
+        }
+      }
+
+      function saveDraftMapToStorage(storageKey, draftMap) {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(draftMap || {}));
+        } catch (error) {
+          // Ignore storage write errors to avoid blocking encoding flow.
+        }
+      }
+
+      function clearDraft(storageKey) {
+        try {
+          localStorage.removeItem(storageKey);
+        } catch (error) {
+          // Ignore storage clear errors to avoid blocking submission.
+        }
+      }
+
+      function clearAllDrafts() {
+        clearDraft(begDraftStorageKey);
+        clearDraft(actualDraftStorageKey);
+      }
+
+      const actualControllers = Array.from(baselineForm.querySelectorAll('.actual-cell')).map((cell, index) => {
+        const input = cell.querySelector('.actual-input');
+        const fieldName = input ? String(input.getAttribute('name') || '') : '';
+        return {
+          index,
+          cell,
+          input,
+          display: cell.querySelector('.actual-display'),
+          rowKey: fieldName.startsWith('actual_') ? fieldName.slice(7) : '',
+        };
+      });
+
+      function getCurrentBeginningQty(rowKey) {
+        const rowEl = rowByKey[rowKey];
+        if (!rowEl) return 0;
+        if (canEditBeginning) {
+          const begInput = rowEl.querySelector('.beg-input');
+          if (begInput) {
+            return parseNonNegativeInt(begInput.value);
+          }
+        }
+        return parseNonNegativeInt(rowEl.getAttribute('data-beg-initial'));
+      }
+
+      function refreshVarianceRow(rowKey) {
+        const rowEl = rowByKey[rowKey];
+        if (!rowEl) return;
+        const beginQty = getCurrentBeginningQty(rowKey);
+        const theoreticalEnding = computeTheoreticalEnding(rowEl, beginQty);
+        const endingCell = rowEl.querySelector('.ending-qty');
+        if (endingCell) {
+          endingCell.textContent = String(theoreticalEnding);
+        }
+
+        const actualInput = rowEl.querySelector('.actual-input');
+        const varianceCell = rowEl.querySelector('.variance-qty');
+        const actualQty = actualInput ? parseNonNegativeInt(actualInput.value) : theoreticalEnding;
+        const varianceQty = actualQty - theoreticalEnding;
+        if (varianceCell) {
+          varianceCell.textContent = String(varianceQty);
+          varianceCell.classList.remove('text-emerald-600', 'text-rose-600', 'text-slate-700');
+          if (varianceQty > 0) {
+            varianceCell.classList.add('text-emerald-600');
+          } else if (varianceQty < 0) {
+            varianceCell.classList.add('text-rose-600');
+          } else {
+            varianceCell.classList.add('text-slate-700');
+          }
+        }
+      }
+
+      function refreshVarianceTotals() {
+        let totalActual = 0;
+        let totalVariance = 0;
+        rowElements.forEach((rowEl) => {
+          const rowKey = String(rowEl.getAttribute('data-row-key') || '');
+          if (!rowKey) return;
+          const beginQty = getCurrentBeginningQty(rowKey);
+          const theoreticalEnding = computeTheoreticalEnding(rowEl, beginQty);
+          const actualInput = rowEl.querySelector('.actual-input');
+          const actualQty = actualInput ? parseNonNegativeInt(actualInput.value) : theoreticalEnding;
+          totalActual += actualQty;
+          totalVariance += (actualQty - theoreticalEnding);
+        });
+
+        const actualTotalCell = document.getElementById('actual-total-cell');
+        const varianceTotalCell = document.getElementById('variance-total-cell');
+        if (actualTotalCell) {
+          actualTotalCell.textContent = String(totalActual);
+        }
+        if (varianceTotalCell) {
+          varianceTotalCell.textContent = String(totalVariance);
+          varianceTotalCell.classList.remove('text-emerald-600', 'text-rose-600', 'text-slate-700');
+          if (totalVariance > 0) {
+            varianceTotalCell.classList.add('text-emerald-600');
+          } else if (totalVariance < 0) {
+            varianceTotalCell.classList.add('text-rose-600');
+          } else {
+            varianceTotalCell.classList.add('text-slate-700');
+          }
+        }
+      }
+
+      function refreshAllVariance() {
+        rowElements.forEach((rowEl) => {
+          const rowKey = String(rowEl.getAttribute('data-row-key') || '');
+          if (!rowKey) return;
+          refreshVarianceRow(rowKey);
+        });
+        refreshVarianceTotals();
+      }
+
+      function persistActualDraftValues() {
+        const draftMap = {};
+        actualControllers.forEach((row) => {
+          if (!row.rowKey) return;
+          draftMap[row.rowKey] = parseNonNegativeInt(row.input.value);
+        });
+        saveDraftMapToStorage(actualDraftStorageKey, draftMap);
+      }
+
+      const actualDraftMap = loadDraftMapFromStorage(actualDraftStorageKey);
+      actualControllers.forEach((row) => {
+        const initialValue = parseNonNegativeInt(row.input.value);
+        const draftValue = row.rowKey && Object.prototype.hasOwnProperty.call(actualDraftMap, row.rowKey)
+          ? parseNonNegativeInt(actualDraftMap[row.rowKey])
+          : initialValue;
+        row.input.value = String(draftValue);
+        row.display.textContent = String(draftValue);
+        row.input.classList.add('hidden');
+        row.display.classList.remove('hidden');
+
+        row.display.addEventListener('click', function () {
+          row.input.classList.remove('hidden');
+          row.display.classList.add('hidden');
+          row.input.focus();
+          row.input.select();
+        });
+
+        row.input.addEventListener('blur', function () {
+          const nextValue = parseNonNegativeInt(row.input.value);
+          row.input.value = String(nextValue);
+          row.display.textContent = String(nextValue);
+          row.input.classList.add('hidden');
+          row.display.classList.remove('hidden');
+          persistActualDraftValues();
+          refreshVarianceRow(row.rowKey);
+          refreshVarianceTotals();
+        });
+
+        row.input.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            row.input.blur();
+          }
+        });
+
+        row.input.addEventListener('input', function () {
+          persistActualDraftValues();
+          refreshVarianceRow(row.rowKey);
+          refreshVarianceTotals();
+        });
+      });
+      persistActualDraftValues();
+      refreshAllVariance();
+
+    if (canEditBeginning && baselineForm) {
+      const controllers = Array.from(baselineForm.querySelectorAll('.beg-cell')).map((cell, index) => {
+        const input = cell.querySelector('.beg-input');
+        const fieldName = input ? String(input.getAttribute('name') || '') : '';
+        return {
+          index,
+          cell,
+          input,
+          display: cell.querySelector('.beg-display'),
+          rowKey: fieldName.startsWith('beg_') ? fieldName.slice(4) : '',
+          isLocked: false,
+        };
+      });
+
+      function normalizeValue(rawValue) {
+        const parsed = Number.parseInt(String(rawValue || '').trim(), 10);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+      }
+
+      function loadDraftMap() {
+        return loadDraftMapFromStorage(begDraftStorageKey);
+      }
+
+      function saveDraftMap(draftMap) {
+        saveDraftMapToStorage(begDraftStorageKey, draftMap);
+      }
+
+      function persistAllDraftValues() {
+        const draftMap = {};
+        controllers.forEach((row) => {
+          if (!row.rowKey) return;
+          draftMap[row.rowKey] = normalizeValue(row.input.value);
+        });
+        saveDraftMap(draftMap);
+      }
+
+      function clearDraftValues() {
+        clearDraft(begDraftStorageKey);
+      }
+
+      function submitAndClearDraft() {
+        clearAllDrafts();
+        baselineForm.submit();
+      }
+
+      function focusCell(index) {
+        const target = controllers[index];
+        if (!target) return;
+        controllers.forEach((row, rowIndex) => {
+          row.cell.classList.remove('is-active');
+          if (rowIndex !== index && !row.input.classList.contains('hidden')) {
+            const committedValue = normalizeValue(row.input.value);
+            row.input.value = String(committedValue);
+            row.display.textContent = String(committedValue);
+            row.input.classList.add('hidden');
+            row.display.classList.remove('hidden');
+          }
+        });
+        persistAllDraftValues();
+        refreshAllVariance();
+        target.input.classList.remove('hidden');
+        target.display.classList.add('hidden');
+        target.cell.classList.add('is-active');
+        target.input.focus();
+        target.input.select();
+      }
+
+      function lockCell(index) {
+        const target = controllers[index];
+        if (!target) return;
+        const nextValue = normalizeValue(target.input.value);
+        target.input.value = String(nextValue);
+        target.display.textContent = String(nextValue);
+        target.isLocked = true;
+        target.input.classList.add('hidden');
+        target.display.classList.remove('hidden');
+        target.cell.classList.remove('is-active');
+        persistAllDraftValues();
+        refreshAllVariance();
+      }
+
+      function promptSubmit() {
+        const message = 'Are you sure this is all and want to submit? You can still click any number to revise before final submit.';
+        if (typeof showConfirmationModal === 'function') {
+          showConfirmationModal({
+            title: 'Final Check',
+            message,
+            confirmText: 'Yes, Submit',
+            cancelText: 'Review Again',
+            onConfirm: function () {
+              submitAndClearDraft();
+            },
+          });
+          return;
+        }
+        if (window.confirm(message)) {
+          submitAndClearDraft();
+        }
+      }
+
+      function lockAndMove(index) {
+        lockCell(index);
+        const nextIndex = index + 1;
+        if (nextIndex < controllers.length) {
+          focusCell(nextIndex);
+          return;
+        }
+        promptSubmit();
+      }
+
+      if (controllers.length > 0) {
+        const draftMap = loadDraftMap();
+        controllers.forEach((row, index) => {
+          const initialValue = normalizeValue(row.input.value);
+          const draftValue = row.rowKey && Object.prototype.hasOwnProperty.call(draftMap, row.rowKey)
+            ? normalizeValue(draftMap[row.rowKey])
+            : initialValue;
+          row.input.value = String(draftValue);
+          row.display.textContent = String(draftValue);
+
+          if (index === 0) {
+            row.input.classList.remove('hidden');
+            row.display.classList.add('hidden');
+            row.cell.classList.add('is-active');
+          } else {
+            row.input.classList.add('hidden');
+            row.display.classList.remove('hidden');
+          }
+
+          row.input.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              lockAndMove(index);
+            }
+          });
+
+          row.input.addEventListener('change', function () {
+            const nextValue = normalizeValue(row.input.value);
+            row.input.value = String(nextValue);
+            row.display.textContent = String(nextValue);
+            persistAllDraftValues();
+            refreshVarianceRow(row.rowKey);
+            refreshVarianceTotals();
+          });
+
+          row.input.addEventListener('input', function () {
+            persistAllDraftValues();
+            refreshVarianceRow(row.rowKey);
+            refreshVarianceTotals();
+          });
+
+          row.display.addEventListener('click', function () {
+            focusCell(index);
+          });
+        });
+
+        persistAllDraftValues();
+        refreshAllVariance();
+        controllers[0].input.focus();
+        controllers[0].input.select();
+      }
+    }
+    }
+
+    if (openBaselineConfirmModalBtn && baselineForm && typeof showConfirmationModal === 'function') {
+      openBaselineConfirmModalBtn.addEventListener('click', function () {
+        showConfirmationModal({
+          title: 'Confirm Submission',
+          message: 'Please confirm all BEG baseline values are final. After saving, baseline is locked and any correction will require an IT request.',
+          confirmText: 'Yes, Submit',
+          cancelText: 'Cancel',
+          onConfirm: function () {
+            if (canEditBeginning) {
+              try {
+                localStorage.removeItem(begDraftStorageKey);
+                localStorage.removeItem(actualDraftStorageKey);
+              } catch (error) {
+                // Ignore storage clear errors to avoid blocking submission.
+              }
+            }
+            baselineForm.submit();
+          }
+        });
+      });
+    }
+  });
+</script>
+{% endblock %}

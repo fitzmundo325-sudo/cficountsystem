@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+{% block title %}View TAF - {{ store.name }}{% endblock %}
+
+{% block content %}
+{% set trans_view_mode = trans_view_mode|default('incoming') %}
+{% set is_outgoing_view = trans_view_mode == 'outgoing' %}
+{% set is_wastage_view = trans_view_mode == 'wastage' %}
+{% if is_wastage_view %}
+  {% set trans_list_endpoint = 'views.store_manager_wastage' %}
+  {% set trans_list_label = 'Wastage' %}
+  {% set view_title_text = 'Wastage Transfer Details' %}
+  {% set view_subtitle_text = 'Read-only view of outgoing wastage transfer.' %}
+{% elif is_outgoing_view %}
+  {% set trans_list_endpoint = 'views.store_manager_outgoing_transfers' %}
+  {% set trans_list_label = 'Trans-Out' %}
+  {% set view_title_text = 'Outgoing Transfer Details' %}
+  {% set view_subtitle_text = 'Read-only view of outgoing transfer.' %}
+{% else %}
+  {% set trans_list_endpoint = 'views.store_manager_incoming_transfers' %}
+  {% set trans_list_label = 'Trans-In' %}
+  {% set view_title_text = 'View TAF' %}
+  {% set view_subtitle_text = 'Read-only view of incoming Product Transfer.' %}
+{% endif %}
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span>Store Manager</span>
+      <span class="mx-2">/</span>
+      <a href="{{ url_for(trans_list_endpoint) }}" class="hover:text-slate-700">{{ trans_list_label }}</a>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">{{ view_title_text }}</span>
+    </nav>
+  </div>
+  <div class="text-sm font-medium text-slate-600">
+    <span class="text-slate-900">{{ store.name }}</span>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  <section class="rounded-none border border-slate-200 bg-white shadow-sm">
+    <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-cyan-50 to-blue-50 border-b border-slate-200 flex items-center justify-between gap-2">
+      <div>
+        <h3 class="text-sm md:text-base font-bold text-slate-900">Transaction Activity Form (TAF)</h3>
+        <p class="text-xs text-slate-500 mt-0.5">{{ view_subtitle_text }}</p>
+      </div>
+      {% set transfer_status = transfer.status if transfer.status else 'Pending' %}
+      <div class="flex items-center gap-2">
+        <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold {% if transfer_status == 'Pending' %}bg-amber-100 text-amber-700{% elif transfer_status == 'Received' %}bg-emerald-100 text-emerald-700{% elif transfer_status in ['Received - Short', 'Received - Over', 'Received - Short/Over'] %}bg-rose-100 text-rose-700{% else %}bg-slate-100 text-slate-700{% endif %}">
+          {{ transfer_status }}
+        </span>
+        <a href="{{ url_for(trans_list_endpoint) }}" class="px-3 py-1.5 text-xs font-semibold bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors shadow-md shadow-cyan-600/25">
+          Back to {{ trans_list_label }}
+        </a>
+      </div>
+    </div>
+
+    {% set is_pending = transfer_status == 'Pending' %}
+    {% set can_edit_receive = can_edit_receive|default(false) %}
+    <form id="trans-receive-form" method="post" class="p-4 md:p-5 space-y-3">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="md:col-span-2 flex flex-wrap items-center gap-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="text-sm font-semibold text-slate-700">Date:</label>
+            <input type="text" value="{{ transfer.transaction_date.strftime('%Y-%m-%d') if transfer.transaction_date else '' }}" readonly class="w-[180px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 cursor-not-allowed">
+          </div>
+          <div class="flex flex-wrap items-center gap-2 sm:ml-auto">
+            <label class="text-sm font-semibold text-slate-700">Control No:</label>
+            <input type="text" value="{{ transfer.control_no }}" readonly class="w-[230px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 cursor-not-allowed">
+          </div>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-xs font-medium text-slate-700 mb-1">Transaction Type</label>
+          {% set selected_type = transfer.transaction_type if transfer.transaction_type else 'Product Transfer' %}
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+            <div class="inline-flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left {% if selected_type == 'Product Transfer' %}border border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200{% else %}border border-slate-200 bg-white{% endif %}">
+              <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M5 12h14"></path>
+                  <path d="m12 5 7 7-7 7"></path>
+                </svg>
+              </span>
+              <span class="text-sm font-semibold text-slate-800">Product Transfer</span>
+              {% if selected_type == 'Product Transfer' %}
+              <span class="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <path d="m5 12 4 4 10-10"></path>
+                </svg>
+              </span>
+              {% endif %}
+            </div>
+            <div class="inline-flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left {% if selected_type == 'Wastage Transfer' %}border border-amber-500 bg-amber-50 ring-2 ring-amber-200{% else %}border border-slate-200 bg-white{% endif %}">
+              <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-amber-100 text-amber-700">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 6h18"></path>
+                  <path d="M8 6V4h8v2"></path>
+                  <path d="M19 6l-1 14H6L5 6"></path>
+                </svg>
+              </span>
+              <span class="text-sm font-semibold text-slate-800">Wastage Transfer</span>
+              {% if selected_type == 'Wastage Transfer' %}
+              <span class="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-600 text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <path d="m5 12 4 4 10-10"></path>
+                </svg>
+              </span>
+              {% endif %}
+            </div>
+            <div class="inline-flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left {% if selected_type == 'Supplies Transfer' %}border border-blue-500 bg-blue-50 ring-2 ring-blue-200{% else %}border border-slate-200 bg-white{% endif %}">
+              <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="7" width="18" height="13" rx="2"></rect>
+                  <path d="M8 7V5h8v2"></path>
+                </svg>
+              </span>
+              <span class="text-sm font-semibold text-slate-800">Supplies Transfer</span>
+              {% if selected_type == 'Supplies Transfer' %}
+              <span class="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <path d="m5 12 4 4 10-10"></path>
+                </svg>
+              </span>
+              {% endif %}
+            </div>
+            <div class="inline-flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left {% if selected_type == 'Supplies Request' %}border border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200{% else %}border border-slate-200 bg-white{% endif %}">
+              <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="9"></circle>
+                  <path d="M12 8v8"></path>
+                  <path d="M8 12h8"></path>
+                </svg>
+              </span>
+              <span class="text-sm font-semibold text-slate-800">Supplies Request</span>
+              {% if selected_type == 'Supplies Request' %}
+              <span class="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <path d="m5 12 4 4 10-10"></path>
+                </svg>
+              </span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-700 mb-1">Transfer From</label>
+          <input type="text" value="{{ transfer.transfer_from }}" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 cursor-not-allowed">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-700 mb-1">Transfer To</label>
+          <input type="text" value="{{ transfer.transfer_to }}" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 cursor-not-allowed">
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-slate-200 overflow-hidden">
+        <div class="bg-slate-100 px-3 py-2 flex items-center justify-between">
+          <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Items</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-white">
+              <tr>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Item Name</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Unit Cost</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Sent Qty</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Received Qty</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Short / Over</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Total</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Remarks</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 bg-white">
+              {% for item in transfer_items %}
+              {% set sent_qty = item.quantity or 0 %}
+              {% set received_qty = item.received_quantity if item.received_quantity is not none else sent_qty %}
+              {% set short_over_qty = (received_qty or 0) - (sent_qty or 0) %}
+              <tr class="odd:bg-white even:bg-slate-50">
+                <td class="px-3 py-2 text-sm text-slate-700">{{ item.item_name }}</td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right font-semibold">{{ '%.2f'|format(item.unit_cost or 0) }}</td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right font-semibold">{{ sent_qty }}</td>
+                <td class="px-3 py-2 text-right">
+                  <input type="hidden" name="item_id[]" value="{{ item.id }}">
+                  <input type="number" min="0" step="1" name="received_qty[]" value="{{ received_qty }}" {% if not (is_pending and can_edit_receive) %}readonly{% endif %} class="taf-received-qty ml-auto w-24 px-2.5 py-1.5 text-sm text-right border border-slate-200 rounded-md outline-none {% if is_pending and can_edit_receive %}bg-white focus:ring-2 focus:ring-cyan-300{% else %}bg-slate-50 text-slate-600 cursor-not-allowed{% endif %}" data-sent-qty="{{ sent_qty }}">
+                </td>
+                <td class="px-3 py-2 text-right text-sm font-semibold">
+                  <span class="taf-short-over {% if short_over_qty < 0 %}text-rose-700{% elif short_over_qty > 0 %}text-emerald-700{% else %}text-slate-700{% endif %}">
+                    {% if short_over_qty > 0 %}+{% endif %}{{ short_over_qty }}
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-sm text-slate-900 text-right font-semibold">{{ '%.2f'|format(item.line_total or 0) }}</td>
+                <td class="px-3 py-2 text-sm text-slate-700">{{ item.remarks if item.remarks else '-' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+            <tfoot class="bg-slate-50">
+              <tr>
+                <td colspan="5" class="px-3 py-2 text-right text-sm font-semibold text-slate-700">Grand Total</td>
+                <td class="px-3 py-2 text-right text-sm font-bold text-slate-900">{{ '%.2f'|format(transfer.grand_total or 0) }}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-slate-200 bg-white px-3 py-3">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-700">
+          <div class="flex items-center gap-2">
+            <span class="font-semibold">Prepared By:</span>
+            <span class="inline-block min-w-[220px] border-b border-slate-400 pb-0.5">{{ transfer.prepared_by_name if transfer.prepared_by_name else ' ' }}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="font-semibold">Received By:</span>
+            {% if is_pending and can_edit_receive %}
+            <input type="text" name="received_by_name" value="{{ transfer.received_by_name if transfer.received_by_name else '' }}" placeholder="Enter receiver name" class="w-full max-w-[260px] px-2 py-1 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+            {% else %}
+            <span class="inline-block min-w-[220px] border-b border-slate-400 pb-0.5">{{ transfer.received_by_name if transfer.received_by_name else ' ' }}</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-2 pt-1">
+        <div>
+          {% if not is_pending %}
+          <p class="mt-1 text-xs text-slate-500">Finalized transfer. Editing is disabled.</p>
+          {% endif %}
+        </div>
+         {% if is_pending and can_edit_receive %}
+         <button id="trans-receive-submit-btn" type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors">
+           Confirm Receiving
+         </button>
+        {% endif %}
+      </div>
+    </form>
+  </section>
+</div>
+
+<script>
+  (function() {
+    const receiveFormEl = document.getElementById('trans-receive-form');
+    const receiveSubmitBtnEl = document.getElementById('trans-receive-submit-btn');
+    let hasConfirmedReceive = false;
+
+    function updateShortOverForInput(inputEl) {
+      if (!inputEl) return;
+      const sentQty = Number(inputEl.dataset.sentQty || 0);
+      const receivedQty = Number(inputEl.value || 0);
+      const variance = receivedQty - sentQty;
+      const row = inputEl.closest('tr');
+      const shortOverEl = row ? row.querySelector('.taf-short-over') : null;
+      if (!shortOverEl) return;
+      shortOverEl.textContent = `${variance > 0 ? '+' : ''}${variance}`;
+      shortOverEl.classList.remove('text-rose-700', 'text-emerald-700', 'text-slate-700');
+      if (variance < 0) {
+        shortOverEl.classList.add('text-rose-700');
+      } else if (variance > 0) {
+        shortOverEl.classList.add('text-emerald-700');
+      } else {
+        shortOverEl.classList.add('text-slate-700');
+      }
+    }
+
+    const receivedQtyInputs = document.querySelectorAll('.taf-received-qty');
+    receivedQtyInputs.forEach((inputEl) => {
+      updateShortOverForInput(inputEl);
+      inputEl.addEventListener('input', () => updateShortOverForInput(inputEl));
+    });
+
+    receiveFormEl?.addEventListener('submit', (event) => {
+      if (hasConfirmedReceive) return;
+      event.preventDefault();
+
+      if (typeof showConfirmationModal !== 'function') {
+        hasConfirmedReceive = true;
+        receiveFormEl.submit();
+        return;
+      }
+
+      showConfirmationModal({
+        title: 'Confirm Receiving',
+        message: 'Are you sure you want to confirm receiving?',
+        confirmText: 'Yes, Confirm',
+        cancelText: 'No, Cancel',
+        onConfirm: () => {
+          hasConfirmedReceive = true;
+          if (receiveSubmitBtnEl) {
+            receiveSubmitBtnEl.disabled = true;
+            receiveSubmitBtnEl.classList.add('opacity-60', 'cursor-not-allowed');
+          }
+          receiveFormEl.submit();
+        },
+      });
+    });
+  })();
+</script>
+{% endblock %}
