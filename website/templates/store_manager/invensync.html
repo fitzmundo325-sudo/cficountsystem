@@ -1,0 +1,1228 @@
+{% if current_user.role in ['Admin', 'Superadmin'] %}
+  {% extends "admin_base.html" %}
+{% else %}
+  {% extends "base.html" %}
+{% endif %}
+{% block title %}Daily Combined - {{ store.name }}{% endblock %}
+
+{% block content %}
+
+{% set is_view_only = current_user.role == 'Inventory Staff' %}
+
+<style>
+  /* Remove number spinner arrows */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+</style>
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div class="flex items-center gap-3 sm:gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    {% if current_user.role in ['Admin', 'Superadmin'] %}
+    <a href="{{ url_for('admin.invensync') }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="Back to Invensync Dashboard">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 12H5M12 19l-7-7 7-7"/>
+      </svg>
+    </a>
+    {% endif %}
+
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      {% if current_user.role in ['Admin', 'Superadmin'] %}
+        <span class="hover:text-slate-900 cursor-pointer">Admin</span>
+        <span class="mx-2">/</span>
+        <span class="hover:text-slate-900 cursor-pointer">InvenSync</span>
+        <span class="mx-2">/</span>
+        <span class="text-slate-900">Store Details</span>
+      {% elif is_view_only %}
+        <span class="hover:text-slate-900 cursor-pointer">Inventory Staff</span>
+        <span class="mx-2">/</span>
+        <span class="text-slate-900">InvenSync</span>
+        <span class="mx-2">/</span>
+        <span class="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full font-semibold">View Only</span>
+      {% else %}
+        <span class="hover:text-slate-900 cursor-pointer">Store Manager</span>
+        <span class="mx-2">/</span>
+        <span class="text-slate-900">InvenSync</span>
+      {% endif %}
+    </nav>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-3 sm:justify-end">
+    <label for="selected_date" class="text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
+      Date
+    </label>
+    <input
+      type="date"
+      id="selected_date"
+      name="selected_date"
+      required
+      value="{{ selected_date }}"
+      class="w-40 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none shadow-sm"
+      onchange="changeDate(this.value)"
+    >
+    <div class="text-sm font-medium text-slate-600">
+      <span class="text-slate-900">{{ store.name }}</span>
+    </div>
+  </div>
+</header>
+
+<!-- Content -->
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-[2400px] w-full mx-auto space-y-6">
+
+  <!-- Page Header -->
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">InvenSync Combined View</h1>
+        
+      <p class="mt-1 text-slate-600">Forecasting and Ending Inventory for {{ store.name }}</p>
+    </div>
+  </section>
+
+  <!-- Summary Cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
+    <!-- Sales Target -->
+    <div class="bg-white rounded-lg border border-slate-200 px-3 py-2 shadow-sm">
+      <label class="block text-[10px] font-semibold text-slate-500 uppercase leading-tight">Sales Target</label>
+      <div class="relative">
+        <span class="absolute left-0 top-1/2 transform -translate-y-1/2 text-base font-bold text-slate-500">₱</span>
+        <input type="text" id="sales_target" value="{% if forecasting.sales_target %}{{ "{:,.0f}".format(forecasting.sales_target) }}{% else %}0{% endif %}" 
+          class="w-full pl-4 text-lg font-bold leading-tight text-slate-900 bg-transparent border-b border-slate-200 focus:border-sky-500 outline-none py-0.5{{ ' readonly cursor-not-allowed opacity-75' if is_view_only else '' }}"
+          {{ 'readonly' if is_view_only else '' }}
+          oninput="formatSalesTarget(this)" onchange="updateCalculations()">
+      </div>
+    </div>
+    
+    <!-- Act Order Value -->
+    <div class="bg-white rounded-lg border border-slate-200 px-3 py-2 shadow-sm">
+      <label class="block text-[10px] font-semibold text-slate-500 uppercase leading-tight">Act Order Value</label>
+      <div id="act_order_value" class="text-lg font-bold leading-tight text-slate-900">{{ "%.2f"|format(forecasting.act_order_value or 0) }}</div>
+    </div>
+    
+    <!-- Variance -->
+    <div class="bg-white rounded-lg border border-slate-200 px-3 py-2 shadow-sm">
+      <label class="block text-[10px] font-semibold text-slate-500 uppercase leading-tight">Variance (+/-)</label>
+      <div id="variance" class="text-lg font-bold leading-tight {{ 'text-emerald-600' if (forecasting.variance or 0) >= 0 else 'text-rose-600' }}">
+        {{ "%.2f"|format(forecasting.variance or 0) }}
+      </div>
+    </div>
+    
+    <!-- Gross Margin -->
+    <div class="bg-white rounded-lg border border-slate-200 px-3 py-2 shadow-sm">
+      <label class="block text-[10px] font-semibold text-slate-500 uppercase leading-tight">Gross Margin</label>
+      <div id="gross_margin" class="text-lg font-bold leading-tight text-slate-900">{{ "%.2f"|format(forecasting.gross_margin or 0) }}</div>
+      <div id="gross_margin_percent" class="text-xs leading-tight text-slate-500">{{ "%.2f"|format(forecasting.gross_margin_percent or 0) }}%</div>
+    </div>
+  </div>
+
+  <!-- Products Table -->
+  <div id="main-content" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between flex-wrap gap-3">
+      <div class="flex items-center gap-4">
+        <h3 class="text-lg font-bold text-slate-900">Combined Product Data</h3>
+        <span class="text-sm text-slate-500">({{ products|length }} products)</span>
+      </div>
+      <div class="flex items-center gap-2">
+        {% if not is_view_only %}
+        <button onclick="syncProducts()" class="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-all" title="Sync products from Product Masterlist">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
+          </svg>
+          <span>Sync</span>
+        </button>
+        {% endif %}
+        <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-all">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+          </svg>
+          <span>Fullscreen</span>
+        </button>
+        {% if not is_view_only %}
+        <button onclick="saveAll()" class="px-4 py-2 bg-sky-600 text-white text-sm font-semibold rounded-lg hover:bg-sky-700 transition-colors">
+          Save All
+        </button>
+        {% endif %}
+      </div>
+    </div>
+    
+    <div class="relative overflow-hidden border border-slate-200 rounded-xl">
+      <div class="overflow-x-auto overflow-y-auto" style="max-height: calc(100vh - 12rem);">
+      <table class="w-full text-xs">
+        <thead class="bg-slate-100 text-black sticky top-0 z-30">
+          <tr>
+            <!-- Product Info (Shared) -->
+            <th class="px-2 py-3 text-center font-semibold bg-sky-100 text-black sticky left-0 z-40 min-w-[200px] shadow-lg">Product</th>
+            
+            <!-- Forecasting Section -->
+            <th colspan="14" class="px-2 py-3 text-center font-semibold bg-indigo-100 text-black border-l-2 border-indigo-200">FORECASTING</th>
+            
+            <!-- Ending Inventory Section -->
+            <th colspan="22" class="px-2 py-3 text-center font-semibold bg-emerald-100 text-black border-l-2 border-emerald-200">ENDING INVENTORY</th>
+          </tr>
+          <tr class="text-[10px]">
+            <!-- Product -->
+            <th class="px-2 py-2 text-center font-semibold bg-sky-50 text-black sticky left-0 z-40 border-r border-slate-300 shadow-lg">Code | Description</th>
+            
+            <!-- Forecasting Columns -->
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-l-2 border-indigo-400 border-r border-slate-300"{% if 'must_have' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>MH</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'tp_price' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>TP</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'srp_price' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>SRP</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'gross_margin_1' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>GM1</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'pre_ending' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Pre-End</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'adq_adequate' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>ADQ</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'initial_order' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Initial</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'final_order' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Final Order</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'tp_peso_value' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>TP Val</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'sp_peso_value' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>SP Val</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'gross_margin_2' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>GM2</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'gm_percent' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>GM%</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'delivery_tomorrow_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Del Tmrw</th>
+            <th class="px-2 py-2 text-center font-semibold bg-indigo-50 text-black border-r border-slate-300"{% if 'delivery_tomorrow_peso' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Del Peso</th>
+            
+            <!-- Ending Inventory Columns -->
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-l-2 border-emerald-400 border-r border-slate-300"{% if 'beginning_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Beg</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'delivery_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Delivery</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'trans_in_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Trans-In</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'bo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>BO</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'adv_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Adv</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'trans_out_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Trans-Out</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'wastage_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Waste Qty</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'wastage_amount' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Waste Amt</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'csi_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>CSI</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'quantity_sold' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Sold</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300" id="header-d5"{% if 'd5_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+5</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300" id="header-d4"{% if 'd4_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+4</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300" id="header-d3"{% if 'd3_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+3</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'total_ending_inventory' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total EI</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'total_amount_with_discount' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total Peso</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'theo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>THEO</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'variance_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Var</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'variance_peso' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Var Peso</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'remarks' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Remarks</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'discount_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Discount Qty</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'discount_percent' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Discount %</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black"{% if 'discount_amount' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Discount Amt</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-200">
+          {% set category_list = [
+            ('BREADS', ['BREADS']),
+            ('TRAY PRODUCTS', ['TRAY PRODUCTS']),
+            ('ROLLS', ['ROLLS']),
+            ('GREETING CAKES', ['GREETING CAKES']),
+            ('PREMIUM', ['PREMIUM']),
+            ('CREMA DE FRUTA', ['CREMA DE FRUTA']),
+            ('GM PRODUCTS', ['GM PRODUCTS']),
+            ('CANDLES', ['CANDLES']),
+            ('ADD-ONS', ['ADD-ONS'])
+          ] %}
+          
+          {% for display_name, possible_names in category_list %}
+            {% set cat_products = products|selectattr('category', 'in', possible_names)|list %}
+            {% if cat_products %}
+              {% set cat_id = display_name|lower|replace(' ', '-')|replace('-', '') %}
+              
+              <!-- Category Header -->
+              <tr class="bg-slate-100 category-header" data-category="{{ cat_id }}">
+                <td colspan="41" class="px-4 py-3">
+                  <div class="flex items-center gap-3">
+                    <span class="font-bold text-slate-700">{{ display_name }}</span>
+                    <span class="px-2 py-0.5 bg-slate-300 text-slate-600 text-xs rounded-full">{{ cat_products|length }} items</span>
+                  </div>
+                </td>
+              </tr>
+              
+              <!-- Category Products -->
+              {% for product in cat_products %}
+              {% set fc_item = forecasting_items.get(product.id) %}
+              {% set inv_item = inventory_items.get(product.id) %}
+              {% if product.id not in global_config_data.get('hidden_rows', []) %}
+              <tr class="hover:bg-slate-50" data-product-id="{{ product.id }}" data-category="{{ product.category }}">
+                <!-- Product Info (Shared) -->
+                <td class="px-2 py-2 bg-sky-50 sticky left-0 z-10 border-r border-slate-200 shadow-lg">
+                  <div class="font-medium text-slate-900 text-xs">{{ product.code or '-' }}</div>
+                  <div class="text-[10px] text-slate-500 truncate max-w-[180px]">{{ product.description or 'No Description' }}</div>
+                </td>
+                
+                <!-- Forecasting Data -->
+                <td class="px-2 py-2 text-center border-l-2 border-indigo-400" data-field="must_have"{% if 'must_have' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>
+                  {% if 'must_have' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="checkbox" class="must-have-checkbox w-3 h-3 rounded border-slate-300 text-sky-600 focus:ring-sky-500{% if 'must_have' not in global_config_data.get('editable_columns', []) or 'must_have' in global_config_data.get('locked_columns', []) %} pointer-events-none cursor-not-allowed opacity-75{% endif %}"
+                      {{ 'checked' if fc_item and fc_item.must_have else '' }} onchange="updateForecastingRow(this)"{% if 'must_have' not in global_config_data.get('editable_columns', []) or 'must_have' in global_config_data.get('locked_columns', []) %} disabled{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600" data-field="tp_price">
+                  {% if 'tp_price' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ "%.2f"|format(fc_item.tp_price if fc_item else 0) }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600" data-field="srp_price">
+                  {% if 'srp_price' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ "%.2f"|format(fc_item.srp_price if fc_item else 0) }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600" data-field="gross_margin_1">
+                  {% if 'gross_margin_1' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ "%.2f"|format(fc_item.gross_margin_1 if fc_item else 0) }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="pre_ending">
+                  {% if 'pre_ending' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="pre-ending-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'pre_ending' not in global_config_data.get('editable_columns', []) or 'pre_ending' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ fc_item.pre_ending if fc_item and fc_item.pre_ending else '' }}" onchange="updateForecastingRow(this)"{% if 'pre_ending' not in global_config_data.get('editable_columns', []) or 'pre_ending' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="adq_adequate">
+                  {% if 'adq_adequate' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="adq-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'adq_adequate' not in global_config_data.get('editable_columns', []) or 'adq_adequate' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ fc_item.adq_adequate if fc_item and fc_item.adq_adequate else '' }}" onchange="updateForecastingRow(this)"{% if 'adq_adequate' not in global_config_data.get('editable_columns', []) or 'adq_adequate' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="initial_order">
+                  {% if 'initial_order' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="initial-order-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'initial_order' not in global_config_data.get('editable_columns', []) or 'initial_order' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ fc_item.initial_order if fc_item and fc_item.initial_order else '' }}" onchange="updateForecastingRow(this)"{% if 'initial_order' not in global_config_data.get('editable_columns', []) or 'initial_order' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center font-semibold text-slate-900 final-order" data-field="final_order">
+                  {% if 'final_order' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ fc_item.final_order if fc_item else 0 }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 tp-value" data-field="tp_peso_value">
+                  {% if 'tp_peso_value' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ "%.2f"|format(fc_item.tp_peso_value if fc_item else 0) }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 sp-value" data-field="sp_peso_value">
+                  {% if 'sp_peso_value' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ "%.2f"|format(fc_item.sp_peso_value if fc_item else 0) }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 gm2-value" data-field="gross_margin_2">
+                  {% if 'gross_margin_2' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ "%.2f"|format(fc_item.gross_margin_2 if fc_item else 0) }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 gm-percent" data-field="gm_percent">
+                  {% if 'gm_percent' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {% if fc_item and fc_item.sp_peso_value and fc_item.sp_peso_value != 0 %}
+                      {{ "%.2f"|format((fc_item.gross_margin_2 / fc_item.sp_peso_value) * 100) }}%
+                    {% else %}
+                      0.00%
+                    {% endif %}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 delivery-tmrw" data-field="delivery_tomorrow_qty">
+                  {% if 'delivery_tomorrow_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ fc_item.delivery_tomorrow_qty if fc_item else 0 }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 delivery-peso" data-field="delivery_tomorrow_peso">
+                  {% if 'delivery_tomorrow_peso' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ "%.2f"|format(fc_item.delivery_tomorrow_peso if fc_item else 0) }}
+                  {% endif %}
+                </td>
+                
+                <!-- Ending Inventory Data -->
+                <td class="px-2 py-2 text-center border-l-2 border-emerald-400" data-field="beginning_qty"{% if 'beginning_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>
+                  {% if 'beginning_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="beginning-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'beginning_qty' not in global_config_data.get('editable_columns', []) or 'beginning_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.beginning_qty if inv_item and inv_item.beginning_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'beginning_qty' not in global_config_data.get('editable_columns', []) or 'beginning_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="delivery_qty"{% if 'delivery_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>
+                  {% if 'delivery_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <div class="flex items-center gap-1">
+                      <input type="number" class="delivery-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                        value="{{ inv_item.delivery_qty if inv_item and inv_item.delivery_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                      {% if inv_item.delivery_reviewed_date %}
+                      <span class="delivery-rso-badge bg-emerald-100 text-emerald-700 text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap font-semibold" title="From RSO Review ({{ inv_item.delivery_reviewed_date }})">RSO</span>
+                      {% endif %}
+                    </div>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="trans_in_qty"{% if 'trans_in_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>
+                  {% if 'trans_in_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="trans-in-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'trans_in_qty' not in global_config_data.get('editable_columns', []) or 'trans_in_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.trans_in_qty if inv_item and inv_item.trans_in_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'trans_in_qty' not in global_config_data.get('editable_columns', []) or 'trans_in_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="bo_qty"{% if 'bo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>
+                  {% if 'bo_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="bo-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'bo_qty' not in global_config_data.get('editable_columns', []) or 'bo_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.bo_qty if inv_item and inv_item.bo_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'bo_qty' not in global_config_data.get('editable_columns', []) or 'bo_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="adv_del_qty">
+                  {% if 'adv_del_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="adv-del-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'adv_del_qty' not in global_config_data.get('editable_columns', []) or 'adv_del_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.adv_del_qty if inv_item and inv_item.adv_del_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'adv_del_qty' not in global_config_data.get('editable_columns', []) or 'adv_del_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="trans_out_qty">
+                  {% if 'trans_out_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="trans-out-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'trans_out_qty' not in global_config_data.get('editable_columns', []) or 'trans_out_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.trans_out_qty if inv_item and inv_item.trans_out_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'trans_out_qty' not in global_config_data.get('editable_columns', []) or 'trans_out_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="wastage_qty">
+                  {% if 'wastage_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="wastage-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'wastage_qty' not in global_config_data.get('editable_columns', []) or 'wastage_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.wastage_qty if inv_item and inv_item.wastage_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'wastage_qty' not in global_config_data.get('editable_columns', []) or 'wastage_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 wastage-amount" data-field="wastage_amount">
+                  {% if 'wastage_amount' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ "%.2f"|format((inv_item.wastage_qty * inv_item.srp_price) if inv_item else 0) }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="csi_qty">
+                  {% if 'csi_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="csi-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'csi_qty' not in global_config_data.get('editable_columns', []) or 'csi_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.csi_qty if inv_item and inv_item.csi_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'csi_qty' not in global_config_data.get('editable_columns', []) or 'csi_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="quantity_sold"{% if 'quantity_sold' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>
+                  {% if 'quantity_sold' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <div class="flex items-center justify-center gap-1">
+                      <input type="number" class="sold-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                        value="{{ inv_item.draft_quantity_sold if inv_item and inv_item.draft_quantity_sold is defined else (inv_item.quantity_sold if inv_item and inv_item.quantity_sold else '') }}" onchange="updateInventoryRow(this)"{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                      {% if inv_item and inv_item.pos_reviewed_source %}
+                      <span class="pos-review-badge bg-amber-100 text-amber-700 text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap font-semibold" title="From POS Review{{ ' - ' ~ inv_item.pos_reviewed_date if inv_item.pos_reviewed_date else '' }}">POS</span>
+                      {% endif %}
+                    </div>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="ending_d5_qty">
+                  {% if 'ending_d5_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="ending-d5-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'ending_d5_qty' not in global_config_data.get('editable_columns', []) or 'ending_d5_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.ending_d5_qty if inv_item and inv_item.ending_d5_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'ending_d5_qty' not in global_config_data.get('editable_columns', []) or 'ending_d5_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="ending_d4_qty">
+                  {% if 'ending_d4_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="ending-d4-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'ending_d4_qty' not in global_config_data.get('editable_columns', []) or 'ending_d4_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.ending_d4_qty if inv_item and inv_item.ending_d4_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'ending_d4_qty' not in global_config_data.get('editable_columns', []) or 'ending_d4_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="ending_d3_qty">
+                  {% if 'ending_d3_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="ending-d3-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'ending_d3_qty' not in global_config_data.get('editable_columns', []) or 'ending_d3_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.ending_d3_qty if inv_item and inv_item.ending_d3_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'ending_d3_qty' not in global_config_data.get('editable_columns', []) or 'ending_d3_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center font-semibold text-slate-900 total-ending" data-field="total_ending_qty">
+                  {% if 'total_ending_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ inv_item.total_ending_qty if inv_item else 0 }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 total-peso" data-field="total_peso_srp">
+                  {% if 'total_peso_srp' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ "%.2f"|format((inv_item.total_ending_qty * inv_item.srp_price) if inv_item else 0) }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 theo-ending" data-field="theo_ending_qty">
+                  {% if 'theo_ending_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ inv_item.theo_ending_qty if inv_item else 0 }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 variance" data-field="variance_qty">
+                  {% if 'variance_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ (inv_item.total_ending_qty - inv_item.theo_ending_qty) if inv_item else 0 }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 variance-peso" data-field="variance_peso">
+                  {% if 'variance_peso' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {{ "%.2f"|format(((inv_item.total_ending_qty - inv_item.theo_ending_qty) * inv_item.srp_price) if inv_item else 0) }}
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center" data-field="remarks">
+                  {% if 'remarks' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="text" class="remarks-input w-20 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'remarks' not in global_config_data.get('editable_columns', []) or 'remarks' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.remarks if inv_item else '' }}" onchange="updateInventoryRow(this)"{% if 'remarks' not in global_config_data.get('editable_columns', []) or 'remarks' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="discount_qty">
+                  {% if 'discount_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="discount-qty-input w-14 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'discount_qty' not in global_config_data.get('editable_columns', []) or 'discount_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.discount_qty if inv_item and inv_item.discount_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'discount_qty' not in global_config_data.get('editable_columns', []) or 'discount_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center" data-field="discount_percent">
+                  {% if 'discount_percent' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <select class="discount-percent-select w-16 px-1 py-1 text-center bg-white border border-slate-200 rounded text-[10px] focus:ring-1 focus:ring-sky-400 outline-none{% if 'discount_percent' not in global_config_data.get('editable_columns', []) or 'discount_percent' in global_config_data.get('locked_columns', []) %} pointer-events-none cursor-not-allowed opacity-75{% endif %}" onchange="updateInventoryRow(this)"{% if 'discount_percent' not in global_config_data.get('editable_columns', []) or 'discount_percent' in global_config_data.get('locked_columns', []) %} disabled{% endif %}>
+                      <option value="0" {% if not inv_item or inv_item.discount_percent == 0 %}selected{% endif %}>0%</option>
+                      <option value="10" {% if inv_item and inv_item.discount_percent == 10 %}selected{% endif %}>10%</option>
+                      <option value="15" {% if inv_item and inv_item.discount_percent == 15 %}selected{% endif %}>15%</option>
+                      <option value="30" {% if inv_item and inv_item.discount_percent == 30 %}selected{% endif %}>30%</option>
+                    </select>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2 text-center text-slate-600 discount-amount" data-field="total_amount_with_discount">
+                  {% if 'total_amount_with_discount' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    {% if inv_item and inv_item.discount_qty > 0 and inv_item.discount_percent > 0 %}
+                      {{ "%.2f"|format(inv_item.discount_qty * (inv_item.srp_price - (inv_item.srp_price * inv_item.discount_percent / 100))) }}
+                    {% else %}
+                      0.00
+                    {% endif %}
+                  {% endif %}
+                </td>
+                
+                <!-- Hidden Data -->
+                <input type="hidden" class="fc-item-id" value="{{ fc_item.id if fc_item else '' }}">
+                <input type="hidden" class="inv-item-id" value="{{ inv_item.id if inv_item else '' }}">
+                <input type="hidden" class="tp-price" value="{{ fc_item.tp_price if fc_item else 0 }}">
+                <input type="hidden" class="srp-price" value="{{ fc_item.srp_price if fc_item else 0 }}">
+                <input type="hidden" class="gm1" value="{{ fc_item.gross_margin_1 if fc_item else 0 }}">
+                <input type="hidden" class="mh-constant" value="{{ fc_item.mh_not_constant if fc_item else 1.0 }}">
+              </tr>
+              {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const forecastingId = {{ forecasting.id }};
+const inventoryId = {{ inventory.id }};
+
+function changeDate(newDate) {
+  window.location.href = `/store-manager/invensync?date=${newDate}`;
+}
+
+function updateDateHeaders() {
+  const selectedDateStr = document.getElementById('selected_date')?.value;
+  if (!selectedDateStr) return;
+  
+  const baseDate = new Date(selectedDateStr);
+  
+  // Calculate D+5, D+4, D+3
+  const d5 = new Date(baseDate);
+  d5.setDate(baseDate.getDate() + 5);
+  const d4 = new Date(baseDate);
+  d4.setDate(baseDate.getDate() + 4);
+  const d3 = new Date(baseDate);
+  d3.setDate(baseDate.getDate() + 3);
+  
+  // Format dates as MM/DD/YYYY
+  const formatDate = (date) => {
+    return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
+  };
+  
+  // Update headers
+  const headerD5 = document.getElementById('header-d5');
+  const headerD4 = document.getElementById('header-d4');
+  const headerD3 = document.getElementById('header-d3');
+  
+  if (headerD5) headerD5.textContent = formatDate(d5);
+  if (headerD4) headerD4.textContent = formatDate(d4);
+  if (headerD3) headerD3.textContent = formatDate(d3);
+}
+
+function updateForecastingRow(input) {
+  const row = input.closest('tr');
+  const initialOrder = parseFloat(row.querySelector('.initial-order-input').value) || 0;
+  const mhConstant = parseFloat(row.querySelector('.mh-constant').value) || 1;
+  const tpPrice = parseFloat(row.querySelector('.tp-price').value) || 0;
+  const srpPrice = parseFloat(row.querySelector('.srp-price').value) || 0;
+  const gm1 = parseFloat(row.querySelector('.gm1').value) || 0;
+  
+  const finalOrder = Math.round(initialOrder * mhConstant);
+  row.querySelector('.final-order').textContent = finalOrder;
+  
+  const tpValue = finalOrder * tpPrice;
+  const spValue = finalOrder * srpPrice;
+  
+  // Calculate new fields
+  const gm2 = finalOrder * gm1;
+  const gmPercent = spValue > 0 ? (gm2 / spValue * 100) : 0;
+  const deliveryTomorrowPeso = finalOrder * srpPrice;
+  
+  row.querySelector('.tp-value').textContent = tpValue.toFixed(2);
+  row.querySelector('.sp-value').textContent = spValue.toFixed(2);
+  row.querySelector('.gm2-value').textContent = gm2.toFixed(2);
+  row.querySelector('.gm-percent').textContent = gmPercent.toFixed(2) + '%';
+  row.querySelector('.delivery-tmrw').textContent = finalOrder;
+  row.querySelector('.delivery-peso').textContent = deliveryTomorrowPeso.toFixed(2);
+  
+  updateCalculations();
+}
+
+function updateInventoryRow(input) {
+  const row = input.closest('tr');
+  const beginningInput = row.querySelector('.beginning-input');
+  const beginning = beginningInput ? parseFloat(beginningInput.value) || 0 : parseFloat(row.querySelector('.beginning-qty').textContent) || 0;
+  const delivery = parseFloat(row.querySelector('.delivery-input').value) || 0;
+  const transIn = parseFloat(row.querySelector('.trans-in-input').value) || 0;
+  const bo = parseFloat(row.querySelector('.bo-input').value) || 0;
+  const advDel = parseFloat(row.querySelector('.adv-del-input').value) || 0;
+  const transOut = parseFloat(row.querySelector('.trans-out-input').value) || 0;
+  const wastage = parseFloat(row.querySelector('.wastage-input').value) || 0;
+  const csi = parseFloat(row.querySelector('.csi-input').value) || 0;
+  const sold = parseFloat(row.querySelector('.sold-input').value) || 0;
+  const endingD5 = parseFloat(row.querySelector('.ending-d5-input').value) || 0;
+  const endingD4 = parseFloat(row.querySelector('.ending-d4-input').value) || 0;
+  const endingD3 = parseFloat(row.querySelector('.ending-d3-input').value) || 0;
+  const srpPrice = parseFloat(row.querySelector('.srp-price').value) || 0;
+  const discountQty = parseFloat(row.querySelector('.discount-qty-input').value) || 0;
+  const discountPercent = parseFloat(row.querySelector('.discount-percent-select').value) || 0;
+  
+  // Calculate values
+  const totalEnding = endingD5 + endingD4 + endingD3;
+  const totalPeso = totalEnding * srpPrice;
+  const theoEnding = beginning + delivery + transIn + bo + advDel - transOut - wastage - csi - sold;
+  const variance = totalEnding - theoEnding;
+  const variancePeso = variance * srpPrice;
+  const wastageAmount = wastage * srpPrice;
+  
+  // Calculate discount amount: (SRP - (SRP × discount%)) × qty
+  let discountAmount = 0;
+  if (discountPercent > 0 && discountQty > 0) {
+    const discountValue = srpPrice * (discountPercent / 100);
+    const discountedPrice = srpPrice - discountValue;
+    discountAmount = discountQty * discountedPrice;
+  }
+  
+  // Update display
+  row.querySelector('.total-ending').textContent = totalEnding;
+  row.querySelector('.total-peso').textContent = totalPeso.toFixed(2);
+  row.querySelector('.theo-ending').textContent = theoEnding;
+  row.querySelector('.variance').textContent = variance;
+  row.querySelector('.variance-peso').textContent = variancePeso.toFixed(2);
+  row.querySelector('.wastage-amount').textContent = wastageAmount.toFixed(2);
+  row.querySelector('.discount-amount').textContent = discountAmount.toFixed(2);
+  
+  // Apply color coding to Theo, Var, and Var Peso cells
+  updateCellColors(row, theoEnding, variance, variancePeso);
+}
+
+// Apply color coding to cells based on values
+function updateCellColors(row, theoValue, varValue, varPesoValue) {
+  const theoCell = row.querySelector('.theo-ending');
+  const varCell = row.querySelector('.variance');
+  const varPesoCell = row.querySelector('.variance-peso');
+  
+  // Helper function to apply color based on value
+  const applyCellColor = (cell, value) => {
+    // Remove existing color classes
+    cell.classList.remove('bg-green-100', 'text-green-800', 'bg-pink-100', 'text-pink-800', 'bg-red-100', 'text-red-800');
+    
+    if (value === 0) {
+      // Green for zero
+      cell.classList.add('bg-green-100', 'text-green-800');
+    } else if (value >= 1) {
+      // Magenta for values >= 1
+      cell.classList.add('bg-pink-100', 'text-pink-800');
+    } else if (value < 0) {
+      // Red for negative values
+      cell.classList.add('bg-red-100', 'text-red-800');
+    }
+  };
+  
+  // Apply colors to all three cells
+  applyCellColor(theoCell, theoValue);
+  applyCellColor(varCell, varValue);
+  applyCellColor(varPesoCell, varPesoValue);
+}
+
+// Apply color coding on page load
+function applyColorCodingOnLoad() {
+  const rows = document.querySelectorAll('tbody tr[data-product-id]');
+  rows.forEach(row => {
+    const theoValue = parseFloat(row.querySelector('.theo-ending')?.textContent) || 0;
+    const varValue = parseFloat(row.querySelector('.variance')?.textContent) || 0;
+    const varPesoValue = parseFloat(row.querySelector('.variance-peso')?.textContent) || 0;
+    updateCellColors(row, theoValue, varValue, varPesoValue);
+  });
+}
+
+function formatSalesTarget(input) {
+  let value = input.value.replace(/,/g, ''); // Remove existing commas
+  if (!isNaN(value) && value !== '') {
+    input.value = parseFloat(value).toLocaleString('en-US'); // Add commas
+  }
+}
+
+function updateCalculations() {
+  const rows = document.querySelectorAll('tbody tr[data-product-id]');
+  let actOrderValue = 0;
+  let grossMargin = 0;
+  
+  rows.forEach(row => {
+    const spValue = parseFloat(row.querySelector('.sp-value')?.textContent) || 0;
+    const tpValue = parseFloat(row.querySelector('.tp-value')?.textContent) || 0;
+    actOrderValue += spValue;
+    grossMargin += tpValue;
+  });
+  
+  const salesTargetStr = document.getElementById('sales_target').value.replace(/,/g, ''); // Remove commas for calculation
+  const salesTarget = parseFloat(salesTargetStr) || 0;
+  const variance = actOrderValue - salesTarget;
+  
+  document.getElementById('act_order_value').textContent = actOrderValue.toFixed(2);
+  document.getElementById('variance').textContent = variance.toFixed(2);
+  document.getElementById('variance').className = 'text-lg font-bold leading-tight ' + (variance >= 0 ? 'text-emerald-600' : 'text-rose-600');
+  document.getElementById('gross_margin').textContent = grossMargin.toFixed(2);
+  
+  const gmPercent = actOrderValue > 0 ? ((actOrderValue - grossMargin) / actOrderValue * 100) : 0;
+  document.getElementById('gross_margin_percent').textContent = gmPercent.toFixed(2) + '%';
+}
+
+function saveAll() {
+  saveForecasting();
+  saveInventory();
+}
+
+function saveForecasting() {
+  const rows = document.querySelectorAll('tbody tr[data-product-id]');
+  const items = [];
+  
+  rows.forEach(row => {
+    const itemId = row.querySelector('.fc-item-id')?.value;
+    if (!itemId) return;
+    
+    items.push({
+      item_id: itemId,
+      pre_ending: parseInt(row.querySelector('.pre-ending-input')?.value) || 0,
+      adq_adequate: parseInt(row.querySelector('.adq-input')?.value) || 0,
+      initial_order: parseInt(row.querySelector('.initial-order-input')?.value) || 0,
+      must_have: row.querySelector('.must-have-checkbox')?.checked || false
+    });
+  });
+  
+  const salesTargetStr = document.getElementById('sales_target').value.replace(/,/g, '');
+  const header = {
+    sales_target: parseFloat(salesTargetStr) || 0,
+    eod_sales_net: 0,
+    ei_current_day: 0,
+    next_day_target: 0,
+    next_day_ly: 0
+  };
+  
+  fetch('/store-manager/daily-forecasting/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      forecasting_id: forecastingId,
+      items: items,
+      header: header
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.success) {
+      toast.show('Forecasting saved!', 'success');
+    } else {
+      toast.show('Error: ' + data.error, 'error');
+    }
+  })
+  .catch(err => {
+    toast.show('Error saving forecasting', 'error');
+    console.error(err);
+  });
+}
+
+function saveInventory() {
+  const rows = document.querySelectorAll('tbody tr[data-product-id]');
+  const items = [];
+  
+  rows.forEach(row => {
+    const itemId = row.querySelector('.inv-item-id')?.value;
+    if (!itemId) return;
+    
+    const beginningInput = row.querySelector('.beginning-input');
+    const itemData = {
+      item_id: itemId,
+      delivery_qty: parseInt(row.querySelector('.delivery-input')?.value) || 0,
+      trans_in_qty: parseInt(row.querySelector('.trans-in-input')?.value) || 0,
+      bo_qty: parseInt(row.querySelector('.bo-input')?.value) || 0,
+      adv_del_qty: parseInt(row.querySelector('.adv-del-input')?.value) || 0,
+      trans_out_qty: parseInt(row.querySelector('.trans-out-input')?.value) || 0,
+      wastage_qty: parseInt(row.querySelector('.wastage-input')?.value) || 0,
+      csi_qty: parseInt(row.querySelector('.csi-input')?.value) || 0,
+      quantity_sold: parseInt(row.querySelector('.sold-input')?.value) || 0,
+      ending_d5_qty: parseInt(row.querySelector('.ending-d5-input')?.value) || 0,
+      ending_d4_qty: parseInt(row.querySelector('.ending-d4-input')?.value) || 0,
+      ending_d3_qty: parseInt(row.querySelector('.ending-d3-input')?.value) || 0,
+      remarks: row.querySelector('.remarks-input')?.value || '',
+      discount_qty: parseInt(row.querySelector('.discount-qty-input')?.value) || 0,
+      discount_percent: parseFloat(row.querySelector('.discount-percent-select')?.value) || 0
+    };
+    if (beginningInput) {
+      itemData.beginning_qty = parseInt(beginningInput.value) || 0;
+    }
+    items.push(itemData);
+  });
+  
+  fetch('/store-manager/daily-ending-inventory/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      inventory_id: inventoryId,
+      items: items
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.success) {
+      toast.show('Inventory saved!', 'success');
+    } else {
+      toast.show('Error: ' + data.error, 'error');
+    }
+  })
+  .catch(err => {
+    toast.show('Error saving inventory', 'error');
+    console.error(err);
+  });
+}
+
+
+// Load previous date's Beginning Inventory (Total EI from previous day) and Final Order for Del Tmrw
+function loadPreviousDateInventory() {
+  const selectedDateStr = document.getElementById('selected_date')?.value;
+  if (!selectedDateStr) return;
+  
+  const selectedDate = new Date(selectedDateStr);
+  const previousDate = new Date(selectedDate);
+  previousDate.setDate(selectedDate.getDate() - 1);
+  const previousDateStr = previousDate.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+
+  fetch(`/store-manager/invensync?date=${previousDateStr}`)
+    .then(res => res.text())
+    .then(html => {
+      // Parse the HTML response
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      
+      // Extract previous day's inventory and forecasting data
+      const previousRows = doc.querySelectorAll('tbody tr[data-product-id]');
+      const previousData = {};
+      
+      previousRows.forEach(row => {
+        const productId = row.getAttribute('data-product-id');
+        const totalEnding = parseFloat(row.querySelector('.total-ending')?.textContent) || 0;
+        const finalOrder = parseFloat(row.querySelector('.final-order')?.textContent) || 0;
+        const srpPrice = parseFloat(row.querySelector('.srp-price')?.value) || 0;
+        if (productId) {
+          previousData[productId] = {
+            totalEnding: totalEnding,
+            finalOrder: finalOrder,
+            srpPrice: srpPrice
+          };
+        }
+      });
+      
+      // Update current page's beginning quantities and delivery tomorrow
+      const currentRows = document.querySelectorAll('tbody tr[data-product-id]');
+      currentRows.forEach(row => {
+        const productId = row.getAttribute('data-product-id');
+        const beginningQtySpan = row.querySelector('.beginning-qty');
+        const deliveryTmrwSpan = row.querySelector('.delivery-tmrw');
+        const deliveryPesoSpan = row.querySelector('.delivery-peso');
+        
+        if (previousData[productId] !== undefined) {
+          // Update beginning quantity
+          if (beginningQtySpan) {
+            beginningQtySpan.textContent = Math.round(previousData[productId].totalEnding);
+          }
+          
+          // Update delivery tomorrow quantity from previous day's final order
+          if (deliveryTmrwSpan) {
+            deliveryTmrwSpan.textContent = previousData[productId].finalOrder;
+          }
+          
+          // Update delivery peso (final order × SRP)
+          if (deliveryPesoSpan) {
+            const deliveryPeso = previousData[productId].finalOrder * previousData[productId].srpPrice;
+            deliveryPesoSpan.textContent = deliveryPeso.toFixed(2);
+          }
+          
+          // Trigger inventory recalculation for this row if needed
+          const firstInput = row.querySelector('input');
+          if (firstInput) {
+            updateInventoryRow(firstInput);
+          }
+        }
+      });
+    })
+    .catch(err => {
+      console.warn('Could not load previous date inventory:', err);
+    });
+}
+
+// Horizontal scroll with Alt + Mouse Wheel
+function enableHorizontalScroll() {
+  // Enable for main content
+  const scrollContainer = document.querySelector('.overflow-x-auto');
+  if (scrollContainer) {
+    scrollContainer.addEventListener('wheel', function(e) {
+      if (e.altKey) {
+        e.preventDefault();
+        const scrollAmount = e.deltaY > 0 ? 50 : -50;
+        scrollContainer.scrollLeft += scrollAmount;
+      }
+    });
+  }
+  
+  // Enable for fullscreen modal
+  const fullscreenScrollContainer = document.querySelector('#fullscreen-modal .overflow-auto');
+  if (fullscreenScrollContainer) {
+    fullscreenScrollContainer.addEventListener('wheel', function(e) {
+      if (e.altKey) {
+        e.preventDefault();
+        const scrollAmount = e.deltaY > 0 ? 50 : -50;
+        fullscreenScrollContainer.scrollLeft += scrollAmount;
+      }
+    });
+  }
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+  updateDateHeaders();
+  loadPreviousDateInventory();
+  updateCalculations();
+  applyColorCodingOnLoad();
+  enableHorizontalScroll();
+
+  // Format sales target on load
+  const salesTargetInput = document.getElementById('sales_target');
+  if (salesTargetInput && !salesTargetInput.readOnly) {
+    formatSalesTarget(salesTargetInput);
+  }
+
+  // Setup Enter key navigation in the main editable table
+  attachEnterNavigation(document);
+
+  // Check for fullscreen state on page load
+  const isFullscreen = localStorage.getItem('dailyCombinedFullscreen');
+  if (isFullscreen === 'true') {
+    toggleFullscreen();
+  }
+});
+
+function attachEnterNavigation(scope) {
+  const table = scope.querySelector('table');
+  if (!table) return;
+
+  const inputs = table.querySelectorAll('input:not([type="checkbox"]), select');
+  inputs.forEach(input => {
+    input.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+
+      const currentRow = this.closest('tr[data-product-id]');
+      if (!currentRow) return;
+
+      let nextRow = currentRow.nextElementSibling;
+      while (nextRow && !nextRow.dataset.productId) {
+        nextRow = nextRow.nextElementSibling;
+      }
+      if (!nextRow) return;
+
+      const currentCell = this.closest('td');
+      if (!currentCell) return;
+
+      const cellIndex = Array.from(currentRow.querySelectorAll('td')).indexOf(currentCell);
+      if (cellIndex < 0) return;
+
+      const targetCell = nextRow.querySelectorAll('td')[cellIndex];
+      if (!targetCell) return;
+
+      const targetInput = targetCell.querySelector('input:not([type="checkbox"]), select');
+      if (targetInput) {
+        targetInput.focus();
+        if (typeof targetInput.select === 'function') {
+          targetInput.select();
+        }
+      }
+    });
+  });
+}
+
+// Keyboard shortcut for fullscreen (F11 to toggle, Escape to close)
+function isEscapeKey(e) {
+  return e.key === 'Escape' || e.key === 'Esc' || e.keyCode === 27 || e.which === 27;
+}
+
+function isF11Key(e) {
+  return e.key === 'F11' || e.keyCode === 122 || e.which === 122;
+}
+
+function handleFullscreenKey(e) {
+  const modal = document.getElementById('fullscreen-modal');
+  if (!modal) return;
+
+  if (isF11Key(e)) {
+    e.preventDefault();
+    toggleFullscreen();
+  } else if (isEscapeKey(e) && !modal.classList.contains('hidden')) {
+    e.preventDefault();
+    toggleFullscreen();
+  }
+}
+
+document.addEventListener('keydown', handleFullscreenKey);
+document.addEventListener('keyup', handleFullscreenKey);
+window.addEventListener('keydown', handleFullscreenKey);
+window.addEventListener('keyup', handleFullscreenKey);
+
+// Sync products from Product Masterlist
+function syncProducts() {
+  const selectedDate = document.getElementById('selected_date')?.value;
+
+  if (!selectedDate) {
+    toast.show('Please select a date first', 'error');
+    return;
+  }
+
+  // Show loading state
+  toast.show('Syncing products from Product Masterlist...', 'info');
+
+  fetch('/store-manager/invensync/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: selectedDate
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.success) {
+      toast.show(`Synced ${data.count} products from Product Masterlist!`, 'success');
+      // Reload the page to show updated products
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } else {
+      toast.show('Error: ' + (data.error || 'Failed to sync products'), 'error');
+    }
+  })
+  .catch(err => {
+    toast.show('Error syncing products', 'error');
+    console.error(err);
+  });
+}
+
+// Fullscreen functionality
+function toggleFullscreen() {
+  const modal = document.getElementById('fullscreen-modal');
+  const isHidden = modal.classList.contains('hidden');
+
+  if (isHidden) {
+    // Update fullscreen content
+    updateFullscreenContent();
+
+    // Show modal
+    modal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+
+    // Save fullscreen state to localStorage
+    localStorage.setItem('dailyCombinedFullscreen', 'true');
+    
+    // Re-enable horizontal scroll for fullscreen after content is rendered
+    setTimeout(() => {
+      enableHorizontalScroll();
+    }, 100);
+  } else {
+    // Exit fullscreen
+    modal.classList.add('hidden');
+    document.body.style.overflow = '';
+
+    // Remove fullscreen state from localStorage
+    localStorage.removeItem('dailyCombinedFullscreen');
+  }
+}
+
+function updateFullscreenContent() {
+  const modalContent = document.getElementById('modal-content');
+  const tableContainer = document.querySelector('#main-content .overflow-x-auto');
+
+  if (!tableContainer) return;
+
+  // Clone table content
+  const table = tableContainer.querySelector('table');
+  if (table) {
+    modalContent.innerHTML = '';
+    const clonedTable = table.cloneNode(true);
+
+    // Make inputs in cloned table functional
+    clonedTable.querySelectorAll('input').forEach(input => {
+      input.addEventListener('change', function() {
+        // Find the corresponding input in the original table
+        const rowIndex = Array.from(this.closest('tbody').querySelectorAll('tr')).indexOf(this.closest('tr'));
+        const cellIndex = Array.from(this.closest('tr').querySelectorAll('td')).indexOf(this.closest('td'));
+
+        const originalTable = tableContainer.querySelector('table');
+        const originalRow = originalTable.querySelectorAll('tbody tr')[rowIndex];
+        if (originalRow) {
+          const originalCell = originalRow.querySelectorAll('td')[cellIndex];
+          if (originalCell) {
+            const originalInput = originalCell.querySelector('input');
+            if (originalInput) {
+              originalInput.value = this.value;
+              // Trigger change event on original input
+              originalInput.dispatchEvent(new Event('change'));
+            }
+          }
+        }
+      });
+    });
+
+    modalContent.appendChild(clonedTable);
+    attachEnterNavigation(modalContent);
+  }
+
+  // Update subtitle
+  const selectedDate = document.getElementById('selected_date')?.value || '{{ selected_date }}';
+  const subtitle = document.getElementById('fullscreen-subtitle');
+  if (subtitle) {
+    subtitle.textContent = '{{ store.name }} - ' + selectedDate;
+  }
+}
+
+// Make all inputs readonly for Inventory Staff (view-only mode)
+{% if is_view_only %}
+document.addEventListener('DOMContentLoaded', function() {
+  // Make all input fields readonly
+  document.querySelectorAll('input[type="number"], input[type="text"], input[type="checkbox"], select').forEach(function(input) {
+    if (input.type === 'checkbox') {
+      input.disabled = true;
+    } else {
+      input.readOnly = true;
+    }
+    input.classList.add('cursor-not-allowed', 'opacity-75');
+  });
+  
+  // Disable onchange events
+  document.querySelectorAll('[onchange]').forEach(function(el) {
+    el.removeAttribute('onchange');
+  });
+});
+{% endif %}
+</script>
+
+<!-- Fullscreen Modal -->
+<div id="fullscreen-modal" class="hidden fixed inset-0 z-50 bg-white">
+  <div class="h-full flex flex-col">
+    <!-- Modal Header -->
+    <div class="flex-none bg-white border-b border-slate-200 px-6 h-16 flex items-center justify-between shadow-sm">
+      <div class="flex items-center gap-4">
+        <h2 class="text-lg font-bold text-slate-900">Combined Product Data</h2>
+        <div class="text-sm text-slate-600" id="fullscreen-subtitle">
+          {{ store.name }} - {{ selected_date }}
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-700 transition-all">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+          </svg>
+          <span>Exit Fullscreen</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Modal Content -->
+    <div class="flex-1 overflow-auto bg-white">
+      <div id="modal-content" class="transition-all duration-300 ease-in-out">
+        <!-- Content will be cloned here -->
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,324 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{% endblock %} - iDashboard</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/styles.css') }}?v=sidebar-scroll-2" rel="stylesheet">
+  <style>
+    #sidebar nav.custom-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    #sidebar nav.custom-scrollbar::-webkit-scrollbar,
+    #sidebar nav.custom-scrollbar::-webkit-scrollbar-button {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+  </style>
+  <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+</head>
+<body class="overflow-x-hidden">
+
+  <!-- Mobile Overlay -->
+  <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden backdrop-blur-sm lg:hidden"></div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar-transition fixed top-0 left-0 h-full z-40 w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex flex-col -translate-x-full lg:translate-x-0">
+    
+    <!-- Logo Section -->
+    <div class="flex items-center justify-between h-20 px-6 border-b border-slate-800 shrink-0">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/20">
+          <span class="text-white font-bold text-lg">I</span>
+        </div>
+        <span class="logo-text text-xl font-bold text-white tracking-tight">
+          i<span class="text-indigo-400">Dashboard</span>
+        </span>
+      </div>
+      
+      <!-- Toggle Button (Desktop) -->
+      <button id="toggle-desktop" class="hidden lg:flex items-center justify-center w-8 h-8 rounded-md hover:bg-slate-800 text-slate-400 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+    </div>
+
+    
+    <!-- Navigation -->
+    {% set current_path = request.path %}
+    {% set current_store_id = request.args.get('store_id', '') %}
+    {% set is_home_active = current_path == '/' %}
+    {% set is_daily_report_active = current_path == '/store-manager/daily-report' %}
+    {% set is_pos_sold_active = current_path.startswith('/store-manager/daily-report/pos-sold') %}
+    {% set is_delivery_active = current_path.startswith('/store-manager/delivery') %}
+    {% set is_taf_active = current_path.startswith('/store-manager/transaction-activity-form') %}
+    {% set is_trans_active = current_path == '/store-manager/trans' or current_path.startswith('/store-manager/trans/') %}
+    {% set is_trans_out_active = current_path == '/store-manager/trans-out' or current_path.startswith('/store-manager/trans-out/') %}
+    {% set is_wastage_active = current_path == '/store-manager/wastage' or current_path.startswith('/store-manager/wastage/') %}
+    {% set is_taf_menu_active = is_taf_active or is_trans_active or is_trans_out_active or is_wastage_active %}
+    {% set is_store_data_active = current_path.startswith('/store-manager/store-data') %}
+    {% set is_cluster_dashboard_active = current_path.startswith('/cluster-dashboard') %}
+    {% set is_cluster_data_active = current_path.startswith('/cluster-manager/cluster-data') %}
+    {% set is_cluster_sbase_active = current_path.startswith('/cluster-manager/cluster-sbase') %}
+    {% set is_raw_data_active = current_path.startswith('/cluster-manager/raw-data') %}
+    {% set is_admin_users_active = current_path.startswith('/admin/users') %}
+    {% set is_admin_stores_active = current_path.startswith('/admin/stores') %}
+    {% set is_admin_clusters_active = current_path.startswith('/admin/clusters') %}
+    {% set force_cluster_sidebar = force_cluster_sidebar|default(false) %}
+    {% set use_cluster_sidebar = user and (user.role == 'Cluster Manager' or force_cluster_sidebar) %}
+    {% set cluster_context_id = cluster_sidebar_cluster_id|default('') %}
+    {% set cluster_query_suffix = '?cluster_id=' ~ cluster_context_id if cluster_context_id else '' %}
+    {% set cluster_dashboard_href = '/cluster-dashboard' ~ cluster_query_suffix %}
+    {% set cluster_data_href = '/cluster-manager/cluster-data' ~ cluster_query_suffix %}
+    {% set cluster_sbase_href = '/cluster-manager/cluster-sbase' ~ cluster_query_suffix %}
+    {% set managed_clusters = user.managed_clusters|default([]) if user else [] %}
+    {% set cluster_stores = cluster_sidebar_stores|default((managed_clusters[0].stores if managed_clusters and managed_clusters|length > 0 else [])) %}
+    {% set is_cluster_data_nav_active = is_cluster_data_active and (not force_cluster_sidebar or not current_store_id) %}
+    {% set is_cluster_sbase_nav_active = is_cluster_sbase_active %}
+    {% set is_stores_menu_active = is_raw_data_active or (force_cluster_sidebar and is_cluster_data_active and current_store_id) %}
+    {% set cluster_store_href_base = '/cluster-manager/cluster-data' if force_cluster_sidebar else '/cluster-manager/raw-data' %}
+
+    <nav class="flex-1 px-3 space-y-1 custom-scrollbar overflow-y-auto mt-2">
+      <!-- Home (All Users) -->
+      <a href="/" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_home_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Home">
+        <div class="shrink-0 {% if is_home_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Home</span>
+      </a>
+
+      {% if user and user.role == 'Store Manager' %}
+      <!-- Store Manager Navigation -->
+      <a href="/store-manager/invensync" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/store-manager/invensync') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="InvenSync">
+        <div class="shrink-0 {% if request.path.startswith('/store-manager/invensync') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 14 3-3 3 2 4-5"/><circle cx="7" cy="14" r="1.2"/><circle cx="10" cy="11" r="1.2"/><circle cx="13" cy="13" r="1.2"/><circle cx="17" cy="8" r="1.2"/><rect x="3" y="14" width="18" height="6" rx="1"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">InvenSync</span>
+      </a>
+      <a href="/store-manager/daily-report" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_daily_report_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Daily Report">
+        <div class="shrink-0 {% if is_daily_report_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Daily Report</span>
+      </a>
+      <a href="/store-manager/daily-report/pos-sold" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_pos_sold_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="POS Sold">
+        <div class="shrink-0 {% if is_pos_sold_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7h18"/><path d="M5 7l1.2 12.4a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L19 7"/><path d="M9 11v6"/><path d="M15 11v6"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">POS Sold</span>
+      </a>
+      <a href="/store-manager/delivery" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_delivery_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Delivery">
+        <div class="shrink-0 {% if is_delivery_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Delivery</span>
+      </a>
+      <div class="nav-item-group">
+        <button id="taf-menu-toggle" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_taf_menu_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="TAF">
+          <div class="shrink-0 {% if is_taf_menu_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h6"/><path d="M10 8h4"/><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
+          </div>
+          <span class="nav-label whitespace-nowrap truncate flex-1 text-left">TransAct Form</span>
+          <svg id="taf-chevron" class="nav-label w-4 h-4 transition-transform {% if is_taf_menu_active %}rotate-180 text-white{% else %}text-slate-400{% endif %}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </button>
+        <div id="taf-submenu" class="{% if not is_taf_menu_active %}hidden {% endif %}ml-4 mt-1 space-y-1">
+          <a href="/store-manager/transaction-activity-form" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if is_taf_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group" data-tooltip="TAF">
+            <div class="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0"></div>
+            <span class="nav-label whitespace-nowrap truncate">TAF</span>
+          </a>
+          <a href="/store-manager/trans" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if is_trans_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group" data-tooltip="Trans-In">
+            <div class="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0"></div>
+            <span class="nav-label whitespace-nowrap truncate">Trans-In</span>
+            {% if (pending_trans_in_count|default(0)|int) > 0 %}
+            <span class="nav-label ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-yellow-400 px-1.5 text-[11px] font-bold leading-none text-slate-900">{{ pending_trans_in_count }}</span>
+            {% endif %}
+          </a>
+          <a href="/store-manager/trans-out" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if is_trans_out_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group" data-tooltip="Trans-Out">
+            <div class="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0"></div>
+            <span class="nav-label whitespace-nowrap truncate">Trans-Out</span>
+          </a>
+          <a href="/store-manager/wastage" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if is_wastage_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group" data-tooltip="Wastage">
+            <div class="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0"></div>
+            <span class="nav-label whitespace-nowrap truncate">Wastage</span>
+          </a>
+        </div>
+      </div>
+      <a href="/store-manager/store-data" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_store_data_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Store Data">
+        <div class="shrink-0 {% if is_store_data_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3h18v18H3z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Store Data</span>
+      </a>
+      {% endif %}
+
+      {% if user and user.role == 'Inventory Staff' %}
+      <a href="/store-manager/invensync-dashboard" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/store-manager/invensync') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="InvenSync">
+        <div class="shrink-0 {% if request.path.startswith('/store-manager/invensync') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 14 3-3 3 2 4-5"/><circle cx="7" cy="14" r="1.2"/><circle cx="10" cy="11" r="1.2"/><circle cx="13" cy="13" r="1.2"/><circle cx="17" cy="8" r="1.2"/><rect x="3" y="14" width="18" height="6" rx="1"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">InvenSync</span>
+      </a>
+      <a href="/store-manager/daily-report/pos-sold" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_pos_sold_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="POS Sold">
+        <div class="shrink-0 {% if is_pos_sold_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7h18"/><path d="M5 7l1.2 12.4a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L19 7"/><path d="M9 11v6"/><path d="M15 11v6"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">POS Sold</span>
+      </a>
+      <a href="/store-manager/trans" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_trans_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Trans-In">
+        <div class="shrink-0 {% if is_trans_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h16"/><path d="m11 5-7 7 7 7"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Trans-In</span>
+      </a>
+      <a href="/store-manager/trans-out" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_trans_out_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Trans-Out">
+        <div class="shrink-0 {% if is_trans_out_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h16"/><path d="m13 5 7 7-7 7"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Trans-Out</span>
+      </a>
+      <a href="/store-manager/wastage" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_wastage_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Wastage">
+        <div class="shrink-0 {% if is_wastage_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Wastage</span>
+      </a>
+      <a href="/store-manager/delivery" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_delivery_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Delivery">
+        <div class="shrink-0 {% if is_delivery_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Delivery</span>
+      </a>
+      {% endif %}
+
+      {% if use_cluster_sidebar %}
+      <!-- Cluster Manager Navigation -->
+
+      
+      <a href="{{ cluster_dashboard_href }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_cluster_dashboard_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Cluster Dashboard">
+        <div class="shrink-0 {% if is_cluster_dashboard_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9M3 9l9-7 9 7m-9 7v-7"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Cluster Dashboard</span>
+      </a>
+      
+      <a href="{{ cluster_data_href }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_cluster_data_nav_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Cluster Data">
+        <div class="shrink-0 {% if is_cluster_data_nav_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15h6"/><path d="M9 19h6"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Cluster Data</span>
+      </a>
+
+      <a href="{{ cluster_sbase_href }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_cluster_sbase_nav_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="CL Sbase">
+        <div class="shrink-0 {% if is_cluster_sbase_nav_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">CL Sbase</span>
+      </a>
+      
+      <!-- Stores Menu with Submenu -->
+      <div class="nav-item-group">
+        <button id="stores-menu-toggle" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_stores_menu_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Stores">
+          <div class="shrink-0 {% if is_stores_menu_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/></svg>
+          </div>
+          <span class="nav-label whitespace-nowrap truncate flex-1 text-left">My Stores</span>
+          <svg id="stores-chevron" class="nav-label w-4 h-4 transition-transform {% if is_stores_menu_active %}rotate-180 text-white{% else %}text-slate-400{% endif %}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </button>
+        
+        <div id="stores-submenu" class="{% if not is_stores_menu_active %}hidden {% endif %}ml-4 mt-1 space-y-1">
+          {% if cluster_stores %}
+            {% for store in cluster_stores %}
+            <a href="{{ cluster_store_href_base }}?store_id={{ store.id }}{% if cluster_context_id %}&cluster_id={{ cluster_context_id }}{% endif %}" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if current_store_id|string == store.id|string and ((force_cluster_sidebar and is_cluster_data_active) or ((not force_cluster_sidebar) and is_raw_data_active)) %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group">
+              <div class="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0"></div>
+              <span class="nav-label whitespace-nowrap truncate">
+                {{ store.name }}
+                {% if (store.pending_count|default(0)|int) > 0 %}
+                <span class="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-yellow-400 px-1.5 text-[11px] font-bold leading-none text-slate-900">{{ store.pending_count }}</span>
+                {% endif %}
+              </span>
+            </a>
+            {% endfor %}
+          {% else %}
+            <div class="p-2 pl-4 text-xs text-slate-500">
+              No stores assigned
+            </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if user and user.role in ['Admin', 'Superadmin'] and not force_cluster_sidebar %}
+      <!-- Admin Navigation -->
+      <a href="/admin/users" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_admin_users_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Users">
+        <div class="shrink-0 {% if is_admin_users_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Users</span>
+      </a>
+
+      <a href="/admin/stores" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_admin_stores_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Stores">
+        <div class="shrink-0 {% if is_admin_stores_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Stores</span>
+      </a>
+
+      <a href="/admin/clusters" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_admin_clusters_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Clusters">
+        <div class="shrink-0 {% if is_admin_clusters_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Clusters</span>
+      </a>
+      {% endif %}
+    </nav>
+
+    <!-- User Section -->
+    <div class="mt-auto border-t border-slate-800 p-4 shrink-0">
+      <div class="flex items-center gap-3 hover:bg-slate-800/50 p-2 rounded-xl cursor-pointer transition-colors group">
+        <div class="relative">
+          <div class="w-10 h-10 rounded-full border-2 border-slate-800 group-hover:border-indigo-500 transition-colors bg-indigo-500 flex items-center justify-center text-white font-bold">
+            {% if user %}{{ user.username[:1].upper() }}{% else %}U{% endif %}
+          </div>
+          <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-900 rounded-full"></div>
+        </div>
+        <div class="user-info flex-1 min-w-0">
+          <p class="text-sm font-semibold text-white truncate">{% if user %}{{ user.full_name }}{% else %}Guest{% endif %}</p>
+          <p class="text-xs text-slate-500 truncate">{% if user %}{{ user.role }}{% else %}Not Logged In{% endif %}</p>
+        </div>
+        {% if user %}
+        <a href="/logout" class="text-slate-400 hover:text-red-500 transition-colors" title="Logout">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+
+        </a>
+        {% endif %}
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content Area -->
+  <main id="main-content" class="sidebar-transition flex-1 min-h-screen lg:ml-64 flex flex-col">
+    {% block content %}{% endblock %}
+      
+    <script src="{{ url_for('static', filename='js/sidebar.js') }}"></script>
+      
+    <!-- Flash Messages as Toast Notifications -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <script>
+          document.addEventListener('DOMContentLoaded', function() {
+            {% for category, message in messages %}
+              toast.show({{ message|tojson }}, {{ category|tojson }});
+            {% endfor %}
+          });
+        </script>
+      {% endif %}
+    {% endwith %}
+  </main>
+</body>
+</html>

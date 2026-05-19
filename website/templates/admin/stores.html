@@ -1,0 +1,574 @@
+{% extends "admin_base.html" %}
+{% block title %}Stores{% endblock %}
+
+{% block content %}
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Stores</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <button id="openModalBtn" class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 active:scale-95">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 5v14" />
+        <path d="M5 12h14" />
+      </svg>
+      <span>New Store</span>
+    </button>
+  </div>
+</header>
+
+<!-- Content -->
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <!-- Page Header -->
+  <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Stores</h1>
+      <p class="mt-1 text-slate-600">Manage all stores in your system.</p>
+    </div>
+
+    <!-- Search -->
+    <form method="GET" class="w-full sm:w-72">
+      <div class="relative">
+        <input
+          type="text"
+          name="q"
+          placeholder="Search stores..."
+          value="{{ request.args.get('q', '') }}"
+          class="block w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+        >
+        <div class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <!-- Stores Table -->
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">ID</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Store Name</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Address</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Manager</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Cluster</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Added</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+        {% for store in stores %}
+        <tr class="hover:bg-slate-50 transition-colors">
+            
+            <!-- ID -->
+            <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
+            #{{ store.id }}
+            </td>
+
+            <!-- Store Name -->
+            <td class="px-4 py-3">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 shrink-0 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 text-xs">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+                  <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+                  <path d="M2 7h20"/>
+                </svg>
+                </div>
+                <p class="text-sm font-semibold text-slate-900 truncate">
+                    {{ store.name }}
+                </p>
+            </div>
+            </td>
+
+            <!-- Address -->
+            <td class="px-4 py-3 text-sm text-slate-600 truncate max-w-xs">
+            {{ store.address }}
+            </td>
+
+            <!-- Manager -->
+            <td class="px-4 py-3 whitespace-nowrap">
+            {% if store.manager %}
+            <div class="flex items-center gap-2">
+                <div class="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 text-[10px] font-bold uppercase">
+                {{ store.manager.username[:1] }}
+                </div>
+                <span class="text-xs font-medium text-slate-700">{{ store.manager.full_name }}</span>
+            </div>
+            {% else %}
+            <button onclick="openAssignManagerModal('{{ store.id }}', '{{ store.name }}')" class="inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold border-2 border-red-500 text-red-500 animate-pulse shadow-sm shadow-red-500/20 hover:bg-red-50 transition-all">
+                ASSIGN MANAGER
+            </button>
+            {% endif %}
+            </td>
+
+            <!-- Cluster -->
+            <td class="px-4 py-3 whitespace-nowrap">
+            {% if store.cluster %}
+            <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-700">
+                {{ store.cluster.name }}
+            </span>
+            {% else %}
+            <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-400">
+                Unassigned
+            </span>
+            {% endif %}
+            </td>
+
+            <!-- Date Added -->
+            <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
+            {{ store.date_added.strftime('%b %d, %Y') if store.date_added else '—' }}
+            </td>
+
+            <!-- Actions -->
+            <td class="px-4 py-3 text-right whitespace-nowrap">
+            <div class="inline-flex items-center gap-1">
+                <button onclick="openEditStoreModal('{{ store.id }}', '{{ store.name }}', '{{ store.address }}', {{ store.is_one_year_already|lower }}, {{ store.manager_id if store.manager_id else 'null' }})"
+                        class="px-2 py-1 text-xs font-medium rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 transition">
+                Edit
+                </button>
+                <form action="/" method="POST" class="inline" onsubmit="return confirm('Delete this store?')">
+                <button type="submit"
+                        class="px-2 py-1 text-xs font-medium rounded-md bg-red-50 text-red-600 hover:bg-red-100 transition">
+                    Delete
+                </button>
+                </form>
+            </div>
+            </td>
+
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="7" class="px-4 py-8 text-center text-slate-400 text-sm">
+            No stores found.
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- New Store Modal -->
+<div id="storeModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <!-- Backdrop -->
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+  
+  <!-- Modal Container -->
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-xl font-bold text-slate-900">Add New Store</h3>
+          <p class="text-sm text-slate-500 mt-1">Create a new store location</p>
+        </div>
+        <button data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <form id="newStoreForm" action="/admin/stores/create" method="POST" class="px-6 py-5 space-y-4">
+        
+        <!-- Store Name -->
+        <div>
+          <label for="name" class="block text-sm font-semibold text-slate-700 mb-2">
+            Store Name <span class="text-red-500">*</span>
+          </label>
+          <input 
+            type="text" 
+            id="name" 
+            name="name" 
+            required
+            placeholder="Enter store name"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300"
+          >
+        </div>
+
+        <!-- Address -->
+        <div>
+          <label for="address" class="block text-sm font-semibold text-slate-700 mb-2">
+            Address <span class="text-red-500">*</span>
+          </label>
+          <textarea 
+            id="address" 
+            name="address" 
+            required
+            rows="3"
+            placeholder="Enter store address"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300 resize-none"
+          ></textarea>
+        </div>
+
+        <!-- Store Manager -->
+        <div>
+          <label for="manager_id" class="block text-sm font-semibold text-slate-700 mb-2">
+            Store Manager
+          </label>
+          <select 
+            id="manager_id" 
+            name="manager_id" 
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300"
+          >
+            <option value="">Select a manager (optional)</option>
+            {% for manager in managers %}
+            <option value="{{ manager.id }}">{{ manager.full_name }} ({{ manager.username }})</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-slate-500 mt-1">Only unassigned "Store Manager" users are shown</p>
+        </div>
+
+        <!-- Store Age Flag -->
+        <div>
+          <p class="block text-sm font-semibold text-slate-700 mb-2">
+            Is this store 1 year already?
+          </p>
+          <div class="flex items-center gap-6">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="radio"
+                name="is_one_year_already"
+                value="0"
+                checked
+                class="h-4 w-4 border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              >
+              <span>No</span>
+            </label>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="radio"
+                name="is_one_year_already"
+                value="1"
+                class="h-4 w-4 border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              >
+              <span>Yes</span>
+            </label>
+          </div>
+        </div>
+
+      </form>
+
+      <!-- Modal Footer -->
+      <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+        <button 
+          type="button" 
+          data-modal-close
+          class="px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-200 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95"
+        >
+          Cancel
+        </button>
+        <button 
+          type="submit" 
+          form="newStoreForm"
+          class="px-4 py-2.5 text-sm font-medium bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all duration-200 shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/40 hover:scale-105 active:scale-95"
+        >
+          Create Store
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Assign Manager Modal -->
+<div id="assignManagerModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <!-- Backdrop -->
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+  
+  <!-- Modal Container -->
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-lg font-bold text-slate-900">Assign Store Manager</h3>
+          <p class="text-xs text-slate-500 mt-1">Assign a manager to <span id="assign-store-name" class="font-semibold"></span></p>
+        </div>
+        <button data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <form id="assignManagerForm" method="POST" class="px-6 py-4 space-y-4">
+        
+        <!-- Manager Selection -->
+        <div>
+          <label for="assign_manager_id" class="block text-sm font-semibold text-slate-700 mb-2">
+            Select Store Manager <span class="text-red-500">*</span>
+          </label>
+          <select 
+            id="assign_manager_id" 
+            name="manager_id" 
+            required
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-slate-500 focus:border-slate-500 outline-none transition-all duration-200 hover:border-slate-300"
+          >
+            <option value="">Select a manager</option>
+            {% for manager in managers %}
+            <option value="{{ manager.id }}">{{ manager.full_name }} ({{ manager.username }})</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-slate-500 mt-1">Only unassigned "Store Manager" users are shown</p>
+        </div>
+
+      </form>
+
+      <!-- Modal Footer -->
+      <div class="flex items-center justify-end gap-3 px-6 py-3 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+        <button 
+          type="button" 
+          data-modal-close
+          class="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 rounded-lg transition-all duration-200"
+        >
+          Cancel
+        </button>
+        <button 
+          type="submit" 
+          form="assignManagerForm"
+          class="px-4 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-all duration-200"
+        >
+          Assign Manager
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Edit Store Modal -->
+<div id="editStoreModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <!-- Backdrop -->
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+
+  <!-- Modal Container -->
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-xl font-bold text-slate-900">Edit Store</h3>
+          <p class="text-sm text-slate-500 mt-1">Update store details</p>
+        </div>
+        <button data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <form id="editStoreForm" method="POST" class="px-6 py-5 space-y-4">
+
+        <!-- Store Name -->
+        <div>
+          <label for="edit_name" class="block text-sm font-semibold text-slate-700 mb-2">
+            Store Name <span class="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            id="edit_name"
+            name="name"
+            required
+            placeholder="Enter store name"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300"
+          >
+        </div>
+
+        <!-- Address -->
+        <div>
+          <label for="edit_address" class="block text-sm font-semibold text-slate-700 mb-2">
+            Address <span class="text-red-500">*</span>
+          </label>
+          <textarea
+            id="edit_address"
+            name="address"
+            required
+            rows="3"
+            placeholder="Enter store address"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300 resize-none"
+          ></textarea>
+        </div>
+
+        <!-- Store Manager -->
+        <div>
+          <label for="edit_manager_id" class="block text-sm font-semibold text-slate-700 mb-2">
+            Store Manager
+          </label>
+          <select
+            id="edit_manager_id"
+            name="manager_id"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300"
+          >
+            <option value="">No manager assigned</option>
+            {% for manager in all_managers %}
+            <option value="{{ manager.id }}">{{ manager.full_name }} ({{ manager.username }})</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-slate-500 mt-1">Select a manager from available Store Managers</p>
+        </div>
+
+        <!-- Store Age Flag -->
+        <div>
+          <p class="block text-sm font-semibold text-slate-700 mb-2">
+            Is this store 1 year already?
+          </p>
+          <div class="flex items-center gap-6">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="radio"
+                name="is_one_year_already"
+                value="0"
+                checked
+                class="edit-is-one-year-no h-4 w-4 border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              >
+              <span>No</span>
+            </label>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="radio"
+                name="is_one_year_already"
+                value="1"
+                class="edit-is-one-year-yes h-4 w-4 border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              >
+              <span>Yes</span>
+            </label>
+          </div>
+        </div>
+
+      </form>
+
+      <!-- Modal Footer -->
+      <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+        <button
+          type="button"
+          data-modal-close
+          class="px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-200 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          form="editStoreForm"
+          class="px-4 py-2.5 text-sm font-medium bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all duration-200 shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/40 hover:scale-105 active:scale-95"
+        >
+          Update Store
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // Initialize Modal using the reusable Modal class
+  const storeModal = new Modal('storeModal');
+  const assignManagerModal = new Modal('assignManagerModal');
+  const editStoreModal = new Modal('editStoreModal');
+
+  // Open modal button
+  document.getElementById('openModalBtn').addEventListener('click', () => {
+    storeModal.open();
+  });
+
+  // Assign Manager Modal function
+  window.openAssignManagerModal = (storeId, storeName) => {
+    const form = document.getElementById('assignManagerForm');
+    form.action = `/admin/stores/${storeId}/assign-manager`;
+    document.getElementById('assign-store-name').textContent = storeName;
+    assignManagerModal.open();
+  };
+
+  // Edit Store Modal function
+  window.openEditStoreModal = (storeId, storeName, storeAddress, isOneYear, managerId) => {
+    const form = document.getElementById('editStoreForm');
+    form.action = `/admin/stores/${storeId}/update`;
+
+    // Populate form fields
+    document.getElementById('edit_name').value = storeName;
+    document.getElementById('edit_address').value = storeAddress;
+
+    // Set the is_one_year_already radio buttons
+    const noRadio = form.querySelector('.edit-is-one-year-no');
+    const yesRadio = form.querySelector('.edit-is-one-year-yes');
+    if (isOneYear) {
+      yesRadio.checked = true;
+      noRadio.checked = false;
+    } else {
+      noRadio.checked = true;
+      yesRadio.checked = false;
+    }
+
+    // Set the manager dropdown
+    const managerSelect = document.getElementById('edit_manager_id');
+    if (managerId) {
+      managerSelect.value = managerId;
+    } else {
+      managerSelect.value = '';
+    }
+
+    editStoreModal.open();
+  };
+
+  // Form validation for new store
+  document.getElementById('newStoreForm').addEventListener('submit', (e) => {
+    const name = document.getElementById('name');
+    const address = document.getElementById('address');
+
+    if (!name.value.trim() || !address.value.trim()) {
+      e.preventDefault();
+      storeModal.shakeElement(name.value.trim() ? address : name);
+      toast.error('Please fill in all required fields!');
+      return false;
+    }
+  });
+
+  // Form validation for edit store
+  document.getElementById('editStoreForm').addEventListener('submit', (e) => {
+    const name = document.getElementById('edit_name');
+    const address = document.getElementById('edit_address');
+
+    if (!name.value.trim() || !address.value.trim()) {
+      e.preventDefault();
+      editStoreModal.shakeElement(name.value.trim() ? address : name);
+      toast.error('Please fill in all required fields!');
+      return false;
+    }
+  });
+</script>
+
+{% endblock %}

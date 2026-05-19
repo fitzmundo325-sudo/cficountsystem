@@ -1,0 +1,232 @@
+{% extends "admin_base.html" %}
+{% block title %}POS Sold{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 bg-white/85 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="4" x2="20" y1="12" y2="12"></line>
+        <line x1="4" x2="20" y1="6" y2="6"></line>
+        <line x1="4" x2="20" y1="18" y2="18"></line>
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span>Admin</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">POS Sold</span>
+    </nav>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  <section class="space-y-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">POS Sold</h1>
+      <p class="text-slate-600 mt-1">Select cluster and date range first, then apply filter to load POS sold data.</p>
+    </div>
+    <div class="flex justify-center">
+      <form method="GET" class="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-2 items-end">
+        <input type="hidden" name="apply" value="1">
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Cluster</label>
+          <select id="cluster_id" name="cluster_id" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+            <option value="">Select Cluster</option>
+            {% for cluster in clusters %}
+            <option value="{{ cluster.id }}" {% if selected_cluster_id and selected_cluster_id == cluster.id %}selected{% endif %}>{{ cluster.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Store</label>
+          <select id="store_id" name="store_id" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none" {% if not selected_cluster_id %}disabled{% endif %}>
+            <option value="">{% if selected_cluster_id %}Select Store (Optional){% else %}Select Cluster First{% endif %}</option>
+            {% for store in stores_for_selected_cluster %}
+            <option value="{{ store.id }}" {% if selected_store_id and selected_store_id == store.id %}selected{% endif %}>{{ store.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Start Date</label>
+          <input type="date" name="start_date" value="{{ start_date }}" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">End Date</label>
+          <input type="date" name="end_date" value="{{ end_date }}" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+        </div>
+        <button type="submit" class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors">Apply</button>
+        <a href="{{ url_for('admin.pos_sold') }}" class="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-sm rounded-lg font-medium hover:bg-slate-50 transition-colors text-center">Reset</a>
+      </form>
+    </div>
+  </section>
+
+  {% if can_show_results %}
+  <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Rows</p>
+      <p class="text-2xl font-bold text-slate-900 mt-2">{{ summary.rows_count }}</p>
+    </div>
+    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Stores</p>
+      <p class="text-2xl font-bold text-slate-900 mt-2">{{ summary.stores_count }}</p>
+    </div>
+    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Qty</p>
+      <p class="text-2xl font-bold text-slate-900 mt-2">{{ summary.total_qty }}</p>
+    </div>
+    <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+      <p class="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Total Net Sales</p>
+      <p class="text-2xl font-bold text-emerald-800 mt-2">{{ "{:,.2f}".format(summary.total_net_sales or 0) }}</p>
+    </div>
+  </section>
+
+  {% if category_metrics %}
+  <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-200 bg-slate-50">
+      <h2 class="text-lg font-bold text-slate-900">Category Quick Stats</h2>
+      <p class="text-xs text-slate-500">Quick cards with short labels and quantity only.</p>
+    </div>
+    <div class="p-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
+      {% for metric in category_metrics %}
+      <article class="rounded-lg border border-slate-200 bg-slate-50/60 p-2.5">
+        <p class="text-[11px] font-semibold text-slate-800 truncate" title="{{ metric.short }} {{ metric.category }}">
+          <span class="inline-flex items-center rounded bg-indigo-50 text-indigo-700 px-1.5 py-0.5 text-[10px] font-semibold mr-1">{{ metric.short }}</span>{{ metric.category }}
+        </p>
+        <p class="text-[11px] text-slate-700 mt-0.5">
+          <span class="inline-flex items-center rounded bg-slate-200 text-slate-700 px-1.5 py-0.5 text-[10px] font-semibold mr-1">Qty</span>
+          <span class="inline-flex items-center rounded bg-emerald-100 text-emerald-800 px-1.5 py-0.5 text-[10px] font-bold">{{ metric.quantity }}</span>
+        </p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+      <div>
+        <h2 class="text-lg font-bold text-slate-900">POS Sold Entries (Consolidated)</h2>
+        <p class="text-xs text-slate-500">Same store + product are merged across the selected date range.</p>
+      </div>
+      <div class="text-xs text-slate-600 font-medium">
+        Gross: {{ "{:,.2f}".format(summary.total_gross_sales or 0) }} |
+        Discount: {{ "{:,.2f}".format(summary.total_discount or 0) }}
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Product</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Category</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Qty</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Gross</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Discount</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Net</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for row in rows %}
+          <tr class="hover:bg-slate-50 transition-colors">
+            <td class="px-4 py-3 text-sm text-slate-700">
+              <div class="inline-flex items-center gap-2">
+                <span>{{ row.product_name }}</span>
+              {% if row.in_masterlist %}
+                <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-bold" title="Matched in Product Masterlist" aria-label="Matched in Product Masterlist">✓</span>
+              {% else %}
+                <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700" title="Warning: Not in Product Masterlist" aria-label="Warning: Not in Product Masterlist">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </span>
+              {% endif %}
+              </div>
+            </td>
+            <td class="px-4 py-3 text-sm text-slate-700">{{ row.category or 'Uncategorized' }}</td>
+            <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ row.quantity }}</td>
+            <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ "{:,.2f}".format(row.gross_sales or 0) }}</td>
+            <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ "{:,.2f}".format(row.discount or 0) }}</td>
+            <td class="px-4 py-3 text-sm text-slate-900 text-right font-semibold">{{ "{:,.2f}".format(row.net_sales or 0) }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6" class="px-4 py-8 text-center text-sm text-slate-500">No POS sold records found for the selected filters.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% else %}
+  <section class="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+    <h2 class="text-base font-bold text-amber-900">No Data Loaded Yet</h2>
+    <p class="text-sm text-amber-800 mt-1">Choose a cluster, optional store, start date, and end date, then click Apply.</p>
+  </section>
+  {% endif %}
+</div>
+
+<script>
+  (function() {
+    const clusterSelect = document.getElementById('cluster_id');
+    const storeSelect = document.getElementById('store_id');
+    if (!clusterSelect || !storeSelect) return;
+
+    const allStores = [
+      {% for store in stores %}
+      { id: {{ store.id }}, name: {{ (store.name or '')|tojson }}, cluster_id: {{ (store.cluster_id or 0)|int }} },
+      {% endfor %}
+    ];
+
+    const selectedStoreId = {{ (selected_store_id or 0)|int }};
+
+    function populateStoresByCluster(clusterId, keepSelected) {
+      while (storeSelect.options.length > 0) {
+        storeSelect.remove(0);
+      }
+
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+
+      if (!clusterId) {
+        placeholder.text = 'Select Cluster First';
+        storeSelect.appendChild(placeholder);
+        return;
+      }
+
+      placeholder.text = 'Select Store (Optional)';
+      storeSelect.appendChild(placeholder);
+
+      const clusterInt = parseInt(clusterId, 10);
+      const matchingStores = allStores
+        .filter((store) => Number(store.cluster_id) === clusterInt)
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+
+      matchingStores.forEach((store) => {
+        const option = document.createElement('option');
+        option.value = String(store.id);
+        option.text = store.name || ('Store ' + store.id);
+        if (keepSelected && selectedStoreId && Number(store.id) === Number(selectedStoreId)) {
+          option.selected = true;
+        }
+        storeSelect.appendChild(option);
+      });
+    }
+
+    function syncStoreState() {
+      const hasCluster = Boolean((clusterSelect.value || '').trim());
+      storeSelect.disabled = !hasCluster;
+      populateStoresByCluster(clusterSelect.value || '', true);
+    }
+
+    clusterSelect.addEventListener('change', function() {
+      storeSelect.value = '';
+      populateStoresByCluster(clusterSelect.value || '', false);
+      storeSelect.disabled = !Boolean((clusterSelect.value || '').trim());
+    });
+
+    syncStoreState();
+  })();
+</script>
+{% endblock %}

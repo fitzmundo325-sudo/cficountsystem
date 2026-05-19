@@ -1,0 +1,377 @@
+{% extends "base.html" %}
+{% block title %}POS Sold - {{ store.name }}{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div class="flex items-center gap-3 sm:gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Store Manager</span>
+      <span class="mx-2">/</span>
+      <a href="{{ url_for('views.store_manager_report', date=selected_report_date) }}" class="hover:text-slate-900">Daily Report</a>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">POS Sold</span>
+    </nav>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-3 sm:justify-end">
+    <label for="report_date" class="text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
+      Report Date
+    </label>
+    <input
+      type="date"
+      id="report_date"
+      name="report_date"
+      required
+      value="{{ selected_report_date if selected_report_date else today }}"
+      class="w-40 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none shadow-sm"
+    >
+    <div class="text-sm font-medium text-slate-600">
+      <span class="text-slate-900">{{ store.name }}</span>
+    </div>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">POS Sold</h1>
+      <p class="mt-1 text-slate-600">Upload and review POS sold extract for {{ store.name }}</p>
+    </div>
+  </section>
+
+  <section class="rounded-none border border-slate-200 bg-white shadow-sm">
+    <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+      <div>
+        <h3 class="text-sm md:text-base font-bold text-slate-900">POS Sold Extract / Review</h3>
+        <p class="text-xs text-slate-500 mt-0.5">Extracted rows are preview only. They are saved when you submit Daily Report (or POS Sold submit).</p>
+      </div>
+      {% if selected_report %}
+      <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium {{ 'bg-amber-100 text-amber-700' if selected_report.status == 'Pending' else ('bg-emerald-100 text-emerald-700' if selected_report.status == 'Approved' else 'bg-rose-100 text-rose-700') }}">
+        {{ selected_report.status }}
+      </span>
+      {% endif %}
+    </div>
+    <div class="p-4 md:p-5 space-y-4">
+      {% if user and user.role == 'Store Manager' and not pos_sold_locked %}
+      <form action="{{ url_for('views.review_pos_sold_excel') }}" method="POST" enctype="multipart/form-data" class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+        <input type="hidden" name="report_date" id="pos-upload-report-date" value="{{ selected_report_date if selected_report_date else today }}">
+        <div>
+          <label for="pos_file" class="block text-xs font-medium text-slate-700 mb-1">POS Excel File (.xls / .xlsx)</label>
+          <input id="pos_file" name="pos_file" type="file" accept=".xls,.xlsx" required class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+        </div>
+        <div class="md:self-end flex items-center gap-2">
+          <button type="submit" class="w-full md:w-auto px-5 py-2.5 text-sm font-medium bg-amber-600 text-white rounded-xl hover:bg-amber-700 transition-all shadow-md shadow-amber-600/25">
+            Review Data
+          </button>
+          {% if pos_sold_source == 'draft' and pos_sold_items %}
+          <a
+            id="go-daily-summary-btn"
+            href="{{ url_for('views.store_manager_report', date=selected_report_date, lock_date=1) }}"
+            class="w-full md:w-auto px-5 py-2.5 text-sm font-medium text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-all shadow-md shadow-indigo-600/25 text-center"
+          >
+            Next
+          </a>
+          <button type="button" id="clear-pos-inline-btn" class="w-full md:w-auto h-[42px] px-3 inline-flex items-center justify-center text-rose-700 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 transition-colors" title="Clear Extracted Data" aria-label="Clear Extracted Data">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+          {% endif %}
+        </div>
+      </form>
+      {% elif pos_sold_items %}
+      <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+        <p class="text-xs font-semibold text-emerald-800">POS sold already uploaded for this report date (one-time upload only).</p>
+      </div>
+      {% endif %}
+
+      {% if pos_sold_source == 'draft' and pos_sold_items %}
+      <form id="clear-pos-inline-form" action="{{ url_for('views.clear_pos_sold_review_data') }}" method="POST" class="hidden">
+        <input type="hidden" name="report_date" id="pos-clear-report-date" value="{{ selected_report_date if selected_report_date else today }}">
+      </form>
+      {% endif %}
+
+      {% if pos_sold_items %}
+      {% if pos_sold_source == 'draft' %}
+      <p class="text-xs font-medium text-amber-700">Showing extracted preview data (not yet saved).</p>
+      {% endif %}
+      <div class="overflow-x-auto border border-slate-200 rounded-lg">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-100">
+            <tr>
+              <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product</th>
+              <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Qty</th>
+              <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Gross</th>
+              <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Discount</th>
+              <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Net Sales</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for item in pos_sold_items %}
+            <tr class="odd:bg-white even:bg-slate-50">
+              <td class="px-4 py-2 text-sm text-slate-700">{{ item.product_name }}</td>
+              <td class="px-4 py-2 text-sm text-slate-900 text-right font-semibold">{{ item.quantity }}</td>
+              <td class="px-4 py-2 text-sm text-slate-900 text-right font-semibold">{{ '%.2f'|format(item.gross_sales or 0) }}</td>
+              <td class="px-4 py-2 text-sm text-slate-900 text-right font-semibold">{{ '%.2f'|format(item.discount or 0) }}</td>
+              <td class="px-4 py-2 text-sm text-slate-900 text-right font-semibold">{{ '%.2f'|format(item.net_sales or 0) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5">
+        <p class="text-xs text-rose-700">No extracted POS sold data yet for this selected report date.</p>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="border border-slate-200 bg-white shadow-sm">
+    <div class="px-4 py-2.5 bg-gradient-to-r from-violet-50 to-fuchsia-50 border-b border-slate-200">
+      <h3 class="text-sm font-bold text-slate-900">Z Reading Image <span class="text-slate-500">(Optional)</span></h3>
+      <p class="text-[11px] text-slate-500 mt-0.5">You may attach now or upload later after POS Sold upload.</p>
+    </div>
+    <div class="p-3.5 space-y-3">
+      {% if current_z_reading_image_preview_url %}
+      <div class="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-2.5">
+        <div class="w-28 shrink-0 rounded-md border border-emerald-200 overflow-hidden bg-white">
+          <img
+            src="{{ current_z_reading_image_preview_url }}"
+            alt="Current Attached Z Reading Image"
+            class="w-full h-auto max-h-28 object-contain"
+            loading="lazy"
+          >
+        </div>
+        <div class="min-w-0">
+          <p class="text-xs font-semibold text-emerald-800">Attached Z Reading Image</p>
+          <p class="text-[11px] text-emerald-700">You can proceed to <span class="font-semibold">Next</span>.</p>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if user and user.role == 'Store Manager' and (not current_z_reading_image_link) and (not pos_sold_locked) %}
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 space-y-2">
+          <div class="flex flex-col gap-2 md:flex-row md:items-end">
+            <div class="flex-1">
+              <label for="z_reading_image_required" class="block text-[11px] font-medium text-slate-700 mb-1">Attach Z Reading (.png / .jpg / .jpeg / .webp)</label>
+              <input id="z_reading_image_required" name="z_reading_image_required" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-400 outline-none">
+            </div>
+          </div>
+          <div id="z-reading-local-preview" class="hidden items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-2.5">
+            <div class="w-28 shrink-0 rounded-md border border-emerald-200 overflow-hidden bg-white">
+              <img id="z-reading-local-preview-img" src="" alt="Selected Z Reading Image Preview" class="w-full h-auto max-h-28 object-contain" loading="lazy">
+            </div>
+            <div class="min-w-0">
+              <p class="text-xs font-semibold text-emerald-800">Selected Z Reading Image</p>
+              <p id="z-reading-local-preview-name" class="text-[11px] text-emerald-700 truncate"></p>
+            </div>
+          </div>
+        </div>
+      {% elif user and user.role == 'Store Manager' and (not current_z_reading_image_link) and pos_sold_locked %}
+        <form action="{{ url_for('views.upload_pos_sold_z_reading') }}" method="POST" enctype="multipart/form-data" class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2.5">
+          <input type="hidden" name="report_date" value="{{ selected_report_date if selected_report_date else today }}">
+          <div>
+            <label for="z_reading_image_late" class="block text-[11px] font-medium text-slate-700 mb-1">Upload Z Reading Now (.png / .jpg / .jpeg / .webp)</label>
+            <input id="z_reading_image_late" name="z_reading_image" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" required class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-400 outline-none">
+          </div>
+          <div class="md:self-end">
+            <button type="submit" class="w-full md:w-auto px-4 py-2 text-xs font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-all shadow-sm shadow-violet-600/25">
+              Upload Z Reading
+            </button>
+          </div>
+        </form>
+      {% elif user and user.role == 'Inventory Staff' and (not current_z_reading_image_link) %}
+        <div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5">
+          <p class="text-xs text-rose-700">No attached Z Reading image for this selected report date.</p>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+</div>
+
+{% if user and user.role == 'Store Manager' and missing_dates %}
+<div id="missing-dates-modal" class="fixed inset-0 z-50 hidden">
+  <div id="missing-dates-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+    <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200">
+        <h3 class="text-lg font-bold text-slate-900">Missing Report Dates</h3>
+        <p class="text-sm text-red-600 mt-1">
+          {{ missing_dates|length }} missing date{{ '' if missing_dates|length == 1 else 's' }} found for this month.
+        </p>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to auto-select the oldest missing date.</p>
+        <div class="max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100">
+          {% for missing in missing_dates %}
+          <div class="px-3 py-2 flex items-center justify-between">
+            <span class="text-sm font-semibold text-red-700">{{ missing.label }}</span>
+            <span class="text-xs text-red-500">{{ missing.iso }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
+        <button id="missing-dates-go" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-slate-700 hover:bg-slate-800 rounded-lg transition-colors shadow-sm">
+          Go
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if show_pos_flow_guide %}
+<div id="pos-flow-guide-modal" class="fixed inset-0 z-50 hidden">
+  <div id="pos-flow-guide-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+    <div class="w-full max-w-xl bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200 bg-slate-50">
+        <h3 class="text-lg font-bold text-slate-900">Daily Report Submission Guide</h3>
+        <p class="text-xs text-slate-600 mt-1">Follow these steps in order for report date <strong>{{ selected_report_date }}</strong>.</p>
+      </div>
+      <div class="px-5 py-4 text-sm text-slate-700">
+        <ol class="space-y-2.5">
+          <li class="rounded-lg border border-slate-200 bg-white px-3 py-2.5"><span class="font-semibold text-slate-900">1.</span> Upload POS Excel file.</li>
+          <li class="rounded-lg border border-slate-200 bg-white px-3 py-2.5"><span class="font-semibold text-slate-900">2.</span> Click <span class="font-semibold text-amber-700">Review Data</span>.</li>
+          <li class="rounded-lg border border-slate-200 bg-white px-3 py-2.5"><span class="font-semibold text-slate-900">3.</span> Click <span class="font-semibold text-indigo-700">Next</span> to open Daily Report.</li>
+          <li class="rounded-lg border border-slate-200 bg-white px-3 py-2.5"><span class="font-semibold text-slate-900">4.</span> Fill Daily Sales fields and submit Daily Report.</li>
+          <li class="rounded-lg border border-slate-200 bg-white px-3 py-2.5"><span class="font-semibold text-slate-900">5.</span> Z Reading image is optional for now (can upload later).</li>
+        </ol>
+        <div class="mt-2.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-900">
+          One submit saves both Daily Report and reviewed POS Sold data.
+        </div>
+      </div>
+      <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
+        <button id="pos-flow-guide-close" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm">
+          Got It
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const reportDateInput = document.getElementById('report_date');
+    const posUploadDateInput = document.getElementById('pos-upload-report-date');
+    const posClearDateInput = document.getElementById('pos-clear-report-date');
+    const clearPosInlineBtn = document.getElementById('clear-pos-inline-btn');
+    const clearPosInlineForm = document.getElementById('clear-pos-inline-form');
+    const baseUrl = {{ url_for('views.store_manager_pos_sold')|tojson }};
+    const isStoreManagerRole = {{ ((user and user.role == 'Store Manager') | tojson) }};
+    const missingDates = {{ missing_dates|tojson }};
+    const nextMissingDate = {{ next_missing_date|tojson }};
+    const missingDatesModal = document.getElementById('missing-dates-modal');
+    const missingDatesGoBtn = document.getElementById('missing-dates-go');
+    const posFlowGuideModal = document.getElementById('pos-flow-guide-modal');
+    const posFlowGuideOverlay = document.getElementById('pos-flow-guide-overlay');
+    const posFlowGuideCloseBtn = document.getElementById('pos-flow-guide-close');
+    const zReadingRequiredInput = document.getElementById('z_reading_image_required');
+    const zReadingLocalPreview = document.getElementById('z-reading-local-preview');
+    const zReadingLocalPreviewImg = document.getElementById('z-reading-local-preview-img');
+    const zReadingLocalPreviewName = document.getElementById('z-reading-local-preview-name');
+
+    function syncPosDateFields() {
+      if (!reportDateInput) return;
+      const dateValue = reportDateInput.value || '';
+      if (posUploadDateInput) posUploadDateInput.value = dateValue;
+      if (posClearDateInput) posClearDateInput.value = dateValue;
+    }
+
+    if (reportDateInput) {
+      reportDateInput.addEventListener('change', function() {
+        syncPosDateFields();
+        const selectedDate = reportDateInput.value;
+        if (selectedDate) {
+          window.location.href = `${baseUrl}?date=${encodeURIComponent(selectedDate)}`;
+        }
+      });
+      reportDateInput.addEventListener('input', syncPosDateFields);
+    }
+
+    if (zReadingRequiredInput) {
+      zReadingRequiredInput.addEventListener('change', function() {
+        const selectedFile = zReadingRequiredInput.files && zReadingRequiredInput.files[0];
+        if (!selectedFile) {
+          if (zReadingLocalPreview) zReadingLocalPreview.classList.add('hidden');
+          return;
+        }
+        if (zReadingLocalPreviewImg) {
+          zReadingLocalPreviewImg.src = URL.createObjectURL(selectedFile);
+        }
+        if (zReadingLocalPreviewName) {
+          zReadingLocalPreviewName.textContent = selectedFile.name || '';
+        }
+        if (zReadingLocalPreview) {
+          zReadingLocalPreview.classList.remove('hidden');
+          zReadingLocalPreview.classList.add('flex');
+        }
+      });
+    }
+
+    if (clearPosInlineBtn && clearPosInlineForm) {
+      clearPosInlineBtn.addEventListener('click', function() {
+        clearPosInlineForm.submit();
+      });
+    }
+
+    function showMissingDatesModal() {
+      if (!missingDatesModal) return;
+      missingDatesModal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+    }
+
+    function hideMissingDatesModal() {
+      if (!missingDatesModal) return;
+      missingDatesModal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    if (missingDatesGoBtn) {
+      missingDatesGoBtn.addEventListener('click', function() {
+        if (!nextMissingDate) {
+          hideMissingDatesModal();
+          return;
+        }
+        window.location.href = `${baseUrl}?date=${encodeURIComponent(nextMissingDate)}&guide=1`;
+      });
+    }
+
+    if (isStoreManagerRole && Array.isArray(missingDates) && missingDates.length > 0) {
+      showMissingDatesModal();
+    }
+
+    function closePosFlowGuideModal() {
+      if (!posFlowGuideModal) return;
+      posFlowGuideModal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    if (posFlowGuideModal) {
+      posFlowGuideModal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+      if (posFlowGuideCloseBtn) {
+        posFlowGuideCloseBtn.addEventListener('click', closePosFlowGuideModal);
+      }
+      if (posFlowGuideOverlay) {
+        posFlowGuideOverlay.addEventListener('click', closePosFlowGuideModal);
+      }
+    }
+
+  });
+</script>
+
+{% endblock %}
