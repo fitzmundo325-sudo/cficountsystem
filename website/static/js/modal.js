@@ -132,7 +132,7 @@ function showConfirmationModal(options) {
     title = 'Confirm Changes',
     message = 'Are you sure you want to continue?',
     messageHtml = '',
-    modalWidth = '360px',
+    modalWidth = '390px',
     oldValue,
     newValue,
     confirmText = 'Confirm',
@@ -143,15 +143,16 @@ function showConfirmationModal(options) {
   const hasCustomBody = Boolean(String(messageHtml || '').trim());
   const hasValueComparison = Boolean(oldValue && newValue);
   const defaultBodyHtml = `
-    <div class="flex flex-col items-center text-center py-1">
-      <div class="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 9v4"></path>
-          <path d="M12 17h.01"></path>
-          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+    <div class="flex flex-col items-center text-center">
+      <div class="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h13"></path>
+          <path d="m13 6 6 6-6 6"></path>
+          <path d="M5 6v12"></path>
         </svg>
       </div>
-      <p class="text-base font-semibold text-slate-900">${message}</p>
+      <h3 class="text-xl font-bold text-slate-900">${title}</h3>
+      <p class="mt-2 text-sm leading-6 text-slate-600">${message}</p>
     </div>
   `;
 
@@ -163,26 +164,33 @@ function showConfirmationModal(options) {
 
   // Create modal HTML
   const modalHTML = `
-    <div id="confirmation-modal" class="fixed inset-0 z-50 flex items-center justify-center hidden">
+    <div id="confirmation-modal" class="fixed inset-0 z-[1000] flex items-center justify-center hidden px-4">
       <!-- Backdrop -->
-      <div data-modal-backdrop class="absolute inset-0 bg-black/50 opacity-0 transition-opacity duration-300"></div>
+      <div data-modal-backdrop class="absolute inset-0 bg-black/60 backdrop-blur-[1px] opacity-0 transition-opacity duration-300"></div>
       
       <!-- Modal Content -->
-      <div data-modal-content class="relative bg-white rounded-2xl shadow-2xl w-full mx-4 scale-95 opacity-0 transition-all duration-300" style="max-width: ${modalWidth};">
-        <!-- Header -->
-        <div class="px-5 py-3 border-b border-slate-200">
-          <h3 class="text-base font-bold text-slate-900">${title}</h3>
-        </div>
-        
+      <div data-modal-content class="relative bg-white rounded-xl shadow-2xl w-full scale-95 opacity-0 transition-all duration-300 overflow-hidden" style="max-width: ${modalWidth};">
         <!-- Body -->
-        <div class="px-5 py-3">
+        <div class="px-6 pt-8 pb-6">
           ${hasCustomBody
-            ? `<div class="text-sm text-slate-700 mb-3" style="max-height:55vh;overflow-y:auto;">${messageHtml}</div>`
-            : `<div class="mb-3">${defaultBodyHtml}</div>`
+            ? `
+              <div class="flex flex-col items-center text-center">
+                <div class="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 12h13"></path>
+                    <path d="m13 6 6 6-6 6"></path>
+                    <path d="M5 6v12"></path>
+                  </svg>
+                </div>
+                <h3 class="text-xl font-bold text-slate-900">${title}</h3>
+              </div>
+              <div class="mt-4 text-sm text-slate-700" style="max-height:55vh;overflow-y:auto;">${messageHtml}</div>
+            `
+            : defaultBodyHtml
           }
           
           ${hasValueComparison ? `
-          <div class="bg-slate-50 rounded-lg p-3 space-y-2">
+          <div class="mt-5 bg-slate-50 rounded-lg p-3 space-y-2">
             <div class="flex items-center justify-between">
               <span class="text-xs font-medium text-slate-500 uppercase">Old Value</span>
               <span class="text-sm font-semibold text-slate-700">${oldValue}</span>
@@ -197,12 +205,16 @@ function showConfirmationModal(options) {
         </div>
         
         <!-- Footer -->
-        <div class="px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2">
-          <button data-modal-cancel class="px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+        <div class="px-6 py-4 border-t border-slate-200 grid grid-cols-2 gap-3">
+          <button data-modal-cancel class="h-11 px-4 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
             ${cancelText}
           </button>
-          <button data-modal-confirm class="px-3 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-lg shadow-indigo-600/20">
+          <button data-modal-confirm class="h-11 px-4 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-lg shadow-indigo-600/25">
             ${confirmText}
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14"></path>
+              <path d="m13 5 7 7-7 7"></path>
+            </svg>
           </button>
         </div>
       </div>
