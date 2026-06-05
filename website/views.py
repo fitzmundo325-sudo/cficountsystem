@@ -3351,7 +3351,7 @@ def _update_inventory_trans_in_on_receive(transfer, transfer_items):
         dest_inventory = DailyEndingInventory(
             store_id=dest_store.id,
             inventory_date=transaction_date,
-            created_by=getattr(transfer, 'uploaded_by', None) or getattr(transfer, 'created_by', None)
+            created_by=getattr(transfer, 'submitted_by', None) or getattr(current_user, 'id', None)
         )
         db.session.add(dest_inventory)
         db.session.flush()
