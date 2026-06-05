@@ -42,7 +42,7 @@
   <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <div>
       <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Invensync Dashboard</h1>
-      <p class="mt-1 text-slate-600">Real-time forecasting & inventory overview for all stores (View Only)</p>
+      <p class="mt-1 text-slate-600">Real-time ending inventory overview for all stores (View Only)</p>
     </div>
   </section>
 
@@ -105,30 +105,6 @@
         </div>
 
         {% if store_summary.has_data %}
-          <!-- Forecasting Info -->
-          {% if store_summary.forecasting %}
-          <div class="space-y-2 pt-3 border-t border-slate-200">
-            <div class="flex justify-between items-center">
-              <span class="text-xs text-slate-600 font-medium">Sales Target</span>
-              <span class="text-sm font-bold text-slate-900">₱{{ "%.2f"|format(store_summary.forecasting.sales_target or 0) }}</span>
-            </div>
-            <div class="flex justify-between items-center">
-              <span class="text-xs text-slate-600 font-medium">Actual Order</span>
-              <span class="text-sm font-bold text-slate-900">₱{{ "%.2f"|format(store_summary.forecasting.act_order_value or 0) }}</span>
-            </div>
-            <div class="flex justify-between items-center">
-              <span class="text-xs text-slate-600 font-medium">Variance</span>
-              <span class="text-sm font-bold {% if (store_summary.forecasting.variance or 0) >= 0 %}text-emerald-600{% else %}text-red-600{% endif %}">
-                ₱{{ "%.2f"|format(store_summary.forecasting.variance or 0) }}
-              </span>
-            </div>
-            <div class="flex justify-between items-center">
-              <span class="text-xs text-slate-600 font-medium">Gross Margin</span>
-              <span class="text-sm font-bold text-slate-900">₱{{ "%.2f"|format(store_summary.forecasting.gross_margin or 0) }}</span>
-            </div>
-          </div>
-          {% endif %}
-
           <!-- Inventory Info -->
           {% if store_summary.inventory %}
           <div class="text-xs text-slate-500">

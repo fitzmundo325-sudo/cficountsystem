@@ -9,8 +9,6 @@ from .models import (
     RsoDelivery,
     TafTransfer,
     TafTransferItem,
-    DailyForecasting,
-    DailyForecastingItem,
     DailyEndingInventory,
     DailyEndingInventoryItem,
     StoreTarget,
@@ -1228,6 +1226,79 @@ def _parse_iso_date(value):
         return None
 
 
+def _get_or_create_global_invensync_config():
+    default_data = {
+        'hidden_rows': [],
+        'hidden_columns': [],
+        'hidden_cells': [],
+        'locked_rows': [],
+        'locked_columns': [],
+        'locked_cells': [],
+        'editable_columns': [],
+    }
+    config = GlobalInvenSyncConfig.query.first()
+    if not config:
+        config = GlobalInvenSyncConfig(config_data=json.dumps(default_data))
+        db.session.add(config)
+        return config, default_data
+
+    try:
+        config_data = json.loads(config.config_data or '{}')
+    except ValueError:
+        config_data = {}
+
+    for key, value in default_data.items():
+        if key not in config_data or not isinstance(config_data.get(key), list):
+            config_data[key] = list(value)
+
+    return config, config_data
+
+
+def _lock_global_invensync_column(column_name):
+    config, config_data = _get_or_create_global_invensync_config()
+    locked_columns = [str(item).strip() for item in config_data.get('locked_columns', []) if str(item).strip()]
+    if column_name not in locked_columns:
+        locked_columns.append(column_name)
+        config_data['locked_columns'] = locked_columns
+        config.config_data = json.dumps(config_data)
+    return config_data
+
+
+def _build_missing_report_dates(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return []
+
+    first_report_date = (
+        DailyReport.query
+        .filter(DailyReport.store_id == store_id)
+        .with_entities(func.min(DailyReport.report_date))
+        .scalar()
+    )
+    if not first_report_date or first_report_date > cutoff_date:
+        return []
+
+    start_date = max(month_start, first_report_date)
+    existing_dates = {
+        row.report_date for row in DailyReport.query.filter(
+            DailyReport.store_id == store_id,
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= cutoff_date,
+        ).all()
+        if row.report_date
+    }
+
+    missing_dates = []
+    cursor = start_date
+    while cursor <= cutoff_date:
+        if cursor not in existing_dates:
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+    return missing_dates
+
+
 def _format_header_date(date_value):
     if not date_value:
         return ''
@@ -2406,24 +2477,7 @@ def store_manager_report():
     if not explicit_date_in_query:
         month_start = selected_date.replace(day=1)
         cutoff_date = min(selected_date, today_date - timedelta(days=1))
-
-        existing_dates = {
-            row.report_date for row in DailyReport.query.filter(
-                DailyReport.store_id == store.id,
-                DailyReport.report_date >= month_start,
-                DailyReport.report_date <= cutoff_date,
-            ).all()
-            if row.report_date
-        }
-
-        cursor = month_start
-        while cursor <= cutoff_date:
-            if cursor not in existing_dates:
-                missing_dates.append({
-                    'iso': cursor.strftime('%Y-%m-%d'),
-                    'label': cursor.strftime('%b %d, %Y'),
-                })
-            cursor += timedelta(days=1)
+        missing_dates = _build_missing_report_dates(store.id, month_start, cutoff_date)
 
     selected_report = DailyReport.query.filter_by(store_id=store.id, report_date=selected_date).first()
 
@@ -2522,26 +2576,16 @@ def store_manager_pos_sold():
     if not explicit_date_in_query:
         month_start = selected_date.replace(day=1)
         cutoff_date = min(selected_date, today_date - timedelta(days=1))
-        existing_dates = {
-            row.report_date for row in DailyReport.query.filter(
-                DailyReport.store_id == store.id,
-                DailyReport.report_date >= month_start,
-                DailyReport.report_date <= cutoff_date,
-            ).all()
-            if row.report_date
-        }
-        cursor = month_start
-        while cursor <= cutoff_date:
-            if cursor not in existing_dates:
-                missing_dates.append({
-                    'iso': cursor.strftime('%Y-%m-%d'),
-                    'label': cursor.strftime('%b %d, %Y'),
-                })
-            cursor += timedelta(days=1)
+        missing_dates = _build_missing_report_dates(store.id, month_start, cutoff_date)
 
     selected_report_date = selected_date.strftime('%Y-%m-%d')
     next_missing_date = missing_dates[0]['iso'] if missing_dates else None
     show_pos_flow_guide = str(request.args.get('guide') or '').strip() == '1'
+    pos_scan_success = str(request.args.get('pos_scan_success') or '').strip() == '1'
+    try:
+        pos_scan_rows = int(request.args.get('pos_scan_rows') or 0)
+    except (TypeError, ValueError):
+        pos_scan_rows = 0
     selected_report = DailyReport.query.filter_by(store_id=store.id, report_date=selected_date).first()
     draft_pos_sold_items = _get_pos_sold_draft(store.id, selected_date)
     pos_sold_items = draft_pos_sold_items if draft_pos_sold_items else []
@@ -2582,6 +2626,8 @@ def store_manager_pos_sold():
         missing_dates=missing_dates,
         next_missing_date=next_missing_date,
         show_pos_flow_guide=show_pos_flow_guide,
+        pos_scan_success=pos_scan_success,
+        pos_scan_rows=pos_scan_rows,
         current_z_reading_image_link=current_z_reading_image_link,
         current_z_reading_image_preview_url=current_z_reading_image_preview_url,
     )
@@ -2861,31 +2907,7 @@ def delete_all_rso_data():
                                 inventory_cleared_count += 1
                                 break
 
-        # ============================================================
-        # 2. Clear from DailyForecastingItem (Forecasting view)
-        # ============================================================
-        forecasting = DailyForecasting.query.filter_by(
-            store_id=store.id,
-            forecast_date=report_date
-        ).first()
-
         forecast_cleared_count = 0
-        if forecasting:
-            items = DailyForecastingItem.query.filter_by(forecasting_id=forecasting.id).all()
-            for item in items:
-                if item.product_master_id:
-                    product = ProductMaster.query.get(item.product_master_id)
-                    if product:
-                        # Check if this forecasting item matches any RSO record
-                        for rso_record in rso_records:
-                            if _match_rso_to_inventory(rso_record, product):
-                                item.delivery_tomorrow_qty = 0
-                                item.delivery_tomorrow_peso = 0.0
-                                forecast_cleared_count += 1
-                                break
-
-            # Recalculate forecasting totals
-            _recalculate_forecasting_totals(forecasting)
 
         # ============================================================
         # 3. Delete RSO records
@@ -2912,7 +2934,7 @@ def delete_all_rso_data():
 
         db.session.commit()
         flash(
-            f'✓ Deleted {deleted_count} RSO record(s). Cleared delivery data from inventory ({inventory_cleared_count} items) and forecasting ({forecast_cleared_count} items).',
+            f'✓ Deleted {deleted_count} RSO record(s). Cleared delivery data from inventory ({inventory_cleared_count} items).',
             category='success'
         )
     except Exception as exc:
@@ -2999,24 +3021,7 @@ def store_manager_store_data():
     if year_int == today.year and month_int == today.month:
         cutoff_date = today - timedelta(days=1)
 
-    existing_dates = {
-        row.report_date for row in DailyReport.query.filter(
-            DailyReport.store_id == store.id,
-            DailyReport.report_date >= month_start,
-            DailyReport.report_date <= cutoff_date,
-        ).all()
-        if row.report_date
-    }
-
-    missing_dates = []
-    cursor = month_start
-    while cursor <= cutoff_date:
-        if cursor not in existing_dates:
-            missing_dates.append({
-                'iso': cursor.strftime('%Y-%m-%d'),
-                'label': cursor.strftime('%b %d, %Y'),
-            })
-        cursor += timedelta(days=1)
+    missing_dates = _build_missing_report_dates(store.id, month_start, cutoff_date)
     next_missing_date = missing_dates[0]['iso'] if missing_dates else None
 
     pos_reports = (
@@ -4049,9 +4054,13 @@ def review_pos_sold_excel():
         )
         db.session.commit()
 
-        flash(
-            f'Reviewed {len(parsed_items)} POS sold item(s) for {report_date.strftime("%B %d, %Y")}. Save happens when you click Submit Report on POS Sold.',
-            category='success'
+        return redirect(
+            url_for(
+                'views.store_manager_pos_sold',
+                date=report_date.strftime('%Y-%m-%d'),
+                pos_scan_success=1,
+                pos_scan_rows=len(parsed_items),
+            )
         )
 
     except ValueError as exc:
@@ -5143,7 +5152,7 @@ def approve_report():
 
 
 # ============================================================================
-# DAILY FORECASTING TOOL ROUTES
+# RETIRED DAILY FORECASTING ROUTES
 # ============================================================================
 
 @views.route('/store-manager/daily-forecasting')
@@ -5159,214 +5168,15 @@ def daily_forecasting():
 @views.route('/store-manager/daily-forecasting/save', methods=['POST'])
 @login_required
 def save_daily_forecasting():
-    """Save daily forecasting data"""
-    try:
-        data = request.get_json()
-        forecasting_id = data.get('forecasting_id')
-        items_data = data.get('items', [])
-        header_data = data.get('header', {})
-        
-        forecasting = DailyForecasting.query.get(forecasting_id)
-        if not forecasting:
-            return jsonify({'success': False, 'error': 'Forecasting not found'}), 404
-        
-        # Update header data
-        forecasting.sales_target = float(header_data.get('sales_target', 0))
-        forecasting.eod_sales_net = float(header_data.get('eod_sales_net', 0))
-        forecasting.ei_current_day = float(header_data.get('ei_current_day', 0))
-        forecasting.next_day_target = float(header_data.get('next_day_target', 0))
-        forecasting.next_day_ly = float(header_data.get('next_day_ly', 0))
-        
-        # Update items
-        for item_data in items_data:
-            item_id = item_data.get('item_id')
-            item = DailyForecastingItem.query.get(item_id)
-            if item:
-                item.pre_ending = int(item_data.get('pre_ending', 0))
-                item.adq_adequate = int(item_data.get('adq_adequate', 0))
-                item.initial_order = int(item_data.get('initial_order', 0))
-                item.must_have = bool(item_data.get('must_have', False))
-                
-                # Calculate derived fields
-                item.final_order = int(item.initial_order * item.mh_not_constant)
-                item.tp_peso_value = item.final_order * item.tp_price
-                item.sp_peso_value = item.final_order * item.srp_price
-                item.gross_margin_2 = item.final_order * item.gross_margin_1
-                if item.sp_peso_value > 0:
-                    item.gross_margin_percent = (item.gross_margin_2 / item.sp_peso_value) * 100
-        
-        # Recalculate totals
-        _recalculate_forecasting_totals(forecasting)
-        
-        db.session.commit()
-        
-        log_audit_event(
-            action='forecasting.save',
-            entity_type='DailyForecasting',
-            entity_id=forecasting.id,
-            details={'forecast_date': forecasting.forecast_date.isoformat()}
-        )
-        
-        return jsonify({
-            'success': True,
-            'message': 'Forecasting saved successfully',
-            'totals': {
-                'act_order_value': forecasting.act_order_value,
-                'variance': forecasting.variance,
-                'gross_margin': forecasting.gross_margin,
-                'profit': forecasting.profit,
-                'delivery_tomorrow_total': forecasting.delivery_tomorrow_total
-            }
-        })
-        
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+    """Forecasting has been retired from InvenSync."""
+    return jsonify({'success': False, 'error': 'Forecasting has been disabled'}), 410
 
 
 @views.route('/store-manager/daily-forecasting/calculate', methods=['POST'])
 @login_required
 def calculate_forecasting():
-    """Calculate forecasting values without saving"""
-    try:
-        data = request.get_json()
-        items_data = data.get('items', [])
-        sales_target = float(data.get('sales_target', 0))
-        
-        # Calculate totals by category
-        category_totals = {
-            'Breads': {'tp': 0, 'sp': 0},
-            'Tray Products': {'tp': 0, 'sp': 0},
-            'Rolls': {'tp': 0, 'sp': 0},
-            'Greeting Cakes': {'tp': 0, 'sp': 0},
-            'Premium': {'tp': 0, 'sp': 0},
-            'Crema De Fruta': {'tp': 0, 'sp': 0}
-        }
-        
-        act_order_value = 0
-        gross_margin = 0
-        
-        for item_data in items_data:
-            category = item_data.get('category', '')
-            final_order = int(item_data.get('final_order', 0))
-            tp_price = float(item_data.get('tp_price', 0))
-            srp_price = float(item_data.get('srp_price', 0))
-            gm1 = float(item_data.get('gross_margin_1', 0))
-            
-            tp_value = final_order * tp_price
-            sp_value = final_order * srp_price
-            gm2 = final_order * gm1
-            
-            act_order_value += sp_value
-            gross_margin += tp_value
-            
-            # Map category
-            if 'Bread' in category:
-                category_totals['Breads']['tp'] += tp_value
-                category_totals['Breads']['sp'] += sp_value
-            elif 'Tray' in category:
-                category_totals['Tray Products']['tp'] += tp_value
-                category_totals['Tray Products']['sp'] += sp_value
-            elif 'Roll' in category:
-                category_totals['Rolls']['tp'] += tp_value
-                category_totals['Rolls']['sp'] += sp_value
-            elif 'Greeting' in category:
-                category_totals['Greeting Cakes']['tp'] += tp_value
-                category_totals['Greeting Cakes']['sp'] += sp_value
-            elif 'Premium' in category or 'Crema' in category:
-                category_totals['Premium']['tp'] += tp_value
-                category_totals['Premium']['sp'] += sp_value
-        
-        # Calculate percentages
-        def calc_percent(tp, sp):
-            if sp > 0:
-                return ((sp - tp) / sp) * 100
-            return 0
-        
-        variance = act_order_value - sales_target
-        profit = act_order_value - gross_margin
-        
-        return jsonify({
-            'success': True,
-            'act_order_value': act_order_value,
-            'variance': variance,
-            'gross_margin': gross_margin,
-            'profit': profit,
-            'gross_margin_percent': calc_percent(gross_margin, act_order_value),
-            'breads_percent': calc_percent(category_totals['Breads']['tp'], category_totals['Breads']['sp']),
-            'tray_percent': calc_percent(category_totals['Tray Products']['tp'], category_totals['Tray Products']['sp']),
-            'rolls_percent': calc_percent(category_totals['Rolls']['tp'], category_totals['Rolls']['sp']),
-            'greeting_percent': calc_percent(category_totals['Greeting Cakes']['tp'], category_totals['Greeting Cakes']['sp']),
-            'premium_percent': calc_percent(category_totals['Premium']['tp'], category_totals['Premium']['sp'])
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-def _recalculate_forecasting_totals(forecasting):
-    """Recalculate all totals for a forecasting record"""
-    items = DailyForecastingItem.query.filter_by(forecasting_id=forecasting.id).all()
-    
-    # Reset totals
-    forecasting.act_order_value = 0
-    forecasting.breads_tp_total = 0
-    forecasting.tray_products_tp_total = 0
-    forecasting.rolls_tp_total = 0
-    forecasting.greeting_cakes_tp_total = 0
-    forecasting.premium_crema_tp_total = 0
-    forecasting.gross_margin = 0
-    forecasting.delivery_tomorrow_total = 0
-    forecasting.delivery_breads = 0
-    forecasting.delivery_tray = 0
-    forecasting.delivery_rolls = 0
-    forecasting.delivery_greeting_cakes = 0
-    forecasting.delivery_premium_crema = 0
-    
-    for item in items:
-        sp_value = item.final_order * item.srp_price
-        tp_value = item.final_order * item.tp_price
-        gm2 = item.final_order * item.gross_margin_1
-        
-        forecasting.act_order_value += sp_value
-        forecasting.gross_margin += tp_value
-        
-        # Category totals
-        cat = item.product_category
-        if 'Bread' in cat:
-            forecasting.breads_tp_total += tp_value
-            forecasting.delivery_breads += item.delivery_tomorrow_qty * item.srp_price
-        elif 'Tray' in cat:
-            forecasting.tray_products_tp_total += tp_value
-            forecasting.delivery_tray += item.delivery_tomorrow_qty * item.srp_price
-        elif 'Roll' in cat:
-            forecasting.rolls_tp_total += tp_value
-            forecasting.delivery_rolls += item.delivery_tomorrow_qty * item.srp_price
-        elif 'Greeting' in cat:
-            forecasting.greeting_cakes_tp_total += tp_value
-            forecasting.delivery_greeting_cakes += item.delivery_tomorrow_qty * item.srp_price
-        elif 'Premium' in cat or 'Crema' in cat:
-            forecasting.premium_crema_tp_total += tp_value
-            forecasting.delivery_premium_crema += item.delivery_tomorrow_qty * item.srp_price
-        
-        # Delivery tomorrow total
-        forecasting.delivery_tomorrow_total += item.delivery_tomorrow_qty * item.srp_price
-    
-    # Calculate variance and profit
-    forecasting.variance = forecasting.act_order_value - forecasting.sales_target
-    forecasting.profit = forecasting.act_order_value - forecasting.gross_margin
-    forecasting.next_day_variance = forecasting.next_day_target - forecasting.next_day_ly
-    
-    # Calculate percentages
-    def calc_pct(margin, total):
-        return ((total - margin) / total * 100) if total > 0 else 0
-    
-    forecasting.gross_margin_percent = calc_pct(forecasting.gross_margin, forecasting.act_order_value)
-    forecasting.breads_percent = calc_pct(forecasting.breads_tp_total, forecasting.act_order_value)
-    forecasting.tray_products_percent = calc_pct(forecasting.tray_products_tp_total, forecasting.act_order_value)
-    forecasting.rolls_percent = calc_pct(forecasting.rolls_tp_total, forecasting.act_order_value)
-    forecasting.greeting_cakes_percent = calc_pct(forecasting.greeting_cakes_tp_total, forecasting.act_order_value)
-    forecasting.premium_crema_percent = calc_pct(forecasting.premium_crema_tp_total, forecasting.act_order_value)
+    """Forecasting has been retired from InvenSync."""
+    return jsonify({'success': False, 'error': 'Forecasting has been disabled'}), 410
 
 
 # ============================================================================
@@ -5395,13 +5205,22 @@ def save_daily_ending_inventory():
         inventory = DailyEndingInventory.query.get(inventory_id)
         if not inventory:
             return jsonify({'success': False, 'error': 'Inventory not found'}), 404
+
+        is_first_inventory_baseline = DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == inventory.store_id,
+            DailyEndingInventory.inventory_date < inventory.inventory_date,
+        ).first() is None
+        has_beginning_payload = any('beginning_qty' in item_data for item_data in items_data)
+        _, global_config_data = _get_or_create_global_invensync_config()
+        beginning_qty_is_locked = 'beginning_qty' in global_config_data.get('locked_columns', [])
+        allow_beginning_qty_update = not beginning_qty_is_locked
         
         # Update items
         for item_data in items_data:
             item_id = item_data.get('item_id')
             item = DailyEndingInventoryItem.query.get(item_id)
             if item:
-                if 'beginning_qty' in item_data:
+                if allow_beginning_qty_update and 'beginning_qty' in item_data:
                     item.beginning_qty = int(item_data.get('beginning_qty', 0))
                 item.delivery_qty = int(item_data.get('delivery_qty', 0))
                 item.trans_in_qty = int(item_data.get('trans_in_qty', 0))
@@ -5415,11 +5234,12 @@ def save_daily_ending_inventory():
                 item.ending_d4_qty = int(item_data.get('ending_d4_qty', 0))
                 item.ending_d3_qty = int(item_data.get('ending_d3_qty', 0))
                 item.remarks = item_data.get('remarks', '')
-                item.discount_qty = int(item_data.get('discount_qty', 0))
-                item.discount_percent = float(item_data.get('discount_percent', 0))
                 
                 # Recalculate derived fields
                 _recalculate_inventory_item(item)
+
+        if is_first_inventory_baseline and has_beginning_payload:
+            _lock_global_invensync_column('beginning_qty')
         
         db.session.commit()
         
@@ -5491,7 +5311,7 @@ def _match_rso_to_inventory(rso_item, product):
 @views.route('/store-manager/invensync')
 @login_required
 def invensync():
-    """Combined Daily Forecasting and Ending Inventory view"""
+    """Daily ending inventory view"""
     if current_user.role not in ['Store Manager', 'Inventory Staff', 'Admin', 'Superadmin']:
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
@@ -5535,23 +5355,6 @@ def invensync():
     else:
         selected_date = date.today()
 
-    # Get or create forecasting record
-    forecasting = DailyForecasting.query.filter_by(
-        store_id=store.id,
-        forecast_date=selected_date
-    ).first()
-
-    if not forecasting:
-        forecasting = DailyForecasting(
-            store_id=store.id,
-            forecast_date=selected_date,
-            order_date=date.today(),
-            delivery_date=selected_date,
-            created_by=current_user.id
-        )
-        db.session.add(forecasting)
-        db.session.commit()
-
     # Get or create inventory record
     inventory = DailyEndingInventory.query.filter_by(
         store_id=store.id,
@@ -5584,53 +5387,6 @@ def invensync():
     }
 
     products.sort(key=lambda p: (category_order.get(p.category, 99), p.id))
-
-    # Get or create forecasting items
-    forecasting_items = {}
-    for product in products:
-        item = DailyForecastingItem.query.filter_by(
-            forecasting_id=forecasting.id,
-            product_master_id=product.id
-        ).first()
-
-        if not item:
-            prev_date = selected_date - timedelta(days=1)
-            prev_forecasting = DailyForecasting.query.filter_by(
-                store_id=store.id,
-                forecast_date=prev_date
-            ).first()
-
-            delivery_tomorrow = 0
-            if prev_forecasting:
-                prev_item = DailyForecastingItem.query.filter_by(
-                    forecasting_id=prev_forecasting.id,
-                    product_master_id=product.id
-                ).first()
-                if prev_item:
-                    delivery_tomorrow = prev_item.final_order
-
-            srp = product.sp_p if store.store_group == 'premium' else product.sp_np
-            tp = product.tp or 0
-            gm1 = (srp or 0) - tp if srp and tp else 0
-
-            item = DailyForecastingItem(
-                forecasting_id=forecasting.id,
-                product_master_id=product.id,
-                product_code=str(product.code) if product.code else '',
-                product_description=product.description,
-                product_category=product.category,
-                uom='PC',
-                must_have=False,
-                mh_not_constant=1.0,
-                tp_price=tp,
-                srp_price=srp or 0,
-                gross_margin_1=gm1,
-                delivery_tomorrow_qty=delivery_tomorrow,
-                delivery_tomorrow_peso=delivery_tomorrow * (srp or 0)
-            )
-            db.session.add(item)
-
-        forecasting_items[product.id] = item
 
     # Get or create inventory items
     inventory_items = {}
@@ -5698,8 +5454,7 @@ def invensync():
                                 matched_rso_ids.add(rso_item.id)
                             break
 
-    # Recalculate totals
-    _recalculate_forecasting_totals(forecasting)
+    # Recalculate inventory totals
     for item in inventory_items.values():
         _recalculate_inventory_item(item)
     saved_sales_map = _build_pos_sold_quantity_by_master_id_for_report(
@@ -5727,26 +5482,33 @@ def invensync():
                 inv_item.pos_reviewed_date = selected_date
                 _recalculate_inventory_item(inv_item, sold_override=inv_item.draft_quantity_sold)
 
-    global_config = GlobalInvenSyncConfig.query.first()
-    global_config_data = {}
-    if global_config:
-        try:
-            global_config_data = json.loads(global_config.config_data or '{}')
-        except ValueError:
-            global_config_data = {}
+    _, global_config_data = _get_or_create_global_invensync_config()
+    beginning_qty_is_locked = 'beginning_qty' in global_config_data.get('locked_columns', [])
+
+    # Detect first-time setup: no previous inventory baseline and no current beginning stock.
+    has_any_beginning = any(
+        item.beginning_qty and item.beginning_qty > 0
+        for item in inventory_items.values()
+    )
+    prev_inventory_exists = DailyEndingInventory.query.filter(
+        DailyEndingInventory.store_id == store.id,
+        DailyEndingInventory.inventory_date < selected_date
+    ).first() is not None
+    is_first_time = (not beginning_qty_is_locked) and not has_any_beginning and not prev_inventory_exists
+    allow_beginning_stock_entry = is_first_time and current_user.role != 'Inventory Staff'
 
     return render_template(
         'store_manager/invensync.html',
         user=current_user,
         store=store,
-        forecasting=forecasting,
         inventory=inventory,
         products=products,
-        forecasting_items=forecasting_items,
         inventory_items=inventory_items,
         selected_date=selected_date.strftime('%Y-%m-%d'),
         today=date.today().strftime('%Y-%m-%d'),
         global_config_data=global_config_data,
+        is_first_time=is_first_time,
+        allow_beginning_stock_entry=allow_beginning_stock_entry,
     )
 
 
@@ -5794,30 +5556,23 @@ def invensync_inventory_staff():
     # Get all stores
     stores = Store.query.order_by(Store.name.asc()).all()
     
-    # Get forecasting and inventory data for selected date from all stores
-    forecasting_records = DailyForecasting.query.filter_by(
-        forecast_date=selected_date
-    ).all()
-    
+    # Get inventory data for selected date from all stores
     inventory_records = DailyEndingInventory.query.filter_by(
         inventory_date=selected_date
     ).all()
 
     # Organize by store
-    forecasting_by_store = {f.store_id: f for f in forecasting_records}
     inventory_by_store = {i.store_id: i for i in inventory_records}
 
     # Build store summary data
     store_summaries = []
     for store in stores:
-        forecasting = forecasting_by_store.get(store.id)
         inventory = inventory_by_store.get(store.id)
         
         store_summaries.append({
             'store': store,
-            'forecasting': forecasting,
             'inventory': inventory,
-            'has_data': bool(forecasting or inventory)
+            'has_data': bool(inventory)
         })
 
     return render_template(
@@ -5833,7 +5588,7 @@ def invensync_inventory_staff():
 @views.route('/store-manager/invensync/sync', methods=['POST'])
 @login_required
 def sync_invensync_products():
-    """Sync products from ProductMaster to daily combined forecasting and inventory"""
+    """Sync products from ProductMaster to daily ending inventory."""
     try:
         data = request.get_json()
         sync_date_str = data.get('date')
@@ -5862,23 +5617,6 @@ def sync_invensync_products():
         if not products:
             return jsonify({'success': False, 'error': 'No products found in masterlist'}), 400
         
-        # Get or create forecasting record
-        forecasting = DailyForecasting.query.filter_by(
-            store_id=store.id,
-            forecast_date=sync_date
-        ).first()
-        
-        if not forecasting:
-            forecasting = DailyForecasting(
-                store_id=store.id,
-                forecast_date=sync_date,
-                order_date=date.today(),
-                delivery_date=sync_date,
-                created_by=current_user.id
-            )
-            db.session.add(forecasting)
-            db.session.flush()
-        
         # Get or create inventory record
         inventory = DailyEndingInventory.query.filter_by(
             store_id=store.id,
@@ -5898,57 +5636,8 @@ def sync_invensync_products():
         prev_date = sync_date - timedelta(days=1)
         
         for product in products:
-            # Sync to Daily Forecasting
-            fc_item = DailyForecastingItem.query.filter_by(
-                forecasting_id=forecasting.id,
-                product_master_id=product.id
-            ).first()
-            
-            # Get delivery tomorrow from previous day's final order
-            delivery_tomorrow = 0
-            prev_forecasting = DailyForecasting.query.filter_by(
-                store_id=store.id,
-                forecast_date=prev_date
-            ).first()
-            
-            if prev_forecasting:
-                prev_fc_item = DailyForecastingItem.query.filter_by(
-                    forecasting_id=prev_forecasting.id,
-                    product_master_id=product.id
-                ).first()
-                if prev_fc_item:
-                    delivery_tomorrow = prev_fc_item.final_order
-            
-            tp = product.tp or 0
             srp = product.sp_p if store.store_group == 'premium' else product.sp_np
-            gm1 = (srp or 0) - tp if srp and tp else 0
-            
-            if not fc_item:
-                fc_item = DailyForecastingItem(
-                    forecasting_id=forecasting.id,
-                    product_master_id=product.id,
-                    product_code=str(product.code) if product.code else '',
-                    product_description=product.description,
-                    product_category=product.category,
-                    uom='PC',
-                    must_have=False,
-                    mh_not_constant=1.0,
-                    tp_price=tp,
-                    srp_price=srp or 0,
-                    gross_margin_1=gm1,
-                    delivery_tomorrow_qty=delivery_tomorrow,
-                    delivery_tomorrow_peso=delivery_tomorrow * (srp or 0)
-                )
-                db.session.add(fc_item)
-            else:
-                # Update with latest product data
-                fc_item.product_code = str(product.code) if product.code else fc_item.product_code
-                fc_item.product_description = product.description
-                fc_item.product_category = product.category
-                fc_item.tp_price = tp
-                fc_item.srp_price = srp or 0
-                fc_item.gross_margin_1 = gm1
-            
+
             # Sync to Daily Ending Inventory
             inv_item = DailyEndingInventoryItem.query.filter_by(
                 inventory_id=inventory.id,
@@ -5994,9 +5683,9 @@ def sync_invensync_products():
         try:
             log_audit_event(
                 action='products.sync',
-                entity_type='DailyForecasting',
-                entity_id=forecasting.id,
-                reason='Synced products from ProductMaster to daily combined view',
+                entity_type='DailyEndingInventory',
+                entity_id=inventory.id,
+                reason='Synced products from ProductMaster to daily ending inventory',
                 details={
                     'products_synced': synced_count,
                     'sync_date': sync_date_str,
@@ -6047,14 +5736,6 @@ def _recalculate_inventory_item(item, sold_override=None):
     item.variance_qty = item.total_ending_qty - item.theo_ending_qty
     item.variance_peso = item.variance_qty * item.srp_price
     
-    # Discount amount
-    if item.discount_percent > 0 and item.discount_qty > 0:
-        discount_amount = item.srp_price * (item.discount_percent / 100)
-        discounted_price = item.srp_price - discount_amount
-        item.total_amount_with_discount = item.discount_qty * discounted_price
-    else:
-        item.total_amount_with_discount = 0
-
 
 # ============================================================================
 # PRODUCT MASTER SYNC ROUTES
@@ -6063,11 +5744,11 @@ def _recalculate_inventory_item(item, sold_override=None):
 @views.route('/store-manager/sync-products', methods=['POST'])
 @login_required
 def sync_products_from_master():
-    """Sync products from ProductMaster to forecasting/inventory items"""
+    """Sync products from ProductMaster to inventory items."""
     try:
         data = request.get_json()
         store_id = data.get('store_id')
-        sync_type = data.get('type', 'all')  # 'forecasting', 'inventory', or 'all'
+        sync_type = data.get('type', 'inventory')
         target_date_str = data.get('date')
         
         if not store_id:
@@ -6094,83 +5775,13 @@ def sync_products_from_master():
         else:
             products = ProductMaster.query.all()
         
-        synced_forecasting = 0
         synced_inventory = 0
-        
-        # Sync to Daily Forecasting
-        if sync_type in ['forecasting', 'all']:
-            forecasting = DailyForecasting.query.filter_by(
-                store_id=store.id,
-                forecast_date=target_date
-            ).first()
-            
-            if not forecasting:
-                forecasting = DailyForecasting(
-                    store_id=store.id,
-                    forecast_date=target_date,
-                    order_date=date.today(),
-                    delivery_date=target_date,
-                    created_by=current_user.id
-                )
-                db.session.add(forecasting)
-                db.session.flush()
-            
-            # Get previous day's data for delivery tomorrow
-            prev_date = target_date - timedelta(days=1)
-            prev_forecasting = DailyForecasting.query.filter_by(
-                store_id=store.id,
-                forecast_date=prev_date
-            ).first()
-            
-            existing_item_ids = {item.product_master_id: item for item in 
-                DailyForecastingItem.query.filter_by(forecasting_id=forecasting.id).all()}
-            
-            for product in products:
-                if product.id in existing_item_ids:
-                    # Update existing item with latest product data
-                    item = existing_item_ids[product.id]
-                    item.product_code = str(product.code) if product.code else item.product_code
-                    item.product_description = product.description
-                    item.product_category = product.category
-                    item.tp_price = product.tp or 0
-                    srp = product.sp_p if store.store_group == 'premium' else product.sp_np
-                    item.srp_price = srp or 0
-                    item.gross_margin_1 = (srp or 0) - (product.tp or 0)
-                else:
-                    # Create new item
-                    delivery_tomorrow = 0
-                    if prev_forecasting:
-                        prev_item = DailyForecastingItem.query.filter_by(
-                            forecasting_id=prev_forecasting.id,
-                            product_master_id=product.id
-                        ).first()
-                        if prev_item:
-                            delivery_tomorrow = prev_item.final_order
-                    
-                    srp = product.sp_p if store.store_group == 'premium' else product.sp_np
-                    tp = product.tp or 0
-                    gm1 = (srp or 0) - tp
-                    
-                    item = DailyForecastingItem(
-                        forecasting_id=forecasting.id,
-                        product_master_id=product.id,
-                        product_code=str(product.code) if product.code else '',
-                        product_description=product.description,
-                        product_category=product.category,
-                        uom='PC',
-                        must_have=False,
-                        mh_not_constant=1.0,
-                        tp_price=tp,
-                        srp_price=srp or 0,
-                        gross_margin_1=gm1,
-                        delivery_tomorrow_qty=delivery_tomorrow,
-                        delivery_tomorrow_peso=delivery_tomorrow * (srp or 0)
-                    )
-                    db.session.add(item)
-                    synced_forecasting += 1
-        
+
+        if sync_type == 'all':
+            sync_type = 'inventory'
+
         # Sync to Daily Ending Inventory
-        if sync_type in ['inventory', 'all']:
+        if sync_type == 'inventory':
             inventory = DailyEndingInventory.query.filter_by(
                 store_id=store.id,
                 inventory_date=target_date
@@ -6236,7 +5847,6 @@ def sync_products_from_master():
             details={
                 'sync_type': sync_type,
                 'date': target_date.isoformat(),
-                'synced_forecasting': synced_forecasting,
                 'synced_inventory': synced_inventory
             }
         )
@@ -6244,7 +5854,6 @@ def sync_products_from_master():
         return jsonify({
             'success': True,
             'message': f'Sync completed successfully',
-            'synced_forecasting': synced_forecasting,
             'synced_inventory': synced_inventory,
             'total_products': len(products)
         })

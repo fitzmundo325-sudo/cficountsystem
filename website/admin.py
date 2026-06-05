@@ -1,5 +1,5 @@
 from flask import Blueprint, redirect, render_template, request, url_for, flash, jsonify
-from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, PosSold, MenuInventoryItem, DailyForecasting, DailyEndingInventory, DailyForecastingItem, DailyEndingInventoryItem, TafTransfer, TafTransferItem
+from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, PosSold, MenuInventoryItem, DailyEndingInventory, DailyEndingInventoryItem, TafTransfer, TafTransferItem
 from . import db
 from .audit import log_audit_event, verify_audit_chain
 from werkzeug.security import generate_password_hash
@@ -2698,7 +2698,7 @@ def _get_global_invensync_config():
 @admin.route('/admin/invensync')
 @login_required
 def invensync():
-    """Admin view for Invensync (Forecasting + Ending Inventory) from all stores"""
+    """Admin view for Invensync ending inventory from all stores"""
     if current_user.role not in ('Superadmin', 'Admin'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
@@ -2718,30 +2718,23 @@ def invensync():
     # Get all stores
     stores = Store.query.order_by(Store.name.asc()).all()
     
-    # Get forecasting and inventory data for selected date from all stores
-    forecasting_records = DailyForecasting.query.filter_by(
-        forecast_date=selected_date
-    ).all()
-    
+    # Get inventory data for selected date from all stores
     inventory_records = DailyEndingInventory.query.filter_by(
         inventory_date=selected_date
     ).all()
 
     # Organize by store
-    forecasting_by_store = {f.store_id: f for f in forecasting_records}
     inventory_by_store = {i.store_id: i for i in inventory_records}
 
     # Build store summary data
     store_summaries = []
     for store in stores:
-        forecasting = forecasting_by_store.get(store.id)
         inventory = inventory_by_store.get(store.id)
         
         store_summaries.append({
             'store': store,
-            'forecasting': forecasting,
             'inventory': inventory,
-            'has_data': bool(forecasting or inventory)
+            'has_data': bool(inventory)
         })
 
     products = ProductMaster.query.order_by(ProductMaster.category.asc(), ProductMaster.description.asc()).all()
@@ -2749,13 +2742,6 @@ def invensync():
     preview_store = stores[0] if stores else None
 
     config_fields = [
-        {'value': 'must_have', 'label': 'MH'},
-        {'value': 'pre_ending', 'label': 'Pre-End'},
-        {'value': 'adq_adequate', 'label': 'ADQ'},
-        {'value': 'initial_order', 'label': 'Initial'},
-        {'value': 'final_order', 'label': 'Final Order'},
-        {'value': 'delivery_tomorrow_qty', 'label': 'Del Tmrw'},
-        {'value': 'delivery_tomorrow_peso', 'label': 'Del Peso'},
         {'value': 'beginning_qty', 'label': 'Beg'},
         {'value': 'delivery_qty', 'label': 'Delivery'},
         {'value': 'trans_in_qty', 'label': 'Trans-In'},
@@ -2775,9 +2761,6 @@ def invensync():
         {'value': 'variance_qty', 'label': 'Var'},
         {'value': 'variance_peso', 'label': 'Var Peso'},
         {'value': 'remarks', 'label': 'Remarks'},
-        {'value': 'discount_qty', 'label': 'Discount Qty'},
-        {'value': 'discount_percent', 'label': 'Discount %'},
-        {'value': 'total_amount_with_discount', 'label': 'Discount Amt'},
     ]
 
     return render_template(
@@ -2861,50 +2844,13 @@ def update_store_pricing():
         store.store_group = tier
         db.session.commit()
         
-        # Update all existing DailyForecastingItems for this store to reflect new pricing
-        try:
-            forecasting_records = DailyForecasting.query.filter_by(store_id=store_id).all()
-            for forecasting in forecasting_records:
-                items = DailyForecastingItem.query.filter_by(forecasting_id=forecasting.id).all()
-                for item in items:
-                    if item.product_master_id:
-                        product = ProductMaster.query.get(item.product_master_id)
-                        if product:
-                            # Recalculate SRP based on new store group
-                            new_srp = product.sp_p if tier == 'premium' else product.sp_np
-                            old_srp = item.srp_price
-                            
-                            # Update item prices
-                            item.srp_price = new_srp or 0
-                            tp = item.tp_price or 0
-                            item.gross_margin_1 = (new_srp or 0) - tp if new_srp and tp else 0
-                            
-                            # Recalculate peso values if they exist
-                            if item.final_order:
-                                item.sp_peso_value = (new_srp or 0) * item.final_order
-                                # Recalculate gross margin 2
-                                item.gross_margin_2 = item.sp_peso_value - (item.tp_peso_value or 0)
-                                if item.sp_peso_value > 0:
-                                    item.gross_margin_percent = (item.gross_margin_2 / item.sp_peso_value) * 100
-                            
-                            # Update delivery peso value
-                            if item.delivery_tomorrow_qty:
-                                item.delivery_tomorrow_peso = item.delivery_tomorrow_qty * (new_srp or 0)
-                            
-                            db.session.add(item)
-            
-            db.session.commit()
-        except Exception as pricing_error:
-            print(f'Error updating forecasting items pricing: {pricing_error}')
-            # Don't fail - the main tier update already succeeded
-        
         # Log this action (don't let audit logging fail the update)
         try:
             log_audit_event(
                 action='UPDATE_STORE_PRICING',
                 entity_type='Store',
                 entity_id=store.id,
-                details=f'Changed store "{store.name}" pricing tier from {old_tier} to {tier} - updated {len(forecasting_records)} forecasting records',
+                details=f'Changed store "{store.name}" pricing tier from {old_tier} to {tier}',
                 actor_user=current_user.id
             )
         except Exception as audit_error:

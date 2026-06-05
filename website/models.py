@@ -305,98 +305,6 @@ class GlobalInvenSyncConfig(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
 
-class DailyForecasting(db.Model):
-    """Daily Forecasting Tool - Stores order and sales data by product"""
-    __tablename__ = 'daily_forecasting'
-    id = db.Column(db.Integer, primary_key=True)
-    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
-    forecast_date = db.Column(db.Date, nullable=False, index=True)
-    order_date = db.Column(db.Date, nullable=True)
-    delivery_date = db.Column(db.Date, nullable=True)
-    created_at = db.Column(db.DateTime(timezone=True), default=func.now())
-    updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
-    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    
-    # Sales targets and actuals
-    sales_target = db.Column(db.Float, default=0.0)
-    act_order_value = db.Column(db.Float, default=0.0)
-    variance = db.Column(db.Float, default=0.0)
-    
-    # Product category totals (Transfer Price based)
-    breads_tp_total = db.Column(db.Float, default=0.0)
-    tray_products_tp_total = db.Column(db.Float, default=0.0)
-    rolls_tp_total = db.Column(db.Float, default=0.0)
-    greeting_cakes_tp_total = db.Column(db.Float, default=0.0)
-    premium_crema_tp_total = db.Column(db.Float, default=0.0)
-    
-    # Gross margin (sum of all TP totals)
-    gross_margin = db.Column(db.Float, default=0.0)
-    
-    # Percentages
-    gross_margin_percent = db.Column(db.Float, default=0.0)
-    breads_percent = db.Column(db.Float, default=0.0)
-    tray_products_percent = db.Column(db.Float, default=0.0)
-    rolls_percent = db.Column(db.Float, default=0.0)
-    greeting_cakes_percent = db.Column(db.Float, default=0.0)
-    premium_crema_percent = db.Column(db.Float, default=0.0)
-    
-    # EOD Sales and targets
-    eod_sales_net = db.Column(db.Float, default=0.0)
-    ei_current_day = db.Column(db.Float, default=0.0)
-    next_day_target = db.Column(db.Float, default=0.0)
-    next_day_ly = db.Column(db.Float, default=0.0)
-    next_day_variance = db.Column(db.Float, default=0.0)
-    profit = db.Column(db.Float, default=0.0)
-    
-    # Delivery totals
-    delivery_tomorrow_total = db.Column(db.Float, default=0.0)
-    delivery_breads = db.Column(db.Float, default=0.0)
-    delivery_tray = db.Column(db.Float, default=0.0)
-    delivery_rolls = db.Column(db.Float, default=0.0)
-    delivery_greeting_cakes = db.Column(db.Float, default=0.0)
-    delivery_premium_crema = db.Column(db.Float, default=0.0)
-    
-    # Relationships
-    store = db.relationship('Store', backref='daily_forecastings')
-    creator = db.relationship('User', foreign_keys=[created_by])
-    items = db.relationship('DailyForecastingItem', backref='forecasting', lazy=True, cascade='all, delete-orphan')
-
-
-class DailyForecastingItem(db.Model):
-    """Individual product items in daily forecasting"""
-    __tablename__ = 'daily_forecasting_item'
-    id = db.Column(db.Integer, primary_key=True)
-    forecasting_id = db.Column(db.Integer, db.ForeignKey('daily_forecasting.id'), nullable=False, index=True)
-    product_master_id = db.Column(db.Integer, db.ForeignKey('product_master.id'), nullable=True)
-    
-    # Product info (snapshot)
-    product_code = db.Column(db.String(50), nullable=True)
-    product_description = db.Column(db.String(255), nullable=False)
-    product_category = db.Column(db.String(100), nullable=False)
-    uom = db.Column(db.String(50), default='PC')
-    must_have = db.Column(db.Boolean, default=False)
-    mh_not_constant = db.Column(db.Float, default=1.0)
-    tp_price = db.Column(db.Float, default=0.0)
-    srp_price = db.Column(db.Float, default=0.0)
-    gross_margin_1 = db.Column(db.Float, default=0.0)
-    
-    # User inputs
-    pre_ending = db.Column(db.Integer, default=0)
-    adq_adequate = db.Column(db.Integer, default=0)
-    initial_order = db.Column(db.Integer, default=0)
-    
-    # Calculated fields
-    final_order = db.Column(db.Integer, default=0)
-    tp_peso_value = db.Column(db.Float, default=0.0)
-    sp_peso_value = db.Column(db.Float, default=0.0)
-    gross_margin_2 = db.Column(db.Float, default=0.0)
-    gross_margin_percent = db.Column(db.Float, default=0.0)
-    
-    # Delivery from previous day
-    delivery_tomorrow_qty = db.Column(db.Integer, default=0)
-    delivery_tomorrow_peso = db.Column(db.Float, default=0.0)
-
-
 class DailyEndingInventory(db.Model):
     """Daily Ending Inventory - Tracks inventory by product"""
     __tablename__ = 'daily_ending_inventory'
@@ -453,10 +361,5 @@ class DailyEndingInventoryItem(db.Model):
     variance_qty = db.Column(db.Integer, default=0)
     variance_peso = db.Column(db.Float, default=0.0)
     delivery_reviewed_date = db.Column(db.Date, nullable=True)
-    
-    # Discount info
+
     remarks = db.Column(db.String(255), nullable=True)
-    discount_qty = db.Column(db.Integer, default=0)
-    discount_percent = db.Column(db.Float, default=0.0)
-    total_amount_with_discount = db.Column(db.Float, default=0.0)
-    

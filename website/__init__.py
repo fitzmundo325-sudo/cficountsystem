@@ -191,6 +191,26 @@ def _ensure_daily_ending_inventory_item_columns():
         conn.commit()
 
 
+def _drop_daily_ending_inventory_discount_columns():
+    with db.engine.connect() as conn:
+        existing_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info('daily_ending_inventory_item')")).fetchall()
+        }
+
+        for column_name in ('discount_qty', 'discount_percent', 'total_amount_with_discount'):
+            if column_name in existing_columns:
+                conn.execute(text(f"ALTER TABLE daily_ending_inventory_item DROP COLUMN {column_name}"))
+        conn.commit()
+
+
+def _drop_daily_forecasting_tables():
+    with db.engine.connect() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS daily_forecasting_item"))
+        conn.execute(text("DROP TABLE IF EXISTS daily_forecasting"))
+        conn.commit()
+
+
 def create_app():
     _load_local_env()
     app = Flask(__name__)
@@ -223,8 +243,6 @@ def create_app():
         StoreTarget,
         AuditLog,
         GlobalInvenSyncConfig,
-        DailyForecasting,
-        DailyForecastingItem,
         DailyEndingInventory,
         DailyEndingInventoryItem,
     )
@@ -239,6 +257,8 @@ def create_app():
         _ensure_taf_transfer_columns()
         _ensure_taf_transfer_item_columns()
         _ensure_daily_ending_inventory_item_columns()
+        _drop_daily_ending_inventory_discount_columns()
+        _drop_daily_forecasting_tables()
         _backfill_store_group_values()
         print("Created database!")
 

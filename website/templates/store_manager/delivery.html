@@ -100,7 +100,7 @@
       {% if rso_source == 'saved' %}
       <div class="flex items-center justify-between">
         <p class="text-xs font-medium text-indigo-700">Showing saved RSO rows from database.</p>
-        <form id="delete-rso-form" action="{{ url_for('views.delete_all_rso_data') }}" method="POST" onsubmit="return confirm('This will delete the RSO data and clear the reflected delivery data from inventory and forecasting. Continue?');" class="inline">
+        <form id="delete-rso-form" action="{{ url_for('views.delete_all_rso_data') }}" method="POST" onsubmit="return confirm('This will delete the RSO data and clear the reflected delivery data from inventory. Continue?');" class="inline">
           <input type="hidden" name="report_date" id="rso-delete-report-date" value="{{ selected_report_date if selected_report_date else today }}">
           <button type="submit" class="px-3 py-1.5 text-xs font-medium bg-rose-600 text-white rounded-lg hover:bg-rose-700 transition-colors shadow-sm hover:shadow-md">
             Delete All RSO

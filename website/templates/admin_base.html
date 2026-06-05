@@ -10,6 +10,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link href="{{ url_for('static', filename='css/styles.css') }}?v=sidebar-scroll-2" rel="stylesheet">
   <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
     #sidebar nav.custom-scrollbar {
       -ms-overflow-style: none;
       scrollbar-width: none;
@@ -26,7 +32,7 @@
   
   {% block extra_head %}{% endblock %}
 </head>
-<body class="overflow-x-hidden">
+<body class="m-0 overflow-x-hidden">
 
   <!-- Mobile Overlay -->
   <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden backdrop-blur-sm lg:hidden"></div>
