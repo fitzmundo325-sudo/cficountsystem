@@ -2795,6 +2795,19 @@ def invensync():
     )
 
 
+@admin.route('/admin/oracle')
+@login_required
+def admin_oracle():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    return render_template(
+        'admin/oracle.html',
+        user=current_user,
+    )
+
+
 @admin.route('/admin/invensync/config', methods=['POST'])
 @login_required
 def update_invensync_config():

@@ -1,0 +1,560 @@
+{% extends "base.html" %}
+{% block title %}Oracle — {{ store.name }}{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<style>
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  input[type="number"] { -moz-appearance:textfield; }
+  .view { display:none; } .view.active { display:block; }
+  .o-tab { border-bottom:2px solid transparent; }
+  .o-tab.active { border-bottom-color:#0ea5e9; color:#0f172a; font-weight:600; }
+  .o-tab:hover:not(.active) { color:#0f172a; background:#f8fafc; }
+  .input-final { background:#f0f9ff; border:1px solid #7dd3fc; border-radius:6px; text-align:center; width:76px; padding:5px 4px; font-size:12px; font-weight:600; outline:none; }
+  .input-final:focus { border-color:#0ea5e9; box-shadow:0 0 0 2px #bae6fd; }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .fade-up { animation:fadeUp .25s ease forwards; }
+  @keyframes toastIn { from{transform:translateX(16px);opacity:0} to{transform:translateX(0);opacity:1} }
+  .o-toast { animation:toastIn .2s ease; }
+  .forecast-bar select option { background:#1e293b; color:#fff; }
+</style>
+
+<!-- Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div class="flex items-center gap-3">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <i class="bi bi-list text-xl"></i>
+    </button>
+    <a href="{{ url_for('views.invensync') }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="Back to InvenSync">
+      <i class="bi bi-arrow-left text-base"></i>
+    </a>
+    <nav class="flex items-center text-sm font-medium text-slate-500">
+      <span>Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900 font-semibold">Oracle</span>
+    </nav>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="topbar-date" class="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full"></span>
+    <span class="text-sm font-semibold text-slate-700">{{ store.name }}</span>
+    <button onclick="navigate('order-form')" class="flex items-center gap-1.5 bg-sky-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-sky-700 transition-colors">
+      <i class="bi bi-plus-lg"></i> New Order
+    </button>
+  </div>
+</header>
+
+<!-- Tab Nav -->
+<div class="bg-white border-b border-slate-200 px-6 flex gap-1 overflow-x-auto">
+  <button class="o-tab active flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-order-form"     onclick="navigate('order-form')">    <i class="bi bi-cart3"></i> Order Form</button>
+  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-approvals"         onclick="navigate('approvals')">      <i class="bi bi-check2-circle"></i> Approvals <span id="badge-approvals" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
+  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-history"            onclick="navigate('history')">        <i class="bi bi-clock-history"></i> History</button>
+  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-stocks"             onclick="navigate('stocks')">         <i class="bi bi-box-seam"></i> Stocks</button>
+  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-daily-averages"     onclick="navigate('daily-averages')"> <i class="bi bi-bar-chart-line"></i> Daily Averages</button>
+</div>
+
+<div class="px-4 pt-4 pb-6 md:px-6 space-y-4 max-w-[2400px] mx-auto overflow-x-hidden">
+
+
+  <!-- ORDER FORM -->
+  <div class="view active" id="view-order-form">
+    <div class="mb-5">
+      <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Smart Order Form</h1>
+      <p class="mt-1 text-sm text-slate-500">Quantities suggested based on stock, expected sales, and avg consumption. <strong class="text-slate-700">Orders outside ±20% range require Manager Approval.</strong></p>
+    </div>
+
+    <!-- Date/Manager row -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-4">
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Order Date</label><input type="date" id="order-date" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none" onchange="onOrderDateChange()"></div>
+        <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Delivery Date <span class="text-amber-500 normal-case font-normal">(min +2 days)</span></label><input type="date" id="delivery-date" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none" onchange="onDeliveryDateChange()"></div>
+        <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Delivery Day</label><input type="text" id="delivery-day" readonly class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-600"></div>
+        <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Prepared By</label><input type="text" id="order-manager" value="{{ user.username }}" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 outline-none"></div>
+      </div>
+    </div>
+
+    <!-- Forecast bar -->
+    <div class="bg-slate-800 rounded-xl p-5 mb-4 flex flex-wrap gap-5 items-start">
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Forecast Event</label>
+        <select id="forecast-event" onchange="updateMultiplier()" class="forecast-bar px-3 py-2 bg-slate-700 border border-slate-600 text-white rounded-lg text-sm outline-none focus:ring-2 focus:ring-sky-400 min-w-[180px]">
+          <option value="1.00">Normal Day</option>
+          <option value="1.25">Payday Week (+25%)</option>
+          <option value="1.40">Holiday (+40%)</option>
+          <option value="0.85">Rainy Season (-15%)</option>
+          <option value="1.60">Valentine's Day (+60%)</option>
+          <option value="1.80">Christmas Season (+80%)</option>
+          <option value="1.15">Summer (+15%)</option>
+          <option value="1.20">School Opening (+20%)</option>
+          <option value="1.35">Long Weekend (+35%)</option>
+          <option value="1.50">Super Sale (+50%)</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Multiplier</label>
+        <div id="eff-mult" class="px-4 py-2 bg-sky-500 text-white font-bold rounded-lg text-sm">1.00×</div>
+      </div>
+      <div class="bg-slate-700/60 border border-slate-600 rounded-lg p-3 min-w-[200px]">
+        <label class="block text-xs font-semibold text-slate-300 mb-1.5"><i class="bi bi-bullseye"></i> Target Sales (₱)</label>
+        <input type="number" id="target-sales-input" placeholder="e.g. 5000" min="0" oninput="onTargetSalesChange()" class="w-full px-3 py-1.5 bg-slate-600 border border-slate-500 text-white placeholder-slate-400 rounded text-sm outline-none focus:ring-1 focus:ring-sky-400">
+        <p class="text-[10px] text-slate-400 mt-1">Rev-share method. Optional.</p>
+      </div>
+      <div class="ml-auto flex flex-col gap-2 items-end justify-center">
+        <div id="order-mode-indicator" class="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-900/50 border border-emerald-700 text-emerald-300 rounded-full text-xs font-semibold"><i class="bi bi-bar-chart-fill"></i> Avg Consumption</div>
+        <span class="text-xs text-slate-500">Multiplier applied to suggested qty</span>
+      </div>
+    </div>
+
+    <!-- Order table -->
+    <div class="bg-white rounded-t-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="overflow-x-auto overflow-y-auto" style="max-height:calc(100vh - 22rem);">
+        <table id="order-table" class="w-full text-xs" style="min-width:1100px">
+          <thead class="bg-slate-100 text-slate-600 sticky top-0">
+            <tr>
+              <th class="px-3 py-3 text-left font-semibold">Product</th>
+              <th class="px-3 py-3 text-center font-semibold">Stock</th>
+              <th class="px-3 py-3 text-center font-semibold text-sky-600">Incoming</th>
+              <th class="px-3 py-3 text-center font-semibold text-rose-500">Exp Sales</th>
+              <th class="px-3 py-3 text-center font-semibold text-amber-600">Trans In</th>
+              <th class="px-3 py-3 text-center font-semibold text-rose-500">Trans Out</th>
+              <th class="px-3 py-3 text-center font-semibold">Eff Stock</th>
+              <th class="px-3 py-3 text-center font-semibold">Avg Sales</th>
+              <th class="px-3 py-3 text-center font-semibold">Buffer %</th>
+              <th class="px-3 py-3 text-center font-semibold text-emerald-600">Suggested Range<br><span class="text-[9px] text-slate-400 font-normal">Min · Center · Max</span></th>
+              <th class="px-3 py-3 text-center font-semibold text-sky-600">Final Order</th>
+              <th class="px-3 py-3 text-center font-semibold text-teal-600">Est. On Hand</th>
+              <th class="px-3 py-3 text-center font-semibold">Plant ₱</th>
+              <th class="px-3 py-3 text-center font-semibold">SRP ₱</th>
+              <th class="px-3 py-3 text-center font-semibold">Total Cost</th>
+            </tr>
+          </thead>
+          <tbody id="order-table-body" class="divide-y divide-slate-100"></tbody>
+          <tfoot id="order-table-foot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Compact summary footer -->
+    <div class="bg-slate-50 border border-slate-200 rounded-b-xl border-t-0 px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">
+      <div class="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
+        <span>SKUs: <strong class="text-slate-700" id="sum-skus">0</strong></span>
+        <span>Suggested: <strong class="text-slate-700" id="sum-suggested">0</strong></span>
+        <span>Final: <strong class="text-slate-700" id="sum-final">0</strong></span>
+        <span>Est. Cost: <strong class="text-sky-600" id="sum-cost">₱0</strong></span>
+      </div>
+      <div class="flex gap-2 ml-auto">
+        <button onclick="refreshSuggested()" class="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+        <button onclick="clearFinalOrders()" class="px-3 py-1.5 bg-white border border-slate-300 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors">Clear Overrides</button>
+        <button onclick="submitOrder()" class="flex items-center gap-1 px-3 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors"><i class="bi bi-check-lg"></i> Submit Order</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- APPROVALS -->
+  <div class="view" id="view-approvals">
+    <div class="mb-5"><h1 class="text-2xl font-bold text-slate-900">Cluster Manager Approvals</h1><p class="mt-1 text-sm text-slate-500">Review orders outside the permitted ±20% suggested range.</p></div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="overflow-x-auto"><table class="w-full text-xs" style="min-width:900px">
+        <thead class="bg-slate-100 text-slate-600"><tr>
+          <th class="px-3 py-3 text-left font-semibold">Order Date</th>
+          <th class="px-3 py-3 text-left font-semibold">Product</th>
+          <th class="px-3 py-3 text-center font-semibold">Suggested Range</th>
+          <th class="px-3 py-3 text-center font-semibold text-rose-500">Requested Qty</th>
+          <th class="px-3 py-3 text-center font-semibold">Total Cost</th>
+          <th class="px-3 py-3 text-left font-semibold">Manager</th>
+          <th class="px-3 py-3 text-center font-semibold">Actions</th>
+        </tr></thead>
+        <tbody id="approvals-tbody" class="divide-y divide-slate-100"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="view" id="view-history">
+    <div class="flex items-center justify-between mb-5">
+      <div><h1 class="text-2xl font-bold text-slate-900">Order History</h1><p class="mt-1 text-sm text-slate-500">Past submitted orders and suggested vs final quantities.</p></div>
+      <button onclick="renderHistory()" class="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="overflow-x-auto"><table class="w-full text-xs" style="min-width:900px">
+        <thead class="bg-slate-100 text-slate-600"><tr>
+          <th class="px-3 py-3 text-left font-semibold">Order Date</th>
+          <th class="px-3 py-3 text-left font-semibold">Delivery</th>
+          <th class="px-3 py-3 text-left font-semibold">Product</th>
+          <th class="px-3 py-3 text-left font-semibold">Forecast / Mode</th>
+          <th class="px-3 py-3 text-center font-semibold text-emerald-600">Suggested</th>
+          <th class="px-3 py-3 text-center font-semibold text-sky-600">Final</th>
+          <th class="px-3 py-3 text-center font-semibold">Unit Cost</th>
+          <th class="px-3 py-3 text-center font-semibold">Total Cost</th>
+          <th class="px-3 py-3 text-left font-semibold">Manager</th>
+        </tr></thead>
+        <tbody id="history-tbody" class="divide-y divide-slate-100"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <!-- STOCKS -->
+  <div class="view" id="view-stocks">
+    <div class="flex items-center justify-between mb-5">
+      <div><h1 class="text-2xl font-bold text-slate-900">Stock Management</h1><p class="mt-1 text-sm text-slate-500">Edit current stock levels. Changes reflect instantly in the Order Form.</p></div>
+      <div class="flex gap-2">
+        <button onclick="renderStocks()" class="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+        <button onclick="saveAllStocks()" class="flex items-center gap-1.5 px-3 py-2 bg-sky-600 text-white rounded-lg text-sm font-semibold hover:bg-sky-700 transition-colors"><i class="bi bi-floppy2-fill"></i> Save All</button>
+      </div>
+    </div>
+    <div id="stocks-kpi" class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5"></div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+        <span class="text-sm font-bold text-slate-700">Current Inventory</span>
+        <span class="text-xs text-slate-500">Edit <strong>Current Stock</strong> or use ± buttons</span>
+      </div>
+      <div class="overflow-x-auto"><table class="w-full text-xs" style="min-width:800px">
+        <thead class="bg-slate-100 text-slate-600"><tr>
+          <th class="px-3 py-3 text-left font-semibold">Product</th>
+          <th class="px-3 py-3 text-center font-semibold">Category</th>
+          <th class="px-3 py-3 text-center font-semibold">Unit</th>
+          <th class="px-3 py-3 text-center font-semibold text-emerald-600">Current Stock</th>
+          <th class="px-3 py-3 text-center font-semibold">Quick Adjust</th>
+          <th class="px-3 py-3 text-center font-semibold">Avg Daily</th>
+          <th class="px-3 py-3 text-center font-semibold">Days of Stock</th>
+          <th class="px-3 py-3 text-center font-semibold">Reorder Pt</th>
+          <th class="px-3 py-3 text-center font-semibold">Health</th>
+          <th class="px-3 py-3 text-center font-semibold">Updated</th>
+        </tr></thead>
+        <tbody id="stocks-table-body" class="divide-y divide-slate-100"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <!-- DAILY AVERAGES -->
+  <div class="view" id="view-daily-averages">
+    <div class="mb-5"><h1 class="text-2xl font-bold text-slate-900">Daily Average Consumption</h1><p class="mt-1 text-sm text-slate-500">Edit the 4 weekly sales tables. The summary auto-calculates and feeds the Order Form.</p></div>
+    <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3">
+      <i class="bi bi-calendar3 text-sky-500"></i> Weekly Sales — Units Sold Per Product Per Day
+    </div>
+    <div id="weekly-sales-tables-container" class="space-y-4"></div>
+    <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3 mt-8">
+      <i class="bi bi-graph-up text-sky-500"></i> Average Daily Sold &amp; Product Share (4-Week Summary)
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+      <div class="overflow-x-auto"><table class="w-full text-xs" style="min-width:800px">
+        <thead class="bg-slate-100 text-slate-600"><tr>
+          <th class="px-3 py-3 text-left font-semibold">Product</th>
+          <th class="px-3 py-3 text-center font-semibold">Mon</th><th class="px-3 py-3 text-center font-semibold">Tue</th>
+          <th class="px-3 py-3 text-center font-semibold">Wed</th><th class="px-3 py-3 text-center font-semibold">Thu</th>
+          <th class="px-3 py-3 text-center font-semibold">Fri</th><th class="px-3 py-3 text-center font-semibold">Sat</th>
+          <th class="px-3 py-3 text-center font-semibold">Sun</th><th class="px-3 py-3 text-center font-semibold">4-Wk Total</th>
+        </tr></thead>
+        <tbody id="avg-summary-body" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="avg-summary-foot"></tfoot>
+      </table></div>
+    </div>
+  </div>
+
+
+</div><!-- /content -->
+
+<!-- Toast container -->
+<div id="o-toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+
+<script>
+const PRODUCTS=[
+  {% for p in products %}
+  {id:{{ p.id }},name:{{ p.description|tojson }},category:{{ p.category|tojson }},unit:'pc',
+   plantPrice:{{ p.tp or 0 }},
+   sellingPrice:{{ (p.sp_p if store.store_group == 'premium' else p.sp_np) or 0 }},
+   buffer:20,minOrder:0},
+  {% endfor %}
+];
+const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const DAYS_DISPLAY=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+const DISP_TO_JS=[1,2,3,4,5,6,0];
+const fmt=d=>d.toISOString().split('T')[0];
+
+function buildSales(){
+  const d={};
+  PRODUCTS.forEach(p=>{d[p.id]=[];for(let w=0;w<4;w++){const wk=[];for(let day=0;day<7;day++)wk.push(0);d[p.id].push(wk);}});
+  return d;
+}
+let salesData=buildSales();
+
+const DB={
+  inventory:PRODUCTS.map(p=>({productId:p.id,productName:p.name,category:p.category,unit:p.unit,currentStock:0,reorderPoint:0,lastUpdated:fmt(new Date())})),
+  orderHistory:[],pendingApprovals:[],transfers:[],
+  settings:{store:'{{ store.name }}',branch:'{{ store.name }}',manager:'{{ user.username }}',contact:'',leadTime:1,buffer:20,alertDays:3}
+};
+let productBuffers={};PRODUCTS.forEach(p=>{productBuffers[p.id]=p.buffer;});
+let orderFinalQtys={};
+
+function getCurStock(pid){return(DB.inventory.find(x=>x.productId===pid)||{currentStock:0}).currentStock;}
+function getAvgDay(pid,dayName){const di=DAYS.indexOf(dayName);if(di<0)return 0;const w=salesData[pid];return w?w.reduce((s,wk)=>s+(wk[di]||0),0)/4:0;}
+function getAvgDayIdx(pid,di){const w=salesData[pid];return w?w.reduce((s,wk)=>s+(wk[di]||0),0)/4:0;}
+function getIncoming(pid,od,dd){if(!od||!dd)return 0;let t=0;const o=new Date(od+'T00:00:00'),d=new Date(dd+'T00:00:00');DB.orderHistory.forEach(h=>{if(h.productId!==pid)return;const hd=new Date(h.delivDate+'T00:00:00');if(hd>o&&hd<=d)t+=h.finalOrder||0;});return t;}
+function getExpSales(pid,od,dd){if(!od||!dd)return 0;let t=0;const c=new Date(od+'T00:00:00');c.setDate(c.getDate()+1);const e=new Date(dd+'T00:00:00');let s=0;while(c<e&&s++<60){t+=getAvgDay(pid,DAYS[c.getDay()]);c.setDate(c.getDate()+1);}return Math.round(t);}
+function getTrans(pid,type,od,dd){if(!od||!dd)return 0;let t=0;const o=new Date(od+'T00:00:00'),d=new Date(dd+'T00:00:00');DB.transfers.forEach(tf=>{if(tf.productId===pid&&tf.type===type&&tf.status==='Pending'){const td=new Date(tf.date+'T00:00:00');if(td>=o&&td<=d)t+=tf.qty;}});return t;}
+function calcAvg(p,dayName,mult,ne,tIn,tOut){const avg=getAvgDay(p.id,dayName),buf=(productBuffers[p.id]??p.buffer)/100,days=DB.settings.leadTime||1,target=Math.ceil(avg*mult*days*(1+buf)),raw=target-ne-tIn+tOut,min=p.minOrder||1;return Math.ceil(Math.max(0,raw)/min)*min;}
+function calcTarget(p,di,tSales,mult,ne,tIn,tOut){const pAvg=getAvgDayIdx(p.id,di)*p.sellingPrice;let totRev=0;PRODUCTS.forEach(q=>{totRev+=getAvgDayIdx(q.id,di)*q.sellingPrice;});if(!totRev)return 0;const qty=Math.ceil(tSales*(pAvg/totRev)/p.sellingPrice),buf=(productBuffers[p.id]??p.buffer)/100,raw=Math.ceil(qty*mult*(1+buf))-ne-tIn+tOut,min=p.minOrder||1;return Math.ceil(Math.max(0,raw)/min)*min;}
+function minDeliv(od){const d=new Date(od+'T00:00:00');d.setDate(d.getDate()+2);return fmt(d);}
+function getEffMult(){return parseFloat(document.getElementById('forecast-event').value)||1;}
+function getDelivDayName(){const v=document.getElementById('delivery-date').value;return v?DAYS[new Date(v+'T00:00:00').getDay()]:DAYS[new Date().getDay()];}
+function getDelivDayIdx(){const v=document.getElementById('delivery-date').value;return v?new Date(v+'T00:00:00').getDay():new Date().getDay();}
+
+function navigate(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.querySelectorAll('.o-tab').forEach(t=>t.classList.remove('active'));
+  const view=document.getElementById('view-'+id);if(!view)return;
+  view.classList.add('active','fade-up');setTimeout(()=>view.classList.remove('fade-up'),300);
+  const tab=document.getElementById('tab-'+id);if(tab)tab.classList.add('active');
+  ({  'order-form':renderOrderForm,'approvals':renderApprovals,'history':renderHistory,
+      'stocks':renderStocks,'transfers':renderTransfers,'daily-averages':renderDailyAverages,
+      'settings':renderSettings}[id]||Function)();
+}
+
+function onOrderDateChange(){const od=document.getElementById('order-date').value;if(!od)return;const min=minDeliv(od),dd=document.getElementById('delivery-date');dd.min=min;if(!dd.value||dd.value<min){dd.value=min;showToast('Delivery date auto-set: minimum is order + 2 days','info');}updateDelivDay();}
+function onDeliveryDateChange(){const od=document.getElementById('order-date').value,dd=document.getElementById('delivery-date');if(od&&dd.value&&dd.value<minDeliv(od)){dd.value=minDeliv(od);showToast('Delivery must be at least 2 days after order date','error');}updateDelivDay();}
+function updateDelivDay(){const v=document.getElementById('delivery-date').value;if(!v)return;document.getElementById('delivery-day').value=DAYS[new Date(v+'T00:00:00').getDay()];renderOrderTable();}
+function onTargetSalesChange(){renderOrderTable();}
+function updateMultiplier(){document.getElementById('eff-mult').textContent=(parseFloat(document.getElementById('forecast-event').value)||1).toFixed(2)+'×';renderOrderTable();}
+
+function renderOrderForm(){
+  const today=new Date(),deliv=new Date(today);deliv.setDate(today.getDate()+2);
+  document.getElementById('order-date').value=fmt(today);
+  document.getElementById('delivery-date').value=fmt(deliv);
+  document.getElementById('delivery-date').min=minDeliv(fmt(today));
+  updateDelivDay();updateMultiplier();
+}
+
+function renderOrderTable(){
+  const mult=getEffMult(),dayName=getDelivDayName(),dayIdx=getDelivDayIdx();
+  const od=document.getElementById('order-date').value,dd=document.getElementById('delivery-date').value;
+  const tsRaw=document.getElementById('target-sales-input').value,tSales=tsRaw!==''?parseFloat(tsRaw):null,useTarget=tSales!==null&&tSales>0;
+  const modeEl=document.getElementById('order-mode-indicator');
+  modeEl.className='flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border '+(useTarget?'bg-purple-900/50 border-purple-700 text-purple-300':'bg-emerald-900/50 border-emerald-700 text-emerald-300');
+  modeEl.innerHTML=useTarget?`<i class="bi bi-bullseye"></i> Target ₱${tSales.toLocaleString()}`:'<i class="bi bi-bar-chart-fill"></i> Avg Consumption';
+  const tbody=document.getElementById('order-table-body'),tfoot=document.getElementById('order-table-foot');
+  let totSug=0,totFinal=0,totPlant=0,totSell=0;
+  tbody.innerHTML=PRODUCTS.map(p=>{
+    const stock=getCurStock(p.id),inc=getIncoming(p.id,od,dd),exp=getExpSales(p.id,od,dd);
+    const tIn=getTrans(p.id,'in',od,dd),tOut=getTrans(p.id,'out',od,dd);
+    const ne=Math.max(0,stock+inc-exp),effStock=ne+tIn-tOut;
+    const bufPct=productBuffers[p.id]??p.buffer,avgMult=getAvgDay(p.id,dayName)*mult;
+    const sug=useTarget?calcTarget(p,dayIdx,tSales,mult,ne,tIn,tOut):calcAvg(p,dayName,mult,ne,tIn,tOut);
+    const minS=Math.max(0,Math.floor(sug*0.8)),maxS=Math.ceil(sug*1.2);
+    const fv=orderFinalQtys[p.id]!==undefined?orderFinalQtys[p.id]:'',fo=fv!==''?(parseInt(fv)||0):sug;
+    const oor=fv!==''&&(fo<minS||fo>maxS);
+    const iStyle=oor?'border-red-400 bg-red-50 text-red-700':'';
+    const estOH=effStock+fo;
+    const ohCls=estOH<=0?'text-red-600 bg-red-50':estOH<(p.minOrder||1)*2?'text-amber-600 bg-amber-50':'text-emerald-600 bg-emerald-50';
+    const sCls=stock===0?'bg-red-100 text-red-700':stock<(p.minOrder||1)*2?'bg-amber-100 text-amber-700':'bg-emerald-100 text-emerald-700';
+    const eCls=effStock<0?'text-red-600 font-bold':effStock===0?'text-amber-600 font-semibold':'text-slate-500';
+    totSug+=sug;totFinal+=fo;totPlant+=fo*p.plantPrice;totSell+=fo*p.sellingPrice;
+    return `<tr class="hover:bg-slate-50">
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${p.name}</div><div class="text-[10px] text-slate-400">${p.id}</div></td>
+      <td class="px-3 py-2.5 text-center"><span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${sCls}">${stock} ${p.unit}s</span></td>
+      <td class="px-3 py-2.5 text-center font-semibold text-sky-600">${inc}</td>
+      <td class="px-3 py-2.5 text-center font-semibold text-rose-500">${exp}</td>
+      <td class="px-3 py-2.5 text-center font-semibold text-amber-600">${tIn>0?'+'+tIn:'0'}</td>
+      <td class="px-3 py-2.5 text-center font-semibold text-rose-500">${tOut>0?'−'+tOut:'0'}</td>
+      <td class="px-3 py-2.5 text-center ${eCls}">${effStock}</td>
+      <td class="px-3 py-2.5 text-center text-slate-600">${avgMult.toFixed(1)}</td>
+      <td class="px-3 py-2.5 text-center"><input type="number" value="${bufPct}" min="0" max="200" class="w-14 text-center text-xs border border-slate-300 rounded px-1 py-1 focus:ring-1 focus:ring-sky-400 outline-none" onchange="onBufferChange('${p.id}',this.value)"><span class="text-slate-400 text-[10px]">%</span></td>
+      <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"><span class="text-[10px] text-slate-500 font-semibold">${minS}</span><span class="font-bold text-emerald-600 text-sm">${sug}</span><span class="text-[10px] text-slate-500 font-semibold">${maxS}</span></div></td>
+      <td class="px-3 py-2.5 text-center"><input type="number" class="input-final ${iStyle}" value="${fv}" placeholder="${sug}" min="0" onchange="onFinalChange('${p.id}',this.value)"></td>
+      <td class="px-3 py-2.5 text-center"><div class="inline-flex flex-col items-center px-3 py-1.5 rounded-lg ${ohCls}"><span class="font-bold text-sm">${estOH}</span><span class="text-[9px]">${p.unit}s</span></div></td>
+      <td class="px-3 py-2.5 text-center text-slate-600">₱${p.plantPrice.toLocaleString()}</td>
+      <td class="px-3 py-2.5 text-center text-slate-600">₱${p.sellingPrice.toLocaleString()}</td>
+      <td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${(fo*p.plantPrice).toLocaleString()}</td>
+    </tr>`;
+  }).join('');
+  tfoot.innerHTML=`<tr class="bg-slate-100 font-semibold text-xs"><td colspan="9" class="px-3 py-2.5 text-right text-slate-500">TOTALS</td><td class="px-3 py-2.5 text-center text-emerald-600 text-sm">${totSug}</td><td class="px-3 py-2.5 text-center text-sky-600">${totFinal}</td><td></td><td></td><td class="px-3 py-2.5 text-center">₱${Math.round(totSell).toLocaleString()}</td><td class="px-3 py-2.5 text-center">₱${Math.round(totPlant).toLocaleString()}</td></tr>`;
+  document.getElementById('sum-skus').textContent=PRODUCTS.length;
+  document.getElementById('sum-suggested').textContent=totSug;
+  document.getElementById('sum-final').textContent=totFinal;
+  document.getElementById('sum-cost').textContent='₱'+Math.round(totPlant).toLocaleString();
+}
+function onFinalChange(pid,val){orderFinalQtys[pid]=val===''?undefined:val;renderOrderTable();}
+function onBufferChange(pid,val){productBuffers[pid]=parseFloat(val)||0;renderOrderTable();}
+function clearFinalOrders(){orderFinalQtys={};PRODUCTS.forEach(p=>{productBuffers[p.id]=p.buffer;});renderOrderTable();showToast('All overrides cleared','info');}
+function refreshSuggested(){renderOrderTable();showToast('Quantities refreshed','success');}
+</script>
+
+
+<script>
+function submitOrder(){
+  const od=document.getElementById('order-date').value,dd=document.getElementById('delivery-date').value;
+  const dayName=getDelivDayName(),dayIdx=getDelivDayIdx(),mult=getEffMult();
+  const event=document.getElementById('forecast-event').selectedOptions[0].text;
+  const manager=document.getElementById('order-manager').value;
+  const tsRaw=document.getElementById('target-sales-input').value,tSales=tsRaw!==''?parseFloat(tsRaw):null,useTarget=tSales!==null&&tSales>0;
+  let autoC=0,pendC=0;
+  PRODUCTS.forEach(p=>{
+    const stock=getCurStock(p.id),inc=getIncoming(p.id,od,dd),exp=getExpSales(p.id,od,dd);
+    const tIn=getTrans(p.id,'in',od,dd),tOut=getTrans(p.id,'out',od,dd),ne=Math.max(0,stock+inc-exp);
+    const sug=useTarget?calcTarget(p,dayIdx,tSales,mult,ne,tIn,tOut):calcAvg(p,dayName,mult,ne,tIn,tOut);
+    const minS=Math.max(0,Math.floor(sug*0.8)),maxS=Math.ceil(sug*1.2);
+    const fv=orderFinalQtys[p.id],fo=fv!==undefined&&fv!==''?(parseInt(fv)||0):sug;
+    const obj={id:'ORD-'+Math.random().toString(36).substr(2,6).toUpperCase(),orderDateActual:od,delivDate:dd,dayName,event,mode:useTarget?'Target Sales':'Avg Consumption',productId:p.id,productName:p.name,suggested:sug,minSug:minS,maxSug:maxS,finalOrder:fo,unitCost:p.plantPrice,totalCost:fo*p.plantPrice,multiplier:mult,manager,timestamp:new Date().toISOString()};
+    if(fo<minS||fo>maxS){DB.pendingApprovals.push(obj);pendC++;}else{DB.orderHistory.push(obj);autoC++;}
+  });
+  orderFinalQtys={};updateApprovalsBadge();
+  showToast(pendC>0?`${autoC} auto-approved. ${pendC} require Manager Approval.`:'Order submitted!',pendC>0?'info':'success');
+  renderOrderTable();
+}
+
+function updateApprovalsBadge(){
+  const b=document.getElementById('badge-approvals');if(!b)return;
+  if(DB.pendingApprovals.length>0){b.classList.remove('hidden');b.textContent=DB.pendingApprovals.length;}else b.classList.add('hidden');
+}
+function renderApprovals(){
+  const tbody=document.getElementById('approvals-tbody');
+  if(!DB.pendingApprovals.length){tbody.innerHTML=`<tr><td colspan="7" class="px-4 py-8 text-center text-slate-400"><i class="bi bi-check-circle text-2xl block mb-2 text-emerald-400"></i>No pending approvals.</td></tr>`;return;}
+  tbody.innerHTML=[...DB.pendingApprovals].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).map(a=>{
+    const t=new Date(a.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${a.orderDateActual}</div><div class="text-[10px] text-slate-400">${t}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${a.productName}</div><div class="text-[10px] text-slate-400">${a.productId}</div></td><td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"><span class="text-[10px] text-slate-500">${a.minSug}</span><span class="font-bold text-emerald-600">${a.suggested}</span><span class="text-[10px] text-slate-500">${a.maxSug}</span></div></td><td class="px-3 py-2.5 text-center font-bold text-rose-500 text-sm">${a.finalOrder}</td><td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${a.totalCost.toLocaleString()}</td><td class="px-3 py-2.5 text-slate-500 text-xs">${a.manager}</td><td class="px-3 py-2.5 text-center"><div class="flex gap-2 justify-center"><button onclick="approveOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors"><i class="bi bi-check-lg"></i> Approve</button><button onclick="rejectOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 text-rose-500 rounded-lg text-xs font-semibold hover:bg-rose-50 transition-colors"><i class="bi bi-x-lg"></i> Reject</button></div></td></tr>`;
+  }).join('');
+}
+function approveOrder(id){const i=DB.pendingApprovals.findIndex(x=>x.id===id);if(i<0)return;const o=DB.pendingApprovals.splice(i,1)[0];o.timestamp=new Date().toISOString();DB.orderHistory.push(o);updateApprovalsBadge();renderApprovals();showToast('Order approved!','success');}
+function rejectOrder(id){const i=DB.pendingApprovals.findIndex(x=>x.id===id);if(i<0)return;DB.pendingApprovals.splice(i,1);updateApprovalsBadge();renderApprovals();showToast('Order rejected.','info');}
+
+function renderHistory(){
+  const tbody=document.getElementById('history-tbody');
+  if(!DB.orderHistory.length){tbody.innerHTML=`<tr><td colspan="9" class="px-4 py-8 text-center text-slate-400"><i class="bi bi-clock-history text-2xl block mb-2"></i>No order history found.</td></tr>`;return;}
+  tbody.innerHTML=[...DB.orderHistory].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).map(h=>{
+    const t=new Date(h.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${h.orderDateActual}</div><div class="text-[10px] text-slate-400">${t}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${h.delivDate}</div><div class="text-[10px] text-slate-400">${h.dayName}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${h.productName}</div><div class="text-[10px] text-slate-400">${h.productId}</div></td><td class="px-3 py-2.5"><div class="text-slate-600">${h.event} (${h.multiplier}×)</div><div class="text-[10px] text-purple-500 font-semibold">${h.mode}</div></td><td class="px-3 py-2.5 text-center font-bold text-emerald-600">${h.suggested}</td><td class="px-3 py-2.5 text-center font-bold text-sky-600">${h.finalOrder}</td><td class="px-3 py-2.5 text-center text-slate-600">₱${h.unitCost.toLocaleString()}</td><td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${h.totalCost.toLocaleString()}</td><td class="px-3 py-2.5 text-slate-500 text-xs">${h.manager}</td></tr>`;
+  }).join('');
+}
+
+function renderTransfers(){
+  const sel=document.getElementById('tf-product');
+  if(!sel.options.length){PRODUCTS.forEach(p=>{const o=document.createElement('option');o.value=p.id;o.text=p.name;sel.appendChild(o);});document.getElementById('tf-date').value=fmt(new Date());}
+  const tbody=document.getElementById('transfers-tbody');
+  if(!DB.transfers.length){tbody.innerHTML=`<tr><td colspan="7" class="px-4 py-8 text-center text-slate-400"><i class="bi bi-arrow-left-right text-2xl block mb-2"></i>No transfers logged.</td></tr>`;return;}
+  tbody.innerHTML=[...DB.transfers].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(t=>{
+    const p=PRODUCTS.find(x=>x.id===t.productId);
+    const typeBadge=t.type==='in'?'<span class="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-[10px] font-semibold">Trans In (+)</span>':'<span class="px-2 py-0.5 bg-rose-100 text-rose-600 rounded-full text-[10px] font-semibold">Trans Out (−)</span>';
+    const statusBadge={Pending:'<span class="px-2 py-0.5 bg-sky-100 text-sky-700 rounded-full text-[10px] font-semibold">Pending</span>',Completed:'<span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-semibold">Received</span>',Cancelled:'<span class="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full text-[10px] font-semibold">Cancelled</span>'}[t.status]||'';
+    const actions=t.status==='Pending'?`<button onclick="setTransferStatus('${t.id}','Completed')" class="px-2.5 py-1 bg-white border border-slate-300 text-slate-600 rounded text-xs hover:bg-slate-50 transition-colors"><i class="bi bi-check-lg"></i></button> <button onclick="setTransferStatus('${t.id}','Cancelled')" class="px-2.5 py-1 bg-white border border-slate-300 text-rose-500 rounded text-xs hover:bg-rose-50 transition-colors"><i class="bi bi-x-lg"></i></button>`:'';
+    return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5 text-slate-700">${t.date}</td><td class="px-3 py-2.5 font-semibold text-slate-800">${p?p.name:t.productId}</td><td class="px-3 py-2.5 text-center">${typeBadge}</td><td class="px-3 py-2.5 text-center font-bold text-slate-700">${t.qty}</td><td class="px-3 py-2.5 text-slate-500 text-xs">${t.remarks||'—'}</td><td class="px-3 py-2.5 text-center">${statusBadge}</td><td class="px-3 py-2.5 text-center">${actions}</td></tr>`;
+  }).join('');
+}
+function addTransfer(){
+  const date=document.getElementById('tf-date').value,productId=document.getElementById('tf-product').value;
+  const type=document.getElementById('tf-type').value,qty=parseInt(document.getElementById('tf-qty').value);
+  const remarks=document.getElementById('tf-remarks').value;
+  if(!date||isNaN(qty)||qty<=0){showToast('Invalid date or quantity','error');return;}
+  DB.transfers.push({id:'TRN-'+Math.random().toString(36).substr(2,6).toUpperCase(),date,productId,type,qty,remarks,status:'Pending'});
+  document.getElementById('tf-qty').value=1;document.getElementById('tf-remarks').value='';
+  showToast('Transfer logged!','success');renderTransfers();
+}
+function setTransferStatus(id,newStatus){
+  const t=DB.transfers.find(x=>x.id===id);if(!t||t.status!=='Pending')return;
+  if(newStatus==='Completed'){const inv=DB.inventory.find(x=>x.productId===t.productId);if(inv){inv.currentStock=Math.max(0,inv.currentStock+(t.type==='in'?t.qty:-t.qty));inv.lastUpdated=fmt(new Date());}showToast('Transfer received & stock updated!','success');}else showToast('Transfer cancelled.','info');
+  t.status=newStatus;renderTransfers();
+}
+</script>
+
+
+<script>
+function getAvgDaily(pid){const w=salesData[pid];if(!w)return 0;let t=0,c=0;w.forEach(wk=>wk.forEach(v=>{t+=v;c++;}));return c?t/c:0;}
+function stockHealth(inv,avg){const days=avg>0?inv.currentStock/avg:99;if(!inv.currentStock)return{label:'Out of Stock',cls:'bg-red-100 text-red-700',bar:'bg-red-500',days};if(days<=1)return{label:'Critical',cls:'bg-red-100 text-red-700',bar:'bg-red-500',days};if(days<=DB.settings.alertDays)return{label:'Low',cls:'bg-amber-100 text-amber-700',bar:'bg-amber-400',days};if(days<=7)return{label:'Adequate',cls:'bg-sky-100 text-sky-700',bar:'bg-sky-400',days};return{label:'Good',cls:'bg-emerald-100 text-emerald-700',bar:'bg-emerald-500',days};}
+function renderStocks(){
+  let oof=0,crit=0,low=0,good=0;
+  DB.inventory.forEach(inv=>{const h=stockHealth(inv,getAvgDaily(inv.productId));if(h.label==='Out of Stock')oof++;else if(h.label==='Critical')crit++;else if(h.label==='Low')low++;else good++;});
+  document.getElementById('stocks-kpi').innerHTML=`
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4"><div class="text-[10px] font-semibold text-slate-500 uppercase mb-1">Out of Stock</div><div class="text-3xl font-bold text-red-600">${oof}</div><div class="w-full h-0.5 bg-red-500 rounded mt-2"></div></div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4"><div class="text-[10px] font-semibold text-slate-500 uppercase mb-1">Critical / Low</div><div class="text-3xl font-bold text-amber-600">${crit+low}</div><div class="w-full h-0.5 bg-amber-400 rounded mt-2"></div></div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4"><div class="text-[10px] font-semibold text-slate-500 uppercase mb-1">Good Stock</div><div class="text-3xl font-bold text-emerald-600">${good}</div><div class="w-full h-0.5 bg-emerald-500 rounded mt-2"></div></div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4"><div class="text-[10px] font-semibold text-slate-500 uppercase mb-1">Total Products</div><div class="text-3xl font-bold text-slate-700">${PRODUCTS.length}</div><div class="w-full h-0.5 bg-slate-400 rounded mt-2"></div></div>`;
+  document.getElementById('stocks-table-body').innerHTML=DB.inventory.map(inv=>{
+    const p=PRODUCTS.find(x=>x.id===inv.productId),avg=getAvgDaily(inv.productId),h=stockHealth(inv,avg);
+    const pct=Math.min(100,avg>0?(inv.currentStock/(avg*14))*100:100);
+    return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${p.name}</div><div class="text-[10px] text-slate-400">${p.id}</div></td><td class="px-3 py-2.5 text-center text-xs text-slate-500">${p.category}</td><td class="px-3 py-2.5 text-center text-xs text-slate-500">${p.unit}</td><td class="px-3 py-2.5 text-center"><input type="number" id="si-${p.id}" value="${inv.currentStock}" min="0" class="w-20 text-center text-xs border border-slate-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-sky-400 outline-none" oninput="onStkChange('${p.id}',this.value)"><div class="w-20 h-1.5 bg-slate-100 rounded-full mt-1.5 mx-auto overflow-hidden"><div id="sb-${p.id}" class="h-full ${h.bar} rounded-full transition-all" style="width:${pct.toFixed(1)}%"></div></div></td><td class="px-3 py-2.5 text-center"><div class="flex items-center justify-center gap-1"><button onclick="adjStock('${p.id}',-1)" class="w-7 h-7 bg-white border border-slate-300 rounded font-bold text-slate-600 hover:bg-slate-50 text-sm">−</button><button onclick="adjStock('${p.id}',1)" class="w-7 h-7 bg-white border border-slate-300 rounded font-bold text-slate-600 hover:bg-slate-50 text-sm">+</button><button onclick="setStock('${p.id}')" class="px-2 py-1 bg-white border border-slate-300 rounded text-[10px] text-slate-600 hover:bg-slate-50">Set</button></div></td><td class="px-3 py-2.5 text-center text-xs text-slate-600">${avg.toFixed(1)}/day</td><td id="sd-${p.id}" class="px-3 py-2.5 text-center text-xs font-semibold ${h.cls.split(' ')[1]}">${h.days>=99?'∞':h.days.toFixed(1)+' days'}</td><td class="px-3 py-2.5 text-center text-xs text-slate-500">${inv.reorderPoint} ${p.unit}s</td><td class="px-3 py-2.5 text-center"><span id="sh-${p.id}" class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${h.cls}">${h.label}</span></td><td id="su-${p.id}" class="px-3 py-2.5 text-center text-[10px] text-slate-400">${inv.lastUpdated}</td></tr>`;
+  }).join('');
+}
+function onStkChange(pid,val){
+  const n=Math.max(0,parseInt(val)||0),inv=DB.inventory.find(x=>x.productId===pid);if(!inv)return;
+  inv.currentStock=n;inv.lastUpdated=fmt(new Date());
+  const avg=getAvgDaily(pid),h=stockHealth(inv,avg),pct=Math.min(100,avg>0?(n/(avg*14))*100:100);
+  const bar=document.getElementById('sb-'+pid);if(bar){bar.style.width=pct.toFixed(1)+'%';bar.className=`h-full ${h.bar} rounded-full transition-all`;}
+  const days=document.getElementById('sd-'+pid);if(days){days.textContent=h.days>=99?'∞':h.days.toFixed(1)+' days';days.className=`px-3 py-2.5 text-center text-xs font-semibold ${h.cls.split(' ')[1]}`;}
+  const hlth=document.getElementById('sh-'+pid);if(hlth){hlth.className=`px-2 py-0.5 rounded-full text-[10px] font-semibold ${h.cls}`;hlth.textContent=h.label;}
+  const upd=document.getElementById('su-'+pid);if(upd)upd.textContent=inv.lastUpdated;
+}
+function adjStock(pid,d){const inv=DB.inventory.find(x=>x.productId===pid);if(!inv)return;const nv=Math.max(0,inv.currentStock+d);const el=document.getElementById('si-'+pid);if(el)el.value=nv;onStkChange(pid,nv);}
+function setStock(pid){const p=PRODUCTS.find(x=>x.id===pid),inv=DB.inventory.find(x=>x.productId===pid);const v=window.prompt(`Set stock for ${p.name}:`,inv.currentStock);if(v===null)return;const n=parseInt(v);if(isNaN(n)||n<0){showToast('Invalid quantity','error');return;}const el=document.getElementById('si-'+pid);if(el)el.value=n;onStkChange(pid,n);showToast(`${p.name} set to ${n}`,'success');}
+function saveAllStocks(){showToast('All stock levels saved.','success');}
+
+const WEEK_META=[
+  {label:'Week 1 (4 Weeks Ago)',hCls:'bg-amber-800',iBg:'#FEF3C7',iBd:'rgba(139,99,24,0.3)',iClr:'#78350F'},
+  {label:'Week 2 (3 Weeks Ago)',hCls:'bg-sky-800',  iBg:'#EFF6FF',iBd:'rgba(29,95,168,0.3)', iClr:'#1e3a5f'},
+  {label:'Week 3 (2 Weeks Ago)',hCls:'bg-emerald-800',iBg:'#ECFDF5',iBd:'rgba(5,150,105,0.3)',iClr:'#064e3b'},
+  {label:'Week 4 (Last Week)',  hCls:'bg-rose-800', iBg:'#FFF1F2',iBd:'rgba(225,29,72,0.3)', iClr:'#881337'}
+];
+function renderDailyAverages(){renderWeeklyTables();renderAvgSummary();}
+function renderWeeklyTables(){
+  const con=document.getElementById('weekly-sales-tables-container');let html='';
+  for(let w=0;w<4;w++){
+    const m=WEEK_META[w];
+    const dTots=DISP_TO_JS.map(di=>PRODUCTS.reduce((s,p)=>s+(salesData[p.id][w][di]||0),0));
+    const wTot=dTots.reduce((s,v)=>s+v,0);
+    const totRev=PRODUCTS.reduce((s,p)=>s+DISP_TO_JS.reduce((ss,di)=>ss+(salesData[p.id][w][di]||0),0)*p.sellingPrice,0);
+    const rows=PRODUCTS.map(p=>{
+      const cells=DISP_TO_JS.map(di=>`<td class="px-2 py-2 text-center"><input type="number" min="0" value="${salesData[p.id][w][di]||0}" style="width:52px;text-align:center;padding:3px 4px;font-size:11px;font-weight:600;background:${m.iBg};border:1px solid ${m.iBd};border-radius:5px;color:${m.iClr};outline:none" oninput="onWkCell(${w},'${p.id}',${di},this.value)"></td>`).join('');
+      const rTot=DISP_TO_JS.reduce((s,di)=>s+(salesData[p.id][w][di]||0),0);
+      return `<tr class="hover:bg-slate-50"><td class="px-3 py-2 font-semibold text-slate-800 text-xs min-w-[140px]">${p.name}</td>${cells}<td id="wrt-${w}-${p.id}" class="px-3 py-2 text-center font-bold text-xs text-slate-700">${rTot}</td><td class="px-3 py-2 text-center text-xs text-amber-700 font-semibold" id="wrr-${w}-${p.id}">₱${(rTot*p.sellingPrice).toLocaleString()}</td></tr>`;
+    }).join('');
+    const fCells=dTots.map((t,ci)=>`<td id="wdt-${w}-${ci}" class="px-2 py-2 text-center font-bold text-xs text-white">${t}</td>`).join('');
+    html+=`<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="${m.hCls} px-5 py-3 flex items-center justify-between"><span class="text-sm font-bold text-white">${m.label}</span><span id="whs-${w}" class="text-xs text-white/70">Units: <strong class="text-white">${wTot}</strong> | Rev: <strong class="text-white">₱${totRev.toLocaleString()}</strong></span></div><div class="overflow-x-auto"><table class="w-full text-xs" style="min-width:800px"><thead class="bg-slate-100 text-slate-600"><tr><th class="px-3 py-2 text-left font-semibold">Product</th>${DAYS_DISPLAY.map(d=>`<th class="px-2 py-2 text-center font-semibold">${d.slice(0,3)}</th>`).join('')}<th class="px-3 py-2 text-center font-semibold">Total</th><th class="px-3 py-2 text-center font-semibold">Revenue</th></tr></thead><tbody class="divide-y divide-slate-100">${rows}</tbody><tfoot><tr class="${m.hCls}"><td class="px-3 py-2 font-bold text-xs text-white">Day Total</td>${fCells}<td id="wwt-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">${wTot}</td><td id="wwr-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">₱${totRev.toLocaleString()}</td></tr></tfoot></table></div></div>`;
+  }
+  con.innerHTML=html;
+}
+function onWkCell(w,pid,di,val){salesData[pid][w][di]=parseInt(val)||0;recompWk(w);renderAvgSummary();}
+function recompWk(w){
+  const dTots=DISP_TO_JS.map(di=>PRODUCTS.reduce((s,p)=>s+(salesData[p.id][w][di]||0),0));
+  const wTot=dTots.reduce((s,v)=>s+v,0);
+  const totRev=PRODUCTS.reduce((s,p)=>s+DISP_TO_JS.reduce((ss,di)=>ss+(salesData[p.id][w][di]||0),0)*p.sellingPrice,0);
+  const hs=document.getElementById(`whs-${w}`);if(hs)hs.innerHTML=`Units:<strong class="text-white"> ${wTot}</strong> | Rev:<strong class="text-white"> ₱${totRev.toLocaleString()}</strong>`;
+  const wt=document.getElementById(`wwt-${w}`);if(wt)wt.textContent=wTot;
+  const wr=document.getElementById(`wwr-${w}`);if(wr)wr.textContent='₱'+totRev.toLocaleString();
+  PRODUCTS.forEach(p=>{const rt=DISP_TO_JS.reduce((s,di)=>s+(salesData[p.id][w][di]||0),0);const el=document.getElementById(`wrt-${w}-${p.id}`);const er=document.getElementById(`wrr-${w}-${p.id}`);if(el)el.textContent=rt;if(er)er.textContent='₱'+(rt*p.sellingPrice).toLocaleString();});
+  dTots.forEach((t,ci)=>{const el=document.getElementById(`wdt-${w}-${ci}`);if(el)el.textContent=t;});
+}
+function renderAvgSummary(){
+  const aS={},aR={};
+  PRODUCTS.forEach(p=>{aS[p.id]=DISP_TO_JS.map(di=>salesData[p.id].reduce((s,wk)=>s+(wk[di]||0),0)/4);aR[p.id]=aS[p.id].map(a=>a*p.sellingPrice);});
+  const cU=DISP_TO_JS.map((_,ci)=>PRODUCTS.reduce((s,p)=>s+aS[p.id][ci],0));
+  const cR=DISP_TO_JS.map((_,ci)=>PRODUCTS.reduce((s,p)=>s+aR[p.id][ci],0));
+  const pU=PRODUCTS.map(p=>aS[p.id].reduce((s,v)=>s+v,0)),pR=PRODUCTS.map(p=>aR[p.id].reduce((s,v)=>s+v,0));
+  const gU=pU.reduce((s,v)=>s+v,0),gR=pR.reduce((s,v)=>s+v,0);
+  document.getElementById('avg-summary-body').innerHTML=PRODUCTS.map((p,pi)=>{
+    const cells=aS[p.id].map((avg,ci)=>{const rev=aR[p.id][ci],pct=cR[ci]>0?(rev/cR[ci]*100).toFixed(1):'0.0';return `<td class="px-3 py-2.5 text-center"><div class="font-bold text-slate-800">${avg.toFixed(1)}</div><div class="text-[9px] text-purple-500 font-semibold">${pct}%</div><div class="text-[9px] text-emerald-600 font-medium">₱${rev.toFixed(0)}</div></td>`;}).join('');
+    const pct4=gR>0?(pR[pi]/gR*100).toFixed(1):'0.0';
+    return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${p.name}</div><div class="text-[10px] text-slate-400">${p.category}</div></td>${cells}<td class="px-3 py-2.5 text-center"><div class="font-bold text-sky-600">${pU[pi].toFixed(1)}</div><div class="text-[9px] text-slate-500">${pct4}%</div><div class="text-[9px] text-emerald-600">₱${pR[pi].toFixed(0)}</div></td></tr>`;
+  }).join('');
+  document.getElementById('avg-summary-foot').innerHTML=`<tr class="bg-slate-800"><td class="px-3 py-2.5 font-bold text-xs text-white">Day Avg</td>${DISP_TO_JS.map((_,ci)=>`<td class="px-3 py-2.5 text-center"><div class="font-bold text-xs text-white">${cU[ci].toFixed(1)}</div><div class="text-[9px] text-slate-400">100%</div><div class="text-[9px] text-sky-300">₱${cR[ci].toFixed(0)}</div></td>`).join('')}<td class="px-3 py-2.5 text-center"><div class="font-bold text-xs text-sky-300">${gU.toFixed(1)}</div><div class="text-[9px] text-slate-400">100%</div><div class="text-[9px] text-sky-300">₱${gR.toFixed(0)}</div></td></tr>`;
+}
+
+function renderSettings(){document.getElementById('cfg-store').value=DB.settings.store;document.getElementById('cfg-branch').value=DB.settings.branch;document.getElementById('cfg-manager').value=DB.settings.manager;document.getElementById('cfg-lead').value=DB.settings.leadTime;document.getElementById('cfg-buffer').value=DB.settings.buffer;document.getElementById('cfg-alert').value=DB.settings.alertDays;}
+function saveSettings(){DB.settings.store=document.getElementById('cfg-store').value;DB.settings.branch=document.getElementById('cfg-branch').value;DB.settings.manager=document.getElementById('cfg-manager').value;DB.settings.leadTime=parseInt(document.getElementById('cfg-lead').value)||1;DB.settings.buffer=parseInt(document.getElementById('cfg-buffer').value)||20;DB.settings.alertDays=parseInt(document.getElementById('cfg-alert').value)||3;PRODUCTS.forEach(p=>{if(productBuffers[p.id]===p.buffer)productBuffers[p.id]=DB.settings.buffer;});showToast('Settings saved.','success');}
+
+function showToast(msg,type='info'){
+  const c=document.getElementById('o-toast-container'),t=document.createElement('div');
+  const styles={success:'bg-emerald-700 border-emerald-500',error:'bg-rose-700 border-rose-500',info:'bg-slate-800 border-sky-500'};
+  const icons={success:'bi-check-circle-fill',error:'bi-x-circle-fill',info:'bi-info-circle-fill'};
+  t.className=`o-toast flex items-center gap-3 px-4 py-3 rounded-xl border text-white text-sm shadow-xl pointer-events-auto max-w-xs ${styles[type]||styles.info}`;
+  t.innerHTML=`<i class="bi ${icons[type]||icons.info}"></i><span>${msg}</span>`;
+  c.appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(12px)';t.style.transition='all .25s';setTimeout(()=>t.remove(),250);},3000);
+}
+
+(function(){
+  document.getElementById('topbar-date').textContent=new Date().toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+  updateApprovalsBadge();
+  renderOrderForm();
+})();
+</script>
+
+{% endblock %}
