@@ -1,0 +1,40 @@
+{% extends 'admin_base.html' %}
+
+{% block title %}Oracle - Admin{% endblock %}
+
+{% block content %}
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-screen-2xl w-full mx-auto space-y-6">
+  <section class="rounded-3xl bg-white border border-slate-200 p-6 shadow-sm">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h1 class="text-3xl font-semibold text-slate-900">Oracle</h1>
+        <p class="mt-2 text-slate-600">Admin-level Oracle page for store user support and Oracle data tools.</p>
+      </div>
+      <div class="rounded-3xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 border border-slate-200">
+        Admin access
+      </div>
+    </div>
+
+    <div class="mt-8 grid gap-4 lg:grid-cols-3">
+      <div class="rounded-3xl bg-slate-50 p-5 border border-slate-200">
+        <p class="text-xs uppercase tracking-[0.3em] text-slate-500">Purpose</p>
+        <p class="mt-3 text-lg font-semibold text-slate-900">Oracle integration</p>
+        <p class="mt-2 text-sm text-slate-500">Use this page to deploy Oracle-specific workflows for store users and admin operations.</p>
+      </div>
+      <div class="rounded-3xl bg-slate-50 p-5 border border-slate-200">
+        <p class="text-xs uppercase tracking-[0.3em] text-slate-500">Next steps</p>
+        <ul class="mt-3 space-y-2 text-sm text-slate-600">
+          <li>• Add Oracle data sync tools</li>
+          <li>• Show user-specific Oracle reports</li>
+          <li>• Manage Oracle permissions</li>
+        </ul>
+      </div>
+      <div class="rounded-3xl bg-slate-50 p-5 border border-slate-200">
+        <p class="text-xs uppercase tracking-[0.3em] text-slate-500">Status</p>
+        <p class="mt-3 text-lg font-semibold text-slate-900">Placeholder ready</p>
+        <p class="mt-2 text-sm text-slate-500">The Oracle menu item now appears for both admin and store users.</p>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

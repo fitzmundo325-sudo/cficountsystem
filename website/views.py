@@ -4827,6 +4827,41 @@ def cluster_manager_cluster_data():
                          today_year=today.year)
 
 
+@views.route('/cluster-manager/oracle')
+@login_required
+def cluster_manager_oracle():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin'):
+        flash('Access denied. Only Cluster Managers and Admins can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Cluster, Store
+    cluster = None
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            flash('You are not assigned to any cluster yet.', category='error')
+            return redirect(url_for('views.home'))
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view Oracle.', category='error')
+            return redirect(url_for('admin.clusters'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    cluster_sidebar_stores = _build_cluster_sidebar_stores(stores)
+
+    return render_template('cluster_manager/oracle.html',
+                           user=current_user,
+                           cluster=cluster,
+                           team_name=_get_team_name(cluster),
+                           stores=stores,
+                           cluster_sidebar_stores=cluster_sidebar_stores,
+                           force_cluster_sidebar=(role in ('Admin', 'Superadmin')),
+                           cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin') else '')
+
+
 @views.route('/cluster-manager/cluster-sbase')
 @login_required
 def cluster_manager_cluster_sbase():
@@ -5712,6 +5747,29 @@ def invensync():
         selected_date=selected_date.strftime('%Y-%m-%d'),
         today=date.today().strftime('%Y-%m-%d'),
         global_config_data=global_config_data,
+    )
+
+
+@views.route('/store-manager/oracle')
+@login_required
+def oracle():
+    """Store Manager Oracle page placeholder."""
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        flash('Store not found or not assigned.', category='error')
+        return redirect(url_for('views.home'))
+
+    products = ProductMaster.query.all()
+
+    return render_template(
+        'store_manager/oracle.html',
+        user=current_user,
+        store=store,
+        products=products,
     )
 
 

@@ -3,6 +3,20 @@ const mainContent = document.getElementById('main-content');
 const sidebarOverlay = document.getElementById('sidebar-overlay');
 const toggleDesktop = document.getElementById('toggle-desktop');
 const toggleMobile = document.getElementById('toggle-mobile');
+const sidebarNav = sidebar ? sidebar.querySelector('nav.custom-scrollbar') : null;
+
+function restoreSidebarScroll() {
+    if (!sidebarNav) return;
+    const savedScroll = parseInt(localStorage.getItem('sidebarScrollTop'), 10);
+    if (!Number.isNaN(savedScroll)) {
+        sidebarNav.scrollTop = savedScroll;
+    }
+
+    const activeItem = sidebarNav.querySelector('.nav-item.bg-slate-800');
+    if (activeItem) {
+        activeItem.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+}
 
 // Load sidebar state from localStorage on page load
 function loadSidebarState() {
@@ -19,8 +33,15 @@ function saveSidebarState(isCollapsed) {
     localStorage.setItem('sidebarCollapsed', isCollapsed);
 }
 
+if (sidebarNav) {
+    sidebarNav.addEventListener('scroll', function() {
+        localStorage.setItem('sidebarScrollTop', sidebarNav.scrollTop);
+    });
+}
+
 // Initialize sidebar state on page load
 loadSidebarState();
+restoreSidebarScroll();
 
 // Toggle Desktop (Collapsed/Expanded)
 toggleDesktop.addEventListener('click', () => {
