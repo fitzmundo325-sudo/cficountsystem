@@ -2,61 +2,458 @@
 {% block title %}Oracle - {{ cluster.name }}{% endblock %}
 
 {% block content %}
-<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
-  <div class="flex items-center gap-4">
-    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="4" x2="20" y1="12" y2="12" />
-        <line x1="4" x2="20" y1="6" y2="6" />
-        <line x1="4" x2="20" y1="18" y2="18" />
-      </svg>
-    </button>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<style>
+  .view { display:none; } .view.active { display:block; }
+  .o-tab { border-bottom:2px solid transparent; }
+  .o-tab.active { border-bottom-color:#0ea5e9; color:#0f172a; font-weight:600; }
+  .o-tab:hover:not(.active) { color:#0f172a; background:#f8fafc; }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .fade-up { animation:fadeUp .25s ease forwards; }
+  @keyframes toastIn { from{transform:translateX(16px);opacity:0} to{transform:translateX(0);opacity:1} }
+  .o-toast { animation:toastIn .2s ease; }
+</style>
 
-    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
-      <span class="hover:text-slate-900 cursor-pointer">Cluster Manager</span>
+<!-- Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div class="flex items-center gap-3">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <i class="bi bi-list text-xl"></i>
+    </button>
+    <nav class="flex items-center text-sm font-medium text-slate-500">
+      <span>Cluster Manager</span>
       <span class="mx-2">/</span>
-      <span class="text-slate-900">Oracle</span>
+      <span class="text-slate-900 font-semibold">Oracle</span>
     </nav>
   </div>
-
-  <div class="flex items-center gap-4">
-    <div class="text-sm font-medium text-slate-600">
-      <span class="text-slate-900">{{ cluster.name }}</span>
-    </div>
+  <div class="flex items-center gap-3">
+    <span id="topbar-date" class="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full"></span>
+    <span class="text-sm font-semibold text-slate-700">{{ cluster.name }}</span>
+    <span id="cluster-stores" class="text-xs font-semibold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-full">{{ stores|length }} Stores</span>
   </div>
 </header>
 
-<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-full w-full mx-auto">
-  <section class="bg-white rounded-3xl border border-slate-200 shadow-sm p-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <p class="text-sm uppercase tracking-[0.24em] text-slate-400">Oracle</p>
-        <h1 class="mt-2 text-3xl font-semibold text-slate-900">Cluster Intelligence</h1>
-        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Access the Oracle workspace for {{ cluster.name }}. Use this page for insights, store performance, and next-step guidance.</p>
+<!-- Tab Nav -->
+<div class="bg-white border-b border-slate-200 px-6 flex gap-1 overflow-x-auto">
+  <button class="o-tab active flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-approvals" onclick="navigate('approvals')">
+    <i class="bi bi-check2-circle"></i> Order Approvals <span id="badge-approvals" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span>
+  </button>
+  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-order-form" onclick="navigate('order-form')">
+    <i class="bi bi-cart3"></i> Buffer %
+  </button>
+  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-cluster-dashboard" onclick="navigate('cluster-dashboard')">
+    <i class="bi bi-graph-up"></i> Cluster Dashboard
+  </button>
+  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-store-performance" onclick="navigate('store-performance')">
+    <i class="bi bi-shop"></i> Store Performance
+  </button>
+</div>
+
+<div class="px-4 pt-4 pb-6 md:px-6 space-y-4 max-w-[2400px] mx-auto overflow-x-hidden">
+
+  <!-- ORDER APPROVALS -->
+  <div class="view active" id="view-approvals">
+    <div class="mb-5">
+      <h1 class="text-2xl font-bold text-slate-900">Order Approvals</h1>
+      <p class="mt-1 text-sm text-slate-500">Review and approve store orders that exceed the suggested range (±20%). Approve before the system accepts as final order.</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs" style="min-width:1100px">
+          <thead class="bg-slate-100 text-slate-600">
+            <tr>
+              <th class="px-3 py-3 text-left font-semibold">Order Date</th>
+              <th class="px-3 py-3 text-left font-semibold">Store</th>
+              <th class="px-3 py-3 text-left font-semibold">Product</th>
+              <th class="px-3 py-3 text-center font-semibold">Suggested Range</th>
+              <th class="px-3 py-3 text-center font-semibold text-rose-500">Requested Qty</th>
+              <th class="px-3 py-3 text-center font-semibold">Total Cost</th>
+              <th class="px-3 py-3 text-left font-semibold">Manager</th>
+              <th class="px-3 py-3 text-center font-semibold">Variance %</th>
+              <th class="px-3 py-3 text-center font-semibold">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="approvals-tbody" class="divide-y divide-slate-100"></tbody>
+        </table>
       </div>
-      <div class="rounded-3xl bg-slate-50 p-4 text-sm font-medium text-slate-700 border border-slate-200">
-        Stores in cluster: <span class="font-semibold text-slate-900">{{ stores|length }}</span>
+    </div>
+  </div>
+
+  <!-- ORDER FORM -->
+  <div class="view" id="view-order-form">
+
+    <!-- Store Cards Grid -->
+    <div id="of-store-grid">
+      <div class="mb-5">
+        <h1 class="text-2xl font-bold text-slate-900">Store Buffer % Management</h1>
+        <p class="mt-1 text-sm text-slate-500">Open a store-specific buffer form to manage product buffer percentages.</p>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {% for s in stores %}
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col gap-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold px-2 py-0.5 rounded-full
+              {% if s.store_group == 'premium' %}bg-sky-100 text-sky-700{% else %}bg-amber-100 text-amber-700{% endif %}">
+              {{ s.store_group|replace('_',' ')|title }}
+            </span>
+            <span class="text-xs text-slate-400">#{{ s.id }}</span>
+          </div>
+          <h3 class="text-base font-bold text-slate-900 leading-tight">{{ s.name }}</h3>
+          {% if s.address %}
+          <p class="text-xs text-slate-500 flex items-start gap-1"><i class="bi bi-geo-alt mt-0.5"></i>{{ s.address }}</p>
+          {% endif %}
+          <div class="mt-auto pt-2 border-t border-slate-100 flex items-center justify-between">
+            <span class="text-[10px] text-slate-400">Manager ID: {{ s.manager_id or '—' }}</span>
+            <a href="{{ url_for('views.cluster_store_order_form', store_id=s.id) }}" class="px-3 py-1.5 bg-sky-600 text-white text-xs font-semibold rounded-lg hover:bg-sky-700 transition-colors">
+              Edit Buffer
+            </a>
+          </div>
+        </div>
+        {% else %}
+        <div class="col-span-full py-12 text-center text-slate-400">
+          <i class="bi bi-shop text-3xl block mb-2"></i>
+          No stores assigned to this cluster manager.
+        </div>
+        {% endfor %}
       </div>
     </div>
 
-    <div class="mt-8 grid gap-4 md:grid-cols-3">
-      <div class="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-        <h2 class="text-base font-semibold text-slate-900">What is Oracle?</h2>
-        <p class="mt-3 text-sm leading-6 text-slate-600">Oracle gives cluster managers a unified view of cluster operations and data-driven actions. This placeholder can be extended with workflows, reports, and tools.</p>
-      </div>
-      <div class="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-        <h2 class="text-base font-semibold text-slate-900">Next steps</h2>
-        <ul class="mt-3 space-y-2 text-sm leading-6 text-slate-600 list-disc list-inside">
-          <li>Review cluster store performance</li>
-          <li>Track pending actions</li>
-          <li>Access Oracle analytics</li>
-        </ul>
-      </div>
-      <div class="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-        <h2 class="text-base font-semibold text-slate-900">Cluster context</h2>
-        <p class="mt-3 text-sm leading-6 text-slate-600">This page is available to Cluster Managers and Admins when viewing a cluster context.</p>
+  </div>
+
+  <div class="view" id="view-cluster-dashboard">
+    <div class="mb-5">
+      <h1 class="text-2xl font-bold text-slate-900">Cluster Dashboard</h1>
+      <p class="mt-1 text-sm text-slate-500">Overview of cluster performance, inventory levels, and order status across all stores.</p>
+    </div>
+    <div id="cluster-kpi" class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5"></div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+      <p class="text-center text-slate-500 py-8">Cluster dashboard data will be populated here with real-time metrics</p>
+    </div>
+  </div>
+
+  <!-- STORE PERFORMANCE -->
+  <div class="view" id="view-store-performance">
+    <div class="mb-5">
+      <h1 class="text-2xl font-bold text-slate-900">Store Performance</h1>
+      <p class="mt-1 text-sm text-slate-500">Track individual store performance, approval history, and compliance metrics.</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs" style="min-width:900px">
+          <thead class="bg-slate-100 text-slate-600">
+            <tr>
+              <th class="px-3 py-3 text-left font-semibold">Store</th>
+              <th class="px-3 py-3 text-center font-semibold">Manager</th>
+              <th class="px-3 py-3 text-center font-semibold">Approved Orders</th>
+              <th class="px-3 py-3 text-center font-semibold">Pending Approval</th>
+              <th class="px-3 py-3 text-center font-semibold">Rejection Rate</th>
+              <th class="px-3 py-3 text-center font-semibold">Status</th>
+            </tr>
+          </thead>
+          <tbody id="store-performance-tbody" class="divide-y divide-slate-100"></tbody>
+        </table>
       </div>
     </div>
-  </section>
-</div>
+  </div>
+
+</div><!-- /content -->
+
+<!-- Toast container -->
+<div id="o-toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+<script>
+const PRODUCTS = [
+  {% for p in products %}
+  {id:{{ p.id }},code:{{ p.code if p.code is not none else p.id }},name:{{ p.description|tojson }},category:{{ p.category|tojson }},unit:'pc',plantPrice:{{ p.tp or 0 }},sellingPrice:{{ p.sp_np or p.sp_p or 0 }},buffer:20},
+  {% endfor %}
+];
+const STORES = [
+  {% for s in stores %}
+  {id:{{ s.id }},name:{{ s.name|tojson }},manager:'Manager {{ loop.index }}'},
+  {% endfor %}
+];
+const SAVED_BUFFERS = {{ buffers_map | tojson }};  // {[store_id, product_id]: pct}
+const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const fmt=d=>d.toISOString().split('T')[0];
+
+const DB={
+  pendingApprovals:[],
+  approvalHistory:[],
+  storeBuffers:{},
+  settings:{clusterName:'{{ cluster.name }}',defaultBuffer:20,leadTime:1}
+};
+
+// Initialize store product buffers, seeding from server-saved values
+STORES.forEach(s=>{
+  DB.storeBuffers[s.id] = {};
+  const stored = SAVED_BUFFERS[s.id] || {};
+  PRODUCTS.forEach(p=>{
+    DB.storeBuffers[s.id][p.id] = (stored[p.id] !== undefined) ? stored[p.id] : DB.settings.defaultBuffer;
+  });
+});
+
+function navigate(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.querySelectorAll('.o-tab').forEach(t=>t.classList.remove('active'));
+  const view=document.getElementById('view-'+id);if(!view)return;
+  view.classList.add('active','fade-up');setTimeout(()=>view.classList.remove('fade-up'),300);
+  const tab=document.getElementById('tab-'+id);if(tab)tab.classList.add('active');
+  ({  'approvals':renderApprovals,
+      'order-form':renderOrderForm,
+      'cluster-dashboard':renderClusterDashboard,
+      'store-performance':renderStorePerformance}[id]||Function)();
+}
+
+function updateApprovalsBadge(){
+  const b=document.getElementById('badge-approvals');if(!b)return;
+  if(DB.pendingApprovals.length>0){b.classList.remove('hidden');b.textContent=DB.pendingApprovals.length;}else b.classList.add('hidden');
+}
+
+function renderApprovals(){
+  const tbody=document.getElementById('approvals-tbody');
+  if(!DB.pendingApprovals.length){
+    tbody.innerHTML=`<tr><td colspan="9" class="px-4 py-8 text-center text-slate-400"><i class="bi bi-check-circle text-2xl block mb-2 text-emerald-400"></i>No pending approvals. All orders are approved!</td></tr>`;
+    return;
+  }
+  tbody.innerHTML=[...DB.pendingApprovals].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).map(a=>{
+    const t=new Date(a.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    const variance=a.suggested>0?Math.round((a.finalOrder-a.suggested)/a.suggested*100):0;
+    const varianceColor=variance>20?'text-rose-600':variance<-20?'text-amber-600':'text-slate-600';
+    return `<tr class="hover:bg-slate-50">
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${a.orderDate}</div><div class="text-[10px] text-slate-400">${t}</div></td>
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${a.storeName}</div><div class="text-[10px] text-slate-400">Store ${a.storeId}</div></td>
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${a.productName}</div><div class="text-[10px] text-slate-400">${a.productId}</div></td>
+      <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"><span class="text-[10px] text-slate-500">${a.minSug}</span><span class="font-bold text-emerald-600">${a.suggested}</span><span class="text-[10px] text-slate-500">${a.maxSug}</span></div></td>
+      <td class="px-3 py-2.5 text-center font-bold text-rose-500 text-sm">${a.finalOrder}</td>
+      <td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${a.totalCost.toLocaleString()}</td>
+      <td class="px-3 py-2.5 text-slate-500 text-xs">${a.manager}</td>
+      <td class="px-3 py-2.5 text-center"><span class="px-2 py-1 rounded-full text-[10px] font-semibold ${varianceColor} ${variance>0?'bg-rose-50':'bg-amber-50'}">${variance>0?'+':''}${variance}%</span></td>
+      <td class="px-3 py-2.5 text-center"><div class="flex gap-2 justify-center">
+        <button onclick="approveOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors" title="Approve this order"><i class="bi bi-check-lg"></i> Approve</button>
+        <button onclick="rejectOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 text-rose-500 rounded-lg text-xs font-semibold hover:bg-rose-50 transition-colors" title="Reject this order"><i class="bi bi-x-lg"></i> Reject</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function approveOrder(id){
+  const i=DB.pendingApprovals.findIndex(x=>x.id===id);
+  if(i<0)return;
+  const o=DB.pendingApprovals.splice(i,1)[0];
+  o.approvedAt=new Date().toISOString();
+  o.status='Approved';
+  DB.approvalHistory.push(o);
+  updateApprovalsBadge();
+  renderApprovals();
+  showToast(`Order from ${o.storeName} approved!`,'success');
+}
+
+function rejectOrder(id){
+  const i=DB.pendingApprovals.findIndex(x=>x.id===id);
+  if(i<0)return;
+  const o=DB.pendingApprovals[i];
+  DB.pendingApprovals.splice(i,1);
+  updateApprovalsBadge();
+  renderApprovals();
+  showToast(`Order from ${o.storeName} rejected.`,'info');
+}
+
+function renderOrderForm(){
+  const grid=document.getElementById('of-store-grid');
+  if(!grid) return;
+  // Nothing extra to re-render for the store card grid (cards are server-rendered)
+}
+
+function _renderOrderFormLegacy(){
+  const grid=document.getElementById('store-card-grid');
+  if(!grid) return;
+  grid.innerHTML = STORES.map(store => {
+    const rows = PRODUCTS.map(p => {
+      const buf = DB.storeBuffers[store.id][p.id] ?? DB.settings.defaultBuffer;
+      const diff = buf - DB.settings.defaultBuffer;
+      const diffColor = diff > 0 ? 'text-amber-600 bg-amber-50' : diff < 0 ? 'text-blue-600 bg-blue-50' : 'text-slate-600 bg-slate-50';
+      return `<tr class="hover:bg-slate-50">
+        <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${p.name}</div><div class="text-[10px] text-slate-400">${p.code||p.id}</div></td>
+        <td class="px-3 py-2.5 text-center"><span class="px-2 py-1 rounded text-[10px] font-semibold text-slate-600 bg-slate-100">${p.category}</span></td>
+        <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${diffColor}"><span class="font-bold text-lg">${buf}</span><span class="font-semibold">%</span></div></td>
+        <td class="px-3 py-2.5 text-center"><div class="flex justify-center gap-1">
+          <button onclick="adjustStoreProductBuffer(${store.id},${p.id},-5)" class="w-7 h-7 bg-white border border-slate-300 rounded font-bold text-slate-600 hover:bg-slate-50 text-sm" title="Decrease by 5%">−</button>
+          <button onclick="adjustStoreProductBuffer(${store.id},${p.id},5)" class="w-7 h-7 bg-white border border-slate-300 rounded font-bold text-slate-600 hover:bg-slate-50 text-sm" title="Increase by 5%">+</button>
+        </div></td>
+        <td class="px-3 py-2.5 text-center"><input type="number" id="store-prod-buf-${store.id}-${p.id}" value="${buf}" min="0" max="200" class="w-20 text-center text-xs border border-slate-300 rounded px-2 py-1.5 focus:ring-2 focus:ring-sky-400 outline-none" onchange="setStoreProductBuffer(${store.id},${p.id},this.value)"></td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="bg-gradient-to-br from-slate-800 to-slate-900 px-6 py-4">
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h3 class="text-lg font-semibold text-white">${store.name}</h3>
+            <p class="text-xs text-slate-300">Assigned Store</p>
+          </div>
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="resetStoreProductBuffers(${store.id})" class="px-3 py-2 bg-white/10 border border-white/20 text-white text-xs rounded-full hover:bg-white/15 transition">Reset Store</button>
+            <button onclick="bulkIncreaseStoreProductBuffers(${store.id},5)" class="px-3 py-2 bg-amber-50 text-amber-700 text-xs rounded-full hover:bg-amber-100 transition">+5%</button>
+            <button onclick="bulkDecreaseStoreProductBuffers(${store.id},5)" class="px-3 py-2 bg-slate-50 text-slate-700 text-xs rounded-full hover:bg-slate-100 transition">-5%</button>
+          </div>
+        </div>
+      </div>
+      <div class="px-5 py-4 overflow-x-auto">
+        <table class="w-full text-xs" style="min-width:860px">
+          <thead class="bg-slate-100 text-slate-600"><tr>
+            <th class="px-3 py-3 text-left font-semibold">Product</th>
+            <th class="px-3 py-3 text-center font-semibold">Category</th>
+            <th class="px-3 py-3 text-center font-semibold">Current Buffer %</th>
+            <th class="px-3 py-3 text-center font-semibold">Quick Adjust</th>
+            <th class="px-3 py-3 text-center font-semibold">Set Custom</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-100">${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+} // end _renderOrderFormLegacy
+
+function adjustStoreProductBuffer(storeId,productId,delta){
+  const cur = DB.storeBuffers[storeId][productId] ?? DB.settings.defaultBuffer;
+  DB.storeBuffers[storeId][productId] = Math.max(0,Math.min(200,cur + delta));
+  const inp = document.getElementById(`store-prod-buf-${storeId}-${productId}`);
+  if(inp) inp.value = DB.storeBuffers[storeId][productId];
+  renderOrderForm();
+}
+
+function setStoreProductBuffer(storeId,productId,val,inline=false){
+  const n = parseInt(val) || 0;
+  DB.storeBuffers[storeId][productId] = Math.max(0,Math.min(200,n));
+  if(!inline) renderOrderForm();
+  showToast('Product buffer updated','info');
+}
+
+function saveOrderSettings(){
+  DB.settings.defaultBuffer = parseInt(document.getElementById('global-buffer').value) || 20;
+  DB.settings.leadTime = parseInt(document.getElementById('global-leadtime').value) || 1;
+  showToast('Order settings saved successfully!','success');
+}
+
+function resetStoreProductBuffers(storeId){
+  if(!confirm('Reset all product buffers for this store to the default value?')) return;
+  PRODUCTS.forEach(p=>{ DB.storeBuffers[storeId][p.id] = DB.settings.defaultBuffer; });
+  renderOrderForm();
+  showToast('Store product buffers reset to default','info');
+}
+
+function resetAllProductBuffers(){
+  if(!confirm('Reset all product buffers for every store to the default value?')) return;
+  STORES.forEach(s=>{ PRODUCTS.forEach(p=>{ DB.storeBuffers[s.id][p.id] = DB.settings.defaultBuffer; }); });
+  renderOrderForm();
+  showToast('All product buffers reset to default','info');
+}
+
+function bulkIncreaseProductBuffers(delta){
+  STORES.forEach(s=>{ PRODUCTS.forEach(p=>{ DB.storeBuffers[s.id][p.id] = Math.min(200,(DB.storeBuffers[s.id][p.id]||DB.settings.defaultBuffer)+delta); }); });
+  renderOrderForm();
+  showToast(`All product buffers increased by ${delta}%`,'success');
+}
+
+function bulkDecreaseProductBuffers(delta){
+  STORES.forEach(s=>{ PRODUCTS.forEach(p=>{ DB.storeBuffers[s.id][p.id] = Math.max(0,(DB.storeBuffers[s.id][p.id]||DB.settings.defaultBuffer)-delta); }); });
+  renderOrderForm();
+  showToast(`All product buffers decreased by ${delta}%`,'success');
+}
+
+function renderClusterDashboard(){
+  const kpiHtml=`
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+      <div class="text-[10px] font-semibold text-slate-500 uppercase mb-1">Pending Approvals</div>
+      <div class="text-3xl font-bold text-rose-600">${DB.pendingApprovals.length}</div>
+      <div class="w-full h-0.5 bg-rose-500 rounded mt-2"></div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+      <div class="text-[10px] font-semibold text-slate-500 uppercase mb-1">Approved Orders</div>
+      <div class="text-3xl font-bold text-emerald-600">${DB.approvalHistory.length}</div>
+      <div class="w-full h-0.5 bg-emerald-500 rounded mt-2"></div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+      <div class="text-[10px] font-semibold text-slate-500 uppercase mb-1">Total Stores</div>
+      <div class="text-3xl font-bold text-sky-600">${STORES.length}</div>
+      <div class="w-full h-0.5 bg-sky-500 rounded mt-2"></div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+      <div class="text-[10px] font-semibold text-slate-500 uppercase mb-1">Products</div>
+      <div class="text-3xl font-bold text-slate-700">${PRODUCTS.length}</div>
+      <div class="w-full h-0.5 bg-slate-400 rounded mt-2"></div>
+    </div>
+  `;
+  document.getElementById('cluster-kpi').innerHTML=kpiHtml;
+}
+
+function renderStorePerformance(){
+  const tbody=document.getElementById('store-performance-tbody');
+  if(!STORES.length){
+    tbody.innerHTML=`<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400"><i class="bi bi-shop text-2xl block mb-2"></i>No stores in this cluster.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML=STORES.map(s=>{
+    const storeApprovals=DB.approvalHistory.filter(a=>a.storeId===s.id);
+    const storePending=DB.pendingApprovals.filter(a=>a.storeId===s.id);
+    return `<tr class="hover:bg-slate-50">
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${s.name}</div></td>
+      <td class="px-3 py-2.5 text-center text-slate-600 text-xs">${s.manager}</td>
+      <td class="px-3 py-2.5 text-center"><span class="px-2 py-1 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700">${storeApprovals.length}</span></td>
+      <td class="px-3 py-2.5 text-center"><span class="px-2 py-1 rounded-full text-[10px] font-semibold ${storePending.length>0?'bg-rose-100 text-rose-700':'bg-slate-100 text-slate-700'}">${storePending.length}</span></td>
+      <td class="px-3 py-2.5 text-center text-slate-600 text-xs">0%</td>
+      <td class="px-3 py-2.5 text-center"><span class="px-2 py-1 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700">Active</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function showToast(msg,type='info'){
+  const c=document.getElementById('o-toast-container'),t=document.createElement('div');
+  const styles={success:'bg-emerald-700 border-emerald-500',error:'bg-rose-700 border-rose-500',info:'bg-slate-800 border-sky-500'};
+  const icons={success:'bi-check-circle-fill',error:'bi-x-circle-fill',info:'bi-info-circle-fill'};
+  t.className=`o-toast flex items-center gap-3 px-4 py-3 rounded-xl border text-white text-sm shadow-xl pointer-events-auto max-w-xs ${styles[type]||styles.info}`;
+  t.innerHTML=`<i class="bi ${icons[type]||icons.info}"></i><span>${msg}</span>`;
+  c.appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(12px)';t.style.transition='all .25s';setTimeout(()=>t.remove(),250);},3000);
+}
+
+// Simulate receiving approval requests from stores
+function addPendingApproval(storeId, productId, suggested, finalOrder){
+  const store=STORES.find(s=>s.id===storeId);
+  const product=PRODUCTS.find(p=>p.id===productId);
+  if(!store||!product)return;
+  
+  const minS=Math.max(0,Math.floor(suggested*0.8));
+  const maxS=Math.ceil(suggested*1.2);
+  const id='APR-'+Math.random().toString(36).substr(2,9).toUpperCase();
+  
+  DB.pendingApprovals.push({
+    id,
+    orderDate:fmt(new Date()),
+    storeId,
+    storeName:store.name,
+    productId,
+    productName:product.name,
+    suggested,
+    minSug:minS,
+    maxSug:maxS,
+    finalOrder,
+    totalCost:finalOrder*product.plantPrice,
+    unitCost:product.plantPrice,
+    manager:store.manager,
+    timestamp:new Date().toISOString()
+  });
+  updateApprovalsBadge();
+}
+
+(function(){
+  document.getElementById('topbar-date').textContent=new Date().toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+  updateApprovalsBadge();
+  const params = new URLSearchParams(window.location.search);
+  const desiredTab = params.get('tab');
+  const allowedTabs = ['approvals','order-form','cluster-dashboard','store-performance'];
+  navigate(allowedTabs.includes(desiredTab) ? desiredTab : 'approvals');
+})();
+</script>
+
 {% endblock %}

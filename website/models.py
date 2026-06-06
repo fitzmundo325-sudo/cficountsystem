@@ -363,3 +363,15 @@ class DailyEndingInventoryItem(db.Model):
     delivery_reviewed_date = db.Column(db.Date, nullable=True)
 
     remarks = db.Column(db.String(255), nullable=True)
+
+
+class StoreProductBuffer(db.Model):
+    __tablename__ = 'store_product_buffer'
+    id = db.Column(db.Integer, primary_key=True)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product_master.id'), nullable=False, index=True)
+    buffer_pct = db.Column(db.Float, nullable=False, default=20.0)
+    updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+    updated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+
+    __table_args__ = (db.UniqueConstraint('store_id', 'product_id', name='uq_store_product_buffer'),)
