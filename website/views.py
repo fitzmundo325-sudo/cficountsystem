@@ -4882,6 +4882,78 @@ def cluster_manager_oracle():
                            cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin') else '')
 
 
+@views.route('/cluster-manager/invensync')
+@login_required
+def cluster_manager_invensync():
+    """Cluster Manager view for Invensync ending inventory from assigned stores only"""
+    from datetime import date as _date
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Cluster, Store
+    cluster = None
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            flash('You are not assigned to any cluster yet.', category='error')
+            return redirect(url_for('views.home'))
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view Invensync.', category='error')
+            return redirect(url_for('admin.clusters'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    # Get selected date (default to today)
+    selected_date_str = request.args.get('date', '')
+    if selected_date_str:
+        try:
+            selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = _date.today()
+    else:
+        selected_date = _date.today()
+
+    # Get stores in this cluster only
+    stores = Store.query.filter_by(cluster_id=cluster.id).order_by(Store.name.asc()).all()
+    store_ids = [s.id for s in stores]
+
+    # Get inventory data for selected date from cluster stores
+    inventory_records = DailyEndingInventory.query.filter(
+        DailyEndingInventory.inventory_date == selected_date,
+        DailyEndingInventory.store_id.in_(store_ids)
+    ).all() if store_ids else []
+
+    inventory_by_store = {i.store_id: i for i in inventory_records}
+
+    store_summaries = []
+    for store in stores:
+        inventory = inventory_by_store.get(store.id)
+        store_summaries.append({
+            'store': store,
+            'inventory': inventory,
+            'has_data': bool(inventory)
+        })
+
+    cluster_sidebar_stores = _build_cluster_sidebar_stores(stores)
+
+    return render_template(
+        'cluster_manager/invensync.html',
+        user=current_user,
+        cluster=cluster,
+        team_name=_get_team_name(cluster),
+        stores=stores,
+        store_summaries=store_summaries,
+        selected_date=selected_date.strftime('%Y-%m-%d'),
+        today=_date.today().strftime('%Y-%m-%d'),
+        cluster_sidebar_stores=cluster_sidebar_stores,
+        force_cluster_sidebar=(role in ('Admin', 'Superadmin')),
+        cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin') else '',
+    )
+
+
 @views.route('/cluster-manager/oracle/save-buffers', methods=['POST'])
 @login_required
 def cluster_manager_save_store_buffers():
@@ -5361,7 +5433,7 @@ def _match_rso_to_inventory(rso_item, product):
 @login_required
 def invensync():
     """Daily ending inventory view"""
-    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Admin', 'Superadmin']:
+    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin']:
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
@@ -5376,12 +5448,24 @@ def invensync():
         # store_id provided, allow viewing details (will be handled below)
 
     # Get store for current user
-    if current_user.role == 'Store Manager':
+    role = (current_user.role or '').strip()
+    if role == 'Store Manager':
         store = Store.query.filter_by(manager_id=current_user.id).first()
-    elif current_user.role == 'Inventory Staff':
+    elif role == 'Inventory Staff':
         # Inventory Staff viewing specific store details
         store_id = request.args.get('store_id', type=int)
         store = Store.query.get(store_id) if store_id else None
+    elif role == 'Cluster Manager':
+        # Cluster Manager viewing store details — must belong to their cluster
+        store_id = request.args.get('store_id', type=int)
+        if not store_id:
+            return redirect(url_for('views.cluster_manager_invensync'))
+        from .models import Cluster
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        store = Store.query.get(store_id) if store_id else None
+        if store and cluster and store.cluster_id != cluster.id:
+            flash('Access denied. Store does not belong to your cluster.', category='error')
+            return redirect(url_for('views.cluster_manager_invensync'))
     else:
         # Admin/Superadmin accessing store details via store_id parameter
         store_id = request.args.get('store_id', type=int)
@@ -5546,6 +5630,19 @@ def invensync():
     is_first_time = (not beginning_qty_is_locked) and not has_any_beginning and not prev_inventory_exists
     allow_beginning_stock_entry = is_first_time and current_user.role != 'Inventory Staff'
 
+    # Build cluster sidebar context for Cluster Manager
+    cluster_sidebar_ctx = {}
+    if role == 'Cluster Manager':
+        from .models import Cluster
+        cm_cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if cm_cluster:
+            cm_stores = Store.query.filter_by(cluster_id=cm_cluster.id).all()
+            cluster_sidebar_ctx = {
+                'cluster': cm_cluster,
+                'team_name': _get_team_name(cm_cluster),
+                'cluster_sidebar_stores': _build_cluster_sidebar_stores(cm_stores),
+            }
+
     return render_template(
         'store_manager/invensync.html',
         user=current_user,
@@ -5558,6 +5655,7 @@ def invensync():
         global_config_data=global_config_data,
         is_first_time=is_first_time,
         allow_beginning_stock_entry=allow_beginning_stock_entry,
+        **cluster_sidebar_ctx,
     )
 
 
