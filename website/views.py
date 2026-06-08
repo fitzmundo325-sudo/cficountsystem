@@ -5820,31 +5820,28 @@ def invensync():
     )
 
 
-def _fetch_oracle_invensync_data(store, products):
+def _fetch_oracle_invensync_data(store, products, oracle_date=None):
     """Fetch invensync data for the Oracle order form.
     Returns (invensync_data dict keyed by str(product_id), prev_inventory_date_str or None).
-    - Ending Inventory: most recent record BEFORE today (total_ending_qty)
-    - Delivery / Trans-In / Trans-Out: today's record
+    - Ending Inventory: previous day's total_ending_qty from InvenSync (no theo fallback)
+    - Delivery / Trans-In / Trans-Out: oracle_date's record
     Handles nullable product_master_id with product_description fallback.
     """
-    from datetime import date as _date
-    today = _date.today()
+    from datetime import date as _date, timedelta
+    ref_date = oracle_date or _date.today()
+    prev_day = ref_date - timedelta(days=1)
 
-    # Most recent inventory record BEFORE today
+    # Previous day's inventory record (exact previous day)
     prev_inventory = (
         DailyEndingInventory.query
-        .filter(
-            DailyEndingInventory.store_id == store.id,
-            DailyEndingInventory.inventory_date < today
-        )
-        .order_by(DailyEndingInventory.inventory_date.desc())
+        .filter_by(store_id=store.id, inventory_date=prev_day)
         .first()
     )
 
-    # Today's inventory record (delivery, trans-in, trans-out)
+    # Oracle date's inventory record (delivery, trans-in, trans-out)
     today_inventory = (
         DailyEndingInventory.query
-        .filter_by(store_id=store.id, inventory_date=today)
+        .filter_by(store_id=store.id, inventory_date=ref_date)
         .first()
     )
 
@@ -5854,9 +5851,8 @@ def _fetch_oracle_invensync_data(store, products):
         prod_by_desc[(p.description or '').strip().lower()] = p.id
 
     # Previous day ending: product_id -> total_ending_qty
-    # Falls back to theo_ending_qty when total_ending_qty is 0
-    # (D+5/D+4/D+3 forecast columns not filled in)
-    # If no previous day record exists, falls back to today's beginning_qty
+    # Uses total_ending_qty directly from InvenSync (no theo_ending_qty fallback)
+    # If no previous day record exists, falls back to oracle date's beginning_qty
     # (beginning_qty = last known ending inventory carried forward)
     prev_ending = {}
     if prev_inventory:
@@ -5866,11 +5862,9 @@ def _fetch_oracle_invensync_data(store, products):
                 pid = prod_by_desc.get((item.product_description or '').strip().lower())
             if pid is not None:
                 ending = (item.total_ending_qty or 0)
-                if ending == 0:
-                    ending = (item.theo_ending_qty or 0)
                 prev_ending[pid] = prev_ending.get(pid, 0) + ending
     elif today_inventory:
-        # No previous day record — use today's beginning_qty as ending stock
+        # No previous day record — use oracle date's beginning_qty as ending stock
         for item in today_inventory.items:
             pid = item.product_master_id
             if pid is None:
@@ -5878,7 +5872,7 @@ def _fetch_oracle_invensync_data(store, products):
             if pid is not None:
                 prev_ending[pid] = prev_ending.get(pid, 0) + (item.beginning_qty or 0)
 
-    # Today: product_id -> delivery, trans_in, trans_out
+    # Oracle date: product_id -> delivery, trans_in, trans_out
     today_delivery = {}
     today_trans_in = {}
     today_trans_out = {}
@@ -5905,9 +5899,9 @@ def _fetch_oracle_invensync_data(store, products):
     if prev_inventory:
         prev_date_str = prev_inventory.inventory_date.isoformat()
     elif today_inventory and prev_ending:
-        prev_date_str = today.isoformat()  # using today's beginning_qty as fallback
+        prev_date_str = prev_day.isoformat()  # beginning_qty carried forward from prev day
     else:
-        prev_date_str = None
+        prev_date_str = prev_day.isoformat() if today_inventory else None
     return invensync_data, prev_date_str
 
 
@@ -6053,12 +6047,28 @@ def oracle():
         return redirect(url_for('views.home'))
 
     from .models import ProductMaster, StoreProductBuffer
+    from datetime import date as _date
     products = ProductMaster.query.all()
+
+    # Parse optional oracle date from query string
+    oracle_date = None
+    date_str = request.args.get('date', '')
+    if date_str:
+        try:
+            oracle_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            oracle_date = None
+    if oracle_date is None:
+        oracle_date = _date.today()
 
     # Load saved per-product buffers for this store (if any)
     saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
     store_buffers = {b.product_id: b.buffer_pct for b in saved}
 
+<<<<<<< HEAD
+    # Fetch invensync data (ending inventory from prev day, delivery/trans from oracle date)
+    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
+=======
     selected_date = _parse_iso_date(request.args.get('date'))
 
     # Fetch invensync data (total ending inventory, delivery, trans-in/out)
@@ -6068,6 +6078,7 @@ def oracle():
         selected_date,
     )
     pos_sales_data = _build_oracle_pos_sales_data(store, products, selected_date)
+>>>>>>> 5a07cb70806463843cc8652cf7341cd03b9df814
 
     return render_template(
         'store_manager/oracle.html',
@@ -6077,7 +6088,11 @@ def oracle():
         store_buffers=store_buffers,
         invensync_data=invensync_data,
         prev_inventory_date=prev_inventory_date,
+<<<<<<< HEAD
+        oracle_date=oracle_date.isoformat(),
+=======
         pos_sales_data=pos_sales_data,
+>>>>>>> 5a07cb70806463843cc8652cf7341cd03b9df814
     )
 
 
@@ -6103,13 +6118,29 @@ def cluster_store_order_form(store_id):
             return redirect(url_for('views.home'))
 
     from .models import ProductMaster, StoreProductBuffer
+    from datetime import date as _date
     products = ProductMaster.query.all()
+
+    # Parse optional oracle date from query string
+    oracle_date = None
+    date_str = request.args.get('date', '')
+    if date_str:
+        try:
+            oracle_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            oracle_date = None
+    if oracle_date is None:
+        oracle_date = _date.today()
 
     # Provide existing saved buffers for this store so the embedded/order view
     # reflects the latest values edited by cluster managers.
     saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
     store_buffers = {b.product_id: b.buffer_pct for b in saved}
 
+<<<<<<< HEAD
+    # Fetch invensync data (ending inventory from prev day, delivery/trans from oracle date)
+    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
+=======
     selected_date = _parse_iso_date(request.args.get('date'))
 
     # Fetch invensync data (total ending inventory, delivery, trans-in/out)
@@ -6119,6 +6150,7 @@ def cluster_store_order_form(store_id):
         selected_date,
     )
     pos_sales_data = _build_oracle_pos_sales_data(store, products, selected_date)
+>>>>>>> 5a07cb70806463843cc8652cf7341cd03b9df814
 
     return render_template(
         'store_manager/oracle.html',
@@ -6129,7 +6161,11 @@ def cluster_store_order_form(store_id):
         store_buffers=store_buffers,
         invensync_data=invensync_data,
         prev_inventory_date=prev_inventory_date,
+<<<<<<< HEAD
+        oracle_date=oracle_date.isoformat(),
+=======
         pos_sales_data=pos_sales_data,
+>>>>>>> 5a07cb70806463843cc8652cf7341cd03b9df814
     )
 
 
