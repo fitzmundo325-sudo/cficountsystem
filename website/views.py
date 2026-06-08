@@ -6065,20 +6065,9 @@ def oracle():
     saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
     store_buffers = {b.product_id: b.buffer_pct for b in saved}
 
-<<<<<<< HEAD
     # Fetch invensync data (ending inventory from prev day, delivery/trans from oracle date)
     invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
-=======
-    selected_date = _parse_iso_date(request.args.get('date'))
-
-    # Fetch invensync data (total ending inventory, delivery, trans-in/out)
-    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data_for_order_form(
-        store,
-        products,
-        selected_date,
-    )
-    pos_sales_data = _build_oracle_pos_sales_data(store, products, selected_date)
->>>>>>> 5a07cb70806463843cc8652cf7341cd03b9df814
+    pos_sales_data = _build_oracle_pos_sales_data(store, products, oracle_date)
 
     return render_template(
         'store_manager/oracle.html',
@@ -6088,11 +6077,8 @@ def oracle():
         store_buffers=store_buffers,
         invensync_data=invensync_data,
         prev_inventory_date=prev_inventory_date,
-<<<<<<< HEAD
         oracle_date=oracle_date.isoformat(),
-=======
         pos_sales_data=pos_sales_data,
->>>>>>> 5a07cb70806463843cc8652cf7341cd03b9df814
     )
 
 
@@ -6137,20 +6123,9 @@ def cluster_store_order_form(store_id):
     saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
     store_buffers = {b.product_id: b.buffer_pct for b in saved}
 
-<<<<<<< HEAD
     # Fetch invensync data (ending inventory from prev day, delivery/trans from oracle date)
     invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
-=======
-    selected_date = _parse_iso_date(request.args.get('date'))
-
-    # Fetch invensync data (total ending inventory, delivery, trans-in/out)
-    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data_for_order_form(
-        store,
-        products,
-        selected_date,
-    )
-    pos_sales_data = _build_oracle_pos_sales_data(store, products, selected_date)
->>>>>>> 5a07cb70806463843cc8652cf7341cd03b9df814
+    pos_sales_data = _build_oracle_pos_sales_data(store, products, oracle_date)
 
     return render_template(
         'store_manager/oracle.html',
@@ -6161,11 +6136,8 @@ def cluster_store_order_form(store_id):
         store_buffers=store_buffers,
         invensync_data=invensync_data,
         prev_inventory_date=prev_inventory_date,
-<<<<<<< HEAD
         oracle_date=oracle_date.isoformat(),
-=======
         pos_sales_data=pos_sales_data,
->>>>>>> 5a07cb70806463843cc8652cf7341cd03b9df814
     )
 
 

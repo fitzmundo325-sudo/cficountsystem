@@ -352,11 +352,8 @@ const CLUSTER_VIEW = {{ 'true' if cluster_view|default(false) else 'false' }};
 const STORE_SAVED_BUFFERS = {{ store_buffers|tojson if store_buffers is defined else '{}' }};
 const INVENSYNC_DATA = {{ invensync_data|tojson if invensync_data is defined else '{}' }};
 const PREV_INVENTORY_DATE = {{ prev_inventory_date|tojson if prev_inventory_date is defined else 'null' }};
-<<<<<<< HEAD
 const ORACLE_DATE = {{ oracle_date|tojson if oracle_date is defined else 'null' }};
-=======
 const POS_SALES_DATA = {{ pos_sales_data|tojson if pos_sales_data is defined else '{}' }};
->>>>>>> 5a07cb70806463843cc8652cf7341cd03b9df814
 const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const DAYS_DISPLAY=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const DISP_TO_JS=[1,2,3,4,5,6,0];
