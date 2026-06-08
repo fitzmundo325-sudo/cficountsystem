@@ -20,7 +20,15 @@
   .forecast-bar select option { background:#1e293b; color:#fff; }
   .table-scroll-shell {
     max-height: min(72vh, 760px);
-    overflow: auto;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .table-scroll-shell > table {
+    width: max-content;
+    min-width: 100%;
   }
   .weekly-scroll {
     max-height: min(58vh, 480px);
@@ -73,7 +81,7 @@
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-daily-averages"     onclick="navigate('daily-averages')"> <i class="bi bi-bar-chart-line"></i> Daily Averages</button>
 </div>
 
-<div class="px-4 pt-4 pb-6 md:px-6 space-y-4 max-w-[2400px] mx-auto overflow-x-hidden">
+<div class="px-4 pt-4 pb-6 md:px-6 space-y-4 max-w-[2400px] mx-auto min-w-0">
 
 
   <!-- ORDER FORM -->
