@@ -5406,10 +5406,31 @@ def save_daily_ending_inventory():
         data = request.get_json()
         inventory_id = data.get('inventory_id')
         items_data = data.get('items', [])
+        finalize_day = bool(data.get('finalize_day'))
+        finalize_beginning = bool(data.get('finalize_beginning'))
         
         inventory = DailyEndingInventory.query.get(inventory_id)
         if not inventory:
             return jsonify({'success': False, 'error': 'Inventory not found'}), 404
+        if inventory.is_finalized:
+            return jsonify({
+                'success': False,
+                'error': 'This inventory day is already finalized and can no longer be edited.'
+            }), 423
+        store_beginning_baseline = DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == inventory.store_id,
+            DailyEndingInventory.is_beginning_finalized.is_(True),
+        ).first()
+        if finalize_beginning and store_beginning_baseline and store_beginning_baseline.id != inventory.id:
+            return jsonify({
+                'success': False,
+                'error': 'Beginning inventory has already been saved for this store.'
+            }), 409
+        if finalize_beginning and inventory.is_beginning_finalized:
+            return jsonify({
+                'success': False,
+                'error': 'Beginning inventory has already been saved for this store.'
+            }), 409
 
         is_first_inventory_baseline = DailyEndingInventory.query.filter(
             DailyEndingInventory.store_id == inventory.store_id,
@@ -5418,7 +5439,11 @@ def save_daily_ending_inventory():
         has_beginning_payload = any('beginning_qty' in item_data for item_data in items_data)
         _, global_config_data = _get_or_create_global_invensync_config()
         beginning_qty_is_locked = 'beginning_qty' in global_config_data.get('locked_columns', [])
-        allow_beginning_qty_update = not beginning_qty_is_locked
+        allow_beginning_qty_update = (
+            (not inventory.is_beginning_finalized)
+            and (not store_beginning_baseline)
+            and ((not beginning_qty_is_locked) or is_first_inventory_baseline or finalize_beginning)
+        )
         
         # Update items
         for item_data in items_data:
@@ -5445,6 +5470,16 @@ def save_daily_ending_inventory():
 
         if is_first_inventory_baseline and has_beginning_payload:
             _lock_global_invensync_column('beginning_qty')
+
+        if finalize_beginning:
+            inventory.is_beginning_finalized = True
+            inventory.beginning_finalized_at = datetime.now()
+            inventory.beginning_finalized_by = current_user.id
+
+        if finalize_day:
+            inventory.is_finalized = True
+            inventory.finalized_at = datetime.now()
+            inventory.finalized_by = current_user.id
         
         db.session.commit()
         
@@ -5452,7 +5487,11 @@ def save_daily_ending_inventory():
             action='inventory.save',
             entity_type='DailyEndingInventory',
             entity_id=inventory.id,
-            details={'inventory_date': inventory.inventory_date.isoformat()}
+            details={
+                'inventory_date': inventory.inventory_date.isoformat(),
+                'finalize_day': finalize_day,
+                'finalize_beginning': finalize_beginning,
+            }
         )
         
         return jsonify({
@@ -5646,10 +5685,12 @@ def invensync():
     db.session.commit()
 
     # Sync RSO delivery data to inventory items with improved matching
-    rso_deliveries = RsoDelivery.query.filter_by(
-        store_id=store.id,
-        report_date=selected_date
-    ).filter(RsoDelivery.delivery_reviewed_date.isnot(None)).all()
+    rso_deliveries = []
+    if not inventory.is_finalized:
+        rso_deliveries = RsoDelivery.query.filter_by(
+            store_id=store.id,
+            report_date=selected_date
+        ).filter(RsoDelivery.delivery_reviewed_date.isnot(None)).all()
     
     if rso_deliveries:
         # Track which RSO items have been matched to avoid duplicates
@@ -5676,7 +5717,7 @@ def invensync():
                                 matched_rso_ids.add(rso_item.id)
                             break
 
-    taf_trans_out_map = _build_taf_trans_out_quantity_by_master_id(store, selected_date)
+    taf_trans_out_map = {} if inventory.is_finalized else _build_taf_trans_out_quantity_by_master_id(store, selected_date)
     if taf_trans_out_map:
         for inv_item in inventory_items.values():
             if not inv_item.product_master_id:
@@ -5690,7 +5731,7 @@ def invensync():
             if current_trans_out_qty == 0 or current_trans_out_qty < taf_trans_out_qty:
                 inv_item.trans_out_qty = taf_trans_out_qty
 
-    taf_trans_in_map = _build_taf_trans_in_quantity_by_master_id(store, selected_date)
+    taf_trans_in_map = {} if inventory.is_finalized else _build_taf_trans_in_quantity_by_master_id(store, selected_date)
     if taf_trans_in_map:
         for inv_item in inventory_items.values():
             if not inv_item.product_master_id:
@@ -5702,12 +5743,14 @@ def invensync():
 
             inv_item.trans_in_qty = taf_trans_in_qty
 
-    # Recalculate inventory totals
-    for item in inventory_items.values():
-        _recalculate_inventory_item(item)
-    saved_sales_map = _build_pos_sold_quantity_by_master_id_for_report(
-        DailyReport.query.filter_by(store_id=store.id, report_date=selected_date).with_entities(DailyReport.id).scalar()
-    )
+    saved_sales_map = {}
+    if not inventory.is_finalized:
+        # Recalculate inventory totals
+        for item in inventory_items.values():
+            _recalculate_inventory_item(item)
+        saved_sales_map = _build_pos_sold_quantity_by_master_id_for_report(
+            DailyReport.query.filter_by(store_id=store.id, report_date=selected_date).with_entities(DailyReport.id).scalar()
+        )
     if saved_sales_map:
         for inv_item in inventory_items.values():
             if inv_item.product_master_id and not inv_item.quantity_sold and inv_item.product_master_id in saved_sales_map:
@@ -5719,7 +5762,7 @@ def invensync():
     db.session.commit()
 
     draft_sales_map = {}
-    if current_user.role == 'Store Manager':
+    if current_user.role == 'Store Manager' and not inventory.is_finalized:
         draft_sales_map = _build_pos_sold_draft_quantity_by_master_id(store.id, selected_date)
 
     if draft_sales_map:
@@ -5731,8 +5774,10 @@ def invensync():
                 _recalculate_inventory_item(inv_item, sold_override=inv_item.draft_quantity_sold)
 
     _, global_config_data = _get_or_create_global_invensync_config()
-    beginning_qty_is_locked = 'beginning_qty' in global_config_data.get('locked_columns', [])
-
+    store_beginning_baseline_finalized = DailyEndingInventory.query.filter(
+        DailyEndingInventory.store_id == store.id,
+        DailyEndingInventory.is_beginning_finalized.is_(True),
+    ).first() is not None
     # Detect first-time setup: no previous inventory baseline and no current beginning stock.
     has_any_beginning = any(
         item.beginning_qty and item.beginning_qty > 0
@@ -5742,7 +5787,7 @@ def invensync():
         DailyEndingInventory.store_id == store.id,
         DailyEndingInventory.inventory_date < selected_date
     ).first() is not None
-    is_first_time = (not beginning_qty_is_locked) and not has_any_beginning and not prev_inventory_exists
+    is_first_time = (not store_beginning_baseline_finalized) and not has_any_beginning and not prev_inventory_exists
     allow_beginning_stock_entry = is_first_time and current_user.role != 'Inventory Staff'
 
     # Build cluster sidebar context for Cluster Manager
@@ -5770,6 +5815,7 @@ def invensync():
         global_config_data=global_config_data,
         is_first_time=is_first_time,
         allow_beginning_stock_entry=allow_beginning_stock_entry,
+        store_beginning_baseline_finalized=store_beginning_baseline_finalized,
         **cluster_sidebar_ctx,
     )
 
@@ -5865,6 +5911,134 @@ def _fetch_oracle_invensync_data(store, products):
     return invensync_data, prev_date_str
 
 
+def _inventory_has_oracle_values(inventory):
+    if not inventory:
+        return False
+
+    return any(
+        (item.total_ending_qty or 0)
+        or (item.delivery_qty or 0)
+        or (item.trans_in_qty or 0)
+        or (item.trans_out_qty or 0)
+        for item in inventory.items
+    )
+
+
+def _resolve_oracle_invensync_inventory(store, selected_date=None):
+    if selected_date:
+        return DailyEndingInventory.query.filter_by(
+            store_id=store.id,
+            inventory_date=selected_date,
+        ).first()
+
+    inventories = (
+        DailyEndingInventory.query
+        .filter(DailyEndingInventory.store_id == store.id)
+        .order_by(DailyEndingInventory.inventory_date.desc())
+        .all()
+    )
+    for inventory in inventories:
+        if _inventory_has_oracle_values(inventory):
+            return inventory
+    return inventories[0] if inventories else None
+
+
+def _fetch_oracle_invensync_data_for_order_form(store, products, selected_date=None):
+    source_inventory = _resolve_oracle_invensync_inventory(store, selected_date)
+
+    prod_by_desc = {
+        (product.description or '').strip().lower(): product.id
+        for product in products
+    }
+
+    total_ending = {}
+    delivery = {}
+    trans_in = {}
+    trans_out = {}
+    if source_inventory:
+        for item in source_inventory.items:
+            product_id = item.product_master_id
+            if product_id is None:
+                product_id = prod_by_desc.get((item.product_description or '').strip().lower())
+            if product_id is None:
+                continue
+
+            total_ending[product_id] = total_ending.get(product_id, 0) + (item.total_ending_qty or 0)
+            delivery[product_id] = delivery.get(product_id, 0) + (item.delivery_qty or 0)
+            trans_in[product_id] = trans_in.get(product_id, 0) + (item.trans_in_qty or 0)
+            trans_out[product_id] = trans_out.get(product_id, 0) + (item.trans_out_qty or 0)
+
+    invensync_data = {}
+    for product in products:
+        invensync_data[str(product.id)] = {
+            'ending_stock': total_ending.get(product.id, 0),
+            'delivery': delivery.get(product.id, 0),
+            'trans_in': trans_in.get(product.id, 0),
+            'trans_out': trans_out.get(product.id, 0),
+        }
+
+    source_date = source_inventory.inventory_date.isoformat() if source_inventory else None
+    return invensync_data, source_date
+
+
+def _build_oracle_pos_sales_data(store, products, anchor_date=None):
+    if not store or not products:
+        return {}
+
+    anchor_date = anchor_date or date.today()
+    start_date = anchor_date - timedelta(days=27)
+    week_ranges = []
+    for week_index in range(4):
+        week_start = start_date + timedelta(days=(week_index * 7))
+        week_ranges.append((week_start, week_start + timedelta(days=6)))
+
+    end_date = week_ranges[-1][1]
+    product_ids = {int(product.id) for product in products}
+    sales_data = {
+        str(product.id): [[0 for _ in range(7)] for _ in range(4)]
+        for product in products
+    }
+
+    pos_rows = (
+        db.session.query(
+            DailyReport.report_date,
+            PosSold.product_name,
+            func.sum(PosSold.quantity).label('total_qty'),
+        )
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(DailyReport.store_id == store.id)
+        .filter(DailyReport.report_date >= start_date)
+        .filter(DailyReport.report_date <= end_date)
+        .group_by(DailyReport.report_date, PosSold.product_name)
+        .all()
+    )
+    if not pos_rows:
+        return sales_data
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    for report_date, product_name, total_qty in pos_rows:
+        master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+        if master_id not in product_ids:
+            continue
+
+        quantity = int(total_qty or 0)
+        if quantity <= 0:
+            continue
+
+        week_index = None
+        for index, (week_start, week_end) in enumerate(week_ranges):
+            if week_start <= report_date <= week_end:
+                week_index = index
+                break
+        if week_index is None:
+            continue
+
+        js_day_index = (report_date.weekday() + 1) % 7
+        sales_data[str(master_id)][week_index][js_day_index] += quantity
+
+    return sales_data
+
+
 @views.route('/store-manager/oracle')
 @login_required
 def oracle():
@@ -5885,8 +6059,15 @@ def oracle():
     saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
     store_buffers = {b.product_id: b.buffer_pct for b in saved}
 
-    # Fetch invensync data (ending inventory, delivery, trans-in/out)
-    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products)
+    selected_date = _parse_iso_date(request.args.get('date'))
+
+    # Fetch invensync data (total ending inventory, delivery, trans-in/out)
+    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data_for_order_form(
+        store,
+        products,
+        selected_date,
+    )
+    pos_sales_data = _build_oracle_pos_sales_data(store, products, selected_date)
 
     return render_template(
         'store_manager/oracle.html',
@@ -5896,6 +6077,7 @@ def oracle():
         store_buffers=store_buffers,
         invensync_data=invensync_data,
         prev_inventory_date=prev_inventory_date,
+        pos_sales_data=pos_sales_data,
     )
 
 
@@ -5928,8 +6110,15 @@ def cluster_store_order_form(store_id):
     saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
     store_buffers = {b.product_id: b.buffer_pct for b in saved}
 
-    # Fetch invensync data (ending inventory, delivery, trans-in/out)
-    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products)
+    selected_date = _parse_iso_date(request.args.get('date'))
+
+    # Fetch invensync data (total ending inventory, delivery, trans-in/out)
+    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data_for_order_form(
+        store,
+        products,
+        selected_date,
+    )
+    pos_sales_data = _build_oracle_pos_sales_data(store, products, selected_date)
 
     return render_template(
         'store_manager/oracle.html',
@@ -5940,6 +6129,7 @@ def cluster_store_order_form(store_id):
         store_buffers=store_buffers,
         invensync_data=invensync_data,
         prev_inventory_date=prev_inventory_date,
+        pos_sales_data=pos_sales_data,
     )
 
 

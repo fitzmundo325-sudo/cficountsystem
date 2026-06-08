@@ -18,6 +18,21 @@
   @keyframes toastIn { from{transform:translateX(16px);opacity:0} to{transform:translateX(0);opacity:1} }
   .o-toast { animation:toastIn .2s ease; }
   .forecast-bar select option { background:#1e293b; color:#fff; }
+  .table-scroll-shell {
+    max-height: min(72vh, 760px);
+    overflow: auto;
+  }
+  .weekly-scroll {
+    max-height: min(58vh, 480px);
+  }
+  @media (max-width: 768px) {
+    .table-scroll-shell {
+      max-height: 68vh;
+    }
+    .weekly-scroll {
+      max-height: 60vh;
+    }
+  }
 </style>
 
 <!-- Header -->
@@ -72,7 +87,7 @@
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-3 mb-4 flex flex-wrap items-center gap-4 text-xs">
       <div class="flex items-center gap-1.5">
         <i class="bi bi-database-fill-check text-emerald-500"></i>
-        <span class="text-slate-500">Ending Inventory from:</span>
+        <span class="text-slate-500">InvenSync values from:</span>
         <strong class="text-slate-800">{% if prev_inventory_date %}{{ prev_inventory_date }}{% else %}No previous record{% endif %}</strong>
       </div>
       <div class="flex items-center gap-1.5">
@@ -164,7 +179,7 @@
 
     <!-- Order table -->
     <div class="bg-white rounded-t-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="overflow-x-auto overflow-y-auto" style="max-height:calc(100vh - 22rem);">
+      <div class="overflow-x-auto table-scroll-shell">
         <table id="order-table" class="w-full text-xs" style="min-width:1100px">
           <thead class="bg-slate-100 text-slate-600 sticky top-0">
             <tr>
@@ -212,7 +227,7 @@
   <div class="view" id="view-approvals">
     <div class="mb-5"><h1 class="text-2xl font-bold text-slate-900">Cluster Manager Approvals</h1><p class="mt-1 text-sm text-slate-500">Review orders outside the permitted ±20% suggested range.</p></div>
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="overflow-x-auto"><table class="w-full text-xs" style="min-width:900px">
+      <div class="overflow-x-auto table-scroll-shell"><table class="w-full text-xs" style="min-width:900px">
         <thead class="bg-slate-100 text-slate-600"><tr>
           <th class="px-3 py-3 text-left font-semibold">Order Date</th>
           <th class="px-3 py-3 text-left font-semibold">Product</th>
@@ -234,7 +249,7 @@
       <button onclick="renderHistory()" class="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
     </div>
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="overflow-x-auto"><table class="w-full text-xs" style="min-width:900px">
+      <div class="overflow-x-auto table-scroll-shell"><table class="w-full text-xs" style="min-width:900px">
         <thead class="bg-slate-100 text-slate-600"><tr>
           <th class="px-3 py-3 text-left font-semibold">Order Date</th>
           <th class="px-3 py-3 text-left font-semibold">Delivery</th>
@@ -266,7 +281,7 @@
         <span class="text-sm font-bold text-slate-700">Current Inventory</span>
         <span class="text-xs text-slate-500">Edit <strong>Current Stock</strong> or use ± buttons</span>
       </div>
-      <div class="overflow-x-auto"><table class="w-full text-xs" style="min-width:800px">
+      <div class="overflow-x-auto table-scroll-shell"><table class="w-full text-xs" style="min-width:800px">
         <thead class="bg-slate-100 text-slate-600"><tr>
           <th class="px-3 py-3 text-left font-semibold">Product</th>
           <th class="px-3 py-3 text-center font-semibold">Category</th>
@@ -286,7 +301,7 @@
 
   <!-- DAILY AVERAGES -->
   <div class="view" id="view-daily-averages">
-    <div class="mb-5"><h1 class="text-2xl font-bold text-slate-900">Daily Average Consumption</h1><p class="mt-1 text-sm text-slate-500">Edit the 4 weekly sales tables. The summary auto-calculates and feeds the Order Form.</p></div>
+    <div class="mb-5"><h1 class="text-2xl font-bold text-slate-900">Daily Average Consumption</h1><p class="mt-1 text-sm text-slate-500">Based on POS Sold for the latest 4 weeks. You can adjust values before ordering.</p></div>
     <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3">
       <i class="bi bi-calendar3 text-sky-500"></i> Weekly Sales — Units Sold Per Product Per Day
     </div>
@@ -295,7 +310,7 @@
       <i class="bi bi-graph-up text-sky-500"></i> Average Daily Sold &amp; Product Share (4-Week Summary)
     </div>
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
-      <div class="overflow-x-auto"><table class="w-full text-xs" style="min-width:800px">
+      <div class="overflow-x-auto table-scroll-shell"><table class="w-full text-xs" style="min-width:800px">
         <thead class="bg-slate-100 text-slate-600"><tr>
           <th class="px-3 py-3 text-left font-semibold">Product</th>
           <th class="px-3 py-3 text-center font-semibold">Mon</th><th class="px-3 py-3 text-center font-semibold">Tue</th>
@@ -329,6 +344,7 @@ const CLUSTER_VIEW = {{ 'true' if cluster_view|default(false) else 'false' }};
 const STORE_SAVED_BUFFERS = {{ store_buffers|tojson if store_buffers is defined else '{}' }};
 const INVENSYNC_DATA = {{ invensync_data|tojson if invensync_data is defined else '{}' }};
 const PREV_INVENTORY_DATE = {{ prev_inventory_date|tojson if prev_inventory_date is defined else 'null' }};
+const POS_SALES_DATA = {{ pos_sales_data|tojson if pos_sales_data is defined else '{}' }};
 const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const DAYS_DISPLAY=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const DISP_TO_JS=[1,2,3,4,5,6,0];
@@ -340,6 +356,15 @@ function buildSales(){
   return d;
 }
 let salesData=buildSales();
+Object.entries(POS_SALES_DATA || {}).forEach(([pid,weeks])=>{
+  if(!salesData[pid] || !Array.isArray(weeks))return;
+  for(let w=0;w<Math.min(4,weeks.length);w++){
+    if(!Array.isArray(weeks[w]))continue;
+    for(let d=0;d<Math.min(7,weeks[w].length);d++){
+      salesData[pid][w][d]=parseInt(weeks[w][d])||0;
+    }
+  }
+});
 
 const DB={
   inventory:PRODUCTS.map(p=>{const iv=INVENSYNC_DATA[String(p.id)];return{productId:p.id,productName:p.name,category:p.category,unit:p.unit,currentStock:iv?iv.ending_stock:0,reorderPoint:0,lastUpdated:fmt(new Date())};}),
@@ -628,7 +653,7 @@ function renderWeeklyTables(){
       return `<tr class="hover:bg-slate-50"><td class="px-3 py-2 font-semibold text-slate-800 text-xs min-w-[140px]">${p.name}</td>${cells}<td id="wrt-${w}-${p.id}" class="px-3 py-2 text-center font-bold text-xs text-slate-700">${rTot}</td><td class="px-3 py-2 text-center text-xs text-amber-700 font-semibold" id="wrr-${w}-${p.id}">₱${(rTot*p.sellingPrice).toLocaleString()}</td></tr>`;
     }).join('');
     const fCells=dTots.map((t,ci)=>`<td id="wdt-${w}-${ci}" class="px-2 py-2 text-center font-bold text-xs text-white">${t}</td>`).join('');
-    html+=`<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="${m.hCls} px-5 py-3 flex items-center justify-between"><span class="text-sm font-bold text-white">${m.label}</span><span id="whs-${w}" class="text-xs text-white/70">Units: <strong class="text-white">${wTot}</strong> | Rev: <strong class="text-white">₱${totRev.toLocaleString()}</strong></span></div><div class="overflow-x-auto"><table class="w-full text-xs" style="min-width:800px"><thead class="bg-slate-100 text-slate-600"><tr><th class="px-3 py-2 text-left font-semibold">Product</th>${DAYS_DISPLAY.map(d=>`<th class="px-2 py-2 text-center font-semibold">${d.slice(0,3)}</th>`).join('')}<th class="px-3 py-2 text-center font-semibold">Total</th><th class="px-3 py-2 text-center font-semibold">Revenue</th></tr></thead><tbody class="divide-y divide-slate-100">${rows}</tbody><tfoot><tr class="${m.hCls}"><td class="px-3 py-2 font-bold text-xs text-white">Day Total</td>${fCells}<td id="wwt-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">${wTot}</td><td id="wwr-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">₱${totRev.toLocaleString()}</td></tr></tfoot></table></div></div>`;
+    html+=`<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="${m.hCls} px-5 py-3 flex items-center justify-between"><span class="text-sm font-bold text-white">${m.label}</span><span id="whs-${w}" class="text-xs text-white/70">Units: <strong class="text-white">${wTot}</strong> | Rev: <strong class="text-white">₱${totRev.toLocaleString()}</strong></span></div><div class="overflow-x-auto table-scroll-shell weekly-scroll"><table class="w-full text-xs" style="min-width:800px"><thead class="bg-slate-100 text-slate-600"><tr><th class="px-3 py-2 text-left font-semibold">Product</th>${DAYS_DISPLAY.map(d=>`<th class="px-2 py-2 text-center font-semibold">${d.slice(0,3)}</th>`).join('')}<th class="px-3 py-2 text-center font-semibold">Total</th><th class="px-3 py-2 text-center font-semibold">Revenue</th></tr></thead><tbody class="divide-y divide-slate-100">${rows}</tbody><tfoot><tr class="${m.hCls}"><td class="px-3 py-2 font-bold text-xs text-white">Day Total</td>${fCells}<td id="wwt-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">${wTot}</td><td id="wwr-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">₱${totRev.toLocaleString()}</td></tr></tfoot></table></div></div>`;
   }
   con.innerHTML=html;
 }
