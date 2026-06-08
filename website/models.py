@@ -173,6 +173,7 @@ class RsoDelivery(db.Model):
     rso_no = db.Column(db.String(255), nullable=True)
     product_name = db.Column(db.String(255), nullable=False)
     quantity = db.Column(db.Integer, nullable=False, default=0)
+    received_quantity = db.Column(db.Integer, nullable=True)
     uploaded_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     uploaded_at = db.Column(db.DateTime(timezone=True), default=func.now())
     delivery_reviewed_date = db.Column(db.Date, nullable=True, index=True)
@@ -314,10 +315,18 @@ class DailyEndingInventory(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=func.now())
     updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    is_finalized = db.Column(db.Boolean, nullable=False, default=False)
+    finalized_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    finalized_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    is_beginning_finalized = db.Column(db.Boolean, nullable=False, default=False)
+    beginning_finalized_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    beginning_finalized_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     
     # Relationships
     store = db.relationship('Store', backref='daily_ending_inventories')
     creator = db.relationship('User', foreign_keys=[created_by])
+    finalizer = db.relationship('User', foreign_keys=[finalized_by])
+    beginning_finalizer = db.relationship('User', foreign_keys=[beginning_finalized_by])
     items = db.relationship('DailyEndingInventoryItem', backref='inventory', lazy=True, cascade='all, delete-orphan')
 
 

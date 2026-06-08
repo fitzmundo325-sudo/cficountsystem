@@ -8,9 +8,11 @@
 {% block content %}
 
 {% set is_view_only = current_user.role == 'Inventory Staff' %}
+{% set is_day_locked = inventory.is_finalized|default(false) %}
+{% set is_beginning_locked = inventory.is_beginning_finalized|default(false) or store_beginning_baseline_finalized|default(false) %}
 {% set can_enter_beginning_stock = allow_beginning_stock_entry|default(false) %}
 {% set hide_beginning_stock = 'beginning_qty' in global_config_data.get('hidden_columns', []) and not can_enter_beginning_stock %}
-{% set lock_beginning_stock = not can_enter_beginning_stock and ('beginning_qty' not in global_config_data.get('editable_columns', []) or 'beginning_qty' in global_config_data.get('locked_columns', [])) %}
+{% set lock_beginning_stock = is_day_locked or is_beginning_locked or (not can_enter_beginning_stock and ('beginning_qty' not in global_config_data.get('editable_columns', []) or 'beginning_qty' in global_config_data.get('locked_columns', []))) %}
 
 <style>
   /* Remove number spinner arrows */
@@ -32,6 +34,15 @@
   }
   .animate-bounce-in {
     animation: bounceIn 0.4s ease-out;
+  }
+  .table-scroll-shell {
+    max-height: min(72vh, 760px);
+    overflow: auto;
+  }
+  @media (max-width: 768px) {
+    .table-scroll-shell {
+      max-height: 68vh;
+    }
   }
 </style>
 
@@ -121,11 +132,17 @@
       </button>
       {% if not is_view_only %}
       <button id="save-inventory-btn" onclick="saveAll()" disabled class="px-4 py-2 bg-sky-600 text-white text-sm font-semibold rounded-lg hover:bg-sky-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:hover:bg-slate-300">
-        {{ 'Save Beginning' if allow_beginning_stock_entry|default(false) else 'End of Day' }}
+        {{ 'Finalized' if is_day_locked else ('Save Beginning' if allow_beginning_stock_entry|default(false) else 'End of Day') }}
       </button>
       {% endif %}
     </div>
   </section>
+
+  {% if is_day_locked %}
+  <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+    This inventory day is finalized and locked. Users can view it, but they can no longer edit or save changes for this date.
+  </div>
+  {% endif %}
 
   {% if is_first_time and not is_view_only %}
   <!-- First Time User Popup Modal -->
@@ -205,7 +222,7 @@
   <!-- Products Table -->
   <div id="main-content" class="bg-white rounded-xl border border-slate-200 shadow-sm">
     <div class="relative border border-slate-200 rounded-xl">
-      <div class="overflow-auto max-h-[calc(100vh-280px)]">
+      <div class="overflow-x-auto table-scroll-shell">
       <table class="w-full text-sm">
         <thead class="bg-slate-100 text-black">
           <tr class="sticky top-0 z-30">
@@ -275,7 +292,7 @@
                     <!-- Hidden -->
                   {% else %}
                     <input type="number" placeholder="0" class="beginning-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if lock_beginning_stock %} readonly cursor-not-allowed opacity-75{% endif %}"
-                      value="{{ inv_item.beginning_qty if inv_item and inv_item.beginning_qty else '' }}" onchange="updateInventoryRow(this)"{% if lock_beginning_stock %} readonly{% endif %}>
+                      value="{% if inv_item and (inv_item.beginning_qty or lock_beginning_stock) %}{{ inv_item.beginning_qty or 0 }}{% endif %}" onchange="updateInventoryRow(this)"{% if lock_beginning_stock %} readonly{% endif %}>
                   {% endif %}
                 </td>
                 <td class="px-2 py-2" data-field="delivery_qty"{% if 'delivery_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>
@@ -285,9 +302,6 @@
                     <div class="flex items-center gap-1">
                       <input type="number" class="delivery-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                         value="{{ inv_item.delivery_qty if inv_item and inv_item.delivery_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
-                      {% if inv_item.delivery_reviewed_date %}
-                      <span class="delivery-rso-badge bg-emerald-100 text-emerald-700 text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap font-semibold" title="From RSO Review ({{ inv_item.delivery_reviewed_date }})">RSO</span>
-                      {% endif %}
                     </div>
                   {% endif %}
                 </td>
@@ -446,6 +460,11 @@
 const inventoryId = {{ inventory.id }};
 let inventoryInitialSnapshot = '';
 const inventoryDraftKey = `invensyncInventoryDraft:${inventoryId}`;
+const requiresBeginningStockFirst = {{ allow_beginning_stock_entry|default(false)|tojson }};
+let isDayFinalized = {{ is_day_locked|tojson }};
+let isBeginningFinalized = {{ is_beginning_locked|tojson }};
+let isSavingBeginningInventory = requiresBeginningStockFirst;
+let missingBeginningNoticeOpen = false;
 
 function notify(message, type = 'info') {
   if (typeof toast !== 'undefined' && typeof toast.show === 'function') {
@@ -512,8 +531,147 @@ function updateDateHeaders() {
   if (headerD3) headerD3.textContent = formatDate(d3);
 }
 
+function isFilledInventoryInput(input) {
+  if (!input) return false;
+  if (input.type === 'checkbox') return input.checked;
+  return String(input.value || '').trim() !== '';
+}
+
+function rowNeedsBeginningBeforeInput(row, sourceInput) {
+  if (!row || !sourceInput) return false;
+  if (sourceInput.classList.contains('beginning-input')) return false;
+  if (!isFilledInventoryInput(sourceInput)) return false;
+
+  const beginningInput = row.querySelector('.beginning-input');
+  if (!beginningInput) return false;
+
+  return String(beginningInput.value || '').trim() === '';
+}
+
+function rowHasBlankBeginningWithOtherValues(row) {
+  if (!row) return false;
+
+  const beginningInput = row.querySelector('.beginning-input');
+  if (!beginningInput) return false;
+  if (beginningInput.disabled || beginningInput.readOnly) return false;
+  if (String(beginningInput.value || '').trim() !== '') return false;
+
+  const otherInputs = Array.from(row.querySelectorAll('input:not([type="hidden"]), select, textarea'))
+    .filter(input => !input.classList.contains('beginning-input'));
+
+  return otherInputs.some(isFilledInventoryInput);
+}
+
+function findFirstRowMissingBeginning() {
+  return Array.from(document.querySelectorAll('tbody tr[data-product-id]'))
+    .find(rowHasBlankBeginningWithOtherValues);
+}
+
+function showMissingBeginningPopup(row, options = {}) {
+  if (missingBeginningNoticeOpen) return;
+
+  const { showToastOnly = false } = options;
+  const beginningInput = row?.querySelector('.beginning-input');
+  const canFocusBeginning = beginningInput && !beginningInput.disabled && !beginningInput.readOnly;
+  const focusBeginningInput = () => {
+    missingBeginningNoticeOpen = false;
+    if (canFocusBeginning) {
+      beginningInput.focus();
+      if (typeof beginningInput.select === 'function') {
+        beginningInput.select();
+      }
+    }
+  };
+
+  missingBeginningNoticeOpen = true;
+  if (!showToastOnly && typeof showConfirmationModal === 'function') {
+    showConfirmationModal({
+      title: 'Beginning Stock Required',
+      message: 'Please enter the Beg column first before adding other inventory values.',
+      confirmText: canFocusBeginning ? 'Enter Beg' : 'Close',
+      cancelText: 'Close',
+      onConfirm: focusBeginningInput,
+      onCancel: focusBeginningInput
+    });
+    return;
+  }
+
+  notify('Please enter the Beg column first.', 'warning');
+  setTimeout(() => {
+    missingBeginningNoticeOpen = false;
+    if (canFocusBeginning) focusBeginningInput();
+  }, 250);
+}
+
+function refreshBeginningSaveMode() {
+  if (isDayFinalized) {
+    const button = document.getElementById('save-inventory-btn');
+    if (button) {
+      button.textContent = 'Finalized';
+      button.disabled = true;
+    }
+    return;
+  }
+
+  if (isBeginningFinalized) {
+    isSavingBeginningInventory = false;
+  }
+
+  const hasMissingBeginning = Boolean(findFirstRowMissingBeginning());
+  isSavingBeginningInventory = !isBeginningFinalized && (requiresBeginningStockFirst || hasMissingBeginning);
+
+  const button = document.getElementById('save-inventory-btn');
+  if (button) {
+    button.textContent = isSavingBeginningInventory ? 'Save Beginning' : 'End of Day';
+  }
+}
+
+function fillBlankBeginningInputsWithZero() {
+  document.querySelectorAll('tbody tr[data-product-id] .beginning-input').forEach(input => {
+    if (String(input.value || '').trim() === '') {
+      input.value = '0';
+      updateInventoryRow(input);
+    }
+  });
+}
+
+function lockBeginningInputs() {
+  document.querySelectorAll('tbody tr[data-product-id] .beginning-input').forEach(input => {
+    input.readOnly = true;
+    input.classList.add('readonly', 'cursor-not-allowed', 'opacity-75');
+  });
+}
+
+function lockDayInputs() {
+  document.querySelectorAll('tbody tr[data-product-id] input:not([type="hidden"]), tbody tr[data-product-id] select, tbody tr[data-product-id] textarea').forEach(input => {
+    if (input.type === 'checkbox') {
+      input.disabled = true;
+    } else {
+      input.readOnly = true;
+    }
+    input.classList.add('readonly', 'cursor-not-allowed', 'opacity-75');
+  });
+
+  const button = document.getElementById('save-inventory-btn');
+  if (button) {
+    button.textContent = 'Finalized';
+    button.disabled = true;
+  }
+}
+
+function checkMissingBeginningOnLoad() {
+  const row = findFirstRowMissingBeginning();
+  if (row) {
+    showMissingBeginningPopup(row);
+  }
+}
+
 function updateInventoryRow(input) {
   const row = input.closest('tr');
+  if (rowNeedsBeginningBeforeInput(row, input)) {
+    showMissingBeginningPopup(row);
+  }
+
   const beginningInput = row.querySelector('.beginning-input');
   const beginning = beginningInput ? parseFloat(beginningInput.value) || 0 : parseFloat(row.querySelector('.beginning-qty').textContent) || 0;
   const delivery = parseFloat(row.querySelector('.delivery-input').value) || 0;
@@ -607,7 +765,8 @@ function buildInventorySnapshot() {
 function setSaveButtonEnabled(enabled) {
   const button = document.getElementById('save-inventory-btn');
   if (button) {
-    button.disabled = !enabled;
+    button.disabled = isDayFinalized || !enabled;
+    refreshBeginningSaveMode();
   }
 }
 
@@ -677,34 +836,46 @@ function clearInventoryDraft() {
 
 function saveAll() {
   const button = document.getElementById('save-inventory-btn');
+  if (isDayFinalized) {
+    notify('This inventory day is finalized and locked.', 'info');
+    return;
+  }
   if (button && button.disabled) return;
 
+  const isBeginningSave = isSavingBeginningInventory || Boolean(findFirstRowMissingBeginning());
+  const isEndOfDaySave = !isBeginningSave;
   if (typeof showConfirmationModal === 'function') {
     showConfirmationModal({
-      title: 'Save Inventory Beginning?',
-      message: 'Are you sure you want to save inventory beginning? You cannot reverse this process.',
+      title: isBeginningSave ? 'Save Beginning Inventory?' : 'Save End of Day Inventory?',
+      message: isBeginningSave
+        ? 'Blank Beg cells will be saved as 0 and the Beg column will be locked after saving. You cannot reverse this process.'
+        : 'This will finalize and lock this inventory day for all users. After saving, users can view this date but can no longer edit it.',
       confirmText: 'Save',
       cancelText: 'Cancel',
-      onConfirm: runInventorySave
+      onConfirm: () => runInventorySave(isBeginningSave, isEndOfDaySave)
     });
     return;
   }
 
-  runInventorySave();
+  runInventorySave(isBeginningSave, isEndOfDaySave);
 }
 
-function runInventorySave() {
+function runInventorySave(isBeginningSave = false, finalizeDay = false) {
   const button = document.getElementById('save-inventory-btn');
   if (button) button.disabled = true;
 
-  saveInventory().catch(err => {
+  if (isBeginningSave) {
+    fillBlankBeginningInputsWithZero();
+  }
+
+  saveInventory(isBeginningSave, finalizeDay).catch(err => {
     refreshSaveButtonState();
     notify('Error saving inventory', 'error');
     console.error(err);
   });
 }
 
-function saveInventory() {
+function saveInventory(isBeginningSave = false, finalizeDay = false) {
   const rows = document.querySelectorAll('tbody tr[data-product-id]');
   const items = [];
   
@@ -739,15 +910,32 @@ function saveInventory() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       inventory_id: inventoryId,
-      items: items
+      items: items,
+      finalize_beginning: isBeginningSave,
+      finalize_day: finalizeDay
     })
   })
   .then(res => res.json())
   .then(data => {
     if (data.success) {
-      notify('Inventory saved!', 'success');
+      notify(
+        isBeginningSave
+          ? 'Beginning inventory saved and locked!'
+          : (finalizeDay ? 'End of day inventory finalized and locked!' : 'Inventory saved!'),
+        'success'
+      );
       clearInventoryDraft();
+      if (isBeginningSave) {
+        lockBeginningInputs();
+        isBeginningFinalized = true;
+        isSavingBeginningInventory = false;
+      }
+      if (finalizeDay) {
+        isDayFinalized = true;
+        lockDayInputs();
+      }
       captureInventorySnapshot();
+      refreshBeginningSaveMode();
       return data;
     } else {
       notify('Error: ' + data.error, 'error');
@@ -820,7 +1008,7 @@ function loadPreviousDateInventory() {
 // Horizontal scroll with Alt + Mouse Wheel
 function enableHorizontalScroll() {
   // Enable for main content
-  const scrollContainer = document.querySelector('#main-content .overflow-auto');
+  const scrollContainer = document.querySelector('#main-content .overflow-x-auto');
   if (scrollContainer) {
     scrollContainer.addEventListener('wheel', function(e) {
       if (e.altKey) {
@@ -897,8 +1085,12 @@ document.addEventListener('DOMContentLoaded', function() {
   applyColorCodingOnLoad();
   enableHorizontalScroll();
   filterInventoryCategory('all');
+  if (isDayFinalized) {
+    lockDayInputs();
+  }
   captureInventorySnapshot();
   restoreInventoryDraft();
+  refreshBeginningSaveMode();
 
   const productSearchInput = document.getElementById('product-search-input');
   if (productSearchInput) {
@@ -907,7 +1099,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
   document.addEventListener('input', function(event) {
     if (event.target && event.target.closest('tbody tr[data-product-id]')) {
+      const row = event.target.closest('tr[data-product-id]');
+      if (rowNeedsBeginningBeforeInput(row, event.target)) {
+        showMissingBeginningPopup(row);
+      }
       saveInventoryDraft();
+      refreshBeginningSaveMode();
       refreshSaveButtonState();
     }
   });
@@ -915,6 +1112,7 @@ document.addEventListener('DOMContentLoaded', function() {
   document.addEventListener('change', function(event) {
     if (event.target && event.target.closest('tbody tr[data-product-id]')) {
       saveInventoryDraft();
+      refreshBeginningSaveMode();
       refreshSaveButtonState();
     }
   });
@@ -927,6 +1125,9 @@ document.addEventListener('DOMContentLoaded', function() {
   if (isFullscreen === 'true') {
     toggleFullscreen();
   }
+
+  setTimeout(checkMissingBeginningOnLoad, 100);
+  setTimeout(refreshBeginningSaveMode, 100);
 });
 
 function attachEnterNavigation(scope) {
@@ -1064,7 +1265,7 @@ function toggleFullscreen() {
 
 function updateFullscreenContent() {
   const modalContent = document.getElementById('modal-content');
-  const tableContainer = document.querySelector('#main-content .overflow-auto');
+  const tableContainer = document.querySelector('#main-content .overflow-x-auto');
 
   if (!tableContainer) return;
 
