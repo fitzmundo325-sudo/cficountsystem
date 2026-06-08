@@ -315,10 +315,18 @@ class DailyEndingInventory(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=func.now())
     updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    is_finalized = db.Column(db.Boolean, nullable=False, default=False)
+    finalized_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    finalized_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    is_beginning_finalized = db.Column(db.Boolean, nullable=False, default=False)
+    beginning_finalized_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    beginning_finalized_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     
     # Relationships
     store = db.relationship('Store', backref='daily_ending_inventories')
     creator = db.relationship('User', foreign_keys=[created_by])
+    finalizer = db.relationship('User', foreign_keys=[finalized_by])
+    beginning_finalizer = db.relationship('User', foreign_keys=[beginning_finalized_by])
     items = db.relationship('DailyEndingInventoryItem', backref='inventory', lazy=True, cascade='all, delete-orphan')
 
 

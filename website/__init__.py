@@ -1,7 +1,8 @@
 import os
+import json
 from pathlib import Path
 from re import A
-from flask import Flask
+from flask import Flask, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, current_user
 from sqlalchemy import text, func
@@ -193,6 +194,68 @@ def _ensure_daily_ending_inventory_item_columns():
         conn.commit()
 
 
+def _ensure_daily_ending_inventory_columns():
+    with db.engine.connect() as conn:
+        existing_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info('daily_ending_inventory')")).fetchall()
+        }
+
+        if 'is_finalized' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_ending_inventory ADD COLUMN is_finalized BOOLEAN NOT NULL DEFAULT 0"))
+        if 'finalized_at' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_ending_inventory ADD COLUMN finalized_at DATETIME"))
+        if 'finalized_by' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_ending_inventory ADD COLUMN finalized_by INTEGER"))
+        if 'is_beginning_finalized' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_ending_inventory ADD COLUMN is_beginning_finalized BOOLEAN NOT NULL DEFAULT 0"))
+        if 'beginning_finalized_at' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_ending_inventory ADD COLUMN beginning_finalized_at DATETIME"))
+        if 'beginning_finalized_by' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_ending_inventory ADD COLUMN beginning_finalized_by INTEGER"))
+        conn.commit()
+
+
+def _backfill_beginning_finalized_flags():
+    from .models import DailyEndingInventory, GlobalInvenSyncConfig
+
+    config = GlobalInvenSyncConfig.query.first()
+    if not config:
+        return
+
+    try:
+        config_data = json.loads(config.config_data or '{}')
+    except ValueError:
+        config_data = {}
+
+    should_seed_missing_flags = 'beginning_qty' in config_data.get('locked_columns', [])
+
+    inventories = DailyEndingInventory.query.order_by(
+        DailyEndingInventory.store_id,
+        DailyEndingInventory.inventory_date,
+        DailyEndingInventory.id,
+    ).all()
+    finalized_store_ids = set()
+    has_changes = False
+    for inventory in inventories:
+        if inventory.store_id in finalized_store_ids:
+            if inventory.is_beginning_finalized:
+                inventory.is_beginning_finalized = False
+                inventory.beginning_finalized_at = None
+                inventory.beginning_finalized_by = None
+                has_changes = True
+            continue
+
+        if inventory.is_beginning_finalized or (should_seed_missing_flags and inventory.items):
+            finalized_store_ids.add(inventory.store_id)
+        if should_seed_missing_flags and inventory.items and not inventory.is_beginning_finalized:
+            inventory.is_beginning_finalized = True
+            has_changes = True
+
+    if has_changes:
+        db.session.commit()
+
+
 def _drop_daily_ending_inventory_discount_columns():
     with db.engine.connect() as conn:
         existing_columns = {
@@ -230,6 +293,29 @@ def create_app():
     app.register_blueprint(admin, url_prefix='/')
     app.register_blueprint(views, url_prefix='/')
 
+    @app.route('/sw.js')
+    def service_worker():
+        script = """
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    self.registration.unregister().then(() => self.clients.matchAll())
+      .then((clients) => clients.forEach((client) => client.navigate(client.url)))
+  );
+});
+""".strip()
+
+        return Response(
+            script,
+            mimetype='application/javascript',
+            headers={
+                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+            },
+        )
+
     from .models import (
         User,
         Store,
@@ -258,10 +344,12 @@ def create_app():
         _ensure_rso_delivery_columns()
         _ensure_taf_transfer_columns()
         _ensure_taf_transfer_item_columns()
+        _ensure_daily_ending_inventory_columns()
         _ensure_daily_ending_inventory_item_columns()
         _drop_daily_ending_inventory_discount_columns()
         _drop_daily_forecasting_tables()
         _backfill_store_group_values()
+        _backfill_beginning_finalized_flags()
         print("Created database!")
 
     login_manager = LoginManager()
