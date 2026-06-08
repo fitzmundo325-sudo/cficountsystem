@@ -285,9 +285,6 @@
                     <div class="flex items-center gap-1">
                       <input type="number" class="delivery-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                         value="{{ inv_item.delivery_qty if inv_item and inv_item.delivery_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
-                      {% if inv_item.delivery_reviewed_date %}
-                      <span class="delivery-rso-badge bg-emerald-100 text-emerald-700 text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap font-semibold" title="From RSO Review ({{ inv_item.delivery_reviewed_date }})">RSO</span>
-                      {% endif %}
                     </div>
                   {% endif %}
                 </td>

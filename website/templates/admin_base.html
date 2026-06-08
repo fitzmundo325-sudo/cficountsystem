@@ -288,7 +288,9 @@
         <script>
           document.addEventListener('DOMContentLoaded', function() {
             {% for category, message in messages %}
-              toast.show('{{ message }}', '{{ category }}');
+              if (window.toast && typeof window.toast.show === 'function') {
+                window.toast.show({{ message|tojson }}, {{ category|tojson }});
+              }
             {% endfor %}
           });
         </script>

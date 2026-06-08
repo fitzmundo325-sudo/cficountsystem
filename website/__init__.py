@@ -134,6 +134,8 @@ def _ensure_rso_delivery_columns():
 
         if 'rso_no' not in existing_columns:
             conn.execute(text("ALTER TABLE rso_delivery ADD COLUMN rso_no VARCHAR(255)"))
+        if 'received_quantity' not in existing_columns:
+            conn.execute(text("ALTER TABLE rso_delivery ADD COLUMN received_quantity INTEGER"))
         if 'delivery_reviewed_date' not in existing_columns:
             conn.execute(text("ALTER TABLE rso_delivery ADD COLUMN delivery_reviewed_date DATE"))
         conn.commit()

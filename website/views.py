@@ -1843,6 +1843,77 @@ def _build_pos_sold_draft_quantity_by_master_id(store_id, report_date):
     return _build_pos_sold_quantities_by_master_id(_get_pos_sold_draft(store_id, report_date))
 
 
+def _build_taf_trans_out_quantity_by_master_id(store, transaction_date):
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(quantity or 0)
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+def _build_taf_trans_in_quantity_by_master_id(store, transaction_date):
+    if not store or not transaction_date:
+        return {}
+
+    normalized_store_name = str(store.name or '').strip().lower()
+    if not normalized_store_name:
+        return {}
+
+    transfer_rows = (
+        db.session.query(
+            TafTransferItem.item_name,
+            TafTransferItem.quantity,
+            TafTransferItem.received_quantity,
+        )
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+        .filter(func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name)
+        .filter(func.lower(func.trim(TafTransfer.status)) != 'pending')
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, sent_quantity, received_quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(received_quantity if received_quantity is not None else (sent_quantity or 0))
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
 def _build_pos_sold_quantity_by_master_id_for_report(report_id):
     if not report_id:
         return {}
@@ -2039,6 +2110,7 @@ def _enrich_rso_items_with_product_code(rso_items):
             
             enriched_item = dict(item)
             enriched_item['product_code'] = product_code
+            enriched_item.setdefault('received_quantity', None)
             enriched_items.append(enriched_item)
         else:
             # It's a model instance (from database)
@@ -2053,6 +2125,7 @@ def _enrich_rso_items_with_product_code(rso_items):
             enriched_item = {
                 'product_name': item.product_name,
                 'quantity': item.quantity,
+                'received_quantity': getattr(item, 'received_quantity', None),
                 'product_code': product_code,
                 'rso_no': getattr(item, 'rso_no', None),
             }
@@ -2797,6 +2870,7 @@ def save_rso_review_data():
 
         raw_draft_items = _sanitize_rso_items(_get_rso_draft(store.id, report_date))
         rso_no, draft_items = _split_rso_meta_and_items(raw_draft_items)
+        received_qty_values = request.form.getlist('received_qty[]')
         if not draft_items:
             if rso_no:
                 _pop_rso_draft(store.id, report_date)
@@ -2815,7 +2889,15 @@ def save_rso_review_data():
             .delete(synchronize_session=False)
         )
 
-        for item in draft_items:
+        for index, item in enumerate(draft_items):
+            raw_received_qty = received_qty_values[index] if index < len(received_qty_values) else ''
+            received_quantity = None
+            if str(raw_received_qty).strip():
+                try:
+                    received_quantity = max(0, int(raw_received_qty))
+                except (TypeError, ValueError):
+                    received_quantity = None
+
             db.session.add(
                 RsoDelivery(
                     store_id=store.id,
@@ -2823,6 +2905,7 @@ def save_rso_review_data():
                     rso_no=(rso_no or None),
                     product_name=str(item.get('product_name', '')).strip(),
                     quantity=int(item.get('quantity', 0) or 0),
+                    received_quantity=received_quantity,
                     uploaded_by=current_user.id,
                     delivery_reviewed_date=date.today(),
                 )
@@ -2839,6 +2922,7 @@ def save_rso_review_data():
                 'store_id': store.id,
                 'report_date': report_date.strftime('%Y-%m-%d'),
                 'rows_saved': len(draft_items),
+                'received_rows_saved': sum(1 for value in received_qty_values if str(value).strip()),
                 'rso_no': rso_no,
             },
         )
@@ -5448,11 +5532,42 @@ def invensync():
                             continue
                         
                         if _match_rso_to_inventory(rso_item, product):
-                            if inv_item.delivery_qty == 0:
-                                inv_item.delivery_qty = rso_item.quantity
+                            delivery_qty = (
+                                rso_item.received_quantity
+                                if rso_item.received_quantity is not None
+                                else rso_item.quantity
+                            )
+                            if inv_item.delivery_qty == 0 or inv_item.delivery_qty == rso_item.quantity:
+                                inv_item.delivery_qty = delivery_qty
                                 inv_item.delivery_reviewed_date = rso_item.delivery_reviewed_date
                                 matched_rso_ids.add(rso_item.id)
                             break
+
+    taf_trans_out_map = _build_taf_trans_out_quantity_by_master_id(store, selected_date)
+    if taf_trans_out_map:
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+
+            taf_trans_out_qty = int(taf_trans_out_map.get(inv_item.product_master_id, 0) or 0)
+            if taf_trans_out_qty <= 0:
+                continue
+
+            current_trans_out_qty = int(inv_item.trans_out_qty or 0)
+            if current_trans_out_qty == 0 or current_trans_out_qty < taf_trans_out_qty:
+                inv_item.trans_out_qty = taf_trans_out_qty
+
+    taf_trans_in_map = _build_taf_trans_in_quantity_by_master_id(store, selected_date)
+    if taf_trans_in_map:
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+
+            taf_trans_in_qty = int(taf_trans_in_map.get(inv_item.product_master_id, 0) or 0)
+            if taf_trans_in_qty <= 0:
+                continue
+
+            inv_item.trans_in_qty = taf_trans_in_qty
 
     # Recalculate inventory totals
     for item in inventory_items.values():
