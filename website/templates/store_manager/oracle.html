@@ -78,7 +78,7 @@
       <div class="flex items-center gap-1.5">
         <i class="bi bi-truck text-sky-500"></i>
         <span class="text-slate-500">Delivery / Trans-In / Trans-Out:</span>
-        <strong class="text-slate-800">Today's InvenSync</strong>
+        <strong class="text-slate-800">{% if oracle_date %}{{ oracle_date }} InvenSync{% else %}Today's InvenSync{% endif %}</strong>
       </div>
     </div>
 
@@ -329,6 +329,7 @@ const CLUSTER_VIEW = {{ 'true' if cluster_view|default(false) else 'false' }};
 const STORE_SAVED_BUFFERS = {{ store_buffers|tojson if store_buffers is defined else '{}' }};
 const INVENSYNC_DATA = {{ invensync_data|tojson if invensync_data is defined else '{}' }};
 const PREV_INVENTORY_DATE = {{ prev_inventory_date|tojson if prev_inventory_date is defined else 'null' }};
+const ORACLE_DATE = {{ oracle_date|tojson if oracle_date is defined else 'null' }};
 const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const DAYS_DISPLAY=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const DISP_TO_JS=[1,2,3,4,5,6,0];
@@ -415,7 +416,7 @@ function onTargetSalesChange(){renderOrderTable();}
 function updateMultiplier(){document.getElementById('eff-mult').textContent=(parseFloat(document.getElementById('forecast-event').value)||1).toFixed(2)+'×';renderOrderTable();}
 
 function renderOrderForm(){
-  const today=new Date(),deliv=new Date(today);deliv.setDate(today.getDate()+2);
+  const today=ORACLE_DATE?new Date(ORACLE_DATE+'T00:00:00'):new Date(),deliv=new Date(today);deliv.setDate(today.getDate()+2);
   document.getElementById('order-date').value=fmt(today);
   document.getElementById('delivery-date').value=fmt(deliv);
   document.getElementById('delivery-date').min=minDeliv(fmt(today));
@@ -672,7 +673,7 @@ function showToast(msg,type='info'){
 }
 
 (function(){
-  document.getElementById('topbar-date').textContent=new Date().toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+  document.getElementById('topbar-date').textContent=(ORACLE_DATE?new Date(ORACLE_DATE+'T00:00:00'):new Date()).toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
   updateApprovalsBadge();
   renderOrderForm();
 })();
