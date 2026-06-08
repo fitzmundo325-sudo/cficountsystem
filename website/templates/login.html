@@ -11,7 +11,7 @@
 <body class="bg-slate-50 min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden">
 
   <!-- Load Toast Script -->
-  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
 
   <!-- Decorative Background Elements -->
   <div class="absolute -top-24 -left-24 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl"></div>
@@ -89,7 +89,7 @@
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
           {% for category, message in messages %}
-            toast.show('{{ message }}', '{{ category }}');
+            window.toast.show({{ message|tojson }}, {{ category|tojson }});
           {% endfor %}
         {% endif %}
       {% endwith %}
