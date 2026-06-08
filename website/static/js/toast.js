@@ -187,7 +187,8 @@ class Toast {
 }
 
 // Create global instance
-const toast = new Toast();
+window.toast = window.toast || new Toast();
+var toast = window.toast;
 
 // Export for use in other files
 if (typeof module !== 'undefined' && module.exports) {

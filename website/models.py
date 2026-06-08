@@ -173,6 +173,7 @@ class RsoDelivery(db.Model):
     rso_no = db.Column(db.String(255), nullable=True)
     product_name = db.Column(db.String(255), nullable=False)
     quantity = db.Column(db.Integer, nullable=False, default=0)
+    received_quantity = db.Column(db.Integer, nullable=True)
     uploaded_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     uploaded_at = db.Column(db.DateTime(timezone=True), default=func.now())
     delivery_reviewed_date = db.Column(db.Date, nullable=True, index=True)
