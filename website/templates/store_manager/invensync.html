@@ -203,19 +203,19 @@
   </div>
 
   <!-- Products Table -->
-  <div id="main-content" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-    <div class="relative overflow-hidden border border-slate-200 rounded-xl">
-      <div class="overflow-x-auto">
+  <div id="main-content" class="bg-white rounded-xl border border-slate-200 shadow-sm">
+    <div class="relative border border-slate-200 rounded-xl">
+      <div class="overflow-auto max-h-[calc(100vh-280px)]">
       <table class="w-full text-sm">
-        <thead class="bg-slate-100 text-black sticky top-0 z-30">
-          <tr>
+        <thead class="bg-slate-100 text-black">
+          <tr class="sticky top-0 z-30">
             <!-- Product Info (Shared) -->
             <th class="px-2 py-3 text-center font-semibold bg-sky-100 text-black sticky left-0 z-40 min-w-[200px] shadow-lg">Product</th>
             
             <!-- Ending Inventory Section -->
             <th colspan="19" class="px-2 py-3 text-center font-semibold bg-emerald-100 text-black border-l-2 border-emerald-200">ENDING INVENTORY</th>
           </tr>
-          <tr class="text-xs">
+          <tr class="text-xs sticky top-[42px] z-30">
             <!-- Product -->
             <th class="px-2 py-2 text-center font-semibold bg-sky-50 text-black sticky left-0 z-40 border-r border-slate-300 shadow-lg">Description | Code - Price</th>
             
@@ -233,10 +233,10 @@
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300" id="header-d5"{% if 'd5_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+5</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300" id="header-d4"{% if 'd4_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+4</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300" id="header-d3"{% if 'd3_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+3</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'total_ending_inventory' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total EI</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'total_ending_inventory' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total Ending Inventory</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'total_peso_srp' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total Peso</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'theo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>THEO</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'variance_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Var</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'theo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Theoritical Ending</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'variance_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Variance</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'variance_peso' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Var Peso</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'remarks' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Remarks</th>
           </tr>
@@ -394,7 +394,7 @@
                     {{ "%.2f"|format((inv_item.total_ending_qty * inv_item.srp_price) if inv_item else 0) }}
                   {% endif %}
                 </td>
-                <td class="px-2 py-2 text-center text-slate-600 theo-ending" data-field="theo_ending_qty">
+                <td class="px-2 py-2 text-center bg-green-100 text-green-800 theo-ending" data-field="theo_ending_qty">
                   {% if 'theo_ending_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
@@ -569,8 +569,7 @@ function updateCellColors(row, theoValue, varValue, varPesoValue) {
     }
   };
   
-  // Apply colors to all three cells
-  applyCellColor(theoCell, theoValue);
+  // Apply colors to var and var peso cells only (theo is always green)
   applyCellColor(varCell, varValue);
   applyCellColor(varPesoCell, varPesoValue);
 }
@@ -579,10 +578,9 @@ function updateCellColors(row, theoValue, varValue, varPesoValue) {
 function applyColorCodingOnLoad() {
   const rows = document.querySelectorAll('tbody tr[data-product-id]');
   rows.forEach(row => {
-    const theoValue = parseFloat(row.querySelector('.theo-ending')?.textContent) || 0;
     const varValue = parseFloat(row.querySelector('.variance')?.textContent) || 0;
     const varPesoValue = parseFloat(row.querySelector('.variance-peso')?.textContent) || 0;
-    updateCellColors(row, theoValue, varValue, varPesoValue);
+    updateCellColors(row, 0, varValue, varPesoValue);
   });
 }
 
@@ -819,7 +817,7 @@ function loadPreviousDateInventory() {
 // Horizontal scroll with Alt + Mouse Wheel
 function enableHorizontalScroll() {
   // Enable for main content
-  const scrollContainer = document.querySelector('.overflow-x-auto');
+  const scrollContainer = document.querySelector('#main-content .overflow-auto');
   if (scrollContainer) {
     scrollContainer.addEventListener('wheel', function(e) {
       if (e.altKey) {
@@ -1063,7 +1061,7 @@ function toggleFullscreen() {
 
 function updateFullscreenContent() {
   const modalContent = document.getElementById('modal-content');
-  const tableContainer = document.querySelector('#main-content .overflow-x-auto');
+  const tableContainer = document.querySelector('#main-content .overflow-auto');
 
   if (!tableContainer) return;
 

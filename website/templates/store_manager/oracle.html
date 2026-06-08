@@ -26,7 +26,7 @@
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
       <i class="bi bi-list text-xl"></i>
     </button>
-    <a href="{{ url_for('views.invensync') }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="Back to InvenSync">
+    <a href="{{ url_for('views.cluster_manager_oracle', tab='order-form') if cluster_view else url_for('views.invensync') }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="{{ 'Back to Cluster Oracle' if cluster_view else 'Back to InvenSync' }}">
       <i class="bi bi-arrow-left text-base"></i>
     </a>
     <nav class="flex items-center text-sm font-medium text-slate-500">
@@ -41,6 +41,11 @@
     <button onclick="navigate('order-form')" class="flex items-center gap-1.5 bg-sky-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-sky-700 transition-colors">
       <i class="bi bi-plus-lg"></i> New Order
     </button>
+    {% if cluster_view %}
+    <button onclick="saveBuffersToCluster()" id="cluster-save-buffers" class="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors">
+      <i class="bi bi-floppy"></i> Save Buffers
+    </button>
+    {% endif %}
   </div>
 </header>
 
@@ -60,7 +65,21 @@
   <div class="view active" id="view-order-form">
     <div class="mb-5">
       <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Smart Order Form</h1>
-      <p class="mt-1 text-sm text-slate-500">Quantities suggested based on stock, expected sales, and avg consumption. <strong class="text-slate-700">Orders outside ±20% range require Manager Approval.</strong></p>
+      <p class="mt-1 text-sm text-slate-500">Quantities suggested based on stock, expected sales, and avg consumption. <strong class="text-slate-700">Orders outside ±20% range require Cluster Manager Approval.</strong></p>
+    </div>
+
+    <!-- Data source info -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-3 mb-4 flex flex-wrap items-center gap-4 text-xs">
+      <div class="flex items-center gap-1.5">
+        <i class="bi bi-database-fill-check text-emerald-500"></i>
+        <span class="text-slate-500">Ending Inventory from:</span>
+        <strong class="text-slate-800">{% if prev_inventory_date %}{{ prev_inventory_date }}{% else %}No previous record{% endif %}</strong>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <i class="bi bi-truck text-sky-500"></i>
+        <span class="text-slate-500">Delivery / Trans-In / Trans-Out:</span>
+        <strong class="text-slate-800">Today's InvenSync</strong>
+      </div>
     </div>
 
     <!-- Date/Manager row -->
@@ -105,6 +124,44 @@
       </div>
     </div>
 
+    {% set category_list = [
+      ('BREADS', ['BREADS']),
+      ('TRAY PRODUCTS', ['TRAY PRODUCTS']),
+      ('ROLLS', ['ROLLS']),
+      ('GREETING CAKES', ['GREETING CAKES']),
+      ('PREMIUM', ['PREMIUM']),
+      ('CREMA DE FRUTA', ['CREMA DE FRUTA']),
+      ('GM PRODUCTS', ['GM PRODUCTS']),
+      ('CANDLES', ['CANDLES']),
+      ('ADD-ONS', ['ADD-ONS'])
+    ] %}
+
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-4">
+      <div class="space-y-3">
+        <div class="relative max-w-md">
+          <input id="product-search-input" type="search" autocomplete="off" placeholder="Search product, code, or price" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pl-9 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100" oninput="onSearchInput()">
+          <svg xmlns="http://www.w3.org/2000/svg" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <path d="m21 21-4.3-4.3"></path>
+          </svg>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" class="category-filter-btn px-3 py-2 rounded-lg border border-slate-300 bg-slate-900 text-white text-sm font-semibold transition" data-category-filter="all" onclick="filterInventoryCategory('all')">
+            All
+          </button>
+          {% for display_name, possible_names in category_list %}
+            {% set cat_products = products|selectattr('category', 'in', possible_names)|list %}
+            {% if cat_products %}
+              {% set cat_id = display_name|lower|replace(' ', '-')|replace('-', '') %}
+              <button type="button" class="category-filter-btn px-3 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-100 transition" data-category-filter="{{ cat_id }}" onclick="filterInventoryCategory('{{ cat_id }}')">
+                {{ display_name }}
+              </button>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
     <!-- Order table -->
     <div class="bg-white rounded-t-xl border border-slate-200 shadow-sm overflow-hidden">
       <div class="overflow-x-auto overflow-y-auto" style="max-height:calc(100vh - 22rem);">
@@ -112,17 +169,17 @@
           <thead class="bg-slate-100 text-slate-600 sticky top-0">
             <tr>
               <th class="px-3 py-3 text-left font-semibold">Product</th>
-              <th class="px-3 py-3 text-center font-semibold">Stock</th>
-              <th class="px-3 py-3 text-center font-semibold text-sky-600">Incoming</th>
-              <th class="px-3 py-3 text-center font-semibold text-rose-500">Exp Sales</th>
+              <th class="px-3 py-3 text-center font-semibold">Total Ending Inventory<br><span class="text-[9px] text-slate-400 font-normal">from InvenSync</span></th>
+              <th class="px-3 py-3 text-center font-semibold text-sky-600">Incoming Delivery Stock</th>
+              <th class="px-3 py-3 text-center font-semibold text-rose-500">Expected Sales</th>
               <th class="px-3 py-3 text-center font-semibold text-amber-600">Trans In</th>
               <th class="px-3 py-3 text-center font-semibold text-rose-500">Trans Out</th>
-              <th class="px-3 py-3 text-center font-semibold">Eff Stock</th>
+              <th class="px-3 py-3 text-center font-semibold">Effective Stock</th>
               <th class="px-3 py-3 text-center font-semibold">Avg Sales</th>
               <th class="px-3 py-3 text-center font-semibold">Buffer %</th>
               <th class="px-3 py-3 text-center font-semibold text-emerald-600">Suggested Range<br><span class="text-[9px] text-slate-400 font-normal">Min · Center · Max</span></th>
               <th class="px-3 py-3 text-center font-semibold text-sky-600">Final Order</th>
-              <th class="px-3 py-3 text-center font-semibold text-teal-600">Est. On Hand</th>
+              <th class="px-3 py-3 text-center font-semibold text-teal-600">Est. On Hand After Delivery</th>
               <th class="px-3 py-3 text-center font-semibold">Plant ₱</th>
               <th class="px-3 py-3 text-center font-semibold">SRP ₱</th>
               <th class="px-3 py-3 text-center font-semibold">Total Cost</th>
@@ -262,12 +319,16 @@
 <script>
 const PRODUCTS=[
   {% for p in products %}
-  {id:{{ p.id }},name:{{ p.description|tojson }},category:{{ p.category|tojson }},unit:'pc',
+  {id:{{ p.id }},code:{{ p.code if p.code is not none else p.id }},name:{{ p.description|tojson }},category:{{ p.category|tojson }},unit:'pc',
    plantPrice:{{ p.tp or 0 }},
    sellingPrice:{{ (p.sp_p if store.store_group == 'premium' else p.sp_np) or 0 }},
    buffer:20,minOrder:0},
   {% endfor %}
 ];
+const CLUSTER_VIEW = {{ 'true' if cluster_view|default(false) else 'false' }};
+const STORE_SAVED_BUFFERS = {{ store_buffers|tojson if store_buffers is defined else '{}' }};
+const INVENSYNC_DATA = {{ invensync_data|tojson if invensync_data is defined else '{}' }};
+const PREV_INVENTORY_DATE = {{ prev_inventory_date|tojson if prev_inventory_date is defined else 'null' }};
 const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const DAYS_DISPLAY=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const DISP_TO_JS=[1,2,3,4,5,6,0];
@@ -281,25 +342,60 @@ function buildSales(){
 let salesData=buildSales();
 
 const DB={
-  inventory:PRODUCTS.map(p=>({productId:p.id,productName:p.name,category:p.category,unit:p.unit,currentStock:0,reorderPoint:0,lastUpdated:fmt(new Date())})),
+  inventory:PRODUCTS.map(p=>{const iv=INVENSYNC_DATA[String(p.id)];return{productId:p.id,productName:p.name,category:p.category,unit:p.unit,currentStock:iv?iv.ending_stock:0,reorderPoint:0,lastUpdated:fmt(new Date())};}),
   orderHistory:[],pendingApprovals:[],transfers:[],
   settings:{store:'{{ store.name }}',branch:'{{ store.name }}',manager:'{{ user.username }}',contact:'',leadTime:1,buffer:20,alertDays:3}
 };
-let productBuffers={};PRODUCTS.forEach(p=>{productBuffers[p.id]=p.buffer;});
+let productBuffers={};
+PRODUCTS.forEach(p=>{
+  productBuffers[p.id] = (STORE_SAVED_BUFFERS && STORE_SAVED_BUFFERS[p.id] !== undefined) ? STORE_SAVED_BUFFERS[p.id] : p.buffer;
+});
 let orderFinalQtys={};
+let activeCategory='all';
+let productSearchQuery='';
 
 function getCurStock(pid){return(DB.inventory.find(x=>x.productId===pid)||{currentStock:0}).currentStock;}
 function getAvgDay(pid,dayName){const di=DAYS.indexOf(dayName);if(di<0)return 0;const w=salesData[pid];return w?w.reduce((s,wk)=>s+(wk[di]||0),0)/4:0;}
 function getAvgDayIdx(pid,di){const w=salesData[pid];return w?w.reduce((s,wk)=>s+(wk[di]||0),0)/4:0;}
-function getIncoming(pid,od,dd){if(!od||!dd)return 0;let t=0;const o=new Date(od+'T00:00:00'),d=new Date(dd+'T00:00:00');DB.orderHistory.forEach(h=>{if(h.productId!==pid)return;const hd=new Date(h.delivDate+'T00:00:00');if(hd>o&&hd<=d)t+=h.finalOrder||0;});return t;}
+function getIncoming(pid,od,dd){if(!od||!dd)return 0;const iv=INVENSYNC_DATA[String(pid)];return iv?iv.delivery:0;}
 function getExpSales(pid,od,dd){if(!od||!dd)return 0;let t=0;const c=new Date(od+'T00:00:00');c.setDate(c.getDate()+1);const e=new Date(dd+'T00:00:00');let s=0;while(c<e&&s++<60){t+=getAvgDay(pid,DAYS[c.getDay()]);c.setDate(c.getDate()+1);}return Math.round(t);}
-function getTrans(pid,type,od,dd){if(!od||!dd)return 0;let t=0;const o=new Date(od+'T00:00:00'),d=new Date(dd+'T00:00:00');DB.transfers.forEach(tf=>{if(tf.productId===pid&&tf.type===type&&tf.status==='Pending'){const td=new Date(tf.date+'T00:00:00');if(td>=o&&td<=d)t+=tf.qty;}});return t;}
+function getTrans(pid,type,od,dd){if(!od||!dd)return 0;const iv=INVENSYNC_DATA[String(pid)];if(!iv)return 0;return type==='in'?iv.trans_in:iv.trans_out;}
 function calcAvg(p,dayName,mult,ne,tIn,tOut){const avg=getAvgDay(p.id,dayName),buf=(productBuffers[p.id]??p.buffer)/100,days=DB.settings.leadTime||1,target=Math.ceil(avg*mult*days*(1+buf)),raw=target-ne-tIn+tOut,min=p.minOrder||1;return Math.ceil(Math.max(0,raw)/min)*min;}
 function calcTarget(p,di,tSales,mult,ne,tIn,tOut){const pAvg=getAvgDayIdx(p.id,di)*p.sellingPrice;let totRev=0;PRODUCTS.forEach(q=>{totRev+=getAvgDayIdx(q.id,di)*q.sellingPrice;});if(!totRev)return 0;const qty=Math.ceil(tSales*(pAvg/totRev)/p.sellingPrice),buf=(productBuffers[p.id]??p.buffer)/100,raw=Math.ceil(qty*mult*(1+buf))-ne-tIn+tOut,min=p.minOrder||1;return Math.ceil(Math.max(0,raw)/min)*min;}
 function minDeliv(od){const d=new Date(od+'T00:00:00');d.setDate(d.getDate()+2);return fmt(d);}
 function getEffMult(){return parseFloat(document.getElementById('forecast-event').value)||1;}
 function getDelivDayName(){const v=document.getElementById('delivery-date').value;return v?DAYS[new Date(v+'T00:00:00').getDay()]:DAYS[new Date().getDay()];}
 function getDelivDayIdx(){const v=document.getElementById('delivery-date').value;return v?new Date(v+'T00:00:00').getDay():new Date().getDay();}
+
+function filterInventoryCategory(category){
+  activeCategory=category;
+  document.querySelectorAll('.category-filter-btn').forEach(btn=>{
+    const isActive=btn.dataset.categoryFilter===category;
+    btn.classList.toggle('bg-slate-900', isActive);
+    btn.classList.toggle('text-white', isActive);
+    btn.classList.toggle('bg-white', !isActive);
+    btn.classList.toggle('text-slate-700', !isActive);
+  });
+  renderOrderTable();
+}
+
+function onSearchInput(){
+  productSearchQuery=document.getElementById('product-search-input').value.trim().toLowerCase();
+  renderOrderTable();
+}
+
+function categoryMatches(product){
+  if(activeCategory==='all') return true;
+  return (product.category||'').toLowerCase().replace(/[\s-]+/g,'')===activeCategory;
+}
+
+function searchMatches(product){
+  if(!productSearchQuery) return true;
+  const code = String(product.code||product.id).toLowerCase();
+  const name = String(product.name||'').toLowerCase();
+  const price = String(product.sellingPrice||'').toLowerCase();
+  return code.includes(productSearchQuery) || name.includes(productSearchQuery) || price.includes(productSearchQuery);
+}
 
 function navigate(id){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -333,9 +429,19 @@ function renderOrderTable(){
   const modeEl=document.getElementById('order-mode-indicator');
   modeEl.className='flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border '+(useTarget?'bg-purple-900/50 border-purple-700 text-purple-300':'bg-emerald-900/50 border-emerald-700 text-emerald-300');
   modeEl.innerHTML=useTarget?`<i class="bi bi-bullseye"></i> Target ₱${tSales.toLocaleString()}`:'<i class="bi bi-bar-chart-fill"></i> Avg Consumption';
+  const filteredProducts = PRODUCTS.filter(p => categoryMatches(p) && searchMatches(p));
   const tbody=document.getElementById('order-table-body'),tfoot=document.getElementById('order-table-foot');
   let totSug=0,totFinal=0,totPlant=0,totSell=0;
-  tbody.innerHTML=PRODUCTS.map(p=>{
+  if(!filteredProducts.length){
+    tbody.innerHTML=`<tr><td colspan="16" class="px-4 py-12 text-center text-slate-400">No products match your search or filter.</td></tr>`;
+    tfoot.innerHTML='';
+    document.getElementById('sum-skus').textContent='0';
+    document.getElementById('sum-suggested').textContent='0';
+    document.getElementById('sum-final').textContent='0';
+    document.getElementById('sum-cost').textContent='₱0';
+    return;
+  }
+  tbody.innerHTML=filteredProducts.map(p=>{
     const stock=getCurStock(p.id),inc=getIncoming(p.id,od,dd),exp=getExpSales(p.id,od,dd);
     const tIn=getTrans(p.id,'in',od,dd),tOut=getTrans(p.id,'out',od,dd);
     const ne=Math.max(0,stock+inc-exp),effStock=ne+tIn-tOut;
@@ -351,7 +457,7 @@ function renderOrderTable(){
     const eCls=effStock<0?'text-red-600 font-bold':effStock===0?'text-amber-600 font-semibold':'text-slate-500';
     totSug+=sug;totFinal+=fo;totPlant+=fo*p.plantPrice;totSell+=fo*p.sellingPrice;
     return `<tr class="hover:bg-slate-50">
-      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${p.name}</div><div class="text-[10px] text-slate-400">${p.id}</div></td>
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${p.name}</div><div class="text-[10px] text-slate-400">${p.code || p.id}</div></td>
       <td class="px-3 py-2.5 text-center"><span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${sCls}">${stock} ${p.unit}s</span></td>
       <td class="px-3 py-2.5 text-center font-semibold text-sky-600">${inc}</td>
       <td class="px-3 py-2.5 text-center font-semibold text-rose-500">${exp}</td>
@@ -359,7 +465,7 @@ function renderOrderTable(){
       <td class="px-3 py-2.5 text-center font-semibold text-rose-500">${tOut>0?'−'+tOut:'0'}</td>
       <td class="px-3 py-2.5 text-center ${eCls}">${effStock}</td>
       <td class="px-3 py-2.5 text-center text-slate-600">${avgMult.toFixed(1)}</td>
-      <td class="px-3 py-2.5 text-center"><input type="number" value="${bufPct}" min="0" max="200" class="w-14 text-center text-xs border border-slate-300 rounded px-1 py-1 focus:ring-1 focus:ring-sky-400 outline-none" onchange="onBufferChange('${p.id}',this.value)"><span class="text-slate-400 text-[10px]">%</span></td>
+      <td class="px-3 py-2.5 text-center"><input type="number" value="${bufPct}" min="0" max="200" ${CLUSTER_VIEW ? 'onchange="onBufferChange('+p.id+',this.value)"' : 'readonly tabindex="-1"'} class="w-14 text-center text-xs border border-slate-300 rounded px-1 py-1 ${CLUSTER_VIEW ? '' : 'bg-slate-50 text-slate-600 cursor-not-allowed'}"><span class="text-slate-400 text-[10px]">%</span></td>
       <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"><span class="text-[10px] text-slate-500 font-semibold">${minS}</span><span class="font-bold text-emerald-600 text-sm">${sug}</span><span class="text-[10px] text-slate-500 font-semibold">${maxS}</span></div></td>
       <td class="px-3 py-2.5 text-center"><input type="number" class="input-final ${iStyle}" value="${fv}" placeholder="${sug}" min="0" onchange="onFinalChange('${p.id}',this.value)"></td>
       <td class="px-3 py-2.5 text-center"><div class="inline-flex flex-col items-center px-3 py-1.5 rounded-lg ${ohCls}"><span class="font-bold text-sm">${estOH}</span><span class="text-[9px]">${p.unit}s</span></div></td>
@@ -369,7 +475,7 @@ function renderOrderTable(){
     </tr>`;
   }).join('');
   tfoot.innerHTML=`<tr class="bg-slate-100 font-semibold text-xs"><td colspan="9" class="px-3 py-2.5 text-right text-slate-500">TOTALS</td><td class="px-3 py-2.5 text-center text-emerald-600 text-sm">${totSug}</td><td class="px-3 py-2.5 text-center text-sky-600">${totFinal}</td><td></td><td></td><td class="px-3 py-2.5 text-center">₱${Math.round(totSell).toLocaleString()}</td><td class="px-3 py-2.5 text-center">₱${Math.round(totPlant).toLocaleString()}</td></tr>`;
-  document.getElementById('sum-skus').textContent=PRODUCTS.length;
+  document.getElementById('sum-skus').textContent=filteredProducts.length;
   document.getElementById('sum-suggested').textContent=totSug;
   document.getElementById('sum-final').textContent=totFinal;
   document.getElementById('sum-cost').textContent='₱'+Math.round(totPlant).toLocaleString();
@@ -378,6 +484,21 @@ function onFinalChange(pid,val){orderFinalQtys[pid]=val===''?undefined:val;rende
 function onBufferChange(pid,val){productBuffers[pid]=parseFloat(val)||0;renderOrderTable();}
 function clearFinalOrders(){orderFinalQtys={};PRODUCTS.forEach(p=>{productBuffers[p.id]=p.buffer;});renderOrderTable();showToast('All overrides cleared','info');}
 function refreshSuggested(){renderOrderTable();showToast('Quantities refreshed','success');}
+// When rendered for Cluster Managers, allow saving buffers directly from this page
+async function saveBuffersToCluster(){
+  if(!CLUSTER_VIEW) return;
+  const btn=document.getElementById('cluster-save-buffers');
+  btn.disabled=true; btn.innerHTML='<i class="bi bi-hourglass-split"></i> Saving…';
+  try{
+    const res = await fetch('/cluster-manager/oracle/save-buffers',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({store_id: {{ store.id }}, buffers: productBuffers})
+    });
+    const data = await res.json();
+    if(data.ok) showToast('Buffers saved','success'); else showToast('Save failed: '+(data.error||'Unknown'),'error');
+  }catch(e){showToast('Network error while saving buffers','error');}
+  btn.disabled=false; btn.innerHTML='<i class="bi bi-floppy"></i> Save Buffers';
+}
 </script>
 
 
@@ -471,7 +592,7 @@ function renderStocks(){
   document.getElementById('stocks-table-body').innerHTML=DB.inventory.map(inv=>{
     const p=PRODUCTS.find(x=>x.id===inv.productId),avg=getAvgDaily(inv.productId),h=stockHealth(inv,avg);
     const pct=Math.min(100,avg>0?(inv.currentStock/(avg*14))*100:100);
-    return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${p.name}</div><div class="text-[10px] text-slate-400">${p.id}</div></td><td class="px-3 py-2.5 text-center text-xs text-slate-500">${p.category}</td><td class="px-3 py-2.5 text-center text-xs text-slate-500">${p.unit}</td><td class="px-3 py-2.5 text-center"><input type="number" id="si-${p.id}" value="${inv.currentStock}" min="0" class="w-20 text-center text-xs border border-slate-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-sky-400 outline-none" oninput="onStkChange('${p.id}',this.value)"><div class="w-20 h-1.5 bg-slate-100 rounded-full mt-1.5 mx-auto overflow-hidden"><div id="sb-${p.id}" class="h-full ${h.bar} rounded-full transition-all" style="width:${pct.toFixed(1)}%"></div></div></td><td class="px-3 py-2.5 text-center"><div class="flex items-center justify-center gap-1"><button onclick="adjStock('${p.id}',-1)" class="w-7 h-7 bg-white border border-slate-300 rounded font-bold text-slate-600 hover:bg-slate-50 text-sm">−</button><button onclick="adjStock('${p.id}',1)" class="w-7 h-7 bg-white border border-slate-300 rounded font-bold text-slate-600 hover:bg-slate-50 text-sm">+</button><button onclick="setStock('${p.id}')" class="px-2 py-1 bg-white border border-slate-300 rounded text-[10px] text-slate-600 hover:bg-slate-50">Set</button></div></td><td class="px-3 py-2.5 text-center text-xs text-slate-600">${avg.toFixed(1)}/day</td><td id="sd-${p.id}" class="px-3 py-2.5 text-center text-xs font-semibold ${h.cls.split(' ')[1]}">${h.days>=99?'∞':h.days.toFixed(1)+' days'}</td><td class="px-3 py-2.5 text-center text-xs text-slate-500">${inv.reorderPoint} ${p.unit}s</td><td class="px-3 py-2.5 text-center"><span id="sh-${p.id}" class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${h.cls}">${h.label}</span></td><td id="su-${p.id}" class="px-3 py-2.5 text-center text-[10px] text-slate-400">${inv.lastUpdated}</td></tr>`;
+    return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${p.name}</div><div class="text-[10px] text-slate-400">${p.code || p.id}</div></td><td class="px-3 py-2.5 text-center text-xs text-slate-500">${p.category}</td><td class="px-3 py-2.5 text-center text-xs text-slate-500">${p.unit}</td><td class="px-3 py-2.5 text-center"><input type="number" id="si-${p.id}" value="${inv.currentStock}" min="0" class="w-20 text-center text-xs border border-slate-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-sky-400 outline-none" oninput="onStkChange('${p.id}',this.value)"><div class="w-20 h-1.5 bg-slate-100 rounded-full mt-1.5 mx-auto overflow-hidden"><div id="sb-${p.id}" class="h-full ${h.bar} rounded-full transition-all" style="width:${pct.toFixed(1)}%"></div></div></td><td class="px-3 py-2.5 text-center"><div class="flex items-center justify-center gap-1"><button onclick="adjStock('${p.id}',-1)" class="w-7 h-7 bg-white border border-slate-300 rounded font-bold text-slate-600 hover:bg-slate-50 text-sm">−</button><button onclick="adjStock('${p.id}',1)" class="w-7 h-7 bg-white border border-slate-300 rounded font-bold text-slate-600 hover:bg-slate-50 text-sm">+</button><button onclick="setStock('${p.id}')" class="px-2 py-1 bg-white border border-slate-300 rounded text-[10px] text-slate-600 hover:bg-slate-50">Set</button></div></td><td class="px-3 py-2.5 text-center text-xs text-slate-600">${avg.toFixed(1)}/day</td><td id="sd-${p.id}" class="px-3 py-2.5 text-center text-xs font-semibold ${h.cls.split(' ')[1]}">${h.days>=99?'∞':h.days.toFixed(1)+' days'}</td><td class="px-3 py-2.5 text-center text-xs text-slate-500">${inv.reorderPoint} ${p.unit}s</td><td class="px-3 py-2.5 text-center"><span id="sh-${p.id}" class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${h.cls}">${h.label}</span></td><td id="su-${p.id}" class="px-3 py-2.5 text-center text-[10px] text-slate-400">${inv.lastUpdated}</td></tr>`;
   }).join('');
 }
 function onStkChange(pid,val){
