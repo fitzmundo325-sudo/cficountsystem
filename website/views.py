@@ -4945,14 +4945,135 @@ def cluster_manager_oracle():
     stores = Store.query.filter_by(cluster_id=cluster.id).all()
     cluster_sidebar_stores = _build_cluster_sidebar_stores(stores)
 
+    from .models import ProductMaster, StoreProductBuffer
+    products = ProductMaster.query.order_by(ProductMaster.category, ProductMaster.description).all()
+
+    store_ids = [s.id for s in stores]
+    saved_buffers = StoreProductBuffer.query.filter(StoreProductBuffer.store_id.in_(store_ids)).all()
+    buffers_map = {}
+    for b in saved_buffers:
+        buffers_map.setdefault(b.store_id, {})[b.product_id] = b.buffer_pct
+
     return render_template('cluster_manager/oracle.html',
                            user=current_user,
                            cluster=cluster,
                            team_name=_get_team_name(cluster),
                            stores=stores,
+                           products=products,
+                           buffers_map=buffers_map,
                            cluster_sidebar_stores=cluster_sidebar_stores,
                            force_cluster_sidebar=(role in ('Admin', 'Superadmin')),
                            cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin') else '')
+
+
+@views.route('/cluster-manager/invensync')
+@login_required
+def cluster_manager_invensync():
+    """Cluster Manager view for Invensync ending inventory from assigned stores only"""
+    from datetime import date as _date
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Cluster, Store
+    cluster = None
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            flash('You are not assigned to any cluster yet.', category='error')
+            return redirect(url_for('views.home'))
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view Invensync.', category='error')
+            return redirect(url_for('admin.clusters'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    # Get selected date (default to today)
+    selected_date_str = request.args.get('date', '')
+    if selected_date_str:
+        try:
+            selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = _date.today()
+    else:
+        selected_date = _date.today()
+
+    # Get stores in this cluster only
+    stores = Store.query.filter_by(cluster_id=cluster.id).order_by(Store.name.asc()).all()
+    store_ids = [s.id for s in stores]
+
+    # Get inventory data for selected date from cluster stores
+    inventory_records = DailyEndingInventory.query.filter(
+        DailyEndingInventory.inventory_date == selected_date,
+        DailyEndingInventory.store_id.in_(store_ids)
+    ).all() if store_ids else []
+
+    inventory_by_store = {i.store_id: i for i in inventory_records}
+
+    store_summaries = []
+    for store in stores:
+        inventory = inventory_by_store.get(store.id)
+        store_summaries.append({
+            'store': store,
+            'inventory': inventory,
+            'has_data': bool(inventory)
+        })
+
+    cluster_sidebar_stores = _build_cluster_sidebar_stores(stores)
+
+    return render_template(
+        'cluster_manager/invensync.html',
+        user=current_user,
+        cluster=cluster,
+        team_name=_get_team_name(cluster),
+        stores=stores,
+        store_summaries=store_summaries,
+        selected_date=selected_date.strftime('%Y-%m-%d'),
+        today=_date.today().strftime('%Y-%m-%d'),
+        cluster_sidebar_stores=cluster_sidebar_stores,
+        force_cluster_sidebar=(role in ('Admin', 'Superadmin')),
+        cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin') else '',
+    )
+
+
+@views.route('/cluster-manager/oracle/save-buffers', methods=['POST'])
+@login_required
+def cluster_manager_save_store_buffers():
+    from .models import Cluster, Store, ProductMaster, StoreProductBuffer
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin'):
+        return {'ok': False, 'error': 'Access denied'}, 403
+
+    data = request.get_json(force=True)
+    store_id = data.get('store_id')
+    buffers = data.get('buffers', {})  # {product_id: buffer_pct}
+
+    if not store_id:
+        return {'ok': False, 'error': 'Missing store_id'}, 400
+
+    # Verify store belongs to manager's cluster
+    store = Store.query.get(store_id)
+    if not store:
+        return {'ok': False, 'error': 'Store not found'}, 404
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster or store.cluster_id != cluster.id:
+            return {'ok': False, 'error': 'Access denied'}, 403
+
+    for product_id_str, pct in buffers.items():
+        product_id = int(product_id_str)
+        pct = max(0.0, min(200.0, float(pct)))
+        rec = StoreProductBuffer.query.filter_by(store_id=store_id, product_id=product_id).first()
+        if rec:
+            rec.buffer_pct = pct
+            rec.updated_by = current_user.id
+        else:
+            db.session.add(StoreProductBuffer(store_id=store_id, product_id=product_id,
+                                              buffer_pct=pct, updated_by=current_user.id))
+    db.session.commit()
+    return {'ok': True}
 
 
 @views.route('/cluster-manager/cluster-sbase')
@@ -5396,7 +5517,7 @@ def _match_rso_to_inventory(rso_item, product):
 @login_required
 def invensync():
     """Daily ending inventory view"""
-    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Admin', 'Superadmin']:
+    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin']:
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
@@ -5411,12 +5532,24 @@ def invensync():
         # store_id provided, allow viewing details (will be handled below)
 
     # Get store for current user
-    if current_user.role == 'Store Manager':
+    role = (current_user.role or '').strip()
+    if role == 'Store Manager':
         store = Store.query.filter_by(manager_id=current_user.id).first()
-    elif current_user.role == 'Inventory Staff':
+    elif role == 'Inventory Staff':
         # Inventory Staff viewing specific store details
         store_id = request.args.get('store_id', type=int)
         store = Store.query.get(store_id) if store_id else None
+    elif role == 'Cluster Manager':
+        # Cluster Manager viewing store details — must belong to their cluster
+        store_id = request.args.get('store_id', type=int)
+        if not store_id:
+            return redirect(url_for('views.cluster_manager_invensync'))
+        from .models import Cluster
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        store = Store.query.get(store_id) if store_id else None
+        if store and cluster and store.cluster_id != cluster.id:
+            flash('Access denied. Store does not belong to your cluster.', category='error')
+            return redirect(url_for('views.cluster_manager_invensync'))
     else:
         # Admin/Superadmin accessing store details via store_id parameter
         store_id = request.args.get('store_id', type=int)
@@ -5612,6 +5745,19 @@ def invensync():
     is_first_time = (not beginning_qty_is_locked) and not has_any_beginning and not prev_inventory_exists
     allow_beginning_stock_entry = is_first_time and current_user.role != 'Inventory Staff'
 
+    # Build cluster sidebar context for Cluster Manager
+    cluster_sidebar_ctx = {}
+    if role == 'Cluster Manager':
+        from .models import Cluster
+        cm_cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if cm_cluster:
+            cm_stores = Store.query.filter_by(cluster_id=cm_cluster.id).all()
+            cluster_sidebar_ctx = {
+                'cluster': cm_cluster,
+                'team_name': _get_team_name(cm_cluster),
+                'cluster_sidebar_stores': _build_cluster_sidebar_stores(cm_stores),
+            }
+
     return render_template(
         'store_manager/invensync.html',
         user=current_user,
@@ -5624,7 +5770,99 @@ def invensync():
         global_config_data=global_config_data,
         is_first_time=is_first_time,
         allow_beginning_stock_entry=allow_beginning_stock_entry,
+        **cluster_sidebar_ctx,
     )
+
+
+def _fetch_oracle_invensync_data(store, products):
+    """Fetch invensync data for the Oracle order form.
+    Returns (invensync_data dict keyed by str(product_id), prev_inventory_date_str or None).
+    - Ending Inventory: most recent record BEFORE today (total_ending_qty)
+    - Delivery / Trans-In / Trans-Out: today's record
+    Handles nullable product_master_id with product_description fallback.
+    """
+    from datetime import date as _date
+    today = _date.today()
+
+    # Most recent inventory record BEFORE today
+    prev_inventory = (
+        DailyEndingInventory.query
+        .filter(
+            DailyEndingInventory.store_id == store.id,
+            DailyEndingInventory.inventory_date < today
+        )
+        .order_by(DailyEndingInventory.inventory_date.desc())
+        .first()
+    )
+
+    # Today's inventory record (delivery, trans-in, trans-out)
+    today_inventory = (
+        DailyEndingInventory.query
+        .filter_by(store_id=store.id, inventory_date=today)
+        .first()
+    )
+
+    # Build product lookup by description (lowercase) for fallback
+    prod_by_desc = {}
+    for p in products:
+        prod_by_desc[(p.description or '').strip().lower()] = p.id
+
+    # Previous day ending: product_id -> total_ending_qty
+    # Falls back to theo_ending_qty when total_ending_qty is 0
+    # (D+5/D+4/D+3 forecast columns not filled in)
+    # If no previous day record exists, falls back to today's beginning_qty
+    # (beginning_qty = last known ending inventory carried forward)
+    prev_ending = {}
+    if prev_inventory:
+        for item in prev_inventory.items:
+            pid = item.product_master_id
+            if pid is None:
+                pid = prod_by_desc.get((item.product_description or '').strip().lower())
+            if pid is not None:
+                ending = (item.total_ending_qty or 0)
+                if ending == 0:
+                    ending = (item.theo_ending_qty or 0)
+                prev_ending[pid] = prev_ending.get(pid, 0) + ending
+    elif today_inventory:
+        # No previous day record — use today's beginning_qty as ending stock
+        for item in today_inventory.items:
+            pid = item.product_master_id
+            if pid is None:
+                pid = prod_by_desc.get((item.product_description or '').strip().lower())
+            if pid is not None:
+                prev_ending[pid] = prev_ending.get(pid, 0) + (item.beginning_qty or 0)
+
+    # Today: product_id -> delivery, trans_in, trans_out
+    today_delivery = {}
+    today_trans_in = {}
+    today_trans_out = {}
+    if today_inventory:
+        for item in today_inventory.items:
+            pid = item.product_master_id
+            if pid is None:
+                pid = prod_by_desc.get((item.product_description or '').strip().lower())
+            if pid is not None:
+                today_delivery[pid] = today_delivery.get(pid, 0) + (item.delivery_qty or 0)
+                today_trans_in[pid] = today_trans_in.get(pid, 0) + (item.trans_in_qty or 0)
+                today_trans_out[pid] = today_trans_out.get(pid, 0) + (item.trans_out_qty or 0)
+
+    # Build invensync_data keyed by string product id (for JSON serialization)
+    invensync_data = {}
+    for p in products:
+        invensync_data[str(p.id)] = {
+            'ending_stock': prev_ending.get(p.id, 0),
+            'delivery': today_delivery.get(p.id, 0),
+            'trans_in': today_trans_in.get(p.id, 0),
+            'trans_out': today_trans_out.get(p.id, 0),
+        }
+
+    if prev_inventory:
+        prev_date_str = prev_inventory.inventory_date.isoformat()
+    elif today_inventory and prev_ending:
+        prev_date_str = today.isoformat()  # using today's beginning_qty as fallback
+    else:
+        prev_date_str = None
+    return invensync_data, prev_date_str
 
 
 @views.route('/store-manager/oracle')
@@ -5640,13 +5878,68 @@ def oracle():
         flash('Store not found or not assigned.', category='error')
         return redirect(url_for('views.home'))
 
+    from .models import ProductMaster, StoreProductBuffer
     products = ProductMaster.query.all()
+
+    # Load saved per-product buffers for this store (if any)
+    saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
+    store_buffers = {b.product_id: b.buffer_pct for b in saved}
+
+    # Fetch invensync data (ending inventory, delivery, trans-in/out)
+    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products)
 
     return render_template(
         'store_manager/oracle.html',
         user=current_user,
         store=store,
         products=products,
+        store_buffers=store_buffers,
+        invensync_data=invensync_data,
+        prev_inventory_date=prev_inventory_date,
+    )
+
+
+@views.route('/cluster-manager/store-order-form/<int:store_id>')
+@login_required
+def cluster_store_order_form(store_id):
+    """Render the Store Manager Order Form for Cluster Managers (view-only except buffers).
+    This allows cluster managers/admins to view a store's full order form and edit buffer %.
+    """
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Store, ProductMaster, Cluster
+    store = Store.query.get_or_404(store_id)
+
+    # Restrict Cluster Manager to stores within their cluster
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster or store.cluster_id != cluster.id:
+            flash('Access denied.', category='error')
+            return redirect(url_for('views.home'))
+
+    from .models import ProductMaster, StoreProductBuffer
+    products = ProductMaster.query.all()
+
+    # Provide existing saved buffers for this store so the embedded/order view
+    # reflects the latest values edited by cluster managers.
+    saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
+    store_buffers = {b.product_id: b.buffer_pct for b in saved}
+
+    # Fetch invensync data (ending inventory, delivery, trans-in/out)
+    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products)
+
+    return render_template(
+        'store_manager/oracle.html',
+        user=current_user,
+        store=store,
+        products=products,
+        cluster_view=True,
+        store_buffers=store_buffers,
+        invensync_data=invensync_data,
+        prev_inventory_date=prev_inventory_date,
     )
 
 
