@@ -35,15 +35,6 @@
   .animate-bounce-in {
     animation: bounceIn 0.4s ease-out;
   }
-  .table-scroll-shell {
-    max-height: min(72vh, 760px);
-    overflow: auto;
-  }
-  @media (max-width: 768px) {
-    .table-scroll-shell {
-      max-height: 68vh;
-    }
-  }
 </style>
 
 <!-- Top Header -->
@@ -222,7 +213,7 @@
   <!-- Products Table -->
   <div id="main-content" class="bg-white rounded-xl border border-slate-200 shadow-sm">
     <div class="relative border border-slate-200 rounded-xl">
-      <div class="overflow-x-auto table-scroll-shell">
+      <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-slate-100 text-black">
           <tr class="sticky top-0 z-30">
