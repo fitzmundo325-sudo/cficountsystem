@@ -279,7 +279,8 @@ def _drop_daily_forecasting_tables():
 def create_app():
     _load_local_env()
     app = Flask(__name__)
-    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_NAME}'
+    db_name = os.environ.get('CM_APP_DB_NAME', DB_NAME)
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_name}'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['SECRET_KEY'] = 'thisisasecretkey'
     

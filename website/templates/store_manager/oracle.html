@@ -18,34 +18,22 @@
   @keyframes toastIn { from{transform:translateX(16px);opacity:0} to{transform:translateX(0);opacity:1} }
   .o-toast { animation:toastIn .2s ease; }
   .forecast-bar select option { background:#1e293b; color:#fff; }
-  .table-scroll-shell {
-    max-height: min(72vh, 760px);
-    max-width: 100%;
-    min-width: 0;
-    overflow-x: auto;
-    overflow-y: auto;
+  .overflow-x-auto { -webkit-overflow-scrolling: touch; }
+  .oracle-shell { width:100%; max-width:100%; min-width:0; overflow-x:hidden; }
+  .oracle-scroll { max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .daily-average-scroll {
+    max-height: min(62vh, 560px);
+    overflow: auto;
     -webkit-overflow-scrolling: touch;
   }
-  .table-scroll-shell > table {
-    width: max-content;
-    min-width: 100%;
-  }
-  .weekly-scroll {
-    max-height: min(58vh, 480px);
-  }
-  @media (max-width: 768px) {
-    .table-scroll-shell {
-      max-height: 68vh;
-    }
-    .weekly-scroll {
-      max-height: 60vh;
-    }
+  .weekly-average-scroll {
+    max-height: min(52vh, 430px);
   }
 </style>
 
 <!-- Header -->
-<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-  <div class="flex items-center gap-3">
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-4 md:px-6 py-3 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+  <div class="flex min-w-0 items-center gap-3">
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
       <i class="bi bi-list text-xl"></i>
     </button>
@@ -58,14 +46,14 @@
       <span class="text-slate-900 font-semibold">Oracle</span>
     </nav>
   </div>
-  <div class="flex items-center gap-3">
-    <span id="topbar-date" class="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full"></span>
-    <span class="text-sm font-semibold text-slate-700">{{ store.name }}</span>
-    <button onclick="navigate('order-form')" class="flex items-center gap-1.5 bg-sky-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-sky-700 transition-colors">
+  <div class="flex min-w-0 flex-wrap items-center gap-2 md:gap-3">
+    <span id="topbar-date" class="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full whitespace-nowrap"></span>
+    <span class="text-sm font-semibold text-slate-700 truncate max-w-[180px]">{{ store.name }}</span>
+    <button onclick="navigate('order-form')" class="flex items-center gap-1.5 bg-sky-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-sky-700 transition-colors whitespace-nowrap">
       <i class="bi bi-plus-lg"></i> New Order
     </button>
     {% if cluster_view %}
-    <button onclick="saveBuffersToCluster()" id="cluster-save-buffers" class="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors">
+    <button onclick="saveBuffersToCluster()" id="cluster-save-buffers" class="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors whitespace-nowrap">
       <i class="bi bi-floppy"></i> Save Buffers
     </button>
     {% endif %}
@@ -81,7 +69,7 @@
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-daily-averages"     onclick="navigate('daily-averages')"> <i class="bi bi-bar-chart-line"></i> Daily Averages</button>
 </div>
 
-<div class="px-4 pt-4 pb-6 md:px-6 space-y-4 max-w-[2400px] mx-auto min-w-0">
+<div class="oracle-shell px-4 pt-4 pb-6 md:px-6 space-y-4 max-w-[2400px] mx-auto min-w-0">
 
 
   <!-- ORDER FORM -->
@@ -95,19 +83,24 @@
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-3 mb-4 flex flex-wrap items-center gap-4 text-xs">
       <div class="flex items-center gap-1.5">
         <i class="bi bi-database-fill-check text-emerald-500"></i>
-        <span class="text-slate-500">InvenSync values from:</span>
-        <strong class="text-slate-800">{% if prev_inventory_date %}{{ prev_inventory_date }}{% else %}No previous record{% endif %}</strong>
+        <span class="text-slate-500">Total Ending Inventory from:</span>
+        <strong class="text-slate-800">{% if prev_inventory_date %}{{ prev_inventory_date }} InvenSync{% else %}No previous record{% endif %}</strong>
       </div>
       <div class="flex items-center gap-1.5">
-        <i class="bi bi-truck text-sky-500"></i>
-        <span class="text-slate-500">Delivery / Trans-In / Trans-Out:</span>
+        <i class="bi bi-cart-check text-sky-500"></i>
+        <span class="text-slate-500">Incoming Delivery Stock from:</span>
+        <strong class="text-slate-800">Oracle order qty</strong>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <i class="bi bi-arrow-left-right text-amber-500"></i>
+        <span class="text-slate-500">Trans-In / Trans-Out from:</span>
         <strong class="text-slate-800">{% if oracle_date %}{{ oracle_date }} InvenSync{% else %}Today's InvenSync{% endif %}</strong>
       </div>
     </div>
 
     <!-- Date/Manager row -->
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-4">
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Order Date</label><input type="date" id="order-date" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none" onchange="onOrderDateChange()"></div>
         <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Delivery Date <span class="text-amber-500 normal-case font-normal">(min +2 days)</span></label><input type="date" id="delivery-date" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none" onchange="onDeliveryDateChange()"></div>
         <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Delivery Day</label><input type="text" id="delivery-day" readonly class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-600"></div>
@@ -116,10 +109,10 @@
     </div>
 
     <!-- Forecast bar -->
-    <div class="bg-slate-800 rounded-xl p-5 mb-4 flex flex-wrap gap-5 items-start">
-      <div>
+    <div class="bg-slate-800 rounded-xl p-4 md:p-5 mb-4 flex flex-wrap gap-4 md:gap-5 items-start">
+      <div class="min-w-[180px] flex-1 sm:flex-none">
         <label class="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Forecast Event</label>
-        <select id="forecast-event" onchange="updateMultiplier()" class="forecast-bar px-3 py-2 bg-slate-700 border border-slate-600 text-white rounded-lg text-sm outline-none focus:ring-2 focus:ring-sky-400 min-w-[180px]">
+        <select id="forecast-event" onchange="updateMultiplier()" class="forecast-bar w-full px-3 py-2 bg-slate-700 border border-slate-600 text-white rounded-lg text-sm outline-none focus:ring-2 focus:ring-sky-400">
           <option value="1.00">Normal Day</option>
           <option value="1.25">Payday Week (+25%)</option>
           <option value="1.40">Holiday (+40%)</option>
@@ -136,13 +129,13 @@
         <label class="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Multiplier</label>
         <div id="eff-mult" class="px-4 py-2 bg-sky-500 text-white font-bold rounded-lg text-sm">1.00×</div>
       </div>
-      <div class="bg-slate-700/60 border border-slate-600 rounded-lg p-3 min-w-[200px]">
+      <div class="bg-slate-700/60 border border-slate-600 rounded-lg p-3 min-w-[200px] flex-1 sm:flex-none">
         <label class="block text-xs font-semibold text-slate-300 mb-1.5"><i class="bi bi-bullseye"></i> Target Sales (₱)</label>
         <input type="number" id="target-sales-input" placeholder="e.g. 5000" min="0" oninput="onTargetSalesChange()" class="w-full px-3 py-1.5 bg-slate-600 border border-slate-500 text-white placeholder-slate-400 rounded text-sm outline-none focus:ring-1 focus:ring-sky-400">
         <p class="text-[10px] text-slate-400 mt-1">Rev-share method. Optional.</p>
       </div>
-      <div class="ml-auto flex flex-col gap-2 items-end justify-center">
-        <div id="order-mode-indicator" class="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-900/50 border border-emerald-700 text-emerald-300 rounded-full text-xs font-semibold"><i class="bi bi-bar-chart-fill"></i> Avg Consumption</div>
+      <div class="flex min-w-[180px] flex-1 flex-col gap-2 items-start xl:items-end justify-center">
+        <div id="order-mode-indicator" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-900/50 border border-emerald-700 text-emerald-300 rounded-full text-xs font-semibold whitespace-nowrap"><i class="bi bi-bar-chart-fill"></i> Avg Consumption</div>
         <span class="text-xs text-slate-500">Multiplier applied to suggested qty</span>
       </div>
     </div>
@@ -187,13 +180,13 @@
 
     <!-- Order table -->
     <div class="bg-white rounded-t-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="overflow-x-auto table-scroll-shell">
+      <div class="oracle-scroll">
         <table id="order-table" class="w-full text-xs" style="min-width:1100px">
           <thead class="bg-slate-100 text-slate-600 sticky top-0">
             <tr>
               <th class="px-3 py-3 text-left font-semibold">Product</th>
               <th class="px-3 py-3 text-center font-semibold">Total Ending Inventory<br><span class="text-[9px] text-slate-400 font-normal">from InvenSync</span></th>
-              <th class="px-3 py-3 text-center font-semibold text-sky-600">Incoming Delivery Stock</th>
+              <th class="px-3 py-3 text-center font-semibold text-sky-600">Incoming Delivery Stock<br><span class="text-[9px] text-slate-400 font-normal">from Oracle order qty</span></th>
               <th class="px-3 py-3 text-center font-semibold text-rose-500">Expected Sales</th>
               <th class="px-3 py-3 text-center font-semibold text-amber-600">Trans In</th>
               <th class="px-3 py-3 text-center font-semibold text-rose-500">Trans Out</th>
@@ -222,7 +215,7 @@
         <span>Final: <strong class="text-slate-700" id="sum-final">0</strong></span>
         <span>Est. Cost: <strong class="text-sky-600" id="sum-cost">₱0</strong></span>
       </div>
-      <div class="flex gap-2 ml-auto">
+      <div class="flex flex-wrap gap-2 sm:ml-auto">
         <button onclick="refreshSuggested()" class="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
         <button onclick="clearFinalOrders()" class="px-3 py-1.5 bg-white border border-slate-300 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors">Clear Overrides</button>
         <button onclick="submitOrder()" class="flex items-center gap-1 px-3 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors"><i class="bi bi-check-lg"></i> Submit Order</button>
@@ -235,7 +228,7 @@
   <div class="view" id="view-approvals">
     <div class="mb-5"><h1 class="text-2xl font-bold text-slate-900">Cluster Manager Approvals</h1><p class="mt-1 text-sm text-slate-500">Review orders outside the permitted ±20% suggested range.</p></div>
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="overflow-x-auto table-scroll-shell"><table class="w-full text-xs" style="min-width:900px">
+      <div class="oracle-scroll"><table class="w-full text-xs" style="min-width:900px">
         <thead class="bg-slate-100 text-slate-600"><tr>
           <th class="px-3 py-3 text-left font-semibold">Order Date</th>
           <th class="px-3 py-3 text-left font-semibold">Product</th>
@@ -257,7 +250,7 @@
       <button onclick="renderHistory()" class="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
     </div>
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="overflow-x-auto table-scroll-shell"><table class="w-full text-xs" style="min-width:900px">
+      <div class="oracle-scroll"><table class="w-full text-xs" style="min-width:900px">
         <thead class="bg-slate-100 text-slate-600"><tr>
           <th class="px-3 py-3 text-left font-semibold">Order Date</th>
           <th class="px-3 py-3 text-left font-semibold">Delivery</th>
@@ -289,7 +282,7 @@
         <span class="text-sm font-bold text-slate-700">Current Inventory</span>
         <span class="text-xs text-slate-500">Edit <strong>Current Stock</strong> or use ± buttons</span>
       </div>
-      <div class="overflow-x-auto table-scroll-shell"><table class="w-full text-xs" style="min-width:800px">
+      <div class="oracle-scroll daily-average-scroll"><table class="w-full text-xs" style="min-width:800px">
         <thead class="bg-slate-100 text-slate-600"><tr>
           <th class="px-3 py-3 text-left font-semibold">Product</th>
           <th class="px-3 py-3 text-center font-semibold">Category</th>
@@ -318,7 +311,7 @@
       <i class="bi bi-graph-up text-sky-500"></i> Average Daily Sold &amp; Product Share (4-Week Summary)
     </div>
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
-      <div class="overflow-x-auto table-scroll-shell"><table class="w-full text-xs" style="min-width:800px">
+      <div class="oracle-scroll"><table class="w-full text-xs" style="min-width:800px">
         <thead class="bg-slate-100 text-slate-600"><tr>
           <th class="px-3 py-3 text-left font-semibold">Product</th>
           <th class="px-3 py-3 text-center font-semibold">Mon</th><th class="px-3 py-3 text-center font-semibold">Tue</th>
@@ -357,7 +350,10 @@ const POS_SALES_DATA = {{ pos_sales_data|tojson if pos_sales_data is defined els
 const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const DAYS_DISPLAY=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const DISP_TO_JS=[1,2,3,4,5,6,0];
-const fmt=d=>d.toISOString().split('T')[0];
+const fmt=d=>{
+  const pad=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+};
 
 function buildSales(){
   const d={};
@@ -391,8 +387,23 @@ let productSearchQuery='';
 function getCurStock(pid){return(DB.inventory.find(x=>x.productId===pid)||{currentStock:0}).currentStock;}
 function getAvgDay(pid,dayName){const di=DAYS.indexOf(dayName);if(di<0)return 0;const w=salesData[pid];return w?w.reduce((s,wk)=>s+(wk[di]||0),0)/4:0;}
 function getAvgDayIdx(pid,di){const w=salesData[pid];return w?w.reduce((s,wk)=>s+(wk[di]||0),0)/4:0;}
-function getIncoming(pid,od,dd){if(!od||!dd)return 0;const iv=INVENSYNC_DATA[String(pid)];return iv?iv.delivery:0;}
-function getExpSales(pid,od,dd){if(!od||!dd)return 0;let t=0;const c=new Date(od+'T00:00:00');c.setDate(c.getDate()+1);const e=new Date(dd+'T00:00:00');let s=0;while(c<e&&s++<60){t+=getAvgDay(pid,DAYS[c.getDay()]);c.setDate(c.getDate()+1);}return Math.round(t);}
+function getSalesDataPointCount(pid){const w=salesData[pid];if(!w)return 0;let c=0;w.forEach(wk=>wk.forEach(v=>{if((parseInt(v)||0)>0)c++;}));return c;}
+function getIncoming(pid,od,dd){return 0;}
+function getExpSales(pid,od,dd){
+  if(!od||!dd)return 0;
+  let t=0;
+  const c=new Date(od+'T00:00:00');
+  c.setDate(c.getDate()+1);
+  const e=new Date(dd+'T00:00:00');
+  const canUseOverallFallback=getSalesDataPointCount(pid)>1;
+  let s=0;
+  while(c<e&&s++<60){
+    const weekdayAvg=getAvgDay(pid,DAYS[c.getDay()]);
+    t+=weekdayAvg>0?weekdayAvg:(canUseOverallFallback?getAvgDaily(pid):0);
+    c.setDate(c.getDate()+1);
+  }
+  return Math.round(t);
+}
 function getTrans(pid,type,od,dd){if(!od||!dd)return 0;const iv=INVENSYNC_DATA[String(pid)];if(!iv)return 0;return type==='in'?iv.trans_in:iv.trans_out;}
 function calcAvg(p,dayName,mult,ne,tIn,tOut){const avg=getAvgDay(p.id,dayName),buf=(productBuffers[p.id]??p.buffer)/100,days=DB.settings.leadTime||1,target=Math.ceil(avg*mult*days*(1+buf)),raw=target-ne-tIn+tOut,min=p.minOrder||1;return Math.ceil(Math.max(0,raw)/min)*min;}
 function calcTarget(p,di,tSales,mult,ne,tIn,tOut){const pAvg=getAvgDayIdx(p.id,di)*p.sellingPrice;let totRev=0;PRODUCTS.forEach(q=>{totRev+=getAvgDayIdx(q.id,di)*q.sellingPrice;});if(!totRev)return 0;const qty=Math.ceil(tSales*(pAvg/totRev)/p.sellingPrice),buf=(productBuffers[p.id]??p.buffer)/100,raw=Math.ceil(qty*mult*(1+buf))-ne-tIn+tOut,min=p.minOrder||1;return Math.ceil(Math.max(0,raw)/min)*min;}
@@ -476,13 +487,14 @@ function renderOrderTable(){
     return;
   }
   tbody.innerHTML=filteredProducts.map(p=>{
-    const stock=getCurStock(p.id),inc=getIncoming(p.id,od,dd),exp=getExpSales(p.id,od,dd);
+    const stock=getCurStock(p.id),exp=getExpSales(p.id,od,dd);
     const tIn=getTrans(p.id,'in',od,dd),tOut=getTrans(p.id,'out',od,dd);
-    const ne=Math.max(0,stock+inc-exp),effStock=ne+tIn-tOut;
+    const ne=Math.max(0,stock-exp),effStock=ne+tIn-tOut;
     const bufPct=productBuffers[p.id]??p.buffer,avgMult=getAvgDay(p.id,dayName)*mult;
     const sug=useTarget?calcTarget(p,dayIdx,tSales,mult,ne,tIn,tOut):calcAvg(p,dayName,mult,ne,tIn,tOut);
     const minS=Math.max(0,Math.floor(sug*0.8)),maxS=Math.ceil(sug*1.2);
     const fv=orderFinalQtys[p.id]!==undefined?orderFinalQtys[p.id]:'',fo=fv!==''?(parseInt(fv)||0):sug;
+    const inc=fo;
     const oor=fv!==''&&(fo<minS||fo>maxS);
     const iStyle=oor?'border-red-400 bg-red-50 text-red-700':'';
     const estOH=effStock+fo;
@@ -545,8 +557,8 @@ function submitOrder(){
   const tsRaw=document.getElementById('target-sales-input').value,tSales=tsRaw!==''?parseFloat(tsRaw):null,useTarget=tSales!==null&&tSales>0;
   let autoC=0,pendC=0;
   PRODUCTS.forEach(p=>{
-    const stock=getCurStock(p.id),inc=getIncoming(p.id,od,dd),exp=getExpSales(p.id,od,dd);
-    const tIn=getTrans(p.id,'in',od,dd),tOut=getTrans(p.id,'out',od,dd),ne=Math.max(0,stock+inc-exp);
+    const stock=getCurStock(p.id),exp=getExpSales(p.id,od,dd);
+    const tIn=getTrans(p.id,'in',od,dd),tOut=getTrans(p.id,'out',od,dd),ne=Math.max(0,stock-exp);
     const sug=useTarget?calcTarget(p,dayIdx,tSales,mult,ne,tIn,tOut):calcAvg(p,dayName,mult,ne,tIn,tOut);
     const minS=Math.max(0,Math.floor(sug*0.8)),maxS=Math.ceil(sug*1.2);
     const fv=orderFinalQtys[p.id],fo=fv!==undefined&&fv!==''?(parseInt(fv)||0):sug;
@@ -662,7 +674,7 @@ function renderWeeklyTables(){
       return `<tr class="hover:bg-slate-50"><td class="px-3 py-2 font-semibold text-slate-800 text-xs min-w-[140px]">${p.name}</td>${cells}<td id="wrt-${w}-${p.id}" class="px-3 py-2 text-center font-bold text-xs text-slate-700">${rTot}</td><td class="px-3 py-2 text-center text-xs text-amber-700 font-semibold" id="wrr-${w}-${p.id}">₱${(rTot*p.sellingPrice).toLocaleString()}</td></tr>`;
     }).join('');
     const fCells=dTots.map((t,ci)=>`<td id="wdt-${w}-${ci}" class="px-2 py-2 text-center font-bold text-xs text-white">${t}</td>`).join('');
-    html+=`<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="${m.hCls} px-5 py-3 flex items-center justify-between"><span class="text-sm font-bold text-white">${m.label}</span><span id="whs-${w}" class="text-xs text-white/70">Units: <strong class="text-white">${wTot}</strong> | Rev: <strong class="text-white">₱${totRev.toLocaleString()}</strong></span></div><div class="overflow-x-auto table-scroll-shell weekly-scroll"><table class="w-full text-xs" style="min-width:800px"><thead class="bg-slate-100 text-slate-600"><tr><th class="px-3 py-2 text-left font-semibold">Product</th>${DAYS_DISPLAY.map(d=>`<th class="px-2 py-2 text-center font-semibold">${d.slice(0,3)}</th>`).join('')}<th class="px-3 py-2 text-center font-semibold">Total</th><th class="px-3 py-2 text-center font-semibold">Revenue</th></tr></thead><tbody class="divide-y divide-slate-100">${rows}</tbody><tfoot><tr class="${m.hCls}"><td class="px-3 py-2 font-bold text-xs text-white">Day Total</td>${fCells}<td id="wwt-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">${wTot}</td><td id="wwr-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">₱${totRev.toLocaleString()}</td></tr></tfoot></table></div></div>`;
+    html+=`<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="${m.hCls} px-5 py-3 flex flex-wrap gap-2 items-center justify-between"><span class="text-sm font-bold text-white">${m.label}</span><span id="whs-${w}" class="text-xs text-white/70">Units: <strong class="text-white">${wTot}</strong> | Rev: <strong class="text-white">₱${totRev.toLocaleString()}</strong></span></div><div class="oracle-scroll daily-average-scroll weekly-average-scroll"><table class="w-full text-xs" style="min-width:800px"><thead class="bg-slate-100 text-slate-600"><tr><th class="px-3 py-2 text-left font-semibold">Product</th>${DAYS_DISPLAY.map(d=>`<th class="px-2 py-2 text-center font-semibold">${d.slice(0,3)}</th>`).join('')}<th class="px-3 py-2 text-center font-semibold">Total</th><th class="px-3 py-2 text-center font-semibold">Revenue</th></tr></thead><tbody class="divide-y divide-slate-100">${rows}</tbody><tfoot><tr class="${m.hCls}"><td class="px-3 py-2 font-bold text-xs text-white">Day Total</td>${fCells}<td id="wwt-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">${wTot}</td><td id="wwr-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">₱${totRev.toLocaleString()}</td></tr></tfoot></table></div></div>`;
   }
   con.innerHTML=html;
 }
