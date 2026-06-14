@@ -35,6 +35,52 @@
   .animate-bounce-in {
     animation: bounceIn 0.4s ease-out;
   }
+
+  .beginning-spotlight-panel {
+    position: fixed;
+    z-index: 9998;
+    background: rgba(15, 23, 42, 0.72);
+    pointer-events: auto;
+  }
+
+  .beginning-spotlight-target {
+    position: relative;
+    z-index: 9999;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35), 0 0 24px rgba(14, 165, 233, 0.5);
+  }
+
+  .beginning-spotlight-label {
+    position: fixed;
+    z-index: 9999;
+    max-width: min(360px, calc(100vw - 32px));
+    color: #ffffff;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.35;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    pointer-events: auto;
+  }
+
+  .beginning-spotlight-label button {
+    margin-top: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 800;
+    text-shadow: none;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .beginning-spotlight-label button:hover {
+    background: #f8fafc;
+    transform: translateY(-1px);
+  }
 </style>
 
 <!-- Top Header -->
@@ -166,7 +212,7 @@
       </div>
       <!-- Footer -->
       <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
-        <button onclick="document.getElementById('first-time-modal').remove()" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+        <button onclick="startBeginningStockGuide()" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
           Got it, let me start!
         </button>
       </div>
@@ -187,14 +233,14 @@
   ] %}
 
   <div class="space-y-3">
-    <div class="relative max-w-md">
+    <div id="inventory-search-guide-target" class="relative max-w-md">
       <input id="product-search-input" type="search" autocomplete="off" placeholder="Search product, code, or price" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pl-9 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100">
       <svg xmlns="http://www.w3.org/2000/svg" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="11" cy="11" r="8"></circle>
         <path d="m21 21-4.3-4.3"></path>
       </svg>
     </div>
-    <div class="flex flex-wrap items-center gap-2">
+    <div id="inventory-category-guide-target" class="flex flex-wrap items-center gap-2">
       <button type="button" class="category-filter-btn px-3 py-2 rounded-lg border border-slate-300 bg-slate-900 text-white text-sm font-semibold transition" data-category-filter="all" onclick="filterInventoryCategory('all')">
         All
       </button>
@@ -456,6 +502,8 @@ let isDayFinalized = {{ is_day_locked|tojson }};
 let isBeginningFinalized = {{ is_beginning_locked|tojson }};
 let isSavingBeginningInventory = requiresBeginningStockFirst;
 let missingBeginningNoticeOpen = false;
+let beginningGuideActive = false;
+let beginningGuideStepIndex = 0;
 
 function notify(message, type = 'info') {
   if (typeof toast !== 'undefined' && typeof toast.show === 'function') {
@@ -558,6 +606,182 @@ function findFirstRowMissingBeginning() {
     .find(rowHasBlankBeginningWithOtherValues);
 }
 
+function getBeginningGuideInputs() {
+  return Array.from(document.querySelectorAll('tbody tr[data-product-id] .beginning-input'))
+    .filter(input => !input.disabled && !input.readOnly && input.offsetParent !== null);
+}
+
+function getBeginningGuideElements() {
+  return Array.from(document.querySelectorAll('td[data-field="beginning_qty"], th'))
+    .filter(el => {
+      if (el.offsetParent === null) return false;
+      if (el.matches('th')) return el.textContent.trim() === 'Beg';
+      return true;
+    })
+    .slice(0, 8);
+}
+
+function getElementGroupRect(elements) {
+  const visibleElements = elements.filter(el => el && el.offsetParent !== null);
+  if (!visibleElements.length) return null;
+
+  const rects = visibleElements.map(el => el.getBoundingClientRect());
+  const padding = 10;
+  return {
+    top: Math.max(0, Math.min(...rects.map(rect => rect.top)) - padding),
+    left: Math.max(0, Math.min(...rects.map(rect => rect.left)) - padding),
+    right: Math.min(window.innerWidth, Math.max(...rects.map(rect => rect.right)) + padding),
+    bottom: Math.min(window.innerHeight, Math.max(...rects.map(rect => rect.bottom)) + padding)
+  };
+}
+
+function getBeginningGuideStep() {
+  const steps = [
+    {
+      elements: getBeginningGuideElements(),
+      text: 'Enter the product beginning quantity here first.',
+      placement: 'right',
+      nextText: 'Next'
+    },
+    {
+      elements: [document.getElementById('inventory-search-guide-target')],
+      text: 'Use search to quickly find a product before entering its Beg quantity.',
+      placement: 'right',
+      nextText: 'Next'
+    },
+    {
+      elements: [document.getElementById('inventory-category-guide-target')],
+      text: 'Use these categories to filter products by group for faster Beg entry.',
+      placement: 'bottom',
+      nextText: 'Next'
+    },
+    {
+      elements: [document.getElementById('save-inventory-btn')],
+      text: 'Click Save Beginning after entering the Beg quantities to finalize your beginning inventory.',
+      placement: 'bottom',
+      nextText: 'Finish, Lets start'
+    }
+  ];
+  return steps[beginningGuideStepIndex] || null;
+}
+
+function renderBeginningSpotlight() {
+  removeBeginningSpotlightPanels();
+
+  const step = getBeginningGuideStep();
+  if (!step) {
+    clearBeginningStockGuide();
+    return;
+  }
+
+  const rect = getElementGroupRect(step.elements);
+  if (!rect) return;
+
+  const panels = [
+    { top: 0, left: 0, width: window.innerWidth, height: rect.top },
+    { top: rect.bottom, left: 0, width: window.innerWidth, height: window.innerHeight - rect.bottom },
+    { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
+    { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top }
+  ];
+
+  panels.forEach(panel => {
+    const el = document.createElement('div');
+    el.className = 'beginning-spotlight-panel';
+    el.style.top = `${panel.top}px`;
+    el.style.left = `${panel.left}px`;
+    el.style.width = `${Math.max(0, panel.width)}px`;
+    el.style.height = `${Math.max(0, panel.height)}px`;
+    document.body.appendChild(el);
+  });
+
+  const label = document.createElement('div');
+  label.className = 'beginning-spotlight-label';
+  const message = document.createElement('div');
+  message.textContent = step.text;
+  const nextButton = document.createElement('button');
+  nextButton.type = 'button';
+  nextButton.textContent = step.nextText;
+  nextButton.addEventListener('click', nextBeginningStockGuideStep);
+  label.appendChild(message);
+  label.appendChild(nextButton);
+  if (step.placement === 'bottom') {
+    label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+    label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+  } else if (step.placement === 'left') {
+    label.style.left = `${Math.max(16, rect.left - 380)}px`;
+    label.style.top = `${Math.max(24, rect.top)}px`;
+  } else {
+    const labelLeft = rect.right + 24;
+    const hasRightSpace = labelLeft + 320 <= window.innerWidth;
+    label.style.left = `${hasRightSpace ? labelLeft : Math.max(16, rect.left - 340)}px`;
+    label.style.top = `${Math.max(24, rect.top + Math.min(96, Math.max(0, (rect.bottom - rect.top) / 3)))}px`;
+  }
+  document.body.appendChild(label);
+}
+
+function removeBeginningSpotlightPanels() {
+  document.querySelectorAll('.beginning-spotlight-panel').forEach(panel => panel.remove());
+  document.querySelectorAll('.beginning-spotlight-label').forEach(label => label.remove());
+}
+
+function clearBeginningStockGuide() {
+  beginningGuideActive = false;
+  beginningGuideStepIndex = 0;
+  removeBeginningSpotlightPanels();
+  document.querySelectorAll('.beginning-spotlight-target').forEach(el => {
+    el.classList.remove('beginning-spotlight-target');
+  });
+}
+
+function applyBeginningGuideTarget() {
+  document.querySelectorAll('.beginning-spotlight-target').forEach(el => {
+    el.classList.remove('beginning-spotlight-target');
+  });
+
+  const step = getBeginningGuideStep();
+  if (!step) return;
+
+  step.elements.forEach(el => {
+    if (el) el.classList.add('beginning-spotlight-target');
+  });
+}
+
+function showBeginningStockGuideStep() {
+  const step = getBeginningGuideStep();
+  if (!step) {
+    clearBeginningStockGuide();
+    return;
+  }
+
+  const target = step.elements.find(el => el && el.offsetParent !== null);
+  if (target) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  }
+
+  setTimeout(() => {
+    applyBeginningGuideTarget();
+    renderBeginningSpotlight();
+  }, 350);
+}
+
+function nextBeginningStockGuideStep() {
+  beginningGuideStepIndex += 1;
+  showBeginningStockGuideStep();
+}
+
+function startBeginningStockGuide() {
+  const modal = document.getElementById('first-time-modal');
+  if (modal) modal.remove();
+
+  const inputs = getBeginningGuideInputs();
+  const firstInput = inputs[0];
+  if (!firstInput) return;
+
+  beginningGuideActive = true;
+  beginningGuideStepIndex = 0;
+  showBeginningStockGuideStep();
+}
+
 function showMissingBeginningPopup(row, options = {}) {
   if (missingBeginningNoticeOpen) return;
 
@@ -647,13 +871,6 @@ function lockDayInputs() {
   if (button) {
     button.textContent = 'Finalized';
     button.disabled = true;
-  }
-}
-
-function checkMissingBeginningOnLoad() {
-  const row = findFirstRowMissingBeginning();
-  if (row) {
-    showMissingBeginningPopup(row);
   }
 }
 
@@ -839,10 +1056,12 @@ function saveAll() {
     showConfirmationModal({
       title: isBeginningSave ? 'Save Beginning Inventory?' : 'Save End of Day Inventory?',
       message: isBeginningSave
-        ? 'Blank Beg cells will be saved as 0 and the Beg column will be locked after saving. You cannot reverse this process.'
+        ? 'Blank Beg cells will be saved as 0. After saving, the Beg column will be locked and cannot be edited.'
         : 'This will finalize and lock this inventory day for all users. After saving, users can view this date but can no longer edit it.',
       confirmText: 'Save',
       cancelText: 'Cancel',
+      variant: isBeginningSave ? 'invensync' : '',
+      modalWidth: isBeginningSave ? '420px' : '390px',
       onConfirm: () => runInventorySave(isBeginningSave, isEndOfDaySave)
     });
     return;
@@ -1117,7 +1336,6 @@ document.addEventListener('DOMContentLoaded', function() {
     toggleFullscreen();
   }
 
-  setTimeout(checkMissingBeginningOnLoad, 100);
   setTimeout(refreshBeginningSaveMode, 100);
 });
 
@@ -1186,6 +1404,12 @@ document.addEventListener('keydown', handleFullscreenKey);
 document.addEventListener('keyup', handleFullscreenKey);
 window.addEventListener('keydown', handleFullscreenKey);
 window.addEventListener('keyup', handleFullscreenKey);
+window.addEventListener('resize', function() {
+  if (beginningGuideActive) renderBeginningSpotlight();
+});
+window.addEventListener('scroll', function() {
+  if (beginningGuideActive) renderBeginningSpotlight();
+}, true);
 
 // Sync products from Product Masterlist
 function syncProducts() {
