@@ -124,6 +124,7 @@ class Modal {
  * @param {string} options.newValue - New value to display
  * @param {string} options.confirmText - Confirm button label
  * @param {string} options.cancelText - Cancel button label
+ * @param {string} options.variant - Optional visual variant
  * @param {Function} options.onConfirm - Callback when confirmed
  * @param {Function} options.onCancel - Callback when cancelled
  */
@@ -137,11 +138,13 @@ function showConfirmationModal(options) {
     newValue,
     confirmText = 'Confirm',
     cancelText = 'Cancel',
+    variant = '',
     onConfirm,
     onCancel
   } = options;
   const hasCustomBody = Boolean(String(messageHtml || '').trim());
   const hasValueComparison = Boolean(oldValue && newValue);
+  const isInvenSyncVariant = variant === 'invensync';
   const defaultBodyHtml = `
     <div class="flex flex-col items-center text-center">
       <div class="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
@@ -153,6 +156,91 @@ function showConfirmationModal(options) {
       </div>
       <h3 class="text-xl font-bold text-slate-900">${title}</h3>
       <p class="mt-2 text-sm leading-6 text-slate-600">${message}</p>
+    </div>
+  `;
+  const standardModalInnerHtml = `
+    <!-- Body -->
+    <div class="px-6 pt-8 pb-6">
+      ${hasCustomBody
+        ? `
+          <div class="flex flex-col items-center text-center">
+            <div class="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 12h13"></path>
+                <path d="m13 6 6 6-6 6"></path>
+                <path d="M5 6v12"></path>
+              </svg>
+            </div>
+            <h3 class="text-xl font-bold text-slate-900">${title}</h3>
+          </div>
+          <div class="mt-4 text-sm text-slate-700" style="max-height:55vh;overflow-y:auto;">${messageHtml}</div>
+        `
+        : defaultBodyHtml
+      }
+
+      ${hasValueComparison ? `
+      <div class="mt-5 bg-slate-50 rounded-lg p-3 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-medium text-slate-500 uppercase">Old Value</span>
+          <span class="text-sm font-semibold text-slate-700">${oldValue}</span>
+        </div>
+        <div class="border-t border-slate-200"></div>
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-medium text-indigo-600 uppercase">New Value</span>
+          <span class="text-sm font-bold text-indigo-600">${newValue}</span>
+        </div>
+      </div>
+      ` : ''}
+    </div>
+
+    <!-- Footer -->
+    <div class="px-6 py-4 border-t border-slate-200 grid grid-cols-2 gap-3">
+      <button data-modal-cancel class="h-11 px-4 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+        ${cancelText}
+      </button>
+      <button data-modal-confirm class="h-11 px-4 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-lg shadow-indigo-600/25">
+        ${confirmText}
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14"></path>
+          <path d="m13 5 7 7-7 7"></path>
+        </svg>
+      </button>
+    </div>
+  `;
+  const invensyncModalInnerHtml = `
+    <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
+      <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center text-white">
+        <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 6 9 17l-5-5"></path>
+        </svg>
+      </div>
+      <div>
+        <h3 class="text-white font-bold text-lg leading-tight">${title}</h3>
+        <p class="text-slate-400 text-xs mt-0.5">Review before continuing</p>
+      </div>
+    </div>
+    <div class="px-6 py-5 space-y-4">
+      <div class="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-500 flex-shrink-0 mt-0.5">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M12 16v-4"></path>
+          <path d="M12 8h.01"></path>
+        </svg>
+        <p class="text-sm leading-6 text-slate-700">${message}</p>
+      </div>
+      <p class="text-xs leading-5 text-slate-500">This action locks the beginning quantity column after saving.</p>
+    </div>
+    <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 grid grid-cols-2 gap-3">
+      <button data-modal-cancel class="h-11 px-4 text-sm font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors">
+        ${cancelText}
+      </button>
+      <button data-modal-confirm class="h-11 px-4 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-sm">
+        ${confirmText}
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14"></path>
+          <path d="m13 5 7 7-7 7"></path>
+        </svg>
+      </button>
     </div>
   `;
 
@@ -169,54 +257,8 @@ function showConfirmationModal(options) {
       <div data-modal-backdrop class="absolute inset-0 bg-black/60 backdrop-blur-[1px] opacity-0 transition-opacity duration-300"></div>
       
       <!-- Modal Content -->
-      <div data-modal-content class="relative bg-white rounded-xl shadow-2xl w-full scale-95 opacity-0 transition-all duration-300 overflow-hidden" style="max-width: ${modalWidth};">
-        <!-- Body -->
-        <div class="px-6 pt-8 pb-6">
-          ${hasCustomBody
-            ? `
-              <div class="flex flex-col items-center text-center">
-                <div class="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M5 12h13"></path>
-                    <path d="m13 6 6 6-6 6"></path>
-                    <path d="M5 6v12"></path>
-                  </svg>
-                </div>
-                <h3 class="text-xl font-bold text-slate-900">${title}</h3>
-              </div>
-              <div class="mt-4 text-sm text-slate-700" style="max-height:55vh;overflow-y:auto;">${messageHtml}</div>
-            `
-            : defaultBodyHtml
-          }
-          
-          ${hasValueComparison ? `
-          <div class="mt-5 bg-slate-50 rounded-lg p-3 space-y-2">
-            <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-slate-500 uppercase">Old Value</span>
-              <span class="text-sm font-semibold text-slate-700">${oldValue}</span>
-            </div>
-            <div class="border-t border-slate-200"></div>
-            <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-indigo-600 uppercase">New Value</span>
-              <span class="text-sm font-bold text-indigo-600">${newValue}</span>
-            </div>
-          </div>
-          ` : ''}
-        </div>
-        
-        <!-- Footer -->
-        <div class="px-6 py-4 border-t border-slate-200 grid grid-cols-2 gap-3">
-          <button data-modal-cancel class="h-11 px-4 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
-            ${cancelText}
-          </button>
-          <button data-modal-confirm class="h-11 px-4 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-lg shadow-indigo-600/25">
-            ${confirmText}
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M5 12h14"></path>
-              <path d="m13 5 7 7-7 7"></path>
-            </svg>
-          </button>
-        </div>
+      <div data-modal-content class="relative bg-white ${isInvenSyncVariant ? 'rounded-2xl' : 'rounded-xl'} shadow-2xl w-full scale-95 opacity-0 transition-all duration-300 overflow-hidden" style="max-width: ${modalWidth};">
+        ${isInvenSyncVariant ? invensyncModalInnerHtml : standardModalInnerHtml}
       </div>
     </div>
   `;

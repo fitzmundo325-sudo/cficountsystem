@@ -1299,6 +1299,73 @@ def _build_missing_report_dates(store_id, month_start, cutoff_date):
     return missing_dates
 
 
+def _build_missing_invensync_dates(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return []
+
+    first_inventory_date = (
+        DailyEndingInventory.query
+        .filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.is_finalized.is_(True),
+        )
+        .with_entities(func.min(DailyEndingInventory.inventory_date))
+        .scalar()
+    )
+    if not first_inventory_date or first_inventory_date > cutoff_date:
+        return []
+
+    start_date = max(month_start, first_inventory_date)
+    existing_dates = {
+        row.inventory_date for row in DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= start_date,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).all()
+        if row.inventory_date
+    }
+
+    missing_dates = []
+    cursor = start_date
+    while cursor <= cutoff_date:
+        if cursor not in existing_dates:
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+    return missing_dates
+
+
+def _store_has_operational_data(store_id):
+    if not store_id:
+        return False
+
+    has_daily_report = DailyReport.query.filter_by(store_id=store_id).first() is not None
+    if has_daily_report:
+        return True
+
+    has_pos_sold = (
+        PosSold.query
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(DailyReport.store_id == store_id)
+        .first()
+        is not None
+    )
+    if has_pos_sold:
+        return True
+
+    has_inventory = DailyEndingInventory.query.filter(
+        DailyEndingInventory.store_id == store_id,
+        (
+            DailyEndingInventory.is_beginning_finalized.is_(True)
+            | DailyEndingInventory.is_finalized.is_(True)
+        ),
+    ).first() is not None
+    return has_inventory
+
+
 def _format_header_date(date_value):
     if not date_value:
         return ''
@@ -2177,6 +2244,9 @@ def home():
     if role == 'Cluster Manager':
         return redirect(url_for('views.cluster_dashboard'))
     if role == 'Store Manager':
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if store and not _store_has_operational_data(store.id):
+            return redirect(url_for('views.invensync'))
         return redirect(url_for('views.store_manager_report'))
     if role == 'Inventory Staff':
         return redirect(url_for('views.store_manager_wastage'))
@@ -5610,6 +5680,15 @@ def invensync():
             selected_date = date.today()
     else:
         selected_date = date.today()
+
+    if not selected_date_str:
+        today_date = date.today()
+        month_start = today_date.replace(day=1)
+        missing_invensync_dates = _build_missing_invensync_dates(store.id, month_start, today_date)
+        if missing_invensync_dates:
+            query_args = request.args.to_dict(flat=True)
+            query_args['date'] = missing_invensync_dates[0]['iso']
+            return redirect(url_for('views.invensync', **query_args))
 
     # Get or create inventory record
     inventory = DailyEndingInventory.query.filter_by(
