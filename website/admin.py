@@ -1,5 +1,5 @@
 from flask import Blueprint, redirect, render_template, request, url_for, flash, jsonify
-from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, PosSold, MenuInventoryItem, DailyEndingInventory, DailyEndingInventoryItem, TafTransfer, TafTransferItem
+from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, PosSold, MenuInventoryItem, DailyEndingInventory, DailyEndingInventoryItem, TafTransfer, TafTransferItem, StoreProductBuffer
 from . import db
 from .audit import log_audit_event, verify_audit_chain
 from werkzeug.security import generate_password_hash
@@ -2529,9 +2529,63 @@ def admin_oracle():
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
+    clusters = (
+        Cluster.query
+        .options(
+            selectinload(Cluster.manager),
+            selectinload(Cluster.stores).selectinload(Store.manager),
+        )
+        .order_by(Cluster.name.asc())
+        .all()
+    )
+    unassigned_stores = (
+        Store.query
+        .options(selectinload(Store.manager))
+        .filter(Store.cluster_id.is_(None))
+        .order_by(Store.name.asc())
+        .all()
+    )
+
+    clustered_store_ids = [
+        int(store.id)
+        for cluster in clusters
+        for store in cluster.stores
+    ]
+    assigned_store_count = len(clustered_store_ids)
+    configured_store_ids = {
+        int(store_id)
+        for store_id, in (
+            db.session.query(StoreProductBuffer.store_id)
+            .filter(StoreProductBuffer.store_id.in_(clustered_store_ids))
+            .distinct()
+            .all()
+        )
+    } if clustered_store_ids else set()
+    product_count = ProductMaster.query.count()
+
+    cluster_cards = []
+    for cluster in clusters:
+        stores = sorted(cluster.stores, key=lambda store: (store.name or '').lower())
+        configured_count = sum(1 for store in stores if int(store.id) in configured_store_ids)
+        cluster_cards.append({
+            'cluster': cluster,
+            'stores': stores,
+            'store_count': len(stores),
+            'configured_count': configured_count,
+            'manager_name': (cluster.manager.full_name or cluster.manager.username) if cluster.manager else 'Unassigned',
+        })
+
     return render_template(
         'admin/oracle.html',
         user=current_user,
+        cluster_cards=cluster_cards,
+        unassigned_stores=unassigned_stores,
+        summary={
+            'cluster_count': len(clusters),
+            'assigned_store_count': assigned_store_count,
+            'configured_store_count': len(configured_store_ids),
+            'product_count': product_count,
+        },
     )
 
 

@@ -196,8 +196,8 @@
         </div>
         <span class="nav-label whitespace-nowrap truncate">InvenSync</span>
       </a>
-      <a href="/admin/oracle" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/oracle') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Oracle">
-        <div class="shrink-0 {% if request.path.startswith('/admin/oracle') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+      <a href="/admin/oracle" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/oracle') or request.path.startswith('/cluster-manager/oracle/store') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Oracle">
+        <div class="shrink-0 {% if request.path.startswith('/admin/oracle') or request.path.startswith('/cluster-manager/oracle/store') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>
         </div>
         <span class="nav-label whitespace-nowrap truncate">Oracle</span>

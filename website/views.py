@@ -6305,6 +6305,7 @@ def cluster_store_order_form(store_id):
         store=store,
         products=products,
         cluster_view=True,
+        admin_shell=(role in ('Admin', 'Superadmin')),
         cluster_id=store.cluster_id,
         store_buffers=store_buffers,
         invensync_data=invensync_data,
