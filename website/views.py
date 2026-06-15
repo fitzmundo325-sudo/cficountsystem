@@ -2753,7 +2753,6 @@ def store_manager_pos_sold():
 
     selected_report_date = selected_date.strftime('%Y-%m-%d')
     next_missing_date = missing_dates[0]['iso'] if missing_dates else None
-    show_pos_flow_guide = str(request.args.get('guide') or '').strip() == '1'
     pos_scan_success = str(request.args.get('pos_scan_success') or '').strip() == '1'
     try:
         pos_scan_rows = int(request.args.get('pos_scan_rows') or 0)
@@ -2785,6 +2784,12 @@ def store_manager_pos_sold():
             pos_sold_items = saved_pos_sold_items
             if pos_sold_items:
                 pos_sold_source = 'saved'
+
+    show_pos_flow_guide = (
+        role == 'Store Manager'
+        and not pos_sold_locked
+        and not missing_dates
+    )
 
     return render_template(
         'store_manager/pos_sold.html',
@@ -5574,7 +5579,17 @@ def save_daily_ending_inventory():
             DailyEndingInventory.store_id == inventory.store_id,
             DailyEndingInventory.inventory_date < inventory.inventory_date,
         ).first() is None
+        if finalize_beginning and not is_first_inventory_baseline:
+            return jsonify({
+                'success': False,
+                'error': 'Beginning inventory can only be finalized during the first inventory setup for this store.'
+            }), 409
         has_beginning_payload = any('beginning_qty' in item_data for item_data in items_data)
+        if finalize_beginning and not has_beginning_payload:
+            return jsonify({
+                'success': False,
+                'error': 'Beginning inventory save requires beginning quantities.'
+            }), 400
         _, global_config_data = _get_or_create_global_invensync_config()
         beginning_qty_is_locked = 'beginning_qty' in global_config_data.get('locked_columns', [])
         allow_beginning_qty_update = (

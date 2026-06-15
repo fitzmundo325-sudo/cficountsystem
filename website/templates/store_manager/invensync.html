@@ -832,8 +832,7 @@ function refreshBeginningSaveMode() {
     isSavingBeginningInventory = false;
   }
 
-  const hasMissingBeginning = Boolean(findFirstRowMissingBeginning());
-  isSavingBeginningInventory = !isBeginningFinalized && (requiresBeginningStockFirst || hasMissingBeginning);
+  isSavingBeginningInventory = !isBeginningFinalized && requiresBeginningStockFirst;
 
   const button = document.getElementById('save-inventory-btn');
   if (button) {
@@ -1050,8 +1049,13 @@ function saveAll() {
   }
   if (button && button.disabled) return;
 
-  const isBeginningSave = isSavingBeginningInventory || Boolean(findFirstRowMissingBeginning());
+  const missingBeginningRow = findFirstRowMissingBeginning();
+  const isBeginningSave = isSavingBeginningInventory;
   const isEndOfDaySave = !isBeginningSave;
+  if (missingBeginningRow && !isBeginningSave) {
+    showMissingBeginningPopup(missingBeginningRow);
+    return;
+  }
   if (typeof showConfirmationModal === 'function') {
     showConfirmationModal({
       title: isBeginningSave ? 'Save Beginning Inventory?' : 'Save End of Day Inventory?',
