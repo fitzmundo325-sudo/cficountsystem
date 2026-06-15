@@ -5097,6 +5097,7 @@ def cluster_manager_oracle():
     for b in saved_buffers:
         buffers_map.setdefault(b.store_id, {})[b.product_id] = b.buffer_pct
 
+    admin_shell = (role in ('Admin', 'Superadmin'))
     return render_template('cluster_manager/oracle.html',
                            user=current_user,
                            cluster=cluster,
@@ -5105,8 +5106,9 @@ def cluster_manager_oracle():
                            products=products,
                            buffers_map=buffers_map,
                            cluster_sidebar_stores=cluster_sidebar_stores,
-                           force_cluster_sidebar=(role in ('Admin', 'Superadmin')),
-                           cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin') else '')
+                           force_cluster_sidebar=admin_shell,
+                           cluster_sidebar_cluster_id=cluster.id if admin_shell else '',
+                           admin_shell=admin_shell)
 
 
 @views.route('/cluster-manager/invensync')
