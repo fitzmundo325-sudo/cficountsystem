@@ -2,6 +2,64 @@
 {% block title %}POS Sold - {{ store.name }}{% endblock %}
 
 {% block content %}
+<style>
+  @keyframes bounceIn {
+    0% { opacity: 0; transform: scale(0.7); }
+    50% { transform: scale(1.03); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+
+  .animate-bounce-in {
+    animation: bounceIn 0.4s ease-out;
+  }
+
+  .pos-tour-panel {
+    position: fixed;
+    z-index: 9998;
+    background: rgba(15, 23, 42, 0.72);
+    pointer-events: auto;
+  }
+
+  .pos-tour-target {
+    position: relative;
+    z-index: 9999;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.35), 0 0 24px rgba(245, 158, 11, 0.55);
+  }
+
+  .pos-tour-label {
+    position: fixed;
+    z-index: 9999;
+    max-width: min(360px, calc(100vw - 32px));
+    color: #ffffff;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.35;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    pointer-events: auto;
+  }
+
+  .pos-tour-label button {
+    margin-top: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 800;
+    text-shadow: none;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .pos-tour-label button:hover {
+    background: #f8fafc;
+    transform: translateY(-1px);
+  }
+</style>
+
 <header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
   <div class="flex items-center gap-3 sm:gap-4">
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
@@ -64,11 +122,16 @@
       <form action="{{ url_for('views.review_pos_sold_excel') }}" method="POST" enctype="multipart/form-data" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 lg:items-end">
         <input type="hidden" name="report_date" id="pos-upload-report-date" value="{{ selected_report_date if selected_report_date else today }}">
         <div>
-          <label for="pos_file" class="block text-[11px] font-semibold text-slate-700 mb-1">POS Excel File (.xls / .xlsx)</label>
-          <input id="pos_file" name="pos_file" type="file" accept=".xls,.xlsx" required class="w-full h-10 px-3 py-2 bg-slate-50 border border-slate-200 rounded-md text-xs text-slate-700 focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none file:mr-3 file:h-7 file:border-0 file:rounded-md file:bg-white file:px-3 file:text-xs file:font-semibold file:text-slate-700 hover:file:bg-slate-100">
+          <label for="pos_file" class="block text-sm font-semibold text-slate-800 mb-1">POS Excel File</label>
+          <p class="text-xs text-slate-500 mb-1">Upload the POS sold extract file.</p>
+          <input id="pos_file" name="pos_file" type="file" accept=".xls,.xlsx" required class="sr-only pos-file-input" data-file-label="pos-file-label">
+          <label id="pos-file-guide-target" for="pos_file" class="flex min-h-[44px] w-full cursor-pointer items-center overflow-hidden rounded-none border border-slate-200 bg-white text-sm transition-colors hover:border-amber-300">
+            <span class="shrink-0 border-r border-slate-200 bg-slate-50 px-3 py-2 font-medium text-slate-800">Choose File</span>
+            <span id="pos-file-label" class="truncate px-3 py-2 text-slate-500">No file chosen</span>
+          </label>
         </div>
         <div class="flex items-center gap-2">
-          <button type="submit" class="h-10 w-full sm:w-auto px-5 text-xs font-semibold bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-all shadow-sm shadow-amber-600/20">
+          <button id="pos-scan-guide-target" type="submit" class="h-10 w-full sm:w-auto px-5 text-xs font-semibold bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-all shadow-sm shadow-amber-600/20">
             Scan Data
           </button>
           {% if pos_sold_source == 'draft' and pos_sold_items %}
@@ -88,6 +151,46 @@
           {% endif %}
         </div>
       </form>
+      {% if show_pos_flow_guide %}
+      <div id="pos-tour-sample-card" class="hidden rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p class="text-[11px] font-semibold text-amber-700">Showing extracted preview data (not yet saved).</p>
+          <div class="flex items-center gap-2">
+            <a id="pos-tour-next-target" href="{{ url_for('views.store_manager_report', date=selected_report_date, lock_date=1) }}" class="h-10 px-5 inline-flex items-center justify-center text-xs font-semibold text-white bg-indigo-600 rounded-md shadow-sm shadow-indigo-600/20">
+              Next
+            </a>
+            <button id="pos-tour-clear-target" type="button" class="h-10 w-10 shrink-0 inline-flex items-center justify-center text-rose-700 bg-rose-50 border border-rose-200 rounded-md" title="Clear Extracted Data" aria-label="Clear Extracted Data">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="overflow-x-auto border border-slate-200 rounded-md bg-white">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-100/80">
+              <tr>
+                <th class="px-4 py-2 text-left text-[11px] font-bold text-slate-500 uppercase">Product</th>
+                <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Qty</th>
+                <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Gross</th>
+                <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Discount</th>
+                <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Net Sales</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr class="bg-white">
+                <td class="px-4 py-2.5 text-xs text-slate-700">Sample Product</td>
+                <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">12</td>
+                <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">0.00</td>
+                <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">0.00</td>
+                <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">0.00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
       {% elif pos_sold_items %}
       <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
         <p class="text-xs font-semibold text-emerald-800">POS sold already uploaded for this report date (one-time upload only).</p>
@@ -233,31 +336,34 @@
 {% endif %}
 
 {% if show_pos_flow_guide %}
-<div id="pos-flow-guide-modal" class="fixed inset-0 z-50 hidden">
-  <div id="pos-flow-guide-overlay" class="absolute inset-0 bg-slate-900/50"></div>
-  <div class="relative z-10 min-h-full flex items-center justify-center p-4">
-    <div class="w-full max-w-xl bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
-      <div class="px-5 py-4 border-b border-slate-200 bg-slate-50">
-        <h3 class="text-lg font-bold text-slate-900">Daily Report Submission Guide</h3>
-        <p class="text-xs text-slate-600 mt-1">Follow these steps in order for report date <strong>{{ selected_report_date }}</strong>.</p>
+<div id="pos-tour-start-modal" class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40" style="margin-top: 0;">
+  <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
+    <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
+      <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
+          <path d="M3 3v18h18"></path>
+          <path d="m19 9-5 5-4-4-3 3"></path>
+        </svg>
       </div>
-      <div class="px-5 py-4 text-sm text-slate-700">
-        <ol class="space-y-2.5">
-          <li class="rounded-lg border border-slate-200 bg-white px-3 py-2.5"><span class="font-semibold text-slate-900">1.</span> Upload POS Excel file.</li>
-          <li class="rounded-lg border border-slate-200 bg-white px-3 py-2.5"><span class="font-semibold text-slate-900">2.</span> Click <span class="font-semibold text-amber-700">Scan Data</span>.</li>
-          <li class="rounded-lg border border-slate-200 bg-white px-3 py-2.5"><span class="font-semibold text-slate-900">3.</span> Click <span class="font-semibold text-indigo-700">Next</span> to open Daily Report.</li>
-          <li class="rounded-lg border border-slate-200 bg-white px-3 py-2.5"><span class="font-semibold text-slate-900">4.</span> Fill Daily Sales fields and submit Daily Report.</li>
-          <li class="rounded-lg border border-slate-200 bg-white px-3 py-2.5"><span class="font-semibold text-slate-900">5.</span> Z Reading image is optional for now (can upload later).</li>
-        </ol>
-        <div class="mt-2.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-900">
-          One submit saves both Daily Report and reviewed POS Sold data.
-        </div>
+      <div>
+        <h2 class="text-white font-bold text-lg leading-tight">POS Sold Guide</h2>
+        <p class="text-slate-400 text-xs mt-0.5">{{ store.name }}</p>
       </div>
-      <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
-        <button id="pos-flow-guide-close" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm">
-          Got It
-        </button>
+    </div>
+    <div class="px-6 py-5 space-y-4">
+      <div class="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-500 flex-shrink-0 mt-0.5">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M12 16v-4M12 8h.01"></path>
+        </svg>
+        <p class="text-sm text-slate-700">No POS Sold data has been uploaded yet for this report date.</p>
       </div>
+      <p class="text-sm text-slate-600">Use this guide to scan the POS Excel file, review the extracted rows, and continue to Daily Report submission.</p>
+    </div>
+    <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+      <button id="pos-tour-start-btn" type="button" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+        Got it, start guide!
+      </button>
     </div>
   </div>
 </div>
@@ -280,13 +386,18 @@
     const nextMissingDate = {{ next_missing_date|tojson }};
     const missingDatesModal = document.getElementById('missing-dates-modal');
     const missingDatesGoBtn = document.getElementById('missing-dates-go');
-    const posFlowGuideModal = document.getElementById('pos-flow-guide-modal');
-    const posFlowGuideOverlay = document.getElementById('pos-flow-guide-overlay');
-    const posFlowGuideCloseBtn = document.getElementById('pos-flow-guide-close');
+    const shouldShowPosTour = {{ (show_pos_flow_guide | default(false)) | tojson }};
+    const posTourSampleCard = document.getElementById('pos-tour-sample-card');
+    const posTourStartModal = document.getElementById('pos-tour-start-modal');
+    const posTourStartBtn = document.getElementById('pos-tour-start-btn');
+    const posFileInput = document.getElementById('pos_file');
+    const posFileLabel = document.getElementById('pos-file-label');
     const zReadingRequiredInput = document.getElementById('z_reading_image_required');
     const zReadingLocalPreview = document.getElementById('z-reading-local-preview');
     const zReadingLocalPreviewImg = document.getElementById('z-reading-local-preview-img');
     const zReadingLocalPreviewName = document.getElementById('z-reading-local-preview-name');
+    let posTourActive = false;
+    let posTourStepIndex = 0;
 
     function syncPosDateFields() {
       if (!reportDateInput) return;
@@ -304,6 +415,16 @@
         }
       });
       reportDateInput.addEventListener('input', syncPosDateFields);
+    }
+
+    if (posFileInput && posFileLabel) {
+      posFileInput.addEventListener('change', function() {
+        const fileName = posFileInput.files && posFileInput.files.length ? posFileInput.files[0].name : 'No file chosen';
+        posFileLabel.textContent = fileName;
+        posFileLabel.classList.toggle('text-slate-700', fileName !== 'No file chosen');
+        posFileLabel.classList.toggle('font-semibold', fileName !== 'No file chosen');
+        posFileLabel.classList.toggle('text-slate-500', fileName === 'No file chosen');
+      });
     }
 
     if (zReadingRequiredInput) {
@@ -388,22 +509,219 @@
       showMissingDatesModal();
     }
 
-    function closePosFlowGuideModal() {
-      if (!posFlowGuideModal) return;
-      posFlowGuideModal.classList.add('hidden');
-      document.body.classList.remove('overflow-hidden');
+    function getPosTourElementGroupRect(elements) {
+      const visibleElements = elements.filter(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (!visibleElements.length) return null;
+
+      const rects = visibleElements.map(function(el) {
+        return el.getBoundingClientRect();
+      });
+      const padding = 10;
+      return {
+        top: Math.max(0, Math.min.apply(null, rects.map(function(rect) { return rect.top; })) - padding),
+        left: Math.max(0, Math.min.apply(null, rects.map(function(rect) { return rect.left; })) - padding),
+        right: Math.min(window.innerWidth, Math.max.apply(null, rects.map(function(rect) { return rect.right; })) + padding),
+        bottom: Math.min(window.innerHeight, Math.max.apply(null, rects.map(function(rect) { return rect.bottom; })) + padding)
+      };
     }
 
-    if (posFlowGuideModal) {
-      posFlowGuideModal.classList.remove('hidden');
-      document.body.classList.add('overflow-hidden');
-      if (posFlowGuideCloseBtn) {
-        posFlowGuideCloseBtn.addEventListener('click', closePosFlowGuideModal);
-      }
-      if (posFlowGuideOverlay) {
-        posFlowGuideOverlay.addEventListener('click', closePosFlowGuideModal);
+    function getPosTourStep() {
+      const nextTarget = document.getElementById('go-daily-summary-btn') || document.getElementById('pos-tour-next-target');
+      const steps = [
+        {
+          elements: [document.getElementById('pos-file-guide-target')],
+          text: 'Choose the POS Excel file for this report date.',
+          placement: 'bottom',
+          nextText: 'Next',
+          showSample: false
+        },
+        {
+          elements: [document.getElementById('pos-scan-guide-target')],
+          text: 'Click Scan Data to extract the POS sold rows.',
+          placement: 'left',
+          nextText: 'Next',
+          showSample: false
+        },
+        {
+          elements: [document.getElementById('pos-tour-sample-card')],
+          text: 'After scanning, extracted POS rows will appear here for preview.',
+          placement: 'bottom-right',
+          align: 'right',
+          nextText: 'Next',
+          showSample: true
+        },
+        {
+          elements: [nextTarget],
+          text: 'Click Next to open the Daily Report and continue submission.',
+          placement: 'bottom',
+          nextText: 'Next',
+          showSample: true
+        },
+        {
+          elements: [document.getElementById('z_reading_image_required')],
+          text: 'Z Reading image is optional for now and can be uploaded later.',
+          placement: 'top',
+          nextText: 'Finish',
+          showSample: true
+        }
+      ];
+      const availableSteps = steps.filter(function(step) {
+        return step.elements.some(function(el) { return Boolean(el); });
+      });
+      return availableSteps[posTourStepIndex] || null;
+    }
+
+    function removePosTourPanels() {
+      document.querySelectorAll('.pos-tour-panel').forEach(function(panel) {
+        panel.remove();
+      });
+      document.querySelectorAll('.pos-tour-label').forEach(function(label) {
+        label.remove();
+      });
+    }
+
+    function clearPosTour() {
+      posTourActive = false;
+      posTourStepIndex = 0;
+      removePosTourPanels();
+      document.querySelectorAll('.pos-tour-target').forEach(function(el) {
+        el.classList.remove('pos-tour-target');
+      });
+      if (posTourSampleCard) {
+        posTourSampleCard.classList.add('hidden');
       }
     }
+
+    function applyPosTourTarget() {
+      document.querySelectorAll('.pos-tour-target').forEach(function(el) {
+        el.classList.remove('pos-tour-target');
+      });
+
+      const step = getPosTourStep();
+      if (!step) return;
+
+      step.elements.forEach(function(el) {
+        if (el) el.classList.add('pos-tour-target');
+      });
+    }
+
+    function renderPosTourSpotlight() {
+      removePosTourPanels();
+
+      const step = getPosTourStep();
+      if (!step) {
+        clearPosTour();
+        return;
+      }
+
+      const rect = getPosTourElementGroupRect(step.elements);
+      if (!rect) return;
+
+      const panels = [
+        { top: 0, left: 0, width: window.innerWidth, height: rect.top },
+        { top: rect.bottom, left: 0, width: window.innerWidth, height: window.innerHeight - rect.bottom },
+        { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
+        { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top }
+      ];
+
+      panels.forEach(function(panel) {
+        const el = document.createElement('div');
+        el.className = 'pos-tour-panel';
+        el.style.top = `${panel.top}px`;
+        el.style.left = `${panel.left}px`;
+        el.style.width = `${Math.max(0, panel.width)}px`;
+        el.style.height = `${Math.max(0, panel.height)}px`;
+        document.body.appendChild(el);
+      });
+
+      const label = document.createElement('div');
+      label.className = 'pos-tour-label';
+      const message = document.createElement('div');
+      message.textContent = step.text;
+      const nextButton = document.createElement('button');
+      nextButton.type = 'button';
+      nextButton.textContent = step.nextText;
+      nextButton.addEventListener('click', nextPosTourStep);
+      label.appendChild(message);
+      label.appendChild(nextButton);
+      if (step.align === 'right') {
+        label.style.textAlign = 'right';
+      }
+
+      if (step.placement === 'bottom') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+      } else if (step.placement === 'bottom-right') {
+        label.style.left = `${Math.max(16, Math.min(rect.right - 360, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+      } else if (step.placement === 'top') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.max(24, rect.top - 118)}px`;
+      } else if (step.placement === 'left') {
+        label.style.left = `${Math.max(16, rect.left - 380)}px`;
+        label.style.top = `${Math.max(24, rect.top)}px`;
+      } else {
+        const labelLeft = rect.right + 24;
+        const hasRightSpace = labelLeft + 320 <= window.innerWidth;
+        label.style.left = `${hasRightSpace ? labelLeft : Math.max(16, rect.left - 340)}px`;
+        label.style.top = `${Math.max(24, rect.top + Math.min(96, Math.max(0, (rect.bottom - rect.top) / 3)))}px`;
+      }
+      document.body.appendChild(label);
+    }
+
+    function showPosTourStep() {
+      const step = getPosTourStep();
+      if (!step) {
+        clearPosTour();
+        return;
+      }
+
+      if (posTourSampleCard) {
+        posTourSampleCard.classList.toggle('hidden', !step.showSample);
+      }
+
+      const target = step.elements.find(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+
+      setTimeout(function() {
+        applyPosTourTarget();
+        renderPosTourSpotlight();
+      }, 350);
+    }
+
+    function nextPosTourStep() {
+      posTourStepIndex += 1;
+      showPosTourStep();
+    }
+
+    function startPosTour() {
+      if (!shouldShowPosTour) return;
+      if (posTourStartModal) {
+        posTourStartModal.remove();
+      }
+      posTourActive = true;
+      posTourStepIndex = 0;
+      showPosTourStep();
+    }
+
+    if (posTourStartBtn) {
+      posTourStartBtn.addEventListener('click', startPosTour);
+    } else if (shouldShowPosTour) {
+      setTimeout(startPosTour, 550);
+    }
+
+    window.addEventListener('resize', function() {
+      if (posTourActive) renderPosTourSpotlight();
+    });
+    window.addEventListener('scroll', function() {
+      if (posTourActive) renderPosTourSpotlight();
+    }, { passive: true });
 
   });
 </script>
