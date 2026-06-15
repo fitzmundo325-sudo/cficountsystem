@@ -104,7 +104,7 @@
           {% endif %}
           <div class="mt-auto pt-2 border-t border-slate-100 flex items-center justify-between">
             <span class="text-[10px] text-slate-400">Manager ID: {{ s.manager_id or '—' }}</span>
-            <a href="{{ url_for('views.cluster_store_order_form', store_id=s.id) }}" class="px-3 py-1.5 bg-sky-600 text-white text-xs font-semibold rounded-lg hover:bg-sky-700 transition-colors">
+            <a href="{{ url_for('views.cluster_store_order_form', store_id=s.id, cluster_id=cluster.id) }}" class="px-3 py-1.5 bg-sky-600 text-white text-xs font-semibold rounded-lg hover:bg-sky-700 transition-colors">
               Edit Buffer
             </a>
           </div>

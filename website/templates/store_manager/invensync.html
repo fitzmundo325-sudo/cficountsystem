@@ -7,7 +7,7 @@
 
 {% block content %}
 
-{% set is_view_only = current_user.role == 'Inventory Staff' %}
+{% set is_view_only = current_user.role in ['Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin'] %}
 {% set is_day_locked = inventory.is_finalized|default(false) %}
 {% set is_beginning_locked = inventory.is_beginning_finalized|default(false) or store_beginning_baseline_finalized|default(false) %}
 {% set can_enter_beginning_stock = allow_beginning_stock_entry|default(false) %}
@@ -181,7 +181,7 @@
   </div>
   {% endif %}
 
-  {% if is_first_time and not is_view_only %}
+  {% if is_first_time and current_user.role == 'Store Manager' %}
   <!-- First Time User Popup Modal -->
   <div id="first-time-modal" class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40" style="margin-top: 0;" onclick="if(event.target===this)this.remove()">
     <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
@@ -1532,11 +1532,10 @@ function updateFullscreenContent() {
   }
 }
 
-// Make all inputs readonly for Inventory Staff (view-only mode)
+// Make inventory fields readonly for view-only roles.
 {% if is_view_only %}
 document.addEventListener('DOMContentLoaded', function() {
-  // Make all input fields readonly
-  document.querySelectorAll('input[type="number"], input[type="text"], input[type="checkbox"], select').forEach(function(input) {
+  document.querySelectorAll('#main-content tbody tr[data-product-id] input[type="number"], #main-content tbody tr[data-product-id] input[type="text"], #main-content tbody tr[data-product-id] input[type="checkbox"], #main-content tbody tr[data-product-id] select').forEach(function(input) {
     if (input.type === 'checkbox') {
       input.disabled = true;
     } else {
@@ -1545,8 +1544,7 @@ document.addEventListener('DOMContentLoaded', function() {
     input.classList.add('cursor-not-allowed', 'opacity-75');
   });
   
-  // Disable onchange events
-  document.querySelectorAll('[onchange]').forEach(function(el) {
+  document.querySelectorAll('#main-content tbody tr[data-product-id] [onchange]').forEach(function(el) {
     el.removeAttribute('onchange');
   });
 });
