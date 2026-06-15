@@ -36,7 +36,7 @@
   <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden backdrop-blur-sm lg:hidden"></div>
 
   <!-- Sidebar -->
-  <aside id="sidebar" class="sidebar-transition fixed top-0 left-0 h-full z-40 w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex flex-col -translate-x-full lg:translate-x-0">
+  <aside id="sidebar" class="sidebar-transition fixed inset-y-0 left-0 h-screen max-h-screen z-40 w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex min-h-0 flex-col -translate-x-full lg:translate-x-0">
     
     <!-- Logo Section -->
     <div class="flex items-center justify-between h-20 px-6 border-b border-slate-800 shrink-0">
@@ -95,7 +95,7 @@
     {% set is_stores_menu_active = is_raw_data_active or (force_cluster_sidebar and is_cluster_data_active and current_store_id) %}
     {% set cluster_store_href_base = '/cluster-manager/cluster-data' if force_cluster_sidebar else '/cluster-manager/raw-data' %}
 
-    <nav class="flex-1 px-3 space-y-1 custom-scrollbar overflow-y-auto mt-2">
+    <nav class="min-h-0 flex-1 px-3 space-y-1 custom-scrollbar overflow-y-auto overscroll-contain mt-2 pb-3">
       <!-- Home (All Users) -->
       <a href="/" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_home_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Home">
         <div class="shrink-0 {% if is_home_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">

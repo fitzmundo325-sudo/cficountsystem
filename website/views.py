@@ -5545,6 +5545,12 @@ def daily_ending_inventory():
 @login_required
 def save_daily_ending_inventory():
     """Save daily ending inventory data"""
+    if (current_user.role or '').strip() != 'Store Manager':
+        return jsonify({
+            'success': False,
+            'error': 'Only Store Managers can edit InvenSync inventory.'
+        }), 403
+
     try:
         data = request.get_json()
         inventory_id = data.get('inventory_id')
@@ -5950,7 +5956,7 @@ def invensync():
         DailyEndingInventory.inventory_date < selected_date
     ).first() is not None
     is_first_time = (not store_beginning_baseline_finalized) and not has_any_beginning and not prev_inventory_exists
-    allow_beginning_stock_entry = is_first_time and current_user.role != 'Inventory Staff'
+    allow_beginning_stock_entry = is_first_time and current_user.role == 'Store Manager'
 
     # Build cluster sidebar context for Cluster Manager
     cluster_sidebar_ctx = {}
@@ -6246,10 +6252,14 @@ def oracle():
 
 @views.route('/cluster-manager/store-order-form/<int:store_id>')
 @login_required
+def cluster_store_order_form_legacy(store_id):
+    return redirect(url_for('views.cluster_store_order_form', store_id=store_id, **request.args.to_dict(flat=True)))
+
+
+@views.route('/cluster-manager/oracle/store/<int:store_id>/buffers')
+@login_required
 def cluster_store_order_form(store_id):
-    """Render the Store Manager Order Form for Cluster Managers (view-only except buffers).
-    This allows cluster managers/admins to view a store's full order form and edit buffer %.
-    """
+    """Render a cluster-scoped buffer editor for a store."""
     role = (current_user.role or '').strip()
     if role not in ('Cluster Manager', 'Admin', 'Superadmin'):
         flash('Access denied.', category='error')
@@ -6295,6 +6305,7 @@ def cluster_store_order_form(store_id):
         store=store,
         products=products,
         cluster_view=True,
+        cluster_id=store.cluster_id,
         store_buffers=store_buffers,
         invensync_data=invensync_data,
         prev_inventory_date=prev_inventory_date,
