@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "admin_base.html" if admin_shell|default(false) else "base.html" %}
 {% block title %}Oracle — {{ store.name }}{% endblock %}
 
 {% block content %}
@@ -38,11 +38,11 @@
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
       <i class="bi bi-list text-xl"></i>
     </button>
-    <a href="{{ url_for('views.cluster_manager_oracle', tab='order-form', cluster_id=cluster_id|default('')) if is_cluster_buffer_view else url_for('views.invensync') }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="{{ 'Back to Cluster Oracle' if is_cluster_buffer_view else 'Back to InvenSync' }}">
+    <a href="{{ url_for('admin.admin_oracle') if admin_shell|default(false) else (url_for('views.cluster_manager_oracle', tab='order-form', cluster_id=cluster_id|default('')) if is_cluster_buffer_view else url_for('views.invensync')) }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="{{ 'Back to Admin Oracle' if admin_shell|default(false) else ('Back to Cluster Oracle' if is_cluster_buffer_view else 'Back to InvenSync') }}">
       <i class="bi bi-arrow-left text-base"></i>
     </a>
     <nav class="flex items-center text-sm font-medium text-slate-500">
-      <span>{{ 'Cluster Manager' if is_cluster_buffer_view else 'Store Manager' }}</span>
+      <span>{{ 'Admin' if admin_shell|default(false) else ('Cluster Manager' if is_cluster_buffer_view else 'Store Manager') }}</span>
       <span class="mx-2">/</span>
       <span class="text-slate-900 font-semibold">Oracle</span>
     </nav>
