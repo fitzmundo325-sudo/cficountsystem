@@ -2205,6 +2205,36 @@ def _rso_draft_storage_key(store_id, report_date):
     return f'{int(store_id)}:{report_date.strftime("%Y-%m-%d")}'
 
 
+def _get_rso_draft_meta(store_id, report_date):
+    draft_meta = session.get('rso_draft_meta') or {}
+    if not isinstance(draft_meta, dict):
+        return {}
+    meta = draft_meta.get(_rso_draft_storage_key(store_id, report_date)) or {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _set_rso_draft_meta(store_id, report_date, meta):
+    draft_meta = session.get('rso_draft_meta') or {}
+    if not isinstance(draft_meta, dict):
+        draft_meta = {}
+    draft_meta[_rso_draft_storage_key(store_id, report_date)] = {
+        'source': str((meta or {}).get('source') or '').strip(),
+        'filename': str((meta or {}).get('filename') or '').strip(),
+    }
+    session['rso_draft_meta'] = draft_meta
+    session.modified = True
+
+
+def _pop_rso_draft_meta(store_id, report_date):
+    draft_meta = session.get('rso_draft_meta') or {}
+    if not isinstance(draft_meta, dict):
+        draft_meta = {}
+    meta = draft_meta.pop(_rso_draft_storage_key(store_id, report_date), {})
+    session['rso_draft_meta'] = draft_meta
+    session.modified = True
+    return meta if isinstance(meta, dict) else {}
+
+
 def _get_rso_draft(store_id, report_date):
     drafts = session.get('rso_drafts') or {}
     if not isinstance(drafts, dict):
@@ -2796,6 +2826,7 @@ def store_manager_delivery():
 
     selected_report_date = selected_date.strftime('%Y-%m-%d')
     draft_rso_items = _get_rso_draft(store.id, selected_date)
+    draft_rso_meta = _get_rso_draft_meta(store.id, selected_date) if draft_rso_items else {}
     rso_items = draft_rso_items if draft_rso_items else []
     rso_source = 'draft' if draft_rso_items else 'none'
 
@@ -2823,6 +2854,8 @@ def store_manager_delivery():
         rso_items=rso_items,
         rso_source=rso_source,
         rso_no=rso_no,
+        rso_upload_source=draft_rso_meta.get('source', ''),
+        rso_upload_filename=draft_rso_meta.get('filename', ''),
     )
 
 
@@ -2846,19 +2879,51 @@ def review_rso_excel():
             flash('Report date cannot be in the future.', category='error')
             return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
 
-        upload_file = request.files.get('rso_file')
-        if not upload_file or upload_file.filename == '':
-            flash('Please select an RSO Excel file to upload.', category='error')
+        upload_files = [
+            ('delivery', 'RSO', request.files.get('rso_file')),
+            ('bulk', 'Bulk Order RSO', request.files.get('bulk_order_rso_file')),
+        ]
+        upload_files = [
+            (source, label, upload_file)
+            for source, label, upload_file in upload_files
+            if upload_file and (upload_file.filename or '').strip()
+        ]
+        if not upload_files:
+            flash('Please select an RSO or Bulk Order RSO Excel file to upload.', category='error')
             return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
 
-        filename = (upload_file.filename or '').lower()
-        if not filename.endswith(('.xls', '.xlsx')):
-            flash('Please upload an Excel file (.xls or .xlsx).', category='error')
-            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+        existing_draft_items = _sanitize_rso_items(_get_rso_draft(store.id, report_date))
+        existing_rso_no, existing_product_items = _split_rso_meta_and_items(existing_draft_items)
+        combined_items = []
+        combined_product_items = list(existing_product_items)
+        rso_numbers = [part.strip() for part in existing_rso_no.split('/') if part.strip()]
+        uploaded_filenames = []
+        upload_sources = []
+        for upload_source, upload_label, upload_file in upload_files:
+            filename = (upload_file.filename or '').lower()
+            if not filename.endswith(('.xls', '.xlsx')):
+                flash(f'Please upload an Excel file (.xls or .xlsx) for {upload_label}.', category='error')
+                return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
 
-        parsed_items = _extract_rso_items_from_excel(upload_file)
-        parsed_rso_no, parsed_product_items = _split_rso_meta_and_items(parsed_items)
-        _set_rso_draft(store.id, report_date, parsed_items)
+            parsed_items = _extract_rso_items_from_excel(upload_file)
+            parsed_rso_no, parsed_product_items = _split_rso_meta_and_items(parsed_items)
+            if parsed_rso_no and parsed_rso_no not in rso_numbers:
+                rso_numbers.append(parsed_rso_no)
+            combined_product_items.extend(parsed_product_items)
+            uploaded_filenames.append(upload_file.filename)
+            upload_sources.append(upload_source)
+
+        if rso_numbers:
+            combined_items.append({
+                'product_name': f'RSO No: {" / ".join(rso_numbers)}',
+                'quantity': 1,
+            })
+        combined_items.extend(combined_product_items)
+        _set_rso_draft(store.id, report_date, combined_items)
+        _set_rso_draft_meta(store.id, report_date, {
+            'source': upload_sources[-1] if upload_sources else '',
+            'filename': uploaded_filenames[-1] if uploaded_filenames else '',
+        })
 
         log_audit_event(
             action='report.rso.review',
@@ -2868,15 +2933,15 @@ def review_rso_excel():
             details={
                 'store_id': store.id,
                 'report_date': report_date.strftime('%Y-%m-%d'),
-                'filename': upload_file.filename,
-                'rows_extracted': len(parsed_product_items),
-                'rso_no': parsed_rso_no,
+                'filenames': uploaded_filenames,
+                'rows_extracted': len(combined_product_items),
+                'rso_no': ' / '.join(rso_numbers),
             },
         )
         db.session.commit()
 
         flash(
-            f'Reviewed {len(parsed_product_items)} RSO delivery item(s) for {report_date.strftime("%B %d, %Y")}.',
+            f'Reviewed {len(combined_product_items)} RSO delivery item(s) for {report_date.strftime("%B %d, %Y")}.',
             category='success'
         )
 
@@ -2908,6 +2973,7 @@ def clear_rso_review_data():
         report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
 
         cleared_items = _pop_rso_draft(store.id, report_date)
+        _pop_rso_draft_meta(store.id, report_date)
         if cleared_items:
             flash('Extracted RSO review data cleared.', category='success')
         else:
@@ -2944,6 +3010,7 @@ def save_rso_review_data():
         if not draft_items:
             if rso_no:
                 _pop_rso_draft(store.id, report_date)
+                _pop_rso_draft_meta(store.id, report_date)
                 db.session.commit()
                 flash(
                     f'RSO No {rso_no} reviewed and saved for {report_date.strftime("%B %d, %Y")} with no product rows.',
@@ -2982,6 +3049,7 @@ def save_rso_review_data():
             )
 
         _pop_rso_draft(store.id, report_date)
+        _pop_rso_draft_meta(store.id, report_date)
 
         log_audit_event(
             action='report.rso.save',

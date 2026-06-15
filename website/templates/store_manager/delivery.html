@@ -2,6 +2,101 @@
 {% block title %}Delivery - {{ store.name }}{% endblock %}
 
 {% block content %}
+<style>
+  .delivery-tour-panel {
+    position: fixed;
+    z-index: 9998;
+    background: rgba(15, 23, 42, 0.72);
+    pointer-events: auto;
+  }
+
+  .delivery-tour-target {
+    position: relative;
+    z-index: 9999;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.35), 0 0 24px rgba(16, 185, 129, 0.55);
+  }
+
+  .delivery-tour-label {
+    position: fixed;
+    z-index: 9999;
+    max-width: min(360px, calc(100vw - 32px));
+    color: #ffffff;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.35;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    pointer-events: auto;
+  }
+
+  .delivery-tour-label button {
+    margin-top: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 800;
+    text-shadow: none;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .delivery-tour-label button:hover {
+    background: #f8fafc;
+    transform: translateY(-1px);
+  }
+</style>
+
+{% macro rso_review_table() %}
+<div class="overflow-x-auto border border-slate-200 rounded-lg">
+  <table class="min-w-full divide-y divide-slate-200">
+    <thead class="bg-slate-100">
+      <tr>
+        <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product Code</th>
+        <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product Name</th>
+        <th class="px-4 py-2 text-left text-xs font-bold text-black uppercase whitespace-nowrap">
+          {% if rso_no %}RSO No: {{ rso_no }}{% else %}RSO No:{% endif %}
+        </th>
+        <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Qty</th>
+        <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Received</th>
+        <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Check</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for item in rso_items %}
+      <tr class="odd:bg-white even:bg-slate-50 rso-row" data-rso-qty="{{ item.quantity }}">
+        <td class="px-4 py-2 text-sm text-slate-700">{{ item.product_code if item.product_code else '-' }}</td>
+        <td class="px-4 py-2 text-sm text-slate-700">{{ item.product_name }}</td>
+        <td class="px-4 py-2 text-sm text-slate-500"></td>
+        <td class="px-4 py-2 text-sm text-slate-900 text-right font-semibold">{{ item.quantity }}</td>
+        <td class="px-4 py-2 text-right">
+          <input type="number" min="0" inputmode="numeric" name="received_qty[]" form="save-rso-form" value="{{ item.received_quantity if item.received_quantity is not none else '' }}" class="rso-received-input w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm font-semibold text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" placeholder="0" {% if rso_source == 'saved' or (user and user.role == 'Inventory Staff') %}readonly{% endif %}>
+        </td>
+        <td class="px-4 py-2 text-center">
+          <button type="button" class="rso-check-btn inline-flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50" title="Mark received quantity as checked" aria-label="Check received quantity" {% if rso_source == 'saved' or (user and user.role == 'Inventory Staff') %}disabled{% endif %}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </button>
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not rso_items %}
+      <tr class="odd:bg-white even:bg-slate-50">
+        <td class="px-4 py-2 text-sm text-slate-500 italic" colspan="6">No product rows found in columns C and D.</td>
+      </tr>
+      {% endif %}
+      <tr class="rso-no-search-results hidden bg-white">
+        <td class="px-4 py-3 text-sm text-slate-500 italic" colspan="6">No matching RSO rows found.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
 <header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
   <div class="flex items-center gap-3 sm:gap-4">
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
@@ -41,40 +136,165 @@
   <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
     <div>
       <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Delivery (RSO)</h1>
-      <p class="mt-1 text-slate-600">Please upload the plant ordering Excel file. The RSO Number will be read from cell A1.</p>
+      <p class="mt-1 text-slate-600">Upload the regular RSO or Bulk Order RSO Excel file to review delivery items before saving.</p>
     </div>
   </section>
 
   <section class="rounded-none border border-slate-200 bg-white shadow-sm">
     <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-slate-200">
       <h3 class="text-sm md:text-base font-bold text-slate-900">RSO Extract / Review</h3>
-      <p class="text-xs text-slate-500 mt-0.5">The system reads the RSO Number from cell A1. Extracted rows are shown for review before saving.</p>
+      <p class="text-xs text-slate-500 mt-0.5">Extracted RSO rows are shown for review before saving.</p>
     </div>
     <div class="p-4 md:p-5 space-y-4">
       {% if user and user.role == 'Store Manager' and rso_source != 'saved' %}
-      <form action="{{ url_for('views.review_rso_excel') }}" method="POST" enctype="multipart/form-data" class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
-        <input type="hidden" name="report_date" id="rso-upload-report-date" value="{{ selected_report_date if selected_report_date else today }}">
-        <div>
-          <label for="rso_file" class="block text-xs font-medium text-slate-700 mb-1">RSO Excel File (.xls / .xlsx)</label>
-          <input id="rso_file" name="rso_file" type="file" accept=".xls,.xlsx" required class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-400 outline-none">
-        </div>
-        <div class="md:self-end flex items-center gap-2">
-          <button type="submit" class="w-full md:w-auto px-5 py-2.5 text-sm font-medium bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all shadow-md shadow-emerald-600/25">
-            Scan Data
-          </button>
-          {% if rso_source == 'draft' and rso_items %}
-          <button id="save-rso-data-btn" type="submit" form="save-rso-form" class="w-full md:w-auto px-5 py-2.5 text-sm font-medium bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all shadow-md shadow-indigo-600/25">
-            Save Data
-          </button>
-          <button type="button" id="clear-rso-inline-btn" class="w-full md:w-auto h-[42px] px-3 inline-flex items-center justify-center text-rose-700 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 transition-colors" title="Clear Extracted Data" aria-label="Clear Extracted Data">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
+      {% set show_delivery_draft_actions = rso_source == 'draft' and (rso_upload_source == 'delivery' or not rso_upload_source) %}
+      {% set show_bulk_draft_actions = rso_source == 'draft' and rso_upload_source == 'bulk' %}
+      <div class="space-y-4">
+        <form action="{{ url_for('views.review_rso_excel') }}" method="POST" enctype="multipart/form-data" class="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+          <input type="hidden" name="report_date" id="rso-upload-report-date" value="{{ selected_report_date if selected_report_date else today }}">
+          <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 md:items-end">
+            <div>
+              <label id="delivery-rso-file-guide-target" for="rso_file" class="block text-sm font-semibold text-slate-800 mb-1">RSO Excel File</label>
+              <p class="text-xs text-slate-500 mb-2">Upload the regular plant ordering file.</p>
+              <input id="rso_file" name="rso_file" type="file" accept=".xls,.xlsx" required class="sr-only rso-file-input" data-file-label="rso-file-label">
+              <label id="delivery-rso-choose-file-guide-target" for="rso_file" class="flex min-h-[44px] w-full cursor-pointer items-center overflow-hidden rounded-lg border border-slate-200 bg-white text-sm transition-colors hover:border-emerald-300">
+                <span class="shrink-0 border-r border-slate-200 bg-slate-50 px-3 py-2 font-medium text-slate-800">Choose File</span>
+                <span id="rso-file-label" class="truncate px-3 py-2 {% if show_delivery_draft_actions and rso_upload_filename %}font-semibold text-slate-700{% else %}text-slate-500{% endif %}">{% if show_delivery_draft_actions and rso_upload_filename %}{{ rso_upload_filename }}{% else %}No file chosen{% endif %}</span>
+              </label>
+            </div>
+            <div class="flex flex-nowrap items-center gap-2 md:justify-end">
+              {% if show_delivery_draft_actions %}
+              <button id="save-rso-data-btn" type="submit" form="save-rso-form" class="shrink-0 px-5 py-2.5 text-sm font-medium bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all shadow-md shadow-indigo-600/25">
+                Save Data
+              </button>
+              <button type="button" id="clear-rso-inline-btn" class="shrink-0 h-[42px] px-3 inline-flex items-center justify-center text-rose-700 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 transition-colors" title="Clear Extracted Data" aria-label="Clear Extracted Data">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+              {% else %}
+              <button id="delivery-scan-rso-guide-target" type="submit" class="w-full md:w-auto px-5 py-2.5 text-sm font-medium bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all shadow-md shadow-emerald-600/25">
+                Scan Del RSO
+              </button>
+              {% endif %}
+            </div>
+          </div>
+          {% if show_delivery_draft_actions %}
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-xs font-medium text-emerald-700">Showing extracted RSO rows for review.</p>
+            <div class="relative w-full sm:w-72">
+              <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="m21 21-4.3-4.3"></path>
+              </svg>
+              <input type="search" class="rso-live-search w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" placeholder="Search RSO rows">
+            </div>
+          </div>
+          {% if rso_items or rso_no %}
+          {{ rso_review_table() }}
           {% endif %}
+          {% endif %}
+        </form>
+
+        {% if rso_source == 'none' %}
+        <div id="delivery-tour-sample-card" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-xs font-medium text-emerald-700">Showing extracted RSO rows for review.</p>
+            <div class="flex items-center gap-2">
+              <button id="delivery-tour-save-target" type="button" class="shrink-0 px-5 py-2.5 text-sm font-medium bg-indigo-600 text-white rounded-xl shadow-md shadow-indigo-600/25">
+                Save Data
+              </button>
+              <button id="delivery-tour-clear-target" type="button" class="shrink-0 h-[42px] px-3 inline-flex items-center justify-center text-rose-700 bg-rose-50 border border-rose-200 rounded-xl" title="Clear Extracted Data" aria-label="Clear Extracted Data">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="overflow-x-auto border border-slate-200 rounded-lg bg-white">
+            <table class="min-w-full divide-y divide-slate-200">
+              <thead class="bg-slate-100">
+                <tr>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product Code</th>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product Name</th>
+                  <th class="px-4 py-2 text-left text-xs font-bold text-black uppercase whitespace-nowrap">RSO No: SAMPLE-001</th>
+                  <th id="delivery-tour-qty-target" class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Qty</th>
+                  <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Received</th>
+                  <th id="delivery-tour-check-target" class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Check</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr class="bg-white">
+                  <td class="px-4 py-2 text-sm text-slate-700">1001</td>
+                  <td class="px-4 py-2 text-sm text-slate-700">Sample Product</td>
+                  <td class="px-4 py-2 text-sm text-slate-500"></td>
+                  <td class="px-4 py-2 text-sm text-slate-900 text-right font-semibold">12</td>
+                  <td class="px-4 py-2 text-right">
+                    <input type="number" min="0" value="12" readonly class="w-20 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-right text-sm font-semibold text-emerald-900 outline-none">
+                  </td>
+                  <td class="px-4 py-2 text-center">
+                    <button type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-600 bg-emerald-600 text-white">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </form>
+        {% endif %}
+
+        <form action="{{ url_for('views.review_rso_excel') }}" method="POST" enctype="multipart/form-data" class="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+          <input type="hidden" name="report_date" id="bulk-rso-upload-report-date" value="{{ selected_report_date if selected_report_date else today }}">
+          <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 md:items-end">
+            <div>
+              <label for="bulk_order_rso_file" class="block text-sm font-semibold text-slate-800 mb-1">Bulk Order RSO Excel File</label>
+              <p class="text-xs text-slate-500 mb-2">Upload the separate bulk order RSO file.</p>
+              <input id="bulk_order_rso_file" name="bulk_order_rso_file" type="file" accept=".xls,.xlsx" required class="sr-only rso-file-input" data-file-label="bulk-rso-file-label">
+              <label for="bulk_order_rso_file" class="flex min-h-[44px] w-full cursor-pointer items-center overflow-hidden rounded-lg border border-slate-200 bg-white text-sm transition-colors hover:border-emerald-300">
+                <span class="shrink-0 border-r border-slate-200 bg-slate-50 px-3 py-2 font-medium text-slate-800">Choose File</span>
+                <span id="bulk-rso-file-label" class="truncate px-3 py-2 {% if show_bulk_draft_actions and rso_upload_filename %}font-semibold text-slate-700{% else %}text-slate-500{% endif %}">{% if show_bulk_draft_actions and rso_upload_filename %}{{ rso_upload_filename }}{% else %}No file chosen{% endif %}</span>
+              </label>
+            </div>
+            <div class="flex flex-nowrap items-center gap-2 md:justify-end">
+              {% if show_bulk_draft_actions %}
+              <button id="save-rso-data-btn" type="submit" form="save-rso-form" class="shrink-0 px-5 py-2.5 text-sm font-medium bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all shadow-md shadow-indigo-600/25">
+                Save Data
+              </button>
+              <button type="button" id="clear-rso-inline-btn" class="shrink-0 h-[42px] px-3 inline-flex items-center justify-center text-rose-700 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 transition-colors" title="Clear Extracted Data" aria-label="Clear Extracted Data">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+              {% else %}
+              <button type="submit" class="w-full md:w-auto px-5 py-2.5 text-sm font-medium bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all shadow-md shadow-emerald-600/25">
+                Scan Bulk Order RSO
+              </button>
+              {% endif %}
+            </div>
+          </div>
+          {% if show_bulk_draft_actions %}
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-xs font-medium text-emerald-700">Showing extracted RSO rows for review.</p>
+            <div class="relative w-full sm:w-72">
+              <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="m21 21-4.3-4.3"></path>
+              </svg>
+              <input type="search" class="rso-live-search w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" placeholder="Search RSO rows">
+            </div>
+          </div>
+          {% if rso_items or rso_no %}
+          {{ rso_review_table() }}
+          {% endif %}
+          {% endif %}
+        </form>
+      </div>
       {% else %}
         {% if rso_source == 'saved' %}
         <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
@@ -97,6 +317,7 @@
       {% endif %}
 
       {% if rso_items or rso_no %}
+      {% if not (user and user.role == 'Store Manager' and rso_source == 'draft') %}
       {% if rso_source == 'saved' %}
       <div class="flex items-center justify-between">
         <p class="text-xs font-medium text-indigo-700">Showing saved RSO rows from database.</p>
@@ -107,50 +328,9 @@
           </button>
         </form>
       </div>
-      {% else %}
-      <p class="text-xs font-medium text-emerald-700">Showing extracted RSO rows for review.</p>
       {% endif %}
-      <div class="overflow-x-auto border border-slate-200 rounded-lg">
-        <table class="min-w-full divide-y divide-slate-200">
-          <thead class="bg-slate-100">
-            <tr>
-              <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product Code</th>
-              <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product Name</th>
-              <th class="px-4 py-2 text-left text-xs font-bold text-black uppercase whitespace-nowrap">
-                {% if rso_no %}RSO No: {{ rso_no }}{% else %}RSO No:{% endif %}
-              </th>
-              <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Qty</th>
-              <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Received</th>
-              <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Check</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100">
-            {% for item in rso_items %}
-            <tr class="odd:bg-white even:bg-slate-50 rso-row" data-rso-qty="{{ item.quantity }}">
-              <td class="px-4 py-2 text-sm text-slate-700">{{ item.product_code if item.product_code else '-' }}</td>
-              <td class="px-4 py-2 text-sm text-slate-700">{{ item.product_name }}</td>
-              <td class="px-4 py-2 text-sm text-slate-500"></td>
-              <td class="px-4 py-2 text-sm text-slate-900 text-right font-semibold">{{ item.quantity }}</td>
-              <td class="px-4 py-2 text-right">
-                <input type="number" min="0" inputmode="numeric" name="received_qty[]" form="save-rso-form" value="{{ item.received_quantity if item.received_quantity is not none else '' }}" class="rso-received-input w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm font-semibold text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" placeholder="0" {% if rso_source == 'saved' or (user and user.role == 'Inventory Staff') %}readonly{% endif %}>
-              </td>
-              <td class="px-4 py-2 text-center">
-                <button type="button" class="rso-check-btn inline-flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50" title="Mark received quantity as checked" aria-label="Check received quantity" {% if rso_source == 'saved' or (user and user.role == 'Inventory Staff') %}disabled{% endif %}>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                </button>
-              </td>
-            </tr>
-            {% endfor %}
-            {% if not rso_items %}
-            <tr class="odd:bg-white even:bg-slate-50">
-              <td class="px-4 py-2 text-sm text-slate-500 italic" colspan="6">No product rows found in columns C and D.</td>
-            </tr>
-            {% endif %}
-          </tbody>
-        </table>
-      </div>
+      {{ rso_review_table() }}
+      {% endif %}
       {% else %}
       {% if not (user and user.role == 'Inventory Staff') %}
       <p class="text-xs text-slate-500">No extracted RSO data yet for this selected report date.</p>
@@ -164,14 +344,21 @@
   document.addEventListener('DOMContentLoaded', function() {
     const reportDateInput = document.getElementById('report_date');
     const rsoUploadDateInput = document.getElementById('rso-upload-report-date');
+    const bulkRsoUploadDateInput = document.getElementById('bulk-rso-upload-report-date');
     const rsoClearDateInput = document.getElementById('rso-clear-report-date');
     const rsoDeleteDateInput = document.getElementById('rso-delete-report-date');
     const rsoSaveDateInput = document.getElementById('rso-save-report-date');
     const clearRsoInlineBtn = document.getElementById('clear-rso-inline-btn');
     const clearRsoInlineForm = document.getElementById('clear-rso-inline-form');
     const saveRsoForm = document.getElementById('save-rso-form');
+    const rsoFileInputs = document.querySelectorAll('.rso-file-input');
+    const rsoLiveSearchInputs = document.querySelectorAll('.rso-live-search');
     const baseUrl = {{ url_for('views.store_manager_delivery')|tojson }};
     const rsoReceivedDraftKey = `deliveryRsoReceived:{{ store.id }}:{{ selected_report_date if selected_report_date else today }}`;
+    const shouldShowDeliveryTour = {{ (user and user.role == 'Store Manager' and rso_source == 'none')|tojson }};
+    const deliveryTourSampleCard = document.getElementById('delivery-tour-sample-card');
+    let deliveryTourActive = false;
+    let deliveryTourStepIndex = 0;
     let allowRsoSaveSubmit = false;
 
     function updateRsoReceivedState(row) {
@@ -249,10 +436,208 @@
       }
     }
 
+    function getDeliveryTourElementGroupRect(elements) {
+      const visibleElements = elements.filter(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (!visibleElements.length) return null;
+
+      const rects = visibleElements.map(function(el) {
+        return el.getBoundingClientRect();
+      });
+      const padding = 10;
+      return {
+        top: Math.max(0, Math.min.apply(null, rects.map(function(rect) { return rect.top; })) - padding),
+        left: Math.max(0, Math.min.apply(null, rects.map(function(rect) { return rect.left; })) - padding),
+        right: Math.min(window.innerWidth, Math.max.apply(null, rects.map(function(rect) { return rect.right; })) + padding),
+        bottom: Math.min(window.innerHeight, Math.max.apply(null, rects.map(function(rect) { return rect.bottom; })) + padding)
+      };
+    }
+
+    function getDeliveryTourStep() {
+      const steps = [
+        {
+          elements: [document.getElementById('delivery-rso-choose-file-guide-target')],
+          text: 'Click Choose File under RSO Excel File to select your delivery Excel file first.',
+          placement: 'bottom',
+          nextText: 'Next',
+          showSample: false
+        },
+        {
+          elements: [document.getElementById('delivery-scan-rso-guide-target')],
+          text: 'Click Scan Del RSO to extract the delivery rows from the file.',
+          placement: 'left',
+          nextText: 'Next',
+          showSample: false
+        },
+        {
+          elements: [document.getElementById('delivery-tour-sample-card')],
+          text: 'After scanning, extracted rows will appear here for review before saving.',
+          placement: 'bottom',
+          nextText: 'Next',
+          showSample: true
+        },
+        {
+          elements: [document.getElementById('delivery-tour-clear-target')],
+          text: 'Use X to clear the extracted data if this is not the correct file.',
+          placement: 'left',
+          nextText: 'Next',
+          showSample: true
+        },
+        {
+          elements: [
+            document.getElementById('delivery-tour-qty-target'),
+            document.getElementById('delivery-tour-check-target')
+          ],
+          text: 'Check the Qty and use the check button when the received quantity matches.',
+          placement: 'bottom',
+          nextText: 'Next',
+          showSample: true
+        },
+        {
+          elements: [document.getElementById('delivery-tour-save-target')],
+          text: 'Click Save Data when the reviewed rows are correct.',
+          placement: 'bottom',
+          nextText: 'Finish',
+          showSample: true
+        }
+      ];
+      return steps[deliveryTourStepIndex] || null;
+    }
+
+    function removeDeliveryTourPanels() {
+      document.querySelectorAll('.delivery-tour-panel').forEach(function(panel) {
+        panel.remove();
+      });
+      document.querySelectorAll('.delivery-tour-label').forEach(function(label) {
+        label.remove();
+      });
+    }
+
+    function clearDeliveryTour() {
+      deliveryTourActive = false;
+      deliveryTourStepIndex = 0;
+      removeDeliveryTourPanels();
+      document.querySelectorAll('.delivery-tour-target').forEach(function(el) {
+        el.classList.remove('delivery-tour-target');
+      });
+      if (deliveryTourSampleCard) {
+        deliveryTourSampleCard.classList.add('hidden');
+      }
+    }
+
+    function applyDeliveryTourTarget() {
+      document.querySelectorAll('.delivery-tour-target').forEach(function(el) {
+        el.classList.remove('delivery-tour-target');
+      });
+
+      const step = getDeliveryTourStep();
+      if (!step) return;
+
+      step.elements.forEach(function(el) {
+        if (el) el.classList.add('delivery-tour-target');
+      });
+    }
+
+    function renderDeliveryTourSpotlight() {
+      removeDeliveryTourPanels();
+
+      const step = getDeliveryTourStep();
+      if (!step) {
+        clearDeliveryTour();
+        return;
+      }
+
+      const rect = getDeliveryTourElementGroupRect(step.elements);
+      if (!rect) return;
+
+      const panels = [
+        { top: 0, left: 0, width: window.innerWidth, height: rect.top },
+        { top: rect.bottom, left: 0, width: window.innerWidth, height: window.innerHeight - rect.bottom },
+        { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
+        { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top }
+      ];
+
+      panels.forEach(function(panel) {
+        const el = document.createElement('div');
+        el.className = 'delivery-tour-panel';
+        el.style.top = `${panel.top}px`;
+        el.style.left = `${panel.left}px`;
+        el.style.width = `${Math.max(0, panel.width)}px`;
+        el.style.height = `${Math.max(0, panel.height)}px`;
+        document.body.appendChild(el);
+      });
+
+      const label = document.createElement('div');
+      label.className = 'delivery-tour-label';
+      const message = document.createElement('div');
+      message.textContent = step.text;
+      const nextButton = document.createElement('button');
+      nextButton.type = 'button';
+      nextButton.textContent = step.nextText;
+      nextButton.addEventListener('click', nextDeliveryTourStep);
+      label.appendChild(message);
+      label.appendChild(nextButton);
+
+      if (step.placement === 'bottom') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+      } else if (step.placement === 'top') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.max(24, rect.top - 118)}px`;
+      } else if (step.placement === 'left') {
+        label.style.left = `${Math.max(16, rect.left - 380)}px`;
+        label.style.top = `${Math.max(24, rect.top)}px`;
+      } else {
+        const labelLeft = rect.right + 24;
+        const hasRightSpace = labelLeft + 320 <= window.innerWidth;
+        label.style.left = `${hasRightSpace ? labelLeft : Math.max(16, rect.left - 340)}px`;
+        label.style.top = `${Math.max(24, rect.top + Math.min(96, Math.max(0, (rect.bottom - rect.top) / 3)))}px`;
+      }
+      document.body.appendChild(label);
+    }
+
+    function showDeliveryTourStep() {
+      const step = getDeliveryTourStep();
+      if (!step) {
+        clearDeliveryTour();
+        return;
+      }
+
+      if (deliveryTourSampleCard) {
+        deliveryTourSampleCard.classList.toggle('hidden', !step.showSample);
+      }
+
+      const target = step.elements.find(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+
+      setTimeout(function() {
+        applyDeliveryTourTarget();
+        renderDeliveryTourSpotlight();
+      }, 350);
+    }
+
+    function nextDeliveryTourStep() {
+      deliveryTourStepIndex += 1;
+      showDeliveryTourStep();
+    }
+
+    function startDeliveryTour() {
+      if (!shouldShowDeliveryTour) return;
+      deliveryTourActive = true;
+      deliveryTourStepIndex = 0;
+      showDeliveryTourStep();
+    }
+
     function syncRsoDateFields() {
       if (!reportDateInput) return;
       const dateValue = reportDateInput.value || '';
       if (rsoUploadDateInput) rsoUploadDateInput.value = dateValue;
+      if (bulkRsoUploadDateInput) bulkRsoUploadDateInput.value = dateValue;
       if (rsoClearDateInput) rsoClearDateInput.value = dateValue;
       if (rsoDeleteDateInput) rsoDeleteDateInput.value = dateValue;
       if (rsoSaveDateInput) rsoSaveDateInput.value = dateValue;
@@ -268,6 +653,41 @@
       });
       reportDateInput.addEventListener('input', syncRsoDateFields);
     }
+
+    rsoFileInputs.forEach(function(input) {
+      input.addEventListener('change', function() {
+        const labelId = input.dataset.fileLabel;
+        const label = labelId ? document.getElementById(labelId) : null;
+        const fileName = input.files && input.files.length ? input.files[0].name : 'No file chosen';
+        if (label) {
+          label.textContent = fileName;
+          label.classList.toggle('text-slate-700', fileName !== 'No file chosen');
+          label.classList.toggle('font-semibold', fileName !== 'No file chosen');
+        }
+      });
+    });
+
+    rsoLiveSearchInputs.forEach(function(input) {
+      input.addEventListener('input', function() {
+        const query = input.value.trim().toLowerCase();
+        const card = input.closest('form') || document;
+        const rows = Array.from(card.querySelectorAll('.rso-row'));
+        const noResultsRow = card.querySelector('.rso-no-search-results');
+        let visibleCount = 0;
+
+        rows.forEach(function(row) {
+          const productCode = row.children[0]?.textContent?.toLowerCase() || '';
+          const productName = row.children[1]?.textContent?.toLowerCase() || '';
+          const matches = !query || productCode.includes(query) || productName.includes(query);
+          row.classList.toggle('hidden', !matches);
+          if (matches) visibleCount += 1;
+        });
+
+        if (noResultsRow) {
+          noResultsRow.classList.toggle('hidden', !query || visibleCount > 0);
+        }
+      });
+    });
 
     if (clearRsoInlineBtn && clearRsoInlineForm) {
       clearRsoInlineBtn.addEventListener('click', function() {
@@ -327,6 +747,17 @@
 
     restoreRsoReceivedDraft();
     document.querySelectorAll('.rso-row').forEach(updateRsoReceivedState);
+
+    if (shouldShowDeliveryTour) {
+      setTimeout(startDeliveryTour, 550);
+    }
+
+    window.addEventListener('resize', function() {
+      if (deliveryTourActive) renderDeliveryTourSpotlight();
+    });
+    window.addEventListener('scroll', function() {
+      if (deliveryTourActive) renderDeliveryTourSpotlight();
+    }, { passive: true });
   });
 </script>
 {% endblock %}
