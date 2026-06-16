@@ -90,6 +90,7 @@
                     class="inline-flex items-center justify-center gap-1 px-2.5 py-2 text-[11px] font-semibold rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition">
               <i class="bi bi-check2-circle"></i>
               Approvals
+              <span class="approval-button-count hidden ml-1 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">0</span>
             </button>
             <button type="button" onclick="navigate('store-performance')"
                     class="inline-flex items-center justify-center gap-1 px-2.5 py-2 text-[11px] font-semibold rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition">
@@ -232,8 +233,13 @@ function renderDashboard(){
 }
 
 function updateApprovalsBadge(){
-  const b=document.getElementById('badge-approvals');if(!b)return;
-  if(DB.pendingApprovals.length>0){b.classList.remove('hidden');b.textContent=DB.pendingApprovals.length;}else b.classList.add('hidden');
+  const b=document.getElementById('badge-approvals');
+  if(b){
+    if(DB.pendingApprovals.length>0){b.classList.remove('hidden');b.textContent=DB.pendingApprovals.length;}else b.classList.add('hidden');
+  }
+  document.querySelectorAll('.approval-button-count').forEach(el=>{
+    if(DB.pendingApprovals.length>0){el.classList.remove('hidden');el.textContent=DB.pendingApprovals.length;}else el.classList.add('hidden');
+  });
 }
 
 function renderApprovals(){

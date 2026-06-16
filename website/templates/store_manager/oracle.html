@@ -69,7 +69,6 @@
   <button class="o-tab active flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-order-form"     onclick="navigate('order-form')">    <i class="bi bi-cart3"></i> Order Form</button>
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-approvals"         onclick="navigate('approvals')">      <i class="bi bi-check2-circle"></i> Approvals <span id="badge-approvals" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-history"            onclick="navigate('history')">        <i class="bi bi-clock-history"></i> History</button>
-  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-stocks"             onclick="navigate('stocks')">         <i class="bi bi-box-seam"></i> Stocks</button>
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-daily-averages"     onclick="navigate('daily-averages')"> <i class="bi bi-bar-chart-line"></i> Daily Averages</button>
 </div>
 {% endif %}
@@ -261,39 +260,6 @@
     </div>
   </div>
 
-  <!-- STOCKS -->
-  <div class="view" id="view-stocks">
-    <div class="flex items-center justify-between mb-5">
-      <div><h1 class="text-2xl font-bold text-slate-900">Stock Management</h1><p class="mt-1 text-sm text-slate-500">Edit current stock levels. Changes reflect instantly in the Order Form.</p></div>
-      <div class="flex gap-2">
-        <button onclick="renderStocks()" class="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
-        <button onclick="saveAllStocks()" class="flex items-center gap-1.5 px-3 py-2 bg-sky-600 text-white rounded-lg text-sm font-semibold hover:bg-sky-700 transition-colors"><i class="bi bi-floppy2-fill"></i> Save All</button>
-      </div>
-    </div>
-    <div id="stocks-kpi" class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5"></div>
-    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-        <span class="text-sm font-bold text-slate-700">Current Inventory</span>
-        <span class="text-xs text-slate-500">Edit <strong>Current Stock</strong> or use ± buttons</span>
-      </div>
-      <div class="oracle-scroll daily-average-scroll"><table class="w-full text-xs" style="min-width:800px">
-        <thead class="bg-slate-100 text-slate-600"><tr>
-          <th class="px-3 py-3 text-left font-semibold">Product</th>
-          <th class="px-3 py-3 text-center font-semibold">Category</th>
-          <th class="px-3 py-3 text-center font-semibold">Unit</th>
-          <th class="px-3 py-3 text-center font-semibold text-emerald-600">Current Stock</th>
-          <th class="px-3 py-3 text-center font-semibold">Quick Adjust</th>
-          <th class="px-3 py-3 text-center font-semibold">Avg Daily</th>
-          <th class="px-3 py-3 text-center font-semibold">Days of Stock</th>
-          <th class="px-3 py-3 text-center font-semibold">Reorder Pt</th>
-          <th class="px-3 py-3 text-center font-semibold">Health</th>
-          <th class="px-3 py-3 text-center font-semibold">Updated</th>
-        </tr></thead>
-        <tbody id="stocks-table-body" class="divide-y divide-slate-100"></tbody>
-      </table></div>
-    </div>
-  </div>
-
   <!-- DAILY AVERAGES -->
   <div class="view" id="view-daily-averages">
     <div class="mb-5"><h1 class="text-2xl font-bold text-slate-900">Daily Average Consumption</h1><p class="mt-1 text-sm text-slate-500">Based on POS Sold for the latest 4 weeks. You can adjust values before ordering.</p></div>
@@ -444,7 +410,7 @@ function navigate(id){
   view.classList.add('active','fade-up');setTimeout(()=>view.classList.remove('fade-up'),300);
   const tab=document.getElementById('tab-'+id);if(tab)tab.classList.add('active');
   ({  'order-form':renderOrderForm,'approvals':renderApprovals,'history':renderHistory,
-      'stocks':renderStocks,'transfers':renderTransfers,'daily-averages':renderDailyAverages,
+      'transfers':renderTransfers,'daily-averages':renderDailyAverages,
       'settings':renderSettings}[id]||Function)();
 }
 
@@ -494,7 +460,7 @@ function renderOrderTable(){
     const iStyle=oor?'border-red-400 bg-red-50 text-red-700':'';
     const finalOrderCell=CLUSTER_VIEW
       ? `<span class="inline-flex min-w-[76px] justify-center rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600">${sug}</span>`
-      : `<input type="number" class="input-final ${iStyle}" value="${fv}" placeholder="${sug}" min="0" onchange="onFinalChange('${p.id}',this.value)">`;
+      : `<input type="number" class="input-final ${iStyle}" data-final-product-id="${p.id}" value="${fv}" placeholder="${sug}" min="0" onchange="onFinalChange('${p.id}',this.value)" onkeydown="onFinalKeyDown(event,this)">`;
     const estOH=effStock+fo;
     const ohCls=estOH<=0?'text-red-600 bg-red-50':estOH<(p.minOrder||1)*2?'text-amber-600 bg-amber-50':'text-emerald-600 bg-emerald-50';
     const sCls=stock===0?'bg-red-100 text-red-700':stock<(p.minOrder||1)*2?'bg-amber-100 text-amber-700':'bg-emerald-100 text-emerald-700';
@@ -525,6 +491,16 @@ function renderOrderTable(){
   document.getElementById('sum-cost').textContent='₱'+Math.round(totPlant).toLocaleString();
 }
 function onFinalChange(pid,val){orderFinalQtys[pid]=val===''?undefined:val;renderOrderTable();}
+function onFinalKeyDown(event,input){
+  if(event.key!=='Enter') return;
+  event.preventDefault();
+  const fields=Array.from(document.querySelectorAll('.input-final'));
+  const index=fields.indexOf(input);
+  onFinalChange(input.dataset.finalProductId,input.value);
+  const nextFields=Array.from(document.querySelectorAll('.input-final'));
+  const next=nextFields[Math.min(index+1,nextFields.length-1)];
+  if(next){next.focus();next.select();}
+}
 function onBufferChange(pid,val){productBuffers[pid]=parseFloat(val)||0;renderOrderTable();}
 function clearFinalOrders(){orderFinalQtys={};PRODUCTS.forEach(p=>{productBuffers[p.id]=p.buffer;});renderOrderTable();showToast('All overrides cleared','info');}
 function refreshSuggested(){renderOrderTable();showToast('Quantities refreshed','success');}
