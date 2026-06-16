@@ -38,7 +38,7 @@
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
       <i class="bi bi-list text-xl"></i>
     </button>
-    <a href="{{ url_for('admin.admin_oracle') if admin_shell|default(false) else (url_for('views.cluster_manager_oracle', tab='order-form', cluster_id=cluster_id|default('')) if is_cluster_buffer_view else url_for('views.invensync')) }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="{{ 'Back to Admin Oracle' if admin_shell|default(false) else ('Back to Cluster Oracle' if is_cluster_buffer_view else 'Back to InvenSync') }}">
+    <a href="{{ url_for('admin.admin_oracle') if admin_shell|default(false) else (url_for('views.cluster_manager_oracle', cluster_id=cluster_id|default(''), date=oracle_date) if is_cluster_buffer_view else url_for('views.invensync')) }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="{{ 'Back to Admin Oracle' if admin_shell|default(false) else ('Back to Cluster Oracle' if is_cluster_buffer_view else 'Back to InvenSync') }}">
       <i class="bi bi-arrow-left text-base"></i>
     </a>
     <nav class="flex items-center text-sm font-medium text-slate-500">
@@ -63,16 +63,16 @@
   </div>
 </header>
 
+{% if not is_cluster_buffer_view %}
 <!-- Tab Nav -->
 <div class="bg-white border-b border-slate-200 px-6 flex gap-1 overflow-x-auto">
-  <button class="o-tab active flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-order-form"     onclick="navigate('order-form')">    <i class="bi bi-cart3"></i> {{ 'Buffer %' if is_cluster_buffer_view else 'Order Form' }}</button>
-  {% if not is_cluster_buffer_view %}
+  <button class="o-tab active flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-order-form"     onclick="navigate('order-form')">    <i class="bi bi-cart3"></i> Order Form</button>
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-approvals"         onclick="navigate('approvals')">      <i class="bi bi-check2-circle"></i> Approvals <span id="badge-approvals" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-history"            onclick="navigate('history')">        <i class="bi bi-clock-history"></i> History</button>
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-stocks"             onclick="navigate('stocks')">         <i class="bi bi-box-seam"></i> Stocks</button>
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-daily-averages"     onclick="navigate('daily-averages')"> <i class="bi bi-bar-chart-line"></i> Daily Averages</button>
-  {% endif %}
 </div>
+{% endif %}
 
 <div class="oracle-shell px-4 pt-4 pb-6 md:px-6 space-y-4 max-w-[2400px] mx-auto min-w-0">
 
@@ -88,25 +88,6 @@
         Quantities suggested based on stock, expected sales, and avg consumption. <strong class="text-slate-700">Orders outside ±20% range require Cluster Manager Approval.</strong>
         {% endif %}
       </p>
-    </div>
-
-    <!-- Data source info -->
-    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-3 mb-4 flex flex-wrap items-center gap-4 text-xs">
-      <div class="flex items-center gap-1.5">
-        <i class="bi bi-database-fill-check text-emerald-500"></i>
-        <span class="text-slate-500">Total Ending Inventory from:</span>
-        <strong class="text-slate-800">{% if prev_inventory_date %}{{ prev_inventory_date }} InvenSync{% else %}No previous record{% endif %}</strong>
-      </div>
-      <div class="flex items-center gap-1.5">
-        <i class="bi bi-cart-check text-sky-500"></i>
-        <span class="text-slate-500">Incoming Delivery Stock from:</span>
-        <strong class="text-slate-800">Oracle order qty</strong>
-      </div>
-      <div class="flex items-center gap-1.5">
-        <i class="bi bi-arrow-left-right text-amber-500"></i>
-        <span class="text-slate-500">Trans-In / Trans-Out from:</span>
-        <strong class="text-slate-800">{% if oracle_date %}{{ oracle_date }} InvenSync{% else %}Today's InvenSync{% endif %}</strong>
-      </div>
     </div>
 
     <!-- Date/Manager row -->

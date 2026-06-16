@@ -5066,6 +5066,7 @@ def cluster_manager_cluster_data():
 @views.route('/cluster-manager/oracle')
 @login_required
 def cluster_manager_oracle():
+    from datetime import date as _date
     role = (current_user.role or '').strip()
     if role not in ('Cluster Manager', 'Admin', 'Superadmin'):
         flash('Access denied. Only Cluster Managers and Admins can access this page.', category='error')
@@ -5084,6 +5085,15 @@ def cluster_manager_oracle():
             flash('Please choose a cluster to view Oracle.', category='error')
             return redirect(url_for('admin.clusters'))
         cluster = Cluster.query.get_or_404(cluster_id)
+
+    selected_date_str = request.args.get('date', '')
+    if selected_date_str:
+        try:
+            selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = _date.today()
+    else:
+        selected_date = _date.today()
 
     stores = Store.query.filter_by(cluster_id=cluster.id).all()
     cluster_sidebar_stores = _build_cluster_sidebar_stores(stores)
@@ -5105,6 +5115,8 @@ def cluster_manager_oracle():
                            stores=stores,
                            products=products,
                            buffers_map=buffers_map,
+                           selected_date=selected_date.strftime('%Y-%m-%d'),
+                           today=_date.today().strftime('%Y-%m-%d'),
                            cluster_sidebar_stores=cluster_sidebar_stores,
                            force_cluster_sidebar=admin_shell,
                            cluster_sidebar_cluster_id=cluster.id if admin_shell else '',
