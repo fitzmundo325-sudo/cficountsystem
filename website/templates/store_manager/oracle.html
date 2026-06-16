@@ -38,9 +38,11 @@
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
       <i class="bi bi-list text-xl"></i>
     </button>
-    <a href="{{ url_for('admin.admin_oracle') if admin_shell|default(false) else (url_for('views.cluster_manager_oracle', cluster_id=cluster_id|default(''), date=oracle_date) if is_cluster_buffer_view else url_for('views.invensync')) }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="{{ 'Back to Admin Oracle' if admin_shell|default(false) else ('Back to Cluster Oracle' if is_cluster_buffer_view else 'Back to InvenSync') }}">
+    {% if admin_shell|default(false) or is_cluster_buffer_view %}
+    <a href="{{ url_for('admin.admin_oracle') if admin_shell|default(false) else url_for('views.cluster_manager_oracle', cluster_id=cluster_id|default(''), date=oracle_date) }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="{{ 'Back to Admin Oracle' if admin_shell|default(false) else 'Back to Cluster Oracle' }}">
       <i class="bi bi-arrow-left text-base"></i>
     </a>
+    {% endif %}
     <nav class="flex items-center text-sm font-medium text-slate-500">
       <span>{{ 'Admin' if admin_shell|default(false) else ('Cluster Manager' if is_cluster_buffer_view else 'Store Manager') }}</span>
       <span class="mx-2">/</span>
@@ -67,7 +69,6 @@
 <!-- Tab Nav -->
 <div class="bg-white border-b border-slate-200 px-6 flex gap-1 overflow-x-auto">
   <button class="o-tab active flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-order-form"     onclick="navigate('order-form')">    <i class="bi bi-cart3"></i> Order Form</button>
-  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-approvals"         onclick="navigate('approvals')">      <i class="bi bi-check2-circle"></i> Approvals <span id="badge-approvals" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-history"            onclick="navigate('history')">        <i class="bi bi-clock-history"></i> History</button>
   <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors" id="tab-daily-averages"     onclick="navigate('daily-averages')"> <i class="bi bi-bar-chart-line"></i> Daily Averages</button>
 </div>
@@ -216,25 +217,6 @@
     </div>
   </div>
 
-
-  <!-- APPROVALS -->
-  <div class="view" id="view-approvals">
-    <div class="mb-5"><h1 class="text-2xl font-bold text-slate-900">Cluster Manager Approvals</h1><p class="mt-1 text-sm text-slate-500">Review orders outside the permitted ±20% suggested range.</p></div>
-    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="oracle-scroll"><table class="w-full text-xs" style="min-width:900px">
-        <thead class="bg-slate-100 text-slate-600"><tr>
-          <th class="px-3 py-3 text-left font-semibold">Order Date</th>
-          <th class="px-3 py-3 text-left font-semibold">Product</th>
-          <th class="px-3 py-3 text-center font-semibold">Suggested Range</th>
-          <th class="px-3 py-3 text-center font-semibold text-rose-500">Requested Qty</th>
-          <th class="px-3 py-3 text-center font-semibold">Total Cost</th>
-          <th class="px-3 py-3 text-left font-semibold">Manager</th>
-          <th class="px-3 py-3 text-center font-semibold">Actions</th>
-        </tr></thead>
-        <tbody id="approvals-tbody" class="divide-y divide-slate-100"></tbody>
-      </table></div>
-    </div>
-  </div>
 
   <!-- HISTORY -->
   <div class="view" id="view-history">
@@ -409,7 +391,7 @@ function navigate(id){
   const view=document.getElementById('view-'+id);if(!view)return;
   view.classList.add('active','fade-up');setTimeout(()=>view.classList.remove('fade-up'),300);
   const tab=document.getElementById('tab-'+id);if(tab)tab.classList.add('active');
-  ({  'order-form':renderOrderForm,'approvals':renderApprovals,'history':renderHistory,
+  ({  'order-form':renderOrderForm,'history':renderHistory,
       'transfers':renderTransfers,'daily-averages':renderDailyAverages,
       'settings':renderSettings}[id]||Function)();
 }
