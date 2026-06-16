@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "admin_base.html" if admin_shell|default(false) else "base.html" %}
 {% block title %}Oracle - {{ cluster.name }}{% endblock %}
 
 {% block content %}
@@ -20,8 +20,13 @@
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
       <i class="bi bi-list text-xl"></i>
     </button>
+    {% if admin_shell|default(false) %}
+    <a href="{{ url_for('admin.admin_oracle') }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="Back to Admin Oracle">
+      <i class="bi bi-arrow-left text-base"></i>
+    </a>
+    {% endif %}
     <nav class="flex items-center text-sm font-medium text-slate-500">
-      <span>Cluster Manager</span>
+      <span>{{ 'Admin' if admin_shell|default(false) else 'Cluster Manager' }}</span>
       <span class="mx-2">/</span>
       <span class="text-slate-900 font-semibold">Oracle</span>
     </nav>
