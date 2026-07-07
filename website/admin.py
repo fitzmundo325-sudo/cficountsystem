@@ -2661,7 +2661,8 @@ def _get_global_invensync_config():
             'locked_columns': [],
             'locked_cells': [],
             'editable_columns': [],
-            'force_beginning_store_ids': []
+            'force_beginning_store_ids': [],
+            'store_configs': {}
         }
         config = GlobalInvenSyncConfig(config_data=json.dumps(default_data))
         db.session.add(config)
@@ -2678,8 +2679,12 @@ def _get_global_invensync_config():
             'locked_columns': [],
             'locked_cells': [],
             'editable_columns': [],
-            'force_beginning_store_ids': []
+            'force_beginning_store_ids': [],
+            'store_configs': {}
         }
+
+    if not isinstance(config_data.get('store_configs'), dict):
+        config_data['store_configs'] = {}
 
     return config, config_data
 
@@ -2763,6 +2768,7 @@ def invensync():
         selected_date=selected_date.strftime('%Y-%m-%d'),
         today=date.today().strftime('%Y-%m-%d'),
         global_invensync_config=config_data,
+        store_invensync_configs=config_data.get('store_configs', {}),
         config_fields=config_fields,
     )
 
@@ -2856,13 +2862,50 @@ def update_invensync_config():
                 int(item)
                 for item in data.get('force_beginning_store_ids', existing_data.get('force_beginning_store_ids', []))
                 if str(item).isdigit()
-            ]
+            ],
+            'store_configs': existing_data.get('store_configs', {}) if isinstance(existing_data.get('store_configs'), dict) else {}
         }
 
         config.config_data = json.dumps(normalized_data)
         db.session.commit()
 
         return jsonify({'success': True, 'message': 'Global Invensync settings updated.'})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+@admin.route('/admin/invensync/store-config', methods=['POST'])
+@login_required
+def update_store_invensync_config():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    try:
+        data = request.get_json(force=True) or {}
+        store_id = int(data.get('store_id', 0) or 0)
+        store = Store.query.get(store_id)
+        if not store:
+            return jsonify({'success': False, 'message': 'Store not found.'}), 404
+
+        config, config_data = _get_global_invensync_config()
+        store_configs = config_data.get('store_configs', {})
+        if not isinstance(store_configs, dict):
+            store_configs = {}
+
+        store_configs[str(store_id)] = {
+            'hidden_columns': [str(item).strip() for item in data.get('hidden_columns', []) if str(item).strip()],
+            'locked_columns': [str(item).strip() for item in data.get('locked_columns', []) if str(item).strip()],
+            'editable_columns': [str(item).strip() for item in data.get('editable_columns', []) if str(item).strip()],
+        }
+
+        config_data['store_configs'] = store_configs
+        config.config_data = json.dumps(config_data)
+        db.session.commit()
+
+        return jsonify({'success': True, 'message': f'Invensync settings saved for {store.name}.'})
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'Select a valid store.'}), 400
     except Exception as exc:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(exc)}), 500
