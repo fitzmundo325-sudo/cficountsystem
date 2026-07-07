@@ -1,0 +1,70 @@
+{% extends "admin_base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 flex h-20 items-center border-b border-slate-200 bg-white/85 px-6 backdrop-blur-md">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
+    </button>
+    <nav class="hidden text-sm font-medium text-slate-500 sm:flex"><span>System</span><span class="mx-2">/</span><span class="text-slate-900">Settings</span></nav>
+  </div>
+</header>
+
+<div class="mx-auto w-full max-w-6xl space-y-6 px-6 py-6 md:px-8">
+  <section>
+    <h1 class="text-3xl font-bold tracking-tight text-slate-900">Settings</h1>
+    <p class="mt-1 text-slate-600">Manage system-level administrative options.</p>
+  </section>
+
+  <section class="overflow-hidden rounded-2xl border border-rose-200 bg-white shadow-sm">
+    <div class="border-b border-rose-200 bg-rose-50 px-6 py-5">
+      <h2 class="text-lg font-bold text-rose-900">Clear Data</h2>
+      <p class="mt-1 text-sm text-rose-700">Permanent deletion of operational records. Users, stores, products, aliases, settings, and audit logs are preserved.</p>
+    </div>
+
+    <div class="grid gap-4 p-6 md:grid-cols-2">
+      {% for key, option in clear_options.items() %}
+      <form method="POST" action="{{ url_for('admin.clear_data') }}" class="clear-data-form rounded-xl border p-4 {% if key == 'all_operational' %}border-rose-300 bg-rose-50 md:col-span-2{% else %}border-slate-200 bg-white{% endif %}" data-label="{{ option.label }}" data-confirmation="{{ option.confirmation }}">
+        <input type="hidden" name="dataset" value="{{ key }}">
+        <input type="hidden" name="confirmation" value="">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3 class="font-bold text-slate-900">{{ option.label }}</h3>
+            <p class="mt-1 text-xs text-slate-500">
+              {% if key == 'rso' %}Saved RSO deliveries and delivery drafts.
+              {% elif key == 'pos_sold' %}POS product rows only; Daily Sales reports remain.
+              {% elif key == 'daily_sales' %}Daily Sales reports and their POS Sold product rows.
+              {% elif key == 'invensync' %}Inventory days and all product quantity rows.
+              {% elif key == 'transfers' %}TransAct forms and their line items.
+              {% elif key == 'targets' %}Uploaded store target records.
+              {% else %}RSO, POS Sold, Daily Sales, InvenSync, transfers, and targets in one operation.
+              {% endif %}
+            </p>
+          </div>
+          <span class="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{{ counts.get(key, 0) }} records</span>
+        </div>
+        <button type="submit" class="mt-4 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">Clear data</button>
+      </form>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+<script>
+document.querySelectorAll('.clear-data-form').forEach(function(form) {
+  form.addEventListener('submit', function(event) {
+    event.preventDefault();
+    const phrase = form.dataset.confirmation || '';
+    const label = form.dataset.label || 'selected data';
+    const entered = window.prompt(`Permanently delete ${label}?\n\nType ${phrase} to continue:`);
+    if (entered !== phrase) {
+      if (entered !== null) window.alert('Confirmation did not match. Nothing was deleted.');
+      return;
+    }
+    form.querySelector('input[name="confirmation"]').value = entered;
+    form.submit();
+  });
+});
+</script>
+{% endblock %}

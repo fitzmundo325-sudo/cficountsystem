@@ -3,6 +3,12 @@ from flask_login import UserMixin
 from sqlalchemy.sql import func
 from sqlalchemy import event
 
+inventory_staff_store = db.Table(
+    'inventory_staff_store',
+    db.Column('user_id', db.Integer, db.ForeignKey('user.id'), primary_key=True),
+    db.Column('store_id', db.Integer, db.ForeignKey('store.id'), primary_key=True),
+)
+
 class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(100), unique=True)
@@ -13,6 +19,12 @@ class User(db.Model, UserMixin):
     date_added = db.Column(db.DateTime(timezone=True), default=func.now())
     password = db.Column(db.String(100))
     assigned_store = db.relationship('Store', foreign_keys=[assigned_store_id], lazy=True)
+    assigned_stores = db.relationship(
+        'Store',
+        secondary=inventory_staff_store,
+        lazy=True,
+        backref=db.backref('assigned_inventory_staff', lazy=True),
+    )
     # Relationship for clusters managed by this user
     managed_clusters = db.relationship('Cluster', backref='manager', lazy=True)
     # Relationship for stores managed by this user
@@ -177,9 +189,30 @@ class RsoDelivery(db.Model):
     uploaded_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     uploaded_at = db.Column(db.DateTime(timezone=True), default=func.now())
     delivery_reviewed_date = db.Column(db.Date, nullable=True, index=True)
+    upload_source = db.Column(db.String(20), nullable=False, default='delivery', index=True)
 
     store = db.relationship('Store', backref='rso_deliveries')
     uploader = db.relationship('User', foreign_keys=[uploaded_by])
+
+
+class RsoDeliveryDraft(db.Model):
+    __tablename__ = 'rso_delivery_draft'
+
+    id = db.Column(db.Integer, primary_key=True)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
+    report_date = db.Column(db.Date, nullable=False, index=True)
+    items_json = db.Column(db.Text, nullable=False, default='[]')
+    upload_source = db.Column(db.String(20), nullable=True)
+    upload_filename = db.Column(db.String(255), nullable=True)
+    updated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    store = db.relationship('Store')
+    updater = db.relationship('User', foreign_keys=[updated_by])
+
+    __table_args__ = (
+        db.UniqueConstraint('store_id', 'report_date', name='uq_rso_delivery_draft_store_date'),
+    )
 
 
 class TafTransfer(db.Model):
@@ -314,6 +347,8 @@ class DailyEndingInventory(db.Model):
     inventory_date = db.Column(db.Date, nullable=False, index=True)
     created_at = db.Column(db.DateTime(timezone=True), default=func.now())
     updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     is_finalized = db.Column(db.Boolean, nullable=False, default=False)
     finalized_at = db.Column(db.DateTime(timezone=True), nullable=True)
@@ -328,6 +363,17 @@ class DailyEndingInventory(db.Model):
     finalizer = db.relationship('User', foreign_keys=[finalized_by])
     beginning_finalizer = db.relationship('User', foreign_keys=[beginning_finalized_by])
     items = db.relationship('DailyEndingInventoryItem', backref='inventory', lazy=True, cascade='all, delete-orphan')
+
+
+class MaintenanceMode(db.Model):
+    __tablename__ = 'maintenance_mode'
+    id = db.Column(db.Integer, primary_key=True)
+    is_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    message = db.Column(db.String(500), nullable=True)
+    updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+    updated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+
+    updater = db.relationship('User', foreign_keys=[updated_by])
 
 
 class DailyEndingInventoryItem(db.Model):

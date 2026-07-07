@@ -2,7 +2,7 @@ import os
 import json
 from pathlib import Path
 from re import A
-from flask import Flask, Response
+from flask import Flask, redirect, render_template, request, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, current_user
 from sqlalchemy import text, func
@@ -139,7 +139,36 @@ def _ensure_rso_delivery_columns():
             conn.execute(text("ALTER TABLE rso_delivery ADD COLUMN received_quantity INTEGER"))
         if 'delivery_reviewed_date' not in existing_columns:
             conn.execute(text("ALTER TABLE rso_delivery ADD COLUMN delivery_reviewed_date DATE"))
+        if 'upload_source' not in existing_columns:
+            conn.execute(text("ALTER TABLE rso_delivery ADD COLUMN upload_source VARCHAR(20) DEFAULT 'delivery'"))
+        conn.execute(text("UPDATE rso_delivery SET upload_source = 'delivery' WHERE upload_source IS NULL OR TRIM(upload_source) = ''"))
         conn.commit()
+
+
+def _backfill_inventory_staff_store_assignments():
+    with db.engine.connect() as conn:
+        conn.execute(text(
+            "INSERT OR IGNORE INTO inventory_staff_store (user_id, store_id) "
+            "SELECT id, assigned_store_id FROM user "
+            "WHERE role = 'Inventory Staff' AND assigned_store_id IS NOT NULL"
+        ))
+        conn.commit()
+
+
+def _ensure_maintenance_mode_table():
+    """Repair the maintenance table if it was created from an older malformed model."""
+    from .models import MaintenanceMode
+
+    with db.engine.connect() as conn:
+        existing_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info('maintenance_mode')")).fetchall()
+        }
+
+    expected_columns = {'id', 'is_enabled', 'message', 'updated_at', 'updated_by'}
+    if existing_columns and existing_columns != expected_columns:
+        MaintenanceMode.__table__.drop(db.engine, checkfirst=True)
+        MaintenanceMode.__table__.create(db.engine, checkfirst=True)
 
 
 def _ensure_taf_transfer_columns():
@@ -296,26 +325,11 @@ def create_app():
 
     @app.route('/sw.js')
     def service_worker():
-        script = """
-self.addEventListener('install', (event) => {
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    self.registration.unregister().then(() => self.clients.matchAll())
-      .then((clients) => clients.forEach((client) => client.navigate(client.url)))
-  );
-});
-""".strip()
-
-        return Response(
-            script,
-            mimetype='application/javascript',
-            headers={
-                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-            },
-        )
+        response = app.send_static_file('sw.js')
+        response.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+        response.headers['Service-Worker-Allowed'] = '/'
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        return response
 
     from .models import (
         User,
@@ -332,6 +346,7 @@ self.addEventListener('activate', (event) => {
         StoreTarget,
         AuditLog,
         GlobalInvenSyncConfig,
+        MaintenanceMode,
         DailyEndingInventory,
         DailyEndingInventoryItem,
     )
@@ -341,8 +356,10 @@ self.addEventListener('activate', (event) => {
         _ensure_pos_sold_columns()
         _ensure_store_group_column()
         _ensure_user_assigned_store_column()
+        _backfill_inventory_staff_store_assignments()
         _ensure_product_master_sp_np_column()
         _ensure_rso_delivery_columns()
+        _ensure_maintenance_mode_table()
         _ensure_taf_transfer_columns()
         _ensure_taf_transfer_item_columns()
         _ensure_daily_ending_inventory_columns()
@@ -362,6 +379,56 @@ self.addEventListener('activate', (event) => {
     @login_manager.user_loader
     def load_user(id):
         return User.query.get(int(id))
+
+    @app.route('/maintenance')
+    def maintenance():
+        mode = MaintenanceMode.query.first()
+        if not mode or not mode.is_enabled:
+            return redirect(url_for('views.home') if current_user.is_authenticated else url_for('auth.login'))
+        if current_user.is_authenticated and getattr(current_user, 'role', None) in ('Admin', 'Superadmin'):
+            return redirect(url_for('admin.dashboard'))
+        return render_template('maintenance.html', maintenance_mode=mode)
+
+    @app.before_request
+    def enforce_maintenance_mode():
+        if request.endpoint in ('static', 'auth.login', 'auth.logout', 'maintenance', 'service_worker'):
+            return None
+        if not current_user.is_authenticated:
+            return None
+        if getattr(current_user, 'role', None) in ('Admin', 'Superadmin'):
+            return None
+        mode = MaintenanceMode.query.first()
+        if mode and mode.is_enabled:
+            return redirect(url_for('maintenance'))
+        return None
+
+    @app.context_processor
+    def inject_maintenance_mode():
+        mode = MaintenanceMode.query.first()
+        return {'system_maintenance_mode': mode}
+
+    @app.context_processor
+    def inject_inventory_staff_store_context():
+        if not current_user.is_authenticated or getattr(current_user, 'role', None) != 'Inventory Staff':
+            return {}
+        assigned_stores = list(getattr(current_user, 'assigned_stores', None) or [])
+        legacy_store = getattr(current_user, 'assigned_store', None)
+        if legacy_store and all(store.id != legacy_store.id for store in assigned_stores):
+            assigned_stores.append(legacy_store)
+        assigned_stores.sort(key=lambda store: (store.name or '').lower())
+        assigned_ids = {store.id for store in assigned_stores}
+        requested_id = request.args.get('store_id', type=int)
+        if requested_id in assigned_ids:
+            session['inventory_staff_store_id'] = requested_id
+        selected_id = int(session.get('inventory_staff_store_id', 0) or 0)
+        if selected_id not in assigned_ids:
+            selected_id = assigned_stores[0].id if assigned_stores else None
+            if selected_id:
+                session['inventory_staff_store_id'] = selected_id
+        return {
+            'inventory_staff_stores': assigned_stores,
+            'inventory_staff_selected_store_id': selected_id,
+        }
 
     @app.context_processor
     def inject_trans_in_pending_count():

@@ -7,6 +7,7 @@ from .models import (
     ProductMaster,
     ProductAlias,
     RsoDelivery,
+    RsoDeliveryDraft,
     TafTransfer,
     TafTransferItem,
     DailyEndingInventory,
@@ -41,12 +42,49 @@ def _safe_ratio(numerator, denominator):
 
 
 def _get_wastage_amount_from_components(report):
+    taf_wastage_amount = getattr(report, '_taf_wastage_amount', None)
+    if taf_wastage_amount is not None:
+        return float(taf_wastage_amount or 0)
     return (
         float(getattr(report, 'spoilage_gc', 0) or 0)
         + float(getattr(report, 'spoilage_rolls', 0) or 0)
         + float(getattr(report, 'spoilage_premium', 0) or 0)
         + float(getattr(report, 'spoilage_others', 0) or 0)
     )
+
+
+def _apply_taf_wastage_amounts(reports):
+    """Attach Wastage Transfer TAF totals to matching daily report rows."""
+    report_keys = {
+        (int(report.store_id), report.report_date)
+        for report in reports
+        if getattr(report, 'store_id', None) and getattr(report, 'report_date', None)
+    }
+    if not report_keys:
+        return
+
+    store_ids = {store_id for store_id, _ in report_keys}
+    report_dates = {report_date for _, report_date in report_keys}
+    taf_totals = {
+        (int(store_id), transaction_date): float(total_amount or 0)
+        for store_id, transaction_date, total_amount in (
+            db.session.query(
+                TafTransfer.store_id,
+                TafTransfer.transaction_date,
+                func.sum(TafTransfer.grand_total),
+            )
+            .filter(TafTransfer.store_id.in_(store_ids))
+            .filter(TafTransfer.transaction_date.in_(report_dates))
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer')
+            .group_by(TafTransfer.store_id, TafTransfer.transaction_date)
+            .all()
+        )
+    }
+
+    for report in reports:
+        key = (int(report.store_id), report.report_date)
+        if key in taf_totals:
+            setattr(report, '_taf_wastage_amount', taf_totals[key])
 
 
 def _classify_store_status(ar_tgt_percent, growth_ratio=None):
@@ -1235,6 +1273,7 @@ def _get_or_create_global_invensync_config():
         'locked_columns': [],
         'locked_cells': [],
         'editable_columns': [],
+        'force_beginning_store_ids': [],
     }
     config = GlobalInvenSyncConfig.query.first()
     if not config:
@@ -1941,6 +1980,34 @@ def _build_taf_trans_out_quantity_by_master_id(store, transaction_date):
     return master_quantities
 
 
+def _build_taf_wastage_quantity_by_master_id(store, transaction_date):
+    """Return sent wastage quantities, including TAFs that are still pending."""
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer')
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, sent_quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        quantity = int(sent_quantity or 0)
+        if not master_id or quantity <= 0:
+            continue
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
 def _build_taf_trans_in_quantity_by_master_id(store, transaction_date):
     if not store or not transaction_date:
         return {}
@@ -2035,21 +2102,40 @@ def _sanitize_rso_items(items):
         product_name = str(item.get('product_name', '')).strip()
         if not product_name:
             continue
+        item_rso_no = str(item.get('rso_no', '') or '').strip()
+        item_source = str(item.get('upload_source', '') or '').strip()
 
         quantity = _normalize_pos_quantity(item.get('quantity'))
         if quantity is None or quantity <= 0:
             continue
 
-        if product_name not in aggregated_items:
-            aggregated_items[product_name] = {'quantity': 0}
-        aggregated_items[product_name]['quantity'] = int(aggregated_items[product_name]['quantity'] or 0) + quantity
+        item_key = (item_rso_no, item_source, product_name)
+        if item_key not in aggregated_items:
+            aggregated_items[item_key] = {
+                'quantity': 0,
+                'received_quantity': 0,
+                'has_received_quantity': False,
+            }
+        aggregated_items[item_key]['quantity'] = int(aggregated_items[item_key]['quantity'] or 0) + quantity
+        raw_received_quantity = item.get('received_quantity')
+        if raw_received_quantity is not None and str(raw_received_quantity).strip() != '':
+            received_quantity = _normalize_pos_quantity(raw_received_quantity)
+            if received_quantity is not None:
+                aggregated_items[item_key]['received_quantity'] += max(0, received_quantity)
+                aggregated_items[item_key]['has_received_quantity'] = True
 
     return [
         {
-            'product_name': product_name,
+            'product_name': item_key[2],
+            'rso_no': item_key[0] or None,
+            'upload_source': item_key[1] or None,
             'quantity': int(item_values.get('quantity', 0) or 0),
+            'received_quantity': (
+                int(item_values.get('received_quantity', 0) or 0)
+                if item_values.get('has_received_quantity') else None
+            ),
         }
-        for product_name, item_values in aggregated_items.items()
+        for item_key, item_values in aggregated_items.items()
     ]
 
 
@@ -2205,61 +2291,108 @@ def _rso_draft_storage_key(store_id, report_date):
     return f'{int(store_id)}:{report_date.strftime("%Y-%m-%d")}'
 
 
-def _get_rso_draft_meta(store_id, report_date):
-    draft_meta = session.get('rso_draft_meta') or {}
-    if not isinstance(draft_meta, dict):
+def _get_rso_draft_meta(store_id, report_date, source='delivery'):
+    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    if not draft:
         return {}
-    meta = draft_meta.get(_rso_draft_storage_key(store_id, report_date)) or {}
-    return meta if isinstance(meta, dict) else {}
+    try:
+        filenames = json.loads(draft.upload_filename or '{}')
+    except (TypeError, ValueError):
+        filenames = {}
+    if not isinstance(filenames, dict):
+        filenames = {str(draft.upload_source or 'delivery'): str(draft.upload_filename or '')}
+    return {'source': source, 'filename': str(filenames.get(source, '') or '').strip()}
 
 
-def _set_rso_draft_meta(store_id, report_date, meta):
-    draft_meta = session.get('rso_draft_meta') or {}
-    if not isinstance(draft_meta, dict):
-        draft_meta = {}
-    draft_meta[_rso_draft_storage_key(store_id, report_date)] = {
-        'source': str((meta or {}).get('source') or '').strip(),
-        'filename': str((meta or {}).get('filename') or '').strip(),
-    }
-    session['rso_draft_meta'] = draft_meta
-    session.modified = True
+def _set_rso_draft_meta(store_id, report_date, meta, source='delivery'):
+    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    if not draft:
+        draft = RsoDeliveryDraft(
+            store_id=store_id,
+            report_date=report_date,
+            items_json='[]',
+            updated_by=current_user.id,
+        )
+        db.session.add(draft)
+    try:
+        filenames = json.loads(draft.upload_filename or '{}')
+    except (TypeError, ValueError):
+        filenames = {}
+    if not isinstance(filenames, dict):
+        filenames = {}
+    filenames[source] = str((meta or {}).get('filename') or '').strip()
+    draft.upload_source = source
+    draft.upload_filename = json.dumps(filenames)
+    draft.updated_by = current_user.id
 
 
-def _pop_rso_draft_meta(store_id, report_date):
-    draft_meta = session.get('rso_draft_meta') or {}
-    if not isinstance(draft_meta, dict):
-        draft_meta = {}
-    meta = draft_meta.pop(_rso_draft_storage_key(store_id, report_date), {})
-    session['rso_draft_meta'] = draft_meta
-    session.modified = True
-    return meta if isinstance(meta, dict) else {}
+def _pop_rso_draft_meta(store_id, report_date, source='delivery'):
+    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    if not draft:
+        return {}
+    try:
+        filenames = json.loads(draft.upload_filename or '{}')
+    except (TypeError, ValueError):
+        filenames = {}
+    if not isinstance(filenames, dict):
+        filenames = {}
+    meta = {'source': source, 'filename': str(filenames.pop(source, '') or '').strip()}
+    draft.upload_filename = json.dumps(filenames)
+    return meta
 
 
-def _get_rso_draft(store_id, report_date):
-    drafts = session.get('rso_drafts') or {}
-    if not isinstance(drafts, dict):
+def _get_rso_draft(store_id, report_date, source='delivery'):
+    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    if not draft:
         return []
-    items = drafts.get(_rso_draft_storage_key(store_id, report_date)) or []
+    try:
+        payload = json.loads(draft.items_json or '{}')
+    except (TypeError, ValueError):
+        payload = {}
+    if isinstance(payload, list):
+        items = payload if str(draft.upload_source or 'delivery') == source else []
+    else:
+        items = payload.get(source, []) if isinstance(payload, dict) else []
     return _sanitize_rso_items(items if isinstance(items, list) else [])
 
 
-def _set_rso_draft(store_id, report_date, items):
-    drafts = session.get('rso_drafts') or {}
-    if not isinstance(drafts, dict):
-        drafts = {}
-    drafts[_rso_draft_storage_key(store_id, report_date)] = _sanitize_rso_items(items)
-    session['rso_drafts'] = drafts
-    session.modified = True
+def _set_rso_draft(store_id, report_date, items, source='delivery'):
+    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    if not draft:
+        draft = RsoDeliveryDraft(
+            store_id=store_id,
+            report_date=report_date,
+            updated_by=current_user.id,
+        )
+        db.session.add(draft)
+    try:
+        payload = json.loads(draft.items_json or '{}')
+    except (TypeError, ValueError):
+        payload = {}
+    if isinstance(payload, list):
+        payload = {str(draft.upload_source or 'delivery'): payload}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload[source] = _sanitize_rso_items(items)
+    draft.items_json = json.dumps(payload)
+    draft.updated_by = current_user.id
 
 
-def _pop_rso_draft(store_id, report_date):
-    drafts = session.get('rso_drafts') or {}
-    if not isinstance(drafts, dict):
-        drafts = {}
-    storage_key = _rso_draft_storage_key(store_id, report_date)
-    items = drafts.pop(storage_key, [])
-    session['rso_drafts'] = drafts
-    session.modified = True
+def _pop_rso_draft(store_id, report_date, source='delivery'):
+    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    if not draft:
+        return []
+    try:
+        payload = json.loads(draft.items_json or '{}')
+    except (TypeError, ValueError):
+        payload = {}
+    if isinstance(payload, list):
+        payload = {str(draft.upload_source or 'delivery'): payload}
+    items = payload.pop(source, []) if isinstance(payload, dict) else []
+    if payload:
+        draft.items_json = json.dumps(payload)
+    else:
+        db.session.delete(draft)
     return _sanitize_rso_items(items if isinstance(items, list) else [])
 
 @views.route('/')
@@ -2785,10 +2918,28 @@ def store_manager_pos_sold():
             if pos_sold_items:
                 pos_sold_source = 'saved'
 
-    show_pos_flow_guide = (
-        role == 'Store Manager'
-        and not pos_sold_locked
-        and not missing_dates
+    saved_pos_exists = (
+        db.session.query(PosSold.id)
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(DailyReport.store_id == store.id)
+        .first()
+        is not None
+    )
+    pos_drafts = session.get('pos_sold_drafts') or {}
+    store_draft_prefix = f'{int(store.id)}:'
+    store_has_pos_draft = isinstance(pos_drafts, dict) and any(
+        str(draft_key).startswith(store_draft_prefix) and bool(draft_items)
+        for draft_key, draft_items in pos_drafts.items()
+    )
+    force_pos_flow_guide = str(request.args.get('guide') or '').strip() == '1'
+    show_pos_flow_guide = role == 'Store Manager' and (
+        force_pos_flow_guide
+        or (
+            not saved_pos_exists
+            and not store_has_pos_draft
+            and not pos_sold_locked
+            and not missing_dates
+        )
     )
 
     return render_template(
@@ -2830,25 +2981,44 @@ def store_manager_delivery():
         selected_date = today_date
 
     selected_report_date = selected_date.strftime('%Y-%m-%d')
-    draft_rso_items = _get_rso_draft(store.id, selected_date)
-    draft_rso_meta = _get_rso_draft_meta(store.id, selected_date) if draft_rso_items else {}
-    rso_items = draft_rso_items if draft_rso_items else []
-    rso_source = 'draft' if draft_rso_items else 'none'
+    source_data = {}
+    for upload_source in ('delivery', 'bulk'):
+        draft_items = _get_rso_draft(store.id, selected_date, upload_source)
+        draft_meta = _get_rso_draft_meta(store.id, selected_date, upload_source) if draft_items else {}
+        items = draft_items
+        status = 'draft' if draft_items else 'none'
+        if not items:
+            query = RsoDelivery.query.filter_by(
+                store_id=store.id,
+                report_date=selected_date,
+            )
+            if upload_source == 'delivery':
+                # Rows saved before upload_source was introduced are regular
+                # delivery RSO rows and should remain visible.
+                query = query.filter(db.or_(
+                    RsoDelivery.upload_source == 'delivery',
+                    RsoDelivery.upload_source.is_(None),
+                    func.trim(RsoDelivery.upload_source) == '',
+                ))
+            else:
+                query = query.filter(RsoDelivery.upload_source == upload_source)
+            items = query.order_by(RsoDelivery.id.asc()).all()
+            status = 'saved' if items else 'none'
+        item_rso_no, clean_items = _split_rso_meta_and_items(items)
+        source_data[upload_source] = {
+            'items': _enrich_rso_items_with_product_code(clean_items),
+            'status': status,
+            'rso_no': item_rso_no,
+            'filename': draft_meta.get('filename', ''),
+        }
 
-    saved_rso_items = (
-        RsoDelivery.query
-        .filter_by(store_id=store.id, report_date=selected_date)
-        .order_by(RsoDelivery.id.asc())
-        .all()
+    # The automatic guide is onboarding, not an empty-date warning. Once this
+    # store has saved or drafted any delivery, keep the guide available only
+    # through the Help button.
+    show_delivery_guide = role == 'Store Manager' and not (
+        RsoDelivery.query.filter_by(store_id=store.id).first()
+        or RsoDeliveryDraft.query.filter_by(store_id=store.id).first()
     )
-    if not draft_rso_items and saved_rso_items:
-        rso_items = saved_rso_items
-        rso_source = 'saved'
-
-    rso_no, rso_items = _split_rso_meta_and_items(rso_items)
-    
-    # Enrich items with product codes
-    rso_items = _enrich_rso_items_with_product_code(rso_items)
 
     return render_template(
         'store_manager/delivery.html',
@@ -2856,12 +3026,82 @@ def store_manager_delivery():
         store=store,
         today=today_date.strftime('%Y-%m-%d'),
         selected_report_date=selected_report_date,
-        rso_items=rso_items,
-        rso_source=rso_source,
-        rso_no=rso_no,
-        rso_upload_source=draft_rso_meta.get('source', ''),
-        rso_upload_filename=draft_rso_meta.get('filename', ''),
+        delivery_data=source_data['delivery'],
+        bulk_data=source_data['bulk'],
+        show_delivery_guide=show_delivery_guide,
+        manual_products=(
+            ProductMaster.query
+            .order_by(ProductMaster.description.asc())
+            .all()
+        ),
     )
+
+
+@views.route('/store-manager/delivery/add-product', methods=['POST'])
+@login_required
+def add_manual_rso_product():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        upload_source = (request.form.get('upload_source') or 'delivery').strip().lower()
+        if upload_source not in ('delivery', 'bulk'):
+            upload_source = 'delivery'
+
+        product_id = request.form.get('product_id', type=int)
+        quantity = request.form.get('quantity', type=int)
+        product = ProductMaster.query.get(product_id) if product_id else None
+        if not product:
+            flash('Please select a valid Product Master item.', category='error')
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+        if quantity is None or quantity <= 0:
+            flash('Quantity must be greater than zero.', category='error')
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        items = _get_rso_draft(store.id, report_date, upload_source)
+        if not items:
+            saved_items = (
+                RsoDelivery.query
+                .filter_by(store_id=store.id, report_date=report_date, upload_source=upload_source)
+                .order_by(RsoDelivery.id.asc())
+                .all()
+            )
+            items = [{
+                'product_name': item.product_name,
+                'quantity': item.quantity,
+                'received_quantity': item.received_quantity,
+                'rso_no': item.rso_no,
+                'upload_source': upload_source,
+            } for item in saved_items]
+
+        items.append({
+            'product_name': product.description,
+            'quantity': quantity,
+            'received_quantity': quantity,
+            'rso_no': None,
+            'upload_source': upload_source,
+        })
+        _set_rso_draft(store.id, report_date, items, upload_source)
+        _set_rso_draft_meta(store.id, report_date, {
+            'source': upload_source,
+            'filename': 'Manual product entry',
+        }, upload_source)
+        db.session.commit()
+        flash(f'Added {product.description}. Received quantity was set to {quantity}.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Unable to add product: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
 
 
 @views.route('/store-manager/delivery/review', methods=['POST'])
@@ -2897,7 +3137,8 @@ def review_rso_excel():
             flash('Please select an RSO or Bulk Order RSO Excel file to upload.', category='error')
             return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
 
-        existing_draft_items = _sanitize_rso_items(_get_rso_draft(store.id, report_date))
+        active_source = upload_files[0][0]
+        existing_draft_items = _sanitize_rso_items(_get_rso_draft(store.id, report_date, active_source))
         existing_rso_no, existing_product_items = _split_rso_meta_and_items(existing_draft_items)
         combined_items = []
         combined_product_items = list(existing_product_items)
@@ -2912,6 +3153,10 @@ def review_rso_excel():
 
             parsed_items = _extract_rso_items_from_excel(upload_file)
             parsed_rso_no, parsed_product_items = _split_rso_meta_and_items(parsed_items)
+            for parsed_item in parsed_product_items:
+                if isinstance(parsed_item, dict):
+                    parsed_item['rso_no'] = parsed_rso_no or None
+                    parsed_item['upload_source'] = upload_source
             if parsed_rso_no and parsed_rso_no not in rso_numbers:
                 rso_numbers.append(parsed_rso_no)
             combined_product_items.extend(parsed_product_items)
@@ -2924,11 +3169,11 @@ def review_rso_excel():
                 'quantity': 1,
             })
         combined_items.extend(combined_product_items)
-        _set_rso_draft(store.id, report_date, combined_items)
+        _set_rso_draft(store.id, report_date, combined_items, active_source)
         _set_rso_draft_meta(store.id, report_date, {
-            'source': upload_sources[-1] if upload_sources else '',
+            'source': active_source,
             'filename': uploaded_filenames[-1] if uploaded_filenames else '',
-        })
+        }, active_source)
 
         log_audit_event(
             action='report.rso.review',
@@ -2976,14 +3221,19 @@ def clear_rso_review_data():
 
         report_date_str = (request.form.get('report_date') or '').strip()
         report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        upload_source = (request.form.get('upload_source') or 'delivery').strip().lower()
+        if upload_source not in ('delivery', 'bulk'):
+            upload_source = 'delivery'
 
-        cleared_items = _pop_rso_draft(store.id, report_date)
-        _pop_rso_draft_meta(store.id, report_date)
+        cleared_items = _pop_rso_draft(store.id, report_date, upload_source)
+        _pop_rso_draft_meta(store.id, report_date, upload_source)
+        db.session.commit()
         if cleared_items:
             flash('Extracted RSO review data cleared.', category='success')
         else:
             flash('No extracted RSO review data found to clear.', category='info')
     except Exception as exc:
+        db.session.rollback()
         flash(f'Error clearing extracted RSO data: {str(exc)}', category='error')
 
     return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
@@ -3005,17 +3255,43 @@ def save_rso_review_data():
 
         report_date_str = (request.form.get('report_date') or '').strip()
         report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        upload_source = (request.form.get('upload_source') or 'delivery').strip().lower()
+        if upload_source not in ('delivery', 'bulk'):
+            upload_source = 'delivery'
         if report_date > date.today():
             flash('Report date cannot be in the future.', category='error')
             return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
 
-        raw_draft_items = _sanitize_rso_items(_get_rso_draft(store.id, report_date))
+        raw_draft_items = _sanitize_rso_items(_get_rso_draft(store.id, report_date, upload_source))
         rso_no, draft_items = _split_rso_meta_and_items(raw_draft_items)
         received_qty_values = request.form.getlist('received_qty[]')
+        manual_product_ids = request.form.getlist('manual_product_id[]')
+        manual_quantities = request.form.getlist('manual_quantity[]')
+        for index, raw_product_id in enumerate(manual_product_ids):
+            raw_quantity = manual_quantities[index] if index < len(manual_quantities) else ''
+            if not str(raw_product_id).strip() and not str(raw_quantity).strip():
+                continue
+            try:
+                product_id = int(raw_product_id)
+                quantity = int(raw_quantity)
+            except (TypeError, ValueError):
+                flash('Each added product row requires a product and quantity.', category='error')
+                return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+            product = ProductMaster.query.get(product_id)
+            if not product or quantity <= 0:
+                flash('Each added product row requires a valid product and quantity greater than zero.', category='error')
+                return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+            draft_items.append({
+                'product_name': product.description,
+                'quantity': quantity,
+                'received_quantity': quantity,
+                'rso_no': None,
+                'upload_source': upload_source,
+            })
         if not draft_items:
             if rso_no:
-                _pop_rso_draft(store.id, report_date)
-                _pop_rso_draft_meta(store.id, report_date)
+                _pop_rso_draft(store.id, report_date, upload_source)
+                _pop_rso_draft_meta(store.id, report_date, upload_source)
                 db.session.commit()
                 flash(
                     f'RSO No {rso_no} reviewed and saved for {report_date.strftime("%B %d, %Y")} with no product rows.',
@@ -3027,12 +3303,16 @@ def save_rso_review_data():
 
         (
             RsoDelivery.query
-            .filter_by(store_id=store.id, report_date=report_date)
+            .filter_by(store_id=store.id, report_date=report_date, upload_source=upload_source)
             .delete(synchronize_session=False)
         )
 
         for index, item in enumerate(draft_items):
-            raw_received_qty = received_qty_values[index] if index < len(received_qty_values) else ''
+            raw_received_qty = (
+                received_qty_values[index]
+                if index < len(received_qty_values)
+                else item.get('received_quantity', '')
+            )
             received_quantity = None
             if str(raw_received_qty).strip():
                 try:
@@ -3044,17 +3324,18 @@ def save_rso_review_data():
                 RsoDelivery(
                     store_id=store.id,
                     report_date=report_date,
-                    rso_no=(rso_no or None),
+                    rso_no=(str(item.get('rso_no', '') or '').strip() or rso_no or None),
                     product_name=str(item.get('product_name', '')).strip(),
                     quantity=int(item.get('quantity', 0) or 0),
                     received_quantity=received_quantity,
                     uploaded_by=current_user.id,
                     delivery_reviewed_date=date.today(),
+                    upload_source=upload_source,
                 )
             )
 
-        _pop_rso_draft(store.id, report_date)
-        _pop_rso_draft_meta(store.id, report_date)
+        _pop_rso_draft(store.id, report_date, upload_source)
+        _pop_rso_draft_meta(store.id, report_date, upload_source)
 
         log_audit_event(
             action='report.rso.save',
@@ -3486,14 +3767,8 @@ def _update_inventory_trans_quantities(transfer_record, parsed_items):
 
 
 def _update_inventory_wastage_on_receive(transfer, transfer_items):
-    """Update source store Wastage Qty when a Wastage Transfer is received."""
-    from datetime import date as date_type
-
-    transfer_from = str(getattr(transfer, 'transfer_from', '') or '').strip()
-    if not transfer_from:
-        return
-
-    source_store = Store.query.filter_by(name=transfer_from).first()
+    """Sync InvenSync wastage from TAF sent quantities, regardless of status."""
+    source_store = Store.query.get(getattr(transfer, 'store_id', None))
     if not source_store:
         return
 
@@ -3515,31 +3790,30 @@ def _update_inventory_wastage_on_receive(transfer, transfer_items):
         db.session.add(source_inventory)
         db.session.flush()
 
-    for item in transfer_items:
-        item_name = str(getattr(item, 'item_name', '') or '').strip()
-        received_qty = int(getattr(item, 'received_quantity', None) or getattr(item, 'quantity', 0) or 0)
-
-        if not item_name or received_qty <= 0:
+    sent_quantities = _build_taf_wastage_quantity_by_master_id(source_store, transaction_date)
+    for product_master_id, sent_qty in sent_quantities.items():
+        product = ProductMaster.query.get(product_master_id)
+        if not product:
             continue
-
         source_inventory_item = DailyEndingInventoryItem.query.filter_by(
             inventory_id=source_inventory.id,
-            product_description=item_name
+            product_master_id=product_master_id,
         ).first()
 
         if not source_inventory_item:
-            product = ProductMaster.query.filter_by(description=item_name).first()
             source_inventory_item = DailyEndingInventoryItem(
                 inventory_id=source_inventory.id,
-                product_master_id=product.id if product else None,
-                product_code=product.code if product else None,
-                product_description=item_name,
-                srp_price=product.sp_p if product else 0.0,
-                wastage_qty=received_qty
+                product_master_id=product.id,
+                product_code=product.code,
+                product_description=product.description,
+                srp_price=product.sp_p or 0.0,
+                wastage_qty=int(sent_qty or 0),
             )
             db.session.add(source_inventory_item)
         else:
-            source_inventory_item.wastage_qty = (source_inventory_item.wastage_qty or 0) + received_qty
+            # Always use sent quantity. Received/short/over quantities do not
+            # change wastage reporting.
+            source_inventory_item.wastage_qty = int(sent_qty or 0)
 
         _recalculate_inventory_item(source_inventory_item)
 
@@ -3650,13 +3924,31 @@ def _parse_int(value, default=0):
         return default
 
 
+def _inventory_staff_assigned_store_ids(user=None):
+    user = user or current_user
+    assigned_ids = {int(store.id) for store in (getattr(user, 'assigned_stores', None) or [])}
+    legacy_store_id = int(getattr(user, 'assigned_store_id', 0) or 0)
+    if legacy_store_id:
+        assigned_ids.add(legacy_store_id)
+    return assigned_ids
+
+
 def _resolve_store_for_store_scope_user():
     role = str(getattr(current_user, 'role', '') or '').strip()
     if role == 'Store Manager':
         return Store.query.filter_by(manager_id=current_user.id).first()
     if role == 'Inventory Staff':
-        assigned_store_id = int(getattr(current_user, 'assigned_store_id', 0) or 0)
-        if assigned_store_id <= 0:
+        assigned_store_ids = _inventory_staff_assigned_store_ids()
+        requested_store_id = request.args.get('store_id', type=int) or request.form.get('store_id', type=int)
+        if requested_store_id in assigned_store_ids:
+            session['inventory_staff_store_id'] = requested_store_id
+        session_store_id = int(session.get('inventory_staff_store_id', 0) or 0)
+        assigned_store_id = (
+            requested_store_id if requested_store_id in assigned_store_ids
+            else session_store_id if session_store_id in assigned_store_ids
+            else min(assigned_store_ids) if assigned_store_ids else None
+        )
+        if not assigned_store_id:
             return None
         return Store.query.get(assigned_store_id)
     return None
@@ -3816,6 +4108,12 @@ def store_manager_transaction_activity_form():
                 )
             )
 
+        if transaction_type == 'Wastage Transfer':
+            # Pending wastage must appear in InvenSync immediately, using the
+            # quantity sent rather than any later received quantity.
+            db.session.flush()
+            _update_inventory_wastage_on_receive(transfer_record, [])
+
         # Update inventory Trans-In/Trans-Out quantities only after receiving is confirmed
         # This is now handled in store_manager_incoming_transfer_view when Confirm Receiving is clicked
         # _update_inventory_trans_quantities(transfer_record, parsed_items)
@@ -3856,6 +4154,7 @@ def store_manager_transaction_activity_form():
         if tp_value is not None:
             product_price_map[product_name] = float(tp_value)
     all_stores = Store.query.order_by(Store.name.asc()).all()
+    show_taf_guide = TafTransfer.query.filter_by(store_id=store.id).first() is None
 
     return render_template(
         'store_manager/transaction_activity_form.html',
@@ -3866,6 +4165,7 @@ def store_manager_transaction_activity_form():
         selected_report_date=selected_date.strftime('%Y-%m-%d'),
         product_names=product_names,
         product_price_map=product_price_map,
+        show_taf_guide=show_taf_guide,
     )
 
 
@@ -4786,6 +5086,7 @@ def cluster_manager_raw_data():
     ).all()
     _coalesce_numeric_fields_for_reports(reports)
     _apply_pos_qty_from_pos_categories(reports)
+    _apply_taf_wastage_amounts(reports)
     
     # Fetch store targets for the selected month
     from .models import StoreTarget
@@ -5580,16 +5881,21 @@ def save_daily_ending_inventory():
                 'success': False,
                 'error': 'This inventory day is already finalized and can no longer be edited.'
             }), 423
+        config, global_config_data = _get_or_create_global_invensync_config()
+        force_beginning_entry = inventory.store_id in {
+            int(item) for item in global_config_data.get('force_beginning_store_ids', [])
+            if str(item).isdigit()
+        }
         store_beginning_baseline = DailyEndingInventory.query.filter(
             DailyEndingInventory.store_id == inventory.store_id,
             DailyEndingInventory.is_beginning_finalized.is_(True),
         ).first()
-        if finalize_beginning and store_beginning_baseline and store_beginning_baseline.id != inventory.id:
+        if finalize_beginning and not force_beginning_entry and store_beginning_baseline and store_beginning_baseline.id != inventory.id:
             return jsonify({
                 'success': False,
                 'error': 'Beginning inventory has already been saved for this store.'
             }), 409
-        if finalize_beginning and inventory.is_beginning_finalized:
+        if finalize_beginning and not force_beginning_entry and inventory.is_beginning_finalized:
             return jsonify({
                 'success': False,
                 'error': 'Beginning inventory has already been saved for this store.'
@@ -5599,7 +5905,7 @@ def save_daily_ending_inventory():
             DailyEndingInventory.store_id == inventory.store_id,
             DailyEndingInventory.inventory_date < inventory.inventory_date,
         ).first() is None
-        if finalize_beginning and not is_first_inventory_baseline:
+        if finalize_beginning and not force_beginning_entry and not is_first_inventory_baseline:
             return jsonify({
                 'success': False,
                 'error': 'Beginning inventory can only be finalized during the first inventory setup for this store.'
@@ -5610,12 +5916,14 @@ def save_daily_ending_inventory():
                 'success': False,
                 'error': 'Beginning inventory save requires beginning quantities.'
             }), 400
-        _, global_config_data = _get_or_create_global_invensync_config()
         beginning_qty_is_locked = 'beginning_qty' in global_config_data.get('locked_columns', [])
         allow_beginning_qty_update = (
-            (not inventory.is_beginning_finalized)
-            and (not store_beginning_baseline)
-            and ((not beginning_qty_is_locked) or is_first_inventory_baseline or finalize_beginning)
+            force_beginning_entry
+            or (
+                (not inventory.is_beginning_finalized)
+                and (not store_beginning_baseline)
+                and ((not beginning_qty_is_locked) or is_first_inventory_baseline or finalize_beginning)
+            )
         )
         
         # Update items
@@ -5648,11 +5956,18 @@ def save_daily_ending_inventory():
             inventory.is_beginning_finalized = True
             inventory.beginning_finalized_at = datetime.now()
             inventory.beginning_finalized_by = current_user.id
+            if force_beginning_entry:
+                global_config_data['force_beginning_store_ids'] = [
+                    int(item) for item in global_config_data.get('force_beginning_store_ids', [])
+                    if str(item).isdigit() and int(item) != inventory.store_id
+                ]
+                config.config_data = json.dumps(global_config_data)
 
         if finalize_day:
             inventory.is_finalized = True
             inventory.finalized_at = datetime.now()
             inventory.finalized_by = current_user.id
+            _carry_finalized_ending_to_next_day(inventory)
         
         db.session.commit()
         
@@ -5677,6 +5992,33 @@ def save_daily_ending_inventory():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _carry_finalized_ending_to_next_day(source_inventory):
+    """Refresh an already-created next day from a newly finalized prior day."""
+    if not source_inventory or not source_inventory.is_finalized:
+        return 0
+
+    next_inventory = DailyEndingInventory.query.filter_by(
+        store_id=source_inventory.store_id,
+        inventory_date=source_inventory.inventory_date + timedelta(days=1),
+    ).first()
+    if not next_inventory:
+        return 0
+
+    source_totals = {
+        item.product_master_id: int(item.total_ending_qty or 0)
+        for item in source_inventory.items
+        if item.product_master_id is not None
+    }
+    updated_count = 0
+    for next_item in next_inventory.items:
+        if next_item.product_master_id not in source_totals:
+            continue
+        next_item.beginning_qty = source_totals[next_item.product_master_id]
+        _recalculate_inventory_item(next_item)
+        updated_count += 1
+    return updated_count
+
+
 def _normalize_product_name(name):
     """Normalize product name for comparison: lowercase, strip, collapse spaces."""
     if not name:
@@ -5686,7 +6028,7 @@ def _normalize_product_name(name):
     return normalized
 
 
-def _match_rso_to_inventory(rso_item, product):
+def _match_rso_to_inventory(rso_item, product, alias_master_lookup=None):
     """
     Match RSO delivery item to inventory product.
     Priority: Product Code > Full Product Name (exact normalized match)
@@ -5698,8 +6040,20 @@ def _match_rso_to_inventory(rso_item, product):
     """
     # Normalize both names
     rso_name_normalized = _normalize_product_name(rso_item.product_name)
+    rso_alias_key = _normalize_product_text(rso_item.product_name)
     product_desc_normalized = _normalize_product_name(product.description)
+    product_desc_key = _normalize_product_text(product.description)
     product_code_str = str(product.code or '').strip()
+
+    # Product aliases are linked to a master product in System Analyzer. Resolve
+    # them at display time so aliases also apply to RSO rows uploaded before the
+    # link was created.
+    if (
+        rso_alias_key
+        and alias_master_lookup
+        and alias_master_lookup.get(rso_alias_key) == product.id
+    ):
+        return True
     
     # Try matching by product code if RSO item has a code embedded in product_name
     # Some Excel files might have format: "CODE - Product Name" or "CODE Product Name"
@@ -5716,6 +6070,12 @@ def _match_rso_to_inventory(rso_item, product):
     if rso_name_normalized and product_desc_normalized:
         if rso_name_normalized == product_desc_normalized:
             return True
+
+    # Treat formatting-only differences the same way System Analyzer does.
+    # Example: "Pizza Bread - Cheeseburger" and
+    # "Pizza Bread (Cheese Burger)" both become "pizzabreadcheeseburger".
+    if rso_alias_key and product_desc_key and rso_alias_key == product_desc_key:
+        return True
     
     # Secondary matching: If product code in RSO matches product.code exactly
     # (for cases where RSO product_name IS the product code)
@@ -5750,7 +6110,8 @@ def invensync():
     elif role == 'Inventory Staff':
         # Inventory Staff viewing specific store details
         store_id = request.args.get('store_id', type=int)
-        store = Store.query.get(store_id) if store_id else None
+        assigned_store_ids = _inventory_staff_assigned_store_ids()
+        store = Store.query.get(store_id) if store_id in assigned_store_ids else None
     elif role == 'Cluster Manager':
         # Cluster Manager viewing store details — must belong to their cluster
         store_id = request.args.get('store_id', type=int)
@@ -5826,6 +6187,18 @@ def invensync():
 
     products.sort(key=lambda p: (category_order.get(p.category, 99), p.id))
 
+    prev_inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=selected_date - timedelta(days=1),
+    ).first()
+    finalized_prev_totals = {}
+    if prev_inventory and prev_inventory.is_finalized:
+        finalized_prev_totals = {
+            prev_item.product_master_id: int(prev_item.total_ending_qty or 0)
+            for prev_item in prev_inventory.items
+            if prev_item.product_master_id is not None
+        }
+
     # Get or create inventory items
     inventory_items = {}
     for product in products:
@@ -5834,21 +6207,9 @@ def invensync():
             product_master_id=product.id
         ).first()
 
-        if not item:
-            prev_date = selected_date - timedelta(days=1)
-            prev_inventory = DailyEndingInventory.query.filter_by(
-                store_id=store.id,
-                inventory_date=prev_date
-            ).first()
+        beginning_qty = finalized_prev_totals.get(product.id, 0)
 
-            beginning_qty = 0
-            if prev_inventory:
-                prev_item = DailyEndingInventoryItem.query.filter_by(
-                    inventory_id=prev_inventory.id,
-                    product_master_id=product.id
-                ).first()
-                if prev_item:
-                    beginning_qty = prev_item.total_ending_qty
+        if not item:
 
             srp = product.sp_p if store.store_group == 'premium' else product.sp_np
 
@@ -5861,43 +6222,80 @@ def invensync():
                 beginning_qty=beginning_qty
             )
             db.session.add(item)
+        elif product.id in finalized_prev_totals:
+            # The next day may have been opened before the prior day was
+            # finalized. Always repair its beginning quantity from finalized EI.
+            item.beginning_qty = beginning_qty
 
         inventory_items[product.id] = item
 
     db.session.commit()
 
     # Sync RSO delivery data to inventory items with improved matching
-    rso_deliveries = []
-    if not inventory.is_finalized:
-        rso_deliveries = RsoDelivery.query.filter_by(
-            store_id=store.id,
-            report_date=selected_date
-        ).filter(RsoDelivery.delivery_reviewed_date.isnot(None)).all()
+    # Reconcile reviewed RSO rows even after an inventory day is finalized.
+    # A product alias may be linked later, and that source-data correction must
+    # still populate the delivery column without reopening manual inventory edits.
+    rso_deliveries = RsoDelivery.query.filter_by(
+        store_id=store.id,
+        report_date=selected_date
+    ).filter(RsoDelivery.delivery_reviewed_date.isnot(None)).all()
     
     if rso_deliveries:
-        # Track which RSO items have been matched to avoid duplicates
-        matched_rso_ids = set()
-        
+        rso_alias_master_lookup = {
+            str(normalized_alias or '').strip(): int(product_master_id)
+            for normalized_alias, product_master_id in (
+                db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
+                .all()
+            )
+            if str(normalized_alias or '').strip()
+        }
+
         for inv_item in inventory_items.values():
             if inv_item.product_master_id:
                 product = ProductMaster.query.get(inv_item.product_master_id)
                 if product:
-                    # Try to match with unmatched RSO items
+                    regular_delivery_qty = 0
+                    bulk_order_qty = 0
+                    has_regular_delivery = False
+                    has_bulk_order = False
+                    latest_reviewed_date = None
+
                     for rso_item in rso_deliveries:
-                        if rso_item.id in matched_rso_ids:
+                        if not _match_rso_to_inventory(rso_item, product, rso_alias_master_lookup):
                             continue
-                        
-                        if _match_rso_to_inventory(rso_item, product):
-                            delivery_qty = (
-                                rso_item.received_quantity
-                                if rso_item.received_quantity is not None
-                                else rso_item.quantity
-                            )
-                            if inv_item.delivery_qty == 0 or inv_item.delivery_qty == rso_item.quantity:
-                                inv_item.delivery_qty = delivery_qty
-                                inv_item.delivery_reviewed_date = rso_item.delivery_reviewed_date
-                                matched_rso_ids.add(rso_item.id)
-                            break
+
+                        reviewed_qty = int(
+                            rso_item.received_quantity
+                            if rso_item.received_quantity is not None
+                            else (rso_item.quantity or 0)
+                        )
+                        upload_source = str(rso_item.upload_source or 'delivery').strip().lower()
+                        if upload_source == 'bulk':
+                            bulk_order_qty += reviewed_qty
+                            has_bulk_order = True
+                        else:
+                            # Blank/legacy upload_source values are regular RSO.
+                            regular_delivery_qty += reviewed_qty
+                            has_regular_delivery = True
+                            if (
+                                rso_item.delivery_reviewed_date
+                                and (
+                                    latest_reviewed_date is None
+                                    or rso_item.delivery_reviewed_date > latest_reviewed_date
+                                )
+                            ):
+                                latest_reviewed_date = rso_item.delivery_reviewed_date
+
+                    if has_regular_delivery:
+                        inv_item.delivery_qty = regular_delivery_qty
+                        inv_item.delivery_reviewed_date = latest_reviewed_date
+                    elif has_bulk_order and int(inv_item.delivery_qty or 0) == bulk_order_qty:
+                        # Repair values written to Delivery by the previous bulk
+                        # RSO behavior without clearing unrelated manual values.
+                        inv_item.delivery_qty = 0
+
+                    if has_bulk_order:
+                        inv_item.bo_qty = bulk_order_qty
 
     taf_trans_out_map = {} if inventory.is_finalized else _build_taf_trans_out_quantity_by_master_id(store, selected_date)
     if taf_trans_out_map:
@@ -5925,11 +6323,23 @@ def invensync():
 
             inv_item.trans_in_qty = taf_trans_in_qty
 
+    # Wastage uses the quantity sent on the TAF immediately. Pending transfers
+    # are included, and assigning the calculated total prevents a later receive
+    # action from leaving the same wastage counted twice.
+    taf_wastage_map = _build_taf_wastage_quantity_by_master_id(store, selected_date)
+    if taf_wastage_map:
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            if inv_item.product_master_id in taf_wastage_map:
+                inv_item.wastage_qty = int(taf_wastage_map[inv_item.product_master_id] or 0)
+
     saved_sales_map = {}
+    # Recalculate after carry-forward and source reconciliation. This also
+    # repairs derived values on finalized rows when late source data is synced.
+    for item in inventory_items.values():
+        _recalculate_inventory_item(item)
     if not inventory.is_finalized:
-        # Recalculate inventory totals
-        for item in inventory_items.values():
-            _recalculate_inventory_item(item)
         saved_sales_map = _build_pos_sold_quantity_by_master_id_for_report(
             DailyReport.query.filter_by(store_id=store.id, report_date=selected_date).with_entities(DailyReport.id).scalar()
         )
@@ -5956,6 +6366,10 @@ def invensync():
                 _recalculate_inventory_item(inv_item, sold_override=inv_item.draft_quantity_sold)
 
     _, global_config_data = _get_or_create_global_invensync_config()
+    force_beginning_entry = store.id in {
+        int(item) for item in global_config_data.get('force_beginning_store_ids', [])
+        if str(item).isdigit()
+    }
     store_beginning_baseline_finalized = DailyEndingInventory.query.filter(
         DailyEndingInventory.store_id == store.id,
         DailyEndingInventory.is_beginning_finalized.is_(True),
@@ -5970,7 +6384,7 @@ def invensync():
         DailyEndingInventory.inventory_date < selected_date
     ).first() is not None
     is_first_time = (not store_beginning_baseline_finalized) and not has_any_beginning and not prev_inventory_exists
-    allow_beginning_stock_entry = is_first_time and current_user.role == 'Store Manager'
+    allow_beginning_stock_entry = (is_first_time or force_beginning_entry) and current_user.role == 'Store Manager'
 
     # Build cluster sidebar context for Cluster Manager
     cluster_sidebar_ctx = {}
@@ -6347,8 +6761,8 @@ def invensync_inventory_staff():
     else:
         selected_date = date.today()
 
-    # Get all stores
-    stores = Store.query.order_by(Store.name.asc()).all()
+    assigned_store_ids = _inventory_staff_assigned_store_ids()
+    stores = Store.query.filter(Store.id.in_(assigned_store_ids)).order_by(Store.name.asc()).all() if assigned_store_ids else []
     
     # Get inventory data for selected date from all stores
     inventory_records = DailyEndingInventory.query.filter_by(

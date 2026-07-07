@@ -80,6 +80,14 @@
   </div>
 
   <div class="flex flex-wrap items-center gap-3 sm:justify-end">
+    <button id="pos-tour-help-btn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50" title="Restart help guide">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4"></path>
+        <path d="M12 17h.01"></path>
+      </svg>
+      <span>Help</span>
+    </button>
     <label for="report_date" class="text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
       Report Date
     </label>
@@ -390,6 +398,7 @@
     const posTourSampleCard = document.getElementById('pos-tour-sample-card');
     const posTourStartModal = document.getElementById('pos-tour-start-modal');
     const posTourStartBtn = document.getElementById('pos-tour-start-btn');
+    const posTourHelpBtn = document.getElementById('pos-tour-help-btn');
     const posFileInput = document.getElementById('pos_file');
     const posFileLabel = document.getElementById('pos-file-label');
     const zReadingRequiredInput = document.getElementById('z_reading_image_required');
@@ -700,11 +709,12 @@
       showPosTourStep();
     }
 
-    function startPosTour() {
-      if (!shouldShowPosTour) return;
+    function startPosTour(force = false) {
+      if (!force && !shouldShowPosTour) return;
       if (posTourStartModal) {
         posTourStartModal.remove();
       }
+      clearPosTour();
       posTourActive = true;
       posTourStepIndex = 0;
       showPosTourStep();
@@ -714,6 +724,11 @@
       posTourStartBtn.addEventListener('click', startPosTour);
     } else if (shouldShowPosTour) {
       setTimeout(startPosTour, 550);
+    }
+    if (posTourHelpBtn) {
+      posTourHelpBtn.addEventListener('click', function() {
+        startPosTour(true);
+      });
     }
 
     window.addEventListener('resize', function() {
