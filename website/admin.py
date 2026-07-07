@@ -1,5 +1,5 @@
 from flask import Blueprint, redirect, render_template, request, url_for, flash, jsonify
-from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, PosSold, MenuInventoryItem, DailyEndingInventory, DailyEndingInventoryItem, TafTransfer, TafTransferItem, StoreProductBuffer
+from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, MaintenanceMode, PosSold, RsoDelivery, RsoDeliveryDraft, MenuInventoryItem, DailyEndingInventory, DailyEndingInventoryItem, TafTransfer, TafTransferItem, StoreProductBuffer
 from . import db
 from .audit import log_audit_event, verify_audit_chain
 from werkzeug.security import generate_password_hash
@@ -19,6 +19,38 @@ admin = Blueprint('admin', __name__)
 
 def _can_manage_users():
     return current_user.role in ('Superadmin', 'Admin')
+
+
+_CLEAR_DATA_OPTIONS = {
+    'rso': {
+        'label': 'RSO delivery data',
+        'confirmation': 'DELETE RSO',
+    },
+    'pos_sold': {
+        'label': 'POS Sold data',
+        'confirmation': 'DELETE POS SOLD',
+    },
+    'daily_sales': {
+        'label': 'Daily Sales reports and POS Sold data',
+        'confirmation': 'DELETE DAILY SALES',
+    },
+    'invensync': {
+        'label': 'InvenSync inventory data',
+        'confirmation': 'DELETE INVENSYNC',
+    },
+    'transfers': {
+        'label': 'TransAct transfer data',
+        'confirmation': 'DELETE TRANSFERS',
+    },
+    'targets': {
+        'label': 'Store target data',
+        'confirmation': 'DELETE TARGETS',
+    },
+    'all_operational': {
+        'label': 'All operational data',
+        'confirmation': 'DELETE ALL OPERATIONAL DATA',
+    },
+}
 
 
 def _is_grand_total_product_name(product_name):
@@ -362,6 +394,36 @@ def pos_sold():
             'total_net_sales': total_net_sales,
         },
     )
+
+
+@admin.route('/admin/maintenance-mode', methods=['POST'])
+@login_required
+def toggle_maintenance_mode():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    try:
+        mode = MaintenanceMode.query.first()
+        if not mode:
+            mode = MaintenanceMode(is_enabled=False)
+            db.session.add(mode)
+        mode.is_enabled = not bool(mode.is_enabled)
+        mode.message = (request.form.get('message') or '').strip() or 'We are currently improving the system. Please check back shortly.'
+        mode.updated_by = current_user.id
+        log_audit_event(
+            action='system.maintenance.toggle',
+            entity_type='MaintenanceMode',
+            entity_id=mode.id or 'global',
+            reason='Admin changed system maintenance mode.',
+            details={'is_enabled': mode.is_enabled, 'message': mode.message},
+        )
+        db.session.commit()
+        flash(f'Maintenance Mode {"enabled" if mode.is_enabled else "disabled"}.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Unable to change Maintenance Mode: {str(exc)}', category='error')
+    return redirect(request.referrer or url_for('admin.dashboard'))
 
 
 @admin.route('/admin/dashboard')
@@ -904,6 +966,94 @@ def audit_logs():
     return render_template('admin/audit_logs.html', user=current_user, logs=logs, tampered_ids=tampered_ids, stats=stats)
 
 
+@admin.route('/admin/settings')
+@login_required
+def settings():
+    if not _can_manage_users():
+        flash('Access denied.', category='error')
+        return redirect(url_for('admin.dashboard'))
+
+    pos_sold_count = PosSold.query.count()
+    counts = {
+        'rso': RsoDelivery.query.count() + RsoDeliveryDraft.query.count(),
+        'pos_sold': pos_sold_count,
+        'daily_sales': DailyReport.query.count() + pos_sold_count,
+        'invensync': DailyEndingInventory.query.count() + DailyEndingInventoryItem.query.count(),
+        'transfers': TafTransfer.query.count() + TafTransferItem.query.count(),
+        'targets': StoreTarget.query.count(),
+    }
+    counts['all_operational'] = (
+        counts['rso']
+        + counts['daily_sales']
+        + counts['invensync']
+        + counts['transfers']
+        + counts['targets']
+    )
+    return render_template(
+        'admin/settings.html',
+        user=current_user,
+        clear_options=_CLEAR_DATA_OPTIONS,
+        counts=counts,
+    )
+
+
+@admin.route('/admin/settings/clear-data', methods=['POST'])
+@login_required
+def clear_data():
+    if not _can_manage_users():
+        flash('Access denied.', category='error')
+        return redirect(url_for('admin.dashboard'))
+
+    dataset = (request.form.get('dataset') or '').strip()
+    option = _CLEAR_DATA_OPTIONS.get(dataset)
+    confirmation = (request.form.get('confirmation') or '').strip()
+    if not option:
+        flash('Select a valid data set.', category='error')
+        return redirect(url_for('admin.settings'))
+    if confirmation != option['confirmation']:
+        flash(f'Type "{option["confirmation"]}" exactly to confirm.', category='error')
+        return redirect(url_for('admin.settings'))
+
+    deleted = {}
+
+    def delete_rows(model, key):
+        count = model.query.delete(synchronize_session=False)
+        deleted[key] = int(count or 0)
+
+    try:
+        if dataset in ('pos_sold', 'daily_sales', 'all_operational'):
+            delete_rows(PosSold, 'pos_sold')
+        if dataset in ('daily_sales', 'all_operational'):
+            delete_rows(DailyReport, 'daily_reports')
+        if dataset in ('rso', 'all_operational'):
+            delete_rows(RsoDeliveryDraft, 'rso_drafts')
+            delete_rows(RsoDelivery, 'rso_deliveries')
+        if dataset in ('invensync', 'all_operational'):
+            delete_rows(DailyEndingInventoryItem, 'invensync_items')
+            delete_rows(DailyEndingInventory, 'invensync_days')
+        if dataset in ('transfers', 'all_operational'):
+            delete_rows(TafTransferItem, 'transfer_items')
+            delete_rows(TafTransfer, 'transfers')
+        if dataset in ('targets', 'all_operational'):
+            delete_rows(StoreTarget, 'store_targets')
+
+        log_audit_event(
+            action='admin.data.clear',
+            entity_type='OperationalData',
+            entity_id=dataset,
+            reason=f'Cleared {option["label"]} from Admin Settings',
+            details={'dataset': dataset, 'deleted_rows': deleted},
+        )
+        db.session.commit()
+        total_deleted = sum(deleted.values())
+        flash(f'{option["label"]} cleared successfully ({total_deleted} database rows deleted).', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Unable to clear data: {str(exc)}', category='error')
+
+    return redirect(url_for('admin.settings'))
+
+
 @admin.route('admin/users/create', methods=['POST'])
 @login_required
 def create_user():
@@ -916,7 +1066,7 @@ def create_user():
         username = (request.form.get('username') or '').strip()
         email = (request.form.get('email') or '').strip()
         role = (request.form.get('role') or '').strip()
-        assigned_store_id_raw = (request.form.get('assigned_store_id') or '').strip()
+        assigned_store_ids_raw = request.form.getlist('assigned_store_ids')
         password = request.form.get('password') or ''
         confirm_password = request.form.get('confirm_password') or ''
 
@@ -933,18 +1083,14 @@ def create_user():
             return redirect(url_for('admin.users'))
 
         assigned_store_id = None
+        assigned_stores = []
         if role == 'Inventory Staff':
-            if not assigned_store_id_raw:
-                flash('Assigned Store is required for Inventory Staff.', category='error')
+            assigned_store_ids = [int(value) for value in assigned_store_ids_raw if str(value).isdigit()]
+            assigned_stores = Store.query.filter(Store.id.in_(assigned_store_ids)).order_by(Store.name.asc()).all() if assigned_store_ids else []
+            if not assigned_stores:
+                flash('At least one Assigned Store is required for Inventory Staff.', category='error')
                 return redirect(url_for('admin.users'))
-            try:
-                assigned_store_id = int(assigned_store_id_raw)
-            except (TypeError, ValueError):
-                flash('Assigned Store is invalid.', category='error')
-                return redirect(url_for('admin.users'))
-            if not Store.query.get(assigned_store_id):
-                flash('Assigned Store does not exist.', category='error')
-                return redirect(url_for('admin.users'))
+            assigned_store_id = assigned_stores[0].id
         
         # Check if user already exists
         if User.query.filter_by(email=email).first():
@@ -967,6 +1113,7 @@ def create_user():
         
         db.session.add(new_user)
         db.session.flush()
+        new_user.assigned_stores = assigned_stores
         log_audit_event(
             action='admin.user.create',
             entity_type='User',
@@ -977,6 +1124,7 @@ def create_user():
                 'email': new_user.email,
                 'role': new_user.role,
                 'assigned_store_id': new_user.assigned_store_id,
+                'assigned_store_ids': [store.id for store in new_user.assigned_stores],
             },
         )
         db.session.commit()
@@ -1004,12 +1152,13 @@ def update_user(user_id):
             'email': user.email,
             'role': user.role,
             'assigned_store_id': user.assigned_store_id,
+            'assigned_store_ids': [store.id for store in user.assigned_stores],
         }
         full_name = (request.form.get('full_name') or '').strip()
         username = (request.form.get('username') or '').strip()
         email = (request.form.get('email') or '').strip()
         role = (request.form.get('role') or '').strip()
-        assigned_store_id_raw = (request.form.get('assigned_store_id') or '').strip()
+        assigned_store_ids_raw = request.form.getlist('assigned_store_ids')
         new_password = request.form.get('new_password') or ''
         confirm_new_password = request.form.get('confirm_new_password') or ''
 
@@ -1033,19 +1182,15 @@ def update_user(user_id):
         user.role = role
 
         if role == 'Inventory Staff':
-            if not assigned_store_id_raw:
-                flash('Assigned Store is required for Inventory Staff.', category='error')
+            assigned_store_ids = [int(value) for value in assigned_store_ids_raw if str(value).isdigit()]
+            assigned_stores = Store.query.filter(Store.id.in_(assigned_store_ids)).order_by(Store.name.asc()).all() if assigned_store_ids else []
+            if not assigned_stores:
+                flash('At least one Assigned Store is required for Inventory Staff.', category='error')
                 return redirect(url_for('admin.users'))
-            try:
-                assigned_store_id = int(assigned_store_id_raw)
-            except (TypeError, ValueError):
-                flash('Assigned Store is invalid.', category='error')
-                return redirect(url_for('admin.users'))
-            if not Store.query.get(assigned_store_id):
-                flash('Assigned Store does not exist.', category='error')
-                return redirect(url_for('admin.users'))
-            user.assigned_store_id = assigned_store_id
+            user.assigned_stores = assigned_stores
+            user.assigned_store_id = assigned_stores[0].id
         else:
+            user.assigned_stores = []
             user.assigned_store_id = None
 
         if new_password or confirm_new_password:
@@ -1070,6 +1215,7 @@ def update_user(user_id):
                     'email': user.email,
                     'role': user.role,
                     'assigned_store_id': user.assigned_store_id,
+                    'assigned_store_ids': [store.id for store in user.assigned_stores],
                     'password_changed': bool(new_password),
                 },
             },
@@ -1963,7 +2109,7 @@ def link_system_analyzer_product():
     )
 
     if not alias_name or not master_product_name:
-        flash('Please provide POS product name and master product name.', category='error')
+        flash('Please provide the detected product name and master product name.', category='error')
         return redirect(redirect_url)
 
     normalized_alias = _normalize_product_text(alias_name)
@@ -2018,7 +2164,7 @@ def link_system_analyzer_product():
             action='admin.product_alias.link',
             entity_type='ProductAlias',
             entity_id=normalized_alias,
-            reason='Linked POS product name to product masterlist.',
+            reason='Linked detected product name to product masterlist.',
             details={
                 'alias_name': alias_name,
                 'normalized_alias': normalized_alias,
@@ -2029,7 +2175,7 @@ def link_system_analyzer_product():
             },
         )
         db.session.commit()
-        flash(f'Linked "{alias_name}" to "{linked_master_name}". POS rollups will now use the master product.', category='success')
+        flash(f'Linked "{alias_name}" to "{linked_master_name}". POS and RSO matching will now use the master product.', category='success')
     except Exception as exc:
         db.session.rollback()
         flash(f'Error linking product alias: {str(exc)}', category='error')
@@ -2063,7 +2209,13 @@ def system_analyzer():
     if start_date > end_date:
         start_date, end_date = end_date, start_date
 
-    master_descriptions = ProductMaster.query.with_entities(ProductMaster.description).all()
+    master_products = ProductMaster.query.with_entities(ProductMaster.code, ProductMaster.description).all()
+    master_descriptions = [(description,) for _, description in master_products]
+    normalized_master_codes = {
+        re.sub(r'[^a-z0-9]', '', str(code).strip().lower())
+        for code, _ in master_products
+        if str(code or '').strip()
+    }
     normalized_master_names = {
         _normalize_product_text(description)
         for (description,) in master_descriptions
@@ -2081,6 +2233,29 @@ def system_analyzer():
     master_match_names_list = list(master_match_names)
     match_result_cache = {}
     alias_lookup = _get_product_alias_lookup()
+
+    def _extract_product_code(product_text):
+        text_value = str(product_text or '').strip()
+        if not text_value:
+            return ''
+        compact_value = re.sub(r'[^a-z0-9]', '', text_value.lower())
+        if compact_value in normalized_master_codes:
+            return compact_value
+        leading_code = re.match(r'^\s*([a-z0-9][a-z0-9._-]{2,})\b', text_value, re.IGNORECASE)
+        if leading_code and re.search(r'\d', leading_code.group(1)):
+            candidate = re.sub(r'[^a-z0-9]', '', leading_code.group(1).lower())
+            return candidate
+        return ''
+
+    def _matches_master_code(product_text):
+        detected_code = _extract_product_code(product_text)
+        return bool(detected_code and detected_code in normalized_master_codes)
+
+    def _matches_master_name_exact(product_text):
+        normalized_name = _normalize_product_text(product_text)
+        if not normalized_name:
+            return False
+        return any(variant in master_match_names for variant in _build_name_variants(normalized_name))
 
     def _is_in_masterlist_fuzzy(normalized_name, threshold=0.80):
         if not normalized_name:
@@ -2175,7 +2350,11 @@ def system_analyzer():
         aliased_master_name = alias_lookup.get(normalized_name)
         canonical_name = aliased_master_name or product_name
         canonical_normalized_name = _normalize_product_text(canonical_name)
-        is_in_master = bool(aliased_master_name) or _is_in_masterlist_fuzzy(canonical_normalized_name, threshold=0.80)
+        is_in_master = (
+            bool(aliased_master_name)
+            or _matches_master_code(product_name)
+            or _matches_master_name_exact(canonical_name)
+        )
         if is_in_master:
             matched_unique_products += 1
             continue
@@ -2202,6 +2381,7 @@ def system_analyzer():
 
         unmatched_items.append({
             'product_name': product_name,
+            'product_code': _extract_product_code(product_name),
             'total_qty': total_qty,
             'total_gross_sales': total_gross_sales,
             'total_net_sales': total_net_sales,
@@ -2222,6 +2402,64 @@ def system_analyzer():
         reverse=True,
     )
 
+    rso_rows = (
+        db.session.query(
+            RsoDelivery.product_name,
+            func.sum(RsoDelivery.quantity).label('total_qty'),
+            func.sum(func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity)).label('total_received_qty'),
+            func.count(RsoDelivery.id).label('entry_count'),
+            func.count(func.distinct(RsoDelivery.store_id)).label('store_count'),
+            func.max(RsoDelivery.report_date).label('latest_report_date'),
+        )
+        .filter(
+            RsoDelivery.report_date >= start_date,
+            RsoDelivery.report_date <= end_date,
+        )
+        .group_by(RsoDelivery.product_name)
+        .all()
+    )
+
+    unmatched_rso_items = []
+    total_unique_rso_products = 0
+    matched_unique_rso_products = 0
+    unmatched_rso_total_qty = 0
+    for row in rso_rows:
+        product_name = (row.product_name or '').strip()
+        normalized_name = _normalize_product_text(product_name)
+        if not normalized_name:
+            continue
+        total_unique_rso_products += 1
+        aliased_master_name = alias_lookup.get(normalized_name)
+        canonical_name = aliased_master_name or product_name
+        is_in_master = (
+            bool(aliased_master_name)
+            or _matches_master_code(product_name)
+            or _matches_master_name_exact(canonical_name)
+        )
+        if is_in_master:
+            matched_unique_rso_products += 1
+            continue
+
+        total_qty = int(row.total_qty or 0)
+        unmatched_rso_total_qty += total_qty
+        unmatched_rso_items.append({
+            'product_name': product_name,
+            'product_code': _extract_product_code(product_name),
+            'total_qty': total_qty,
+            'total_received_qty': int(row.total_received_qty or 0),
+            'entry_count': int(row.entry_count or 0),
+            'store_count': int(row.store_count or 0),
+            'latest_report_date': row.latest_report_date,
+        })
+
+    unmatched_rso_items.sort(
+        key=lambda item: (
+            item.get('latest_report_date') or datetime.min.date(),
+            int(item.get('total_qty', 0) or 0),
+        ),
+        reverse=True,
+    )
+
     return render_template(
         'admin/system_analyzer.html',
         user=current_user,
@@ -2230,12 +2468,17 @@ def system_analyzer():
         link_alias=link_alias,
         master_name_options=master_name_options,
         unmatched_items=unmatched_items,
+        unmatched_rso_items=unmatched_rso_items,
         summary={
             'total_unique_pos_products': total_unique_pos_products,
             'matched_unique_products': matched_unique_products,
             'unmatched_unique_products': len(unmatched_items),
             'unmatched_total_qty': unmatched_total_qty,
             'unmatched_total_net_sales': unmatched_total_net_sales,
+            'total_unique_rso_products': total_unique_rso_products,
+            'matched_unique_rso_products': matched_unique_rso_products,
+            'unmatched_unique_rso_products': len(unmatched_rso_items),
+            'unmatched_rso_total_qty': unmatched_rso_total_qty,
         },
     )
 
@@ -2417,7 +2660,8 @@ def _get_global_invensync_config():
             'locked_rows': [],
             'locked_columns': [],
             'locked_cells': [],
-            'editable_columns': []
+            'editable_columns': [],
+            'force_beginning_store_ids': []
         }
         config = GlobalInvenSyncConfig(config_data=json.dumps(default_data))
         db.session.add(config)
@@ -2433,7 +2677,8 @@ def _get_global_invensync_config():
             'locked_rows': [],
             'locked_columns': [],
             'locked_cells': [],
-            'editable_columns': []
+            'editable_columns': [],
+            'force_beginning_store_ids': []
         }
 
     return config, config_data
@@ -2597,7 +2842,7 @@ def update_invensync_config():
 
     try:
         data = request.get_json(force=True) or {}
-        config, _ = _get_global_invensync_config()
+        config, existing_data = _get_global_invensync_config()
 
         normalized_data = {
             'hidden_rows': [str(item).strip() for item in data.get('hidden_rows', []) if str(item).strip()],
@@ -2606,13 +2851,51 @@ def update_invensync_config():
             'locked_rows': [str(item).strip() for item in data.get('locked_rows', []) if str(item).strip()],
             'locked_columns': [str(item).strip() for item in data.get('locked_columns', []) if str(item).strip()],
             'locked_cells': [str(item).strip() for item in data.get('locked_cells', []) if str(item).strip()],
-            'editable_columns': [str(item).strip() for item in data.get('editable_columns', []) if str(item).strip()]
+            'editable_columns': [str(item).strip() for item in data.get('editable_columns', []) if str(item).strip()],
+            'force_beginning_store_ids': [
+                int(item)
+                for item in data.get('force_beginning_store_ids', existing_data.get('force_beginning_store_ids', []))
+                if str(item).isdigit()
+            ]
         }
 
         config.config_data = json.dumps(normalized_data)
         db.session.commit()
 
         return jsonify({'success': True, 'message': 'Global Invensync settings updated.'})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+@admin.route('/admin/invensync/force-beginning', methods=['POST'])
+@login_required
+def force_invensync_beginning():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    try:
+        data = request.get_json(force=True) or {}
+        store_id = int(data.get('store_id', 0) or 0)
+        store = Store.query.get(store_id)
+        if not store:
+            return jsonify({'success': False, 'message': 'Store not found.'}), 404
+
+        config, config_data = _get_global_invensync_config()
+        forced_ids = {
+            int(item) for item in config_data.get('force_beginning_store_ids', [])
+            if str(item).isdigit()
+        }
+        forced_ids.add(store_id)
+        config_data['force_beginning_store_ids'] = sorted(forced_ids)
+        config.config_data = json.dumps(config_data)
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': f'Beginning entry enabled for {store.name}. It will turn off after Beginning is saved.'
+        })
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'Select a valid store.'}), 400
     except Exception as exc:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(exc)}), 500
@@ -2683,14 +2966,18 @@ def admin_taf():
     else:
         selected_date = date.today()
 
-    # Get all TAF transfers
-    transfers = TafTransfer.query.options(
+    page = request.args.get('page', 1, type=int)
+    transfer_query = TafTransfer.query.options(
         selectinload(TafTransfer.store),
         selectinload(TafTransfer.submitter)
     ).order_by(
         TafTransfer.transaction_date.desc(),
         TafTransfer.id.desc()
-    ).all()
+    )
+    pagination = transfer_query.paginate(page=page, per_page=15, error_out=False)
+    transfers = pagination.items
+    total_transfers = TafTransfer.query.count()
+    pending_transfers = TafTransfer.query.filter_by(status='Pending').count()
 
     # Get item counts for each transfer
     transfer_ids = [transfer.id for transfer in transfers]
@@ -2715,6 +3002,11 @@ def admin_taf():
         transfers=transfers,
         item_count_by_transfer=item_count_by_transfer,
         selected_date=selected_date.strftime('%Y-%m-%d'),
+        pagination=pagination,
+        total_transfers=total_transfers,
+        pending_transfers=pending_transfers,
+        received_transfers=max(0, total_transfers - pending_transfers),
+        filter_stores=Store.query.order_by(Store.name.asc()).all(),
     )
 
 
@@ -2785,7 +3077,7 @@ def _reverse_inventory_trans_quantities(transfer_record):
                 # Reverse Trans-In quantities for destination store
                 for item in transfer_items:
                     item_name = item.item_name
-                    quantity = item.quantity
+                    quantity = item.received_quantity if item.received_quantity is not None else item.quantity
                     
                     # Find inventory item for destination store
                     dest_inventory_item = DailyEndingInventoryItem.query.filter_by(
@@ -2809,6 +3101,127 @@ def _reverse_inventory_trans_quantities(transfer_record):
                             (dest_inventory_item.csi_qty or 0) -
                             (dest_inventory_item.quantity_sold or 0)
                         )
+
+
+def _apply_inventory_trans_quantities(transfer_record):
+    """Apply the inventory effect represented by a TAF after an admin edit."""
+    source_store = Store.query.filter_by(name=transfer_record.transfer_from).first()
+    source_inventory = DailyEndingInventory.query.filter_by(
+        store_id=source_store.id,
+        inventory_date=transfer_record.transaction_date,
+    ).first() if source_store else None
+
+    destination_store = Store.query.filter_by(name=transfer_record.transfer_to).first()
+    destination_inventory = DailyEndingInventory.query.filter_by(
+        store_id=destination_store.id,
+        inventory_date=transfer_record.transaction_date,
+    ).first() if destination_store and transfer_record.transaction_type == 'Product Transfer' else None
+
+    for transfer_item in transfer_record.items:
+        if source_inventory:
+            source_item = DailyEndingInventoryItem.query.filter_by(
+                inventory_id=source_inventory.id,
+                product_description=transfer_item.item_name,
+            ).first()
+            if source_item:
+                source_item.trans_out_qty = (source_item.trans_out_qty or 0) + int(transfer_item.quantity or 0)
+                source_item.theo_ending_qty = (
+                    (source_item.beginning_qty or 0) + (source_item.delivery_qty or 0)
+                    + (source_item.trans_in_qty or 0) + (source_item.bo_qty or 0)
+                    + (source_item.adv_del_qty or 0) - (source_item.trans_out_qty or 0)
+                    - (source_item.wastage_qty or 0) - (source_item.csi_qty or 0)
+                    - (source_item.quantity_sold or 0)
+                )
+
+        if destination_inventory:
+            destination_item = DailyEndingInventoryItem.query.filter_by(
+                inventory_id=destination_inventory.id,
+                product_description=transfer_item.item_name,
+            ).first()
+            if destination_item:
+                received_qty = transfer_item.received_quantity
+                quantity = int(received_qty if received_qty is not None else transfer_item.quantity or 0)
+                destination_item.trans_in_qty = (destination_item.trans_in_qty or 0) + quantity
+                destination_item.theo_ending_qty = (
+                    (destination_item.beginning_qty or 0) + (destination_item.delivery_qty or 0)
+                    + (destination_item.trans_in_qty or 0) + (destination_item.bo_qty or 0)
+                    + (destination_item.adv_del_qty or 0) - (destination_item.trans_out_qty or 0)
+                    - (destination_item.wastage_qty or 0) - (destination_item.csi_qty or 0)
+                    - (destination_item.quantity_sold or 0)
+                )
+
+
+@admin.route('/admin/taf/edit/<int:transfer_id>', methods=['GET', 'POST'])
+@login_required
+def admin_edit_taf(transfer_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('admin.dashboard'))
+
+    transfer = TafTransfer.query.options(selectinload(TafTransfer.items)).get_or_404(transfer_id)
+    if request.method == 'POST':
+        try:
+            _reverse_inventory_trans_quantities(transfer)
+            transfer.transaction_date = datetime.strptime(request.form['transaction_date'], '%Y-%m-%d').date()
+            transfer.control_no = (request.form.get('control_no') or '').strip()
+            transfer.transaction_type = (request.form.get('transaction_type') or '').strip()
+            transfer.transfer_to = (request.form.get('transfer_to') or '').strip()
+            transfer.prepared_by_name = (request.form.get('prepared_by_name') or '').strip()
+            transfer.received_by_name = (request.form.get('received_by_name') or '').strip() or None
+            transfer.status = (request.form.get('status') or 'Pending').strip()
+
+            item_ids = request.form.getlist('item_id[]')
+            item_names = request.form.getlist('item_name[]')
+            unit_costs = request.form.getlist('unit_cost[]')
+            quantities = request.form.getlist('quantity[]')
+            received_quantities = request.form.getlist('received_quantity[]')
+            remarks = request.form.getlist('remarks[]')
+            existing_items = {str(item.id): item for item in transfer.items}
+            kept_ids = set()
+            grand_total = 0.0
+            for index, item_name in enumerate(item_names):
+                item_name = item_name.strip()
+                if not item_name:
+                    continue
+                item_id = item_ids[index] if index < len(item_ids) else ''
+                item = existing_items.get(item_id) or TafTransferItem(transfer=transfer)
+                if item.id:
+                    kept_ids.add(item.id)
+                unit_cost = max(0.0, float(unit_costs[index] or 0))
+                quantity = max(0, int(quantities[index] or 0))
+                received_raw = received_quantities[index].strip() if index < len(received_quantities) else ''
+                item.item_name = item_name
+                item.unit_cost = unit_cost
+                item.quantity = quantity
+                item.received_quantity = max(0, int(received_raw)) if received_raw else None
+                item.short_over_qty = (item.received_quantity - quantity) if item.received_quantity is not None else 0
+                item.line_total = unit_cost * quantity
+                item.remarks = remarks[index].strip() if index < len(remarks) else None
+                grand_total += item.line_total
+            for old_item in list(transfer.items):
+                if old_item.id and old_item.id not in kept_ids:
+                    db.session.delete(old_item)
+            transfer.grand_total = grand_total
+            db.session.flush()
+            _apply_inventory_trans_quantities(transfer)
+            log_audit_event(
+                action='taf.edit', entity_type='TafTransfer', entity_id=transfer.id,
+                reason=f'Admin edited TAF transfer {transfer.control_no}',
+                details={'control_no': transfer.control_no, 'item_count': len(item_names)},
+            )
+            db.session.commit()
+            flash('TAF updated successfully.', category='success')
+            return redirect(url_for('admin.admin_taf'))
+        except Exception as exc:
+            db.session.rollback()
+            flash(f'Unable to update TAF: {str(exc)}', category='error')
+
+    return render_template(
+        'admin/taf_edit.html',
+        user=current_user,
+        transfer=transfer,
+        stores=Store.query.order_by(Store.name.asc()).all(),
+    )
 
 
 @admin.route('/admin/taf/delete/<int:transfer_id>', methods=['POST'])

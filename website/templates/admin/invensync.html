@@ -192,6 +192,32 @@
           </div>
         </div>
 
+        <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <h3 class="text-sm font-semibold text-amber-900 uppercase tracking-wide">Force Beginning Entry</h3>
+          <p class="mt-1 text-xs text-amber-800">Use this when a store never received the Beginning Inventory screen. The override is removed automatically after the store saves Beginning.</p>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <select id="forceBeginningStore" class="min-w-[240px] rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm text-slate-800">
+              <option value="">Select affected store</option>
+              {% for store in stores %}
+                <option value="{{ store.id }}">{{ store.name }}</option>
+              {% endfor %}
+            </select>
+            <button type="button" id="forceBeginningBtn" onclick="forceBeginningEntry()" class="rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 transition">
+              Force Beginning Entry
+            </button>
+            <span id="forceBeginningMessage" class="text-sm text-amber-900"></span>
+          </div>
+          {% set forced_store_ids = global_invensync_config.force_beginning_store_ids|default([]) %}
+          {% if forced_store_ids %}
+            <div class="mt-3 text-xs text-amber-900">
+              Waiting for Beginning save:
+              {% for store in stores if store.id in forced_store_ids %}
+                <span class="ml-1 inline-flex rounded-full bg-amber-200 px-2 py-1 font-semibold">{{ store.name }}</span>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+
         <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
           <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">Hidden, Locked &amp; Editable Columns</h3>
           <table class="w-full text-sm text-slate-700">
@@ -334,6 +360,36 @@ function saveInvensyncConfig() {
         saveBtn.disabled = false;
         saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
         saveBtn.innerHTML = 'Save Global Config';
+    });
+}
+
+function forceBeginningEntry() {
+    const storeId = document.getElementById('forceBeginningStore').value;
+    const button = document.getElementById('forceBeginningBtn');
+    const message = document.getElementById('forceBeginningMessage');
+    if (!storeId) {
+        message.textContent = 'Please select a store.';
+        return;
+    }
+
+    button.disabled = true;
+    button.classList.add('opacity-50', 'cursor-not-allowed');
+    message.textContent = 'Enabling...';
+    fetch(`{{ url_for('admin.force_invensync_beginning') }}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({store_id: Number(storeId)})
+    })
+    .then(response => response.json().then(data => ({ok: response.ok, data})))
+    .then(({ok, data}) => {
+        if (!ok || !data.success) throw new Error(data.message || 'Unable to enable Beginning entry.');
+        message.textContent = data.message;
+        setTimeout(() => window.location.reload(), 900);
+    })
+    .catch(error => {
+        message.textContent = error.message;
+        button.disabled = false;
+        button.classList.remove('opacity-50', 'cursor-not-allowed');
     });
 }
 

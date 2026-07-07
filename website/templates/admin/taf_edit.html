@@ -1,0 +1,31 @@
+{% extends "admin_base.html" %}
+{% block title %}Edit TAF{% endblock %}
+{% block content %}
+<div class="max-w-6xl mx-auto p-6 md:p-8 space-y-6">
+  <div class="flex items-center justify-between gap-3">
+    <div><h1 class="text-3xl font-bold text-slate-900">Edit TAF</h1><p class="text-sm text-slate-500">{{ transfer.control_no }}</p></div>
+    <a href="{{ url_for('admin.admin_taf') }}" class="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">Back</a>
+  </div>
+  <form method="POST" class="space-y-6">
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+      <label class="text-sm font-semibold">Date<input type="date" name="transaction_date" required value="{{ transfer.transaction_date }}" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"></label>
+      <label class="text-sm font-semibold">Control No<input name="control_no" required value="{{ transfer.control_no }}" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"></label>
+      <label class="text-sm font-semibold">Type<select name="transaction_type" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal">{% for option in ['Product Transfer','Wastage Transfer','Supplies Transfer','Supplies Request'] %}<option {% if transfer.transaction_type == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+      <label class="text-sm font-semibold">From<input value="{{ transfer.transfer_from }}" readonly class="mt-1 w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 font-normal"></label>
+      <label class="text-sm font-semibold">To<select name="transfer_to" required class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal">{% for store in stores %}<option value="{{ store.name }}" {% if transfer.transfer_to == store.name %}selected{% endif %}>{{ store.name }}</option>{% endfor %}</select></label>
+      <label class="text-sm font-semibold">Status<select name="status" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal">{% for option in ['Pending','Received','Received - Short','Received - Over','Received - Short/Over'] %}<option {% if transfer.status == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+      <label class="text-sm font-semibold">Prepared By<input name="prepared_by_name" required value="{{ transfer.prepared_by_name }}" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"></label>
+      <label class="text-sm font-semibold">Received By<input name="received_by_name" value="{{ transfer.received_by_name or '' }}" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"></label>
+    </section>
+    <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+      <div class="flex items-center justify-between p-4 border-b"><h2 class="font-bold">Items</h2><button type="button" id="add-item" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white">+ Add Item</button></div>
+      <div class="overflow-x-auto"><table class="min-w-full"><thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3 text-left">Item</th><th class="p-3">Cost</th><th class="p-3">Qty</th><th class="p-3">Received</th><th class="p-3 text-left">Remarks</th><th></th></tr></thead><tbody id="item-rows">
+      {% for item in transfer.items %}<tr class="border-t item-row"><td class="p-2"><input type="hidden" name="item_id[]" value="{{ item.id }}"><input name="item_name[]" required value="{{ item.item_name }}" class="w-64 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" step="0.01" min="0" name="unit_cost[]" value="{{ item.unit_cost }}" class="w-24 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" min="0" name="quantity[]" value="{{ item.quantity }}" class="w-20 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" min="0" name="received_quantity[]" value="{{ item.received_quantity if item.received_quantity is not none else '' }}" class="w-20 rounded border px-2 py-1.5"></td><td class="p-2"><input name="remarks[]" value="{{ item.remarks or '' }}" class="w-48 rounded border px-2 py-1.5"></td><td class="p-2"><button type="button" class="remove-item text-rose-600 font-bold">×</button></td></tr>{% endfor %}
+      </tbody></table></div>
+    </section>
+    <div class="flex justify-end"><button type="submit" class="rounded-xl bg-indigo-600 px-6 py-3 font-semibold text-white hover:bg-indigo-700">Save Changes</button></div>
+  </form>
+</div>
+<template id="item-template"><tr class="border-t item-row"><td class="p-2"><input type="hidden" name="item_id[]"><input name="item_name[]" required class="w-64 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" step="0.01" min="0" name="unit_cost[]" value="0" class="w-24 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" min="0" name="quantity[]" value="0" class="w-20 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" min="0" name="received_quantity[]" class="w-20 rounded border px-2 py-1.5"></td><td class="p-2"><input name="remarks[]" class="w-48 rounded border px-2 py-1.5"></td><td class="p-2"><button type="button" class="remove-item text-rose-600 font-bold">×</button></td></tr></template>
+<script>document.getElementById('add-item').addEventListener('click',()=>document.getElementById('item-rows').appendChild(document.getElementById('item-template').content.cloneNode(true)));document.getElementById('item-rows').addEventListener('click',e=>{if(e.target.closest('.remove-item'))e.target.closest('tr').remove();});</script>
+{% endblock %}
