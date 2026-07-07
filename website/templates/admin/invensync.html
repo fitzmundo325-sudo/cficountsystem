@@ -53,6 +53,9 @@
       <button id="configTabBtn" onclick="switchAdminInvenSyncTab('config')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'config' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'config' else 'false' }}">
         Global Config
       </button>
+      <button id="storeConfigTabBtn" onclick="switchAdminInvenSyncTab('store_config')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'store_config' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'store_config' else 'false' }}">
+        Store Config
+      </button>
     </div>
   </div>
 
@@ -157,39 +160,11 @@
   </div>
 
   <div id="configTab" style="display: {{ 'block' if selected_tab == 'config' else 'none' }};">
-    <div class="grid gap-6">
-      <section class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+    <div class="grid gap-4">
+      <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">
         <div>
-          <h2 class="text-2xl font-bold text-slate-900">Global Invensync Configuration</h2>
-          <p class="mt-1 text-slate-600">Manage locking and visibility rules for store-level Invensync inputs across all stores.</p>
-        </div>
-
-        <div class="grid gap-4 lg:grid-cols-2">
-          <div class="space-y-4">
-            <div>
-              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Hidden Rows</h3>
-              <p class="text-xs text-slate-500">Enter product IDs to hide entire rows. One per line.</p>
-              <textarea id="hiddenRowsInput" rows="5" class="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-800 bg-slate-50">{{ global_invensync_config.hidden_rows|default([])|join('\n') }}</textarea>
-            </div>
-            <div>
-              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Hidden Cells</h3>
-              <p class="text-xs text-slate-500">Enter specific cells to hide in the format <code>product_id|field_name</code>. One per line.</p>
-              <textarea id="hiddenCellsInput" rows="5" class="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-800 bg-slate-50">{{ global_invensync_config.hidden_cells|default([])|join('\n') }}</textarea>
-            </div>
-          </div>
-
-          <div class="space-y-4">
-            <div>
-              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Locked Rows</h3>
-              <p class="text-xs text-slate-500">Enter product IDs to lock entire rows. One per line.</p>
-              <textarea id="lockedRowsInput" rows="5" class="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-800 bg-slate-50">{{ global_invensync_config.locked_rows|default([])|join('\n') }}</textarea>
-            </div>
-            <div>
-              <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide">Locked Cells</h3>
-              <p class="text-xs text-slate-500">Enter specific cells to lock in the format <code>product_id|field_name</code>. One per line.</p>
-              <textarea id="lockedCellsInput" rows="5" class="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-800 bg-slate-50">{{ global_invensync_config.locked_cells|default([])|join('\n') }}</textarea>
-            </div>
-          </div>
+          <h2 class="text-xl font-bold text-slate-900">Global Invensync Configuration</h2>
+          <p class="mt-0.5 text-sm text-slate-600">Manage locking and visibility rules for store-level Invensync inputs across all stores.</p>
         </div>
 
         <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
@@ -264,7 +239,7 @@
           <span id="configSaveMessage" class="text-sm text-slate-600"></span>
         </div>
 
-        <div class="bg-white rounded-2xl border border-slate-200 p-4">
+        <div class="hidden">
           <h3 class="text-sm font-semibold text-slate-700">Available Product IDs</h3>
           <p class="text-xs text-slate-500 mt-2">Use product IDs when creating specific row or cell rules. Example: <code>42|quantity_sold</code>.</p>
           <div class="grid gap-2 mt-3 text-[11px] text-slate-600 max-h-40 overflow-y-auto">
@@ -279,13 +254,80 @@
       </section>
     </div>
   </div>
+
+  <div id="storeConfigTab" style="display: {{ 'block' if selected_tab == 'store_config' else 'none' }};">
+    <div class="grid gap-4">
+      <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">
+        <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">Store Invensync Configuration</h2>
+            <p class="mt-0.5 text-sm text-slate-600">Apply hidden, locked, and editable column rules to one selected store.</p>
+          </div>
+          <div class="w-full md:w-auto">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+              <select id="storeConfigSelect" class="w-full sm:w-[220px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-800" onchange="loadStoreInvensyncConfig()">
+                <option value="">Select store</option>
+                {% for store in stores %}
+                  <option value="{{ store.id }}">{{ store.name }}</option>
+                {% endfor %}
+              </select>
+              <button type="button" id="saveStoreConfigBtn" onclick="saveStoreInvensyncConfig()" class="w-full sm:w-[120px] rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold leading-tight text-white hover:bg-slate-800 transition">
+                Save Store Config
+              </button>
+            </div>
+            <span id="storeConfigSaveMessage" class="mt-1 block min-h-5 text-xs text-slate-600"></span>
+          </div>
+        </div>
+
+        <div class="bg-slate-50 rounded-xl border border-slate-200 p-3">
+          <table class="w-full text-sm text-slate-700">
+            <thead>
+              <tr class="text-xs text-slate-500 uppercase">
+                <th class="text-left pb-2 font-semibold">Column</th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Hidden
+                  <button type="button" onclick="toggleSelectAll('store-hidden-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Locked
+                  <button type="button" onclick="toggleSelectAll('store-locked-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Editable
+                  <button type="button" onclick="toggleSelectAll('store-editable-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+              {% for field in config_fields %}
+              <tr>
+                <td class="py-1.5">{{ field.label }}</td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="store-hidden-column-checkbox">
+                </td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="store-locked-column-checkbox">
+                </td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="store-editable-column-checkbox">
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
 </div>
 
 <script>
 function updateDate() {
     const dateInput = document.getElementById('dateInput').value;
     if (dateInput) {
-        const tab = document.querySelector('#summaryTab').style.display === 'block' ? 'summary' : 'config';
+        const tab = document.querySelector('#summaryTab').style.display === 'block'
+            ? 'summary'
+            : (document.querySelector('#storeConfigTab').style.display === 'block' ? 'store_config' : 'config');
         window.location.href = `{{ url_for('admin.invensync') }}?date=${dateInput}&tab=${tab}`;
     }
 }
@@ -293,32 +335,34 @@ function updateDate() {
 function switchAdminInvenSyncTab(tab) {
     const summaryTab = document.getElementById('summaryTab');
     const configTab = document.getElementById('configTab');
+    const storeConfigTab = document.getElementById('storeConfigTab');
     const summaryBtn = document.getElementById('summaryTabBtn');
     const configBtn = document.getElementById('configTabBtn');
+    const storeConfigBtn = document.getElementById('storeConfigTabBtn');
 
-    if (tab === 'config') {
-        summaryTab.style.display = 'none';
-        configTab.style.display = 'block';
-        summaryBtn.classList.remove('bg-slate-900', 'text-white');
-        summaryBtn.classList.add('bg-slate-100', 'text-slate-700');
-        configBtn.classList.remove('bg-slate-100', 'text-slate-700');
-        configBtn.classList.add('bg-slate-900', 'text-white');
-    } else {
-        summaryTab.style.display = 'block';
-        configTab.style.display = 'none';
-        summaryBtn.classList.remove('bg-slate-100', 'text-slate-700');
-        summaryBtn.classList.add('bg-slate-900', 'text-white');
-        configBtn.classList.remove('bg-slate-900', 'text-white');
-        configBtn.classList.add('bg-slate-100', 'text-slate-700');
-    }
+    summaryTab.style.display = tab === 'summary' ? 'block' : 'none';
+    configTab.style.display = tab === 'config' ? 'block' : 'none';
+    storeConfigTab.style.display = tab === 'store_config' ? 'block' : 'none';
+
+    [
+        [summaryBtn, tab === 'summary'],
+        [configBtn, tab === 'config'],
+        [storeConfigBtn, tab === 'store_config']
+    ].forEach(([button, isActive]) => {
+        button.classList.toggle('bg-slate-900', isActive);
+        button.classList.toggle('text-white', isActive);
+        button.classList.toggle('bg-slate-100', !isActive);
+        button.classList.toggle('text-slate-700', !isActive);
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
 }
 
 function saveInvensyncConfig() {
     const url = `{{ url_for('admin.update_invensync_config') }}`;
-    const hiddenRows = document.getElementById('hiddenRowsInput').value.split('\n').map(v => v.trim()).filter(Boolean);
-    const hiddenCells = document.getElementById('hiddenCellsInput').value.split('\n').map(v => v.trim()).filter(Boolean);
-    const lockedRows = document.getElementById('lockedRowsInput').value.split('\n').map(v => v.trim()).filter(Boolean);
-    const lockedCells = document.getElementById('lockedCellsInput').value.split('\n').map(v => v.trim()).filter(Boolean);
+    const hiddenRows = {{ global_invensync_config.hidden_rows|default([])|tojson }};
+    const hiddenCells = {{ global_invensync_config.hidden_cells|default([])|tojson }};
+    const lockedRows = {{ global_invensync_config.locked_rows|default([])|tojson }};
+    const lockedCells = {{ global_invensync_config.locked_cells|default([])|tojson }};
     const hiddenColumns = Array.from(document.querySelectorAll('.hidden-column-checkbox:checked')).map(el => el.value);
     const lockedColumns = Array.from(document.querySelectorAll('.locked-column-checkbox:checked')).map(el => el.value);
     const editableColumns = Array.from(document.querySelectorAll('.editable-column-checkbox:checked')).map(el => el.value);
@@ -362,6 +406,118 @@ function saveInvensyncConfig() {
         saveBtn.innerHTML = 'Save Global Config';
     });
 }
+
+const globalInvensyncColumnConfig = {
+    hidden_columns: {{ global_invensync_config.hidden_columns|default([])|tojson }},
+    locked_columns: {{ global_invensync_config.locked_columns|default([])|tojson }},
+    editable_columns: {{ global_invensync_config.editable_columns|default([])|tojson }}
+};
+const storeInvensyncConfigs = {{ store_invensync_configs|default({})|tojson }};
+
+function setCheckboxGroupValues(cls, values) {
+    const valueSet = new Set((values || []).map(value => String(value)));
+    document.querySelectorAll('.' + cls).forEach((checkbox) => {
+        checkbox.checked = valueSet.has(String(checkbox.value));
+    });
+}
+
+function getCheckboxGroupValues(cls) {
+    return Array.from(document.querySelectorAll('.' + cls + ':checked')).map(el => el.value);
+}
+
+function loadStoreInvensyncConfig() {
+    const storeId = document.getElementById('storeConfigSelect').value;
+    const saveBtn = document.getElementById('saveStoreConfigBtn');
+    const message = document.getElementById('storeConfigSaveMessage');
+    const storeConfig = storeId && storeInvensyncConfigs[String(storeId)]
+        ? storeInvensyncConfigs[String(storeId)]
+        : globalInvensyncColumnConfig;
+
+    setCheckboxGroupValues('store-hidden-column-checkbox', storeConfig.hidden_columns || []);
+    setCheckboxGroupValues('store-locked-column-checkbox', storeConfig.locked_columns || []);
+    setCheckboxGroupValues('store-editable-column-checkbox', storeConfig.editable_columns || []);
+    if (saveBtn) {
+        saveBtn.disabled = !storeId;
+        saveBtn.classList.toggle('opacity-50', !storeId);
+        saveBtn.classList.toggle('cursor-not-allowed', !storeId);
+    }
+    if (message) {
+        message.textContent = storeId ? 'Ready to save store-specific rules.' : 'Select a store to save store-specific rules.';
+        message.classList.remove('text-red-600', 'text-emerald-600');
+        message.classList.add('text-slate-600');
+    }
+}
+
+function saveStoreInvensyncConfig() {
+    const storeId = document.getElementById('storeConfigSelect').value;
+    const saveBtn = document.getElementById('saveStoreConfigBtn');
+    const message = document.getElementById('storeConfigSaveMessage');
+    const saveStartedAt = Date.now();
+    const minimumSaveDurationMs = 800;
+    if (!storeId) {
+        message.textContent = 'Please select a store.';
+        message.classList.remove('text-emerald-600');
+        message.classList.add('text-red-600');
+        return;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    saveBtn.textContent = 'Saving...';
+    message.textContent = '';
+
+    fetch(`{{ url_for('admin.update_store_invensync_config') }}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            store_id: Number(storeId),
+            hidden_columns: getCheckboxGroupValues('store-hidden-column-checkbox'),
+            locked_columns: getCheckboxGroupValues('store-locked-column-checkbox'),
+            editable_columns: getCheckboxGroupValues('store-editable-column-checkbox')
+        })
+    })
+    .then(response => response.text().then(text => {
+        let data = {};
+        try {
+            data = text ? JSON.parse(text) : {};
+        } catch (error) {
+            data = {message: text || 'Server returned an unreadable response.'};
+        }
+        return {ok: response.ok, data};
+    }))
+    .then(({ok, data}) => {
+        if (!ok || !data.success) throw new Error(data.message || 'Unable to save store config.');
+        storeInvensyncConfigs[String(storeId)] = {
+            hidden_columns: getCheckboxGroupValues('store-hidden-column-checkbox'),
+            locked_columns: getCheckboxGroupValues('store-locked-column-checkbox'),
+            editable_columns: getCheckboxGroupValues('store-editable-column-checkbox')
+        };
+        return {
+            type: 'success',
+            message: data.message || 'Store config saved.'
+        };
+    })
+    .catch(error => {
+        return {
+            type: 'error',
+            message: error.message
+        };
+    })
+    .then((result) => {
+        const elapsedMs = Date.now() - saveStartedAt;
+        const remainingMs = Math.max(0, minimumSaveDurationMs - elapsedMs);
+        setTimeout(() => {
+            message.textContent = result.message;
+            message.classList.remove('text-red-600', 'text-emerald-600');
+            message.classList.add(result.type === 'success' ? 'text-emerald-600' : 'text-red-600');
+            saveBtn.disabled = false;
+            saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            saveBtn.textContent = 'Save Store Config';
+        }, remainingMs);
+    });
+}
+
+loadStoreInvensyncConfig();
 
 function forceBeginningEntry() {
     const storeId = document.getElementById('forceBeginningStore').value;

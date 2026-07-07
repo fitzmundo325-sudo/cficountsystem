@@ -39,51 +39,15 @@
     </form>
   </section>
 
-  <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-    <div class="rounded-2xl border border-sky-200 bg-sky-50 p-4">
-      <p class="text-xs font-semibold text-sky-700 uppercase tracking-wider">Unique RSO Items</p>
-      <p class="text-2xl font-bold text-sky-900 mt-2">{{ summary.total_unique_rso_products }}</p>
-    </div>
-    <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-      <p class="text-xs font-semibold text-emerald-700 uppercase tracking-wider">RSO Matched</p>
-      <p class="text-2xl font-bold text-emerald-800 mt-2">{{ summary.matched_unique_rso_products }}</p>
-    </div>
-    <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-      <p class="text-xs font-semibold text-amber-700 uppercase tracking-wider">RSO Unmatched</p>
-      <p class="text-2xl font-bold text-amber-800 mt-2">{{ summary.unmatched_unique_rso_products }}</p>
-    </div>
-    <div class="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-      <p class="text-xs font-semibold text-indigo-700 uppercase tracking-wider">Unmatched RSO Qty</p>
-      <p class="text-2xl font-bold text-indigo-800 mt-2">{{ summary.unmatched_rso_total_qty }}</p>
-    </div>
-  </section>
-
-  <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-    <div class="rounded-2xl border border-slate-200 bg-white p-4">
-      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Unique POS Items</p>
-      <p class="text-2xl font-bold text-slate-900 mt-2">{{ summary.total_unique_pos_products }}</p>
-    </div>
-    <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-      <p class="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Matched In Masterlist</p>
-      <p class="text-2xl font-bold text-emerald-800 mt-2">{{ summary.matched_unique_products }}</p>
-    </div>
-    <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-      <p class="text-xs font-semibold text-amber-700 uppercase tracking-wider">New / Unmatched</p>
-      <p class="text-2xl font-bold text-amber-800 mt-2">{{ summary.unmatched_unique_products }}</p>
-    </div>
-    <div class="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-      <p class="text-xs font-semibold text-indigo-700 uppercase tracking-wider">Unmatched Total Qty</p>
-      <p class="text-2xl font-bold text-indigo-800 mt-2">{{ summary.unmatched_total_qty }}</p>
-    </div>
-  </section>
-
   <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
     <div class="px-5 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
       <div>
         <h2 class="text-lg font-bold text-slate-900">Unmatched POS Products</h2>
         <p class="text-xs text-slate-500">Date Range: {{ start_date }} to {{ end_date }}</p>
       </div>
-      <p class="text-xs text-slate-600 font-medium">Unmatched Net Sales: {{ "{:,.2f}".format(summary.unmatched_total_net_sales or 0) }}</p>
+      <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+        <input id="pos-product-search" type="text" placeholder="Search unmatched POS products" class="w-full sm:w-72 px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+      </div>
     </div>
 
     <div class="overflow-x-auto">
@@ -102,7 +66,7 @@
         </thead>
         <tbody class="divide-y divide-slate-100">
           {% for item in unmatched_items %}
-          <tr class="hover:bg-slate-50 transition-colors">
+          <tr class="analyzer-row analyzer-pos-row hover:bg-slate-50 transition-colors" data-search="{{ (item.product_code or '') ~ ' ' ~ (item.product_name or '') ~ ' ' ~ (item.total_qty or '') ~ ' ' ~ (item.total_net_sales or '') ~ ' ' ~ (item.store_count or '') ~ ' ' ~ (item.entry_count or '') ~ ' ' ~ (item.latest_report_date.strftime('%Y-%m-%d') if item.latest_report_date else '') }}">
             <td class="px-4 py-3 text-sm font-semibold text-slate-700">{{ item.product_code or '-' }}</td>
             <td class="px-4 py-3 text-sm text-slate-900 font-semibold">{{ item.product_name }}</td>
             <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ item.total_qty }}</td>
@@ -130,15 +94,29 @@
             <td colspan="8" class="px-4 py-8 text-center text-sm text-slate-500">No new POS items detected for this date range.</td>
           </tr>
           {% endfor %}
+          <tr id="pos-empty-filtered" class="hidden">
+            <td colspan="8" class="px-4 py-8 text-center text-sm text-slate-500">No POS products match your search.</td>
+          </tr>
         </tbody>
       </table>
+    </div>
+    <div id="pos-pagination" class="px-5 py-3 border-t border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <p id="pos-pagination-summary" class="text-xs text-slate-500"></p>
+      <div class="flex items-center gap-2">
+        <button id="pos-prev-page" type="button" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Previous</button>
+        <div id="pos-page-numbers" class="flex items-center gap-1"></div>
+        <button id="pos-next-page" type="button" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+      </div>
     </div>
   </section>
 
   <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-    <div class="px-5 py-4 border-b border-slate-200 bg-sky-50">
-      <h2 class="text-lg font-bold text-slate-900">Unmatched RSO Products</h2>
+    <div class="px-5 py-4 border-b border-slate-200 bg-sky-50 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+      <div>
+        <h2 class="text-lg font-bold text-slate-900">Unmatched RSO Products</h2>
       <p class="text-xs text-slate-500">Delivery and Bulk Order RSO · {{ start_date }} to {{ end_date }}</p>
+      </div>
+      <input id="rso-product-search" type="text" placeholder="Search unmatched RSO products" class="w-full sm:w-72 px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
     </div>
     <div class="overflow-x-auto">
       <table class="min-w-full divide-y divide-slate-200">
@@ -156,7 +134,7 @@
         </thead>
         <tbody class="divide-y divide-slate-100">
           {% for item in unmatched_rso_items %}
-          <tr class="hover:bg-slate-50">
+          <tr class="analyzer-row analyzer-rso-row hover:bg-slate-50" data-search="{{ (item.product_code or '') ~ ' ' ~ (item.product_name or '') ~ ' ' ~ (item.total_qty or '') ~ ' ' ~ (item.total_received_qty or '') ~ ' ' ~ (item.store_count or '') ~ ' ' ~ (item.entry_count or '') ~ ' ' ~ (item.latest_report_date.strftime('%Y-%m-%d') if item.latest_report_date else '') }}">
             <td class="px-4 py-3 text-sm font-semibold text-slate-700">{{ item.product_code or '-' }}</td>
             <td class="px-4 py-3 text-sm font-semibold text-slate-900">{{ item.product_name }}</td>
             <td class="px-4 py-3 text-sm text-right">{{ item.total_qty }}</td>
@@ -172,8 +150,17 @@
           {% else %}
           <tr><td colspan="8" class="px-4 py-8 text-center text-sm text-slate-500">No unmatched RSO products detected for this date range.</td></tr>
           {% endfor %}
+          <tr id="rso-empty-filtered" class="hidden"><td colspan="8" class="px-4 py-8 text-center text-sm text-slate-500">No RSO products match your search.</td></tr>
         </tbody>
       </table>
+    </div>
+    <div id="rso-pagination" class="px-5 py-3 border-t border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <p id="rso-pagination-summary" class="text-xs text-slate-500"></p>
+      <div class="flex items-center gap-2">
+        <button id="rso-prev-page" type="button" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Previous</button>
+        <div id="rso-page-numbers" class="flex items-center gap-1"></div>
+        <button id="rso-next-page" type="button" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+      </div>
     </div>
   </section>
 
@@ -231,6 +218,127 @@
 </div>
 
 <script>
+  (function () {
+    const rowsPerPage = 10;
+
+    function bindPaginatedTable(config) {
+      const searchInput = document.getElementById(config.inputId);
+      const rows = Array.from(document.querySelectorAll(config.rowSelector));
+      const emptyFiltered = document.getElementById(config.emptyRowId);
+      const pagination = document.getElementById(config.paginationId);
+      const summary = document.getElementById(config.summaryId);
+      const pageNumbers = document.getElementById(config.pageNumbersId);
+      const prevButton = document.getElementById(config.prevButtonId);
+      const nextButton = document.getElementById(config.nextButtonId);
+      let currentPage = 1;
+
+      if (!searchInput) return;
+
+      function getFilteredRows() {
+        const query = (searchInput.value || '').trim().toLowerCase();
+        if (!query) return rows;
+
+        return rows.filter((row) => {
+          const haystack = (row.getAttribute('data-search') || '').toLowerCase();
+          return haystack.includes(query);
+        });
+      }
+
+      function renderPage() {
+        const filteredRows = getFilteredRows();
+        const totalRows = filteredRows.length;
+        const totalPages = Math.max(1, Math.ceil(totalRows / rowsPerPage));
+        currentPage = Math.min(Math.max(currentPage, 1), totalPages);
+        const startIndex = (currentPage - 1) * rowsPerPage;
+        const endIndex = Math.min(startIndex + rowsPerPage, totalRows);
+        const visibleRows = new Set(filteredRows.slice(startIndex, endIndex));
+
+        rows.forEach((row) => {
+          row.classList.toggle('hidden', !visibleRows.has(row));
+        });
+
+        if (emptyFiltered) {
+          const hasQuery = Boolean((searchInput.value || '').trim());
+          emptyFiltered.classList.toggle('hidden', !hasQuery || totalRows > 0 || rows.length === 0);
+        }
+
+        if (summary) {
+          summary.textContent = totalRows
+            ? `Showing ${startIndex + 1}-${endIndex} of ${totalRows}`
+            : 'Showing 0 of 0';
+        }
+
+        if (pagination) {
+          pagination.classList.toggle('hidden', rows.length === 0);
+        }
+
+        if (prevButton) prevButton.disabled = currentPage <= 1 || totalRows === 0;
+        if (nextButton) nextButton.disabled = currentPage >= totalPages || totalRows === 0;
+
+        if (pageNumbers) {
+          pageNumbers.innerHTML = '';
+          for (let page = 1; page <= totalPages; page += 1) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = String(page);
+            button.className = [
+              'min-w-8 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors',
+              page === currentPage
+                ? 'bg-slate-900 border-slate-900 text-white'
+                : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+            ].join(' ');
+            button.addEventListener('click', function () {
+              currentPage = page;
+              renderPage();
+            });
+            pageNumbers.appendChild(button);
+          }
+        }
+      }
+
+      searchInput.addEventListener('input', function () {
+        currentPage = 1;
+        renderPage();
+      });
+      if (prevButton) {
+        prevButton.addEventListener('click', function () {
+          currentPage -= 1;
+          renderPage();
+        });
+      }
+      if (nextButton) {
+        nextButton.addEventListener('click', function () {
+          currentPage += 1;
+          renderPage();
+        });
+      }
+
+      renderPage();
+    }
+
+    bindPaginatedTable({
+      inputId: 'pos-product-search',
+      rowSelector: '.analyzer-pos-row',
+      emptyRowId: 'pos-empty-filtered',
+      paginationId: 'pos-pagination',
+      summaryId: 'pos-pagination-summary',
+      pageNumbersId: 'pos-page-numbers',
+      prevButtonId: 'pos-prev-page',
+      nextButtonId: 'pos-next-page'
+    });
+
+    bindPaginatedTable({
+      inputId: 'rso-product-search',
+      rowSelector: '.analyzer-rso-row',
+      emptyRowId: 'rso-empty-filtered',
+      paginationId: 'rso-pagination',
+      summaryId: 'rso-pagination-summary',
+      pageNumbersId: 'rso-page-numbers',
+      prevButtonId: 'rso-prev-page',
+      nextButtonId: 'rso-next-page'
+    });
+  })();
+
   (function () {
     const modal = document.getElementById('link-product-modal');
     const backdrop = document.getElementById('link-product-backdrop');
