@@ -247,18 +247,6 @@
   </div>
   {% endif %}
 
-  {% set category_list = [
-    ('BREADS', ['BREADS']),
-    ('TRAY PRODUCTS', ['TRAY PRODUCTS']),
-    ('ROLLS', ['ROLLS']),
-    ('GREETING CAKES', ['GREETING CAKES']),
-    ('PREMIUM', ['PREMIUM']),
-    ('CREMA DE FRUTA', ['CREMA DE FRUTA']),
-    ('GM PRODUCTS', ['GM PRODUCTS']),
-    ('CANDLES', ['CANDLES']),
-    ('ADD-ONS', ['ADD-ONS'])
-  ] %}
-
   <div class="space-y-3">
     <div id="inventory-search-guide-target" class="relative max-w-md">
       <input id="product-search-input" type="search" autocomplete="off" placeholder="Search product, code, or price" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pl-9 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100">
@@ -271,12 +259,12 @@
       <button type="button" class="category-filter-btn px-3 py-2 rounded-lg border border-slate-300 bg-slate-900 text-white text-sm font-semibold transition" data-category-filter="all" onclick="filterInventoryCategory('all')">
         All
       </button>
-      {% for display_name, possible_names in category_list %}
-        {% set cat_products = products|selectattr('category', 'in', possible_names)|list %}
+      {% for category_group in category_groups %}
+        {% set cat_products = category_group.products %}
         {% if cat_products %}
-          {% set cat_id = display_name|lower|replace(' ', '-')|replace('-', '') %}
+          {% set cat_id = category_group.id %}
           <button type="button" class="category-filter-btn px-3 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-100 transition" data-category-filter="{{ cat_id }}" onclick="filterInventoryCategory('{{ cat_id }}')">
-            {{ display_name }}
+            {{ category_group.display_name }}
           </button>
         {% endif %}
       {% endfor %}
@@ -323,16 +311,16 @@
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-200">
-          {% for display_name, possible_names in category_list %}
-            {% set cat_products = products|selectattr('category', 'in', possible_names)|list %}
+          {% for category_group in category_groups %}
+            {% set cat_products = category_group.products %}
             {% if cat_products %}
-              {% set cat_id = display_name|lower|replace(' ', '-')|replace('-', '') %}
+              {% set cat_id = category_group.id %}
               
               <!-- Category Header -->
               <tr class="bg-slate-100 category-header" data-category="{{ cat_id }}">
                 <td class="px-4 py-3 bg-slate-100 sticky left-0 z-20 border-r border-slate-200 shadow-lg">
                   <div class="flex items-center gap-3">
-                    <span class="font-bold text-slate-700">{{ display_name }}</span>
+                    <span class="font-bold text-slate-700">{{ category_group.display_name }}</span>
                     <span class="px-2 py-0.5 bg-slate-300 text-slate-600 text-xs rounded-full">{{ cat_products|length }} items</span>
                   </div>
                 </td>
@@ -1471,7 +1459,8 @@ function syncProducts() {
   .then(res => res.json())
   .then(data => {
     if (data.success) {
-      notify(`Synced ${data.count} products from Product Masterlist!`, 'success');
+      const totalProducts = data.total_products ?? data.synced_inventory ?? 0;
+      notify(`Synced ${totalProducts} products from Product Masterlist!`, 'success');
       // Reload the page to show updated products
       setTimeout(() => {
         window.location.reload();
