@@ -286,40 +286,40 @@
   <!-- Products Table -->
   <div id="main-content" class="bg-white rounded-xl border border-slate-200 shadow-sm">
     <div class="relative border border-slate-200 rounded-xl">
-      <div class="overflow-x-auto">
+      <div class="inventory-scroll-container overflow-auto max-h-[calc(100vh-220px)]">
       <table class="w-full text-sm">
         <thead class="bg-slate-100 text-black">
-          <tr class="sticky top-0 z-30">
+          <tr>
             <!-- Product Info (Shared) -->
-            <th class="px-2 py-3 text-center font-semibold bg-sky-100 text-black sticky left-0 z-40 min-w-[200px] shadow-lg">Product</th>
+            <th class="px-2 py-3 text-center font-semibold bg-sky-100 text-black sticky top-0 left-0 z-50 min-w-[200px] shadow-lg">Product</th>
             
             <!-- Ending Inventory Section -->
-            <th colspan="{{ column_count.visible }}" class="px-2 py-3 text-center font-semibold bg-emerald-100 text-black border-l-2 border-emerald-200">ENDING INVENTORY</th>
+            <th colspan="{{ column_count.visible }}" class="px-2 py-3 text-center font-semibold bg-emerald-100 text-black border-l-2 border-emerald-200 sticky top-0 z-40">ENDING INVENTORY</th>
           </tr>
-          <tr class="text-xs sticky top-[42px] z-30">
+          <tr class="text-xs">
             <!-- Product -->
-            <th class="px-2 py-2 text-center font-semibold bg-sky-50 text-black sticky left-0 z-40 border-r border-slate-300 shadow-lg">Description | Code - Price</th>
+            <th class="px-2 py-2 text-center font-semibold bg-sky-50 text-black sticky top-[42px] left-0 z-50 border-r border-slate-300 shadow-lg">Description | Code - Price</th>
             
             <!-- Ending Inventory Columns -->
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-l-2 border-emerald-400 border-r border-slate-300"{% if hide_beginning_stock %} style="display:none;"{% endif %}>Beg</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'delivery_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Delivery</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'trans_in_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Trans-In</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'bo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>BO</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'adv_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Adv</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'trans_out_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Trans-Out</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'wastage_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Waste Qty</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'wastage_amount' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Waste Amt</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'csi_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>CSI</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'quantity_sold' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Sold</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300" id="header-d5"{% if 'd5_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+5</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300" id="header-d4"{% if 'd4_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+4</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300" id="header-d3"{% if 'd3_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+3</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'total_ending_inventory' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total Ending Inventory</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'total_peso_srp' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total Peso</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'theo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Theoritical Ending</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'variance_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Variance</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'variance_peso' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Var Peso</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300"{% if 'remarks' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Remarks</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-l-2 border-emerald-400 border-r border-slate-300 sticky top-[42px] z-40"{% if hide_beginning_stock %} style="display:none;"{% endif %}>Beg</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'delivery_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Delivery</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'trans_in_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Trans-In</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'bo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>BO</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'adv_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Adv</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'trans_out_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Trans-Out</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'wastage_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Waste Qty</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'wastage_amount' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Waste Amt</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'csi_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>CSI</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'quantity_sold' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Sold</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40" id="header-d5"{% if 'd5_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+5</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40" id="header-d4"{% if 'd4_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+4</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40" id="header-d3"{% if 'd3_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+3</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'total_ending_inventory' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total Ending Inventory</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'total_peso_srp' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total Peso</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'theo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Theoritical Ending</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'variance_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Variance</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'variance_peso' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Var Peso</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'remarks' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Remarks</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-200">
@@ -1256,7 +1256,7 @@ function loadPreviousDateInventory() {
 // Horizontal scroll with Alt + Mouse Wheel
 function enableHorizontalScroll() {
   // Enable for main content
-  const scrollContainer = document.querySelector('#main-content .overflow-x-auto');
+  const scrollContainer = document.querySelector('#main-content .inventory-scroll-container');
   if (scrollContainer) {
     scrollContainer.addEventListener('wheel', function(e) {
       if (e.altKey) {
@@ -1518,7 +1518,7 @@ function toggleFullscreen() {
 
 function updateFullscreenContent() {
   const modalContent = document.getElementById('modal-content');
-  const tableContainer = document.querySelector('#main-content .overflow-x-auto');
+  const tableContainer = document.querySelector('#main-content .inventory-scroll-container');
 
   if (!tableContainer) return;
 
