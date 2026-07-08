@@ -6191,18 +6191,44 @@ def invensync():
 
     # Define category order
     category_order = {
-        'BREADS': 1,
-        'TRAY PRODUCTS': 2,
-        'ROLLS': 3,
-        'GREETING CAKES': 4,
-        'PREMIUM': 5,
-        'CREMA DE FRUTA': 6,
-        'GM PRODUCTS': 7,
-        'CANDLES': 8,
-        'ADD-ONS': 9
+        'breads': 1,
+        'trayproducts': 2,
+        'rolls': 3,
+        'greetingcakes': 4,
+        'premium': 5,
+        'cremadefruta': 6,
+        'gmproducts': 7,
+        'candles': 8,
+        'addons': 9,
     }
 
-    products.sort(key=lambda p: (category_order.get(p.category, 99), p.id))
+    def _product_category_label(product):
+        return (product.category or '').strip() or 'Uncategorized'
+
+    def _category_dom_id(category_name):
+        normalized = re.sub(r'[^a-z0-9]+', '', (category_name or '').lower())
+        return normalized or 'uncategorized'
+
+    def _product_category_key(product):
+        return _category_dom_id(_product_category_label(product))
+
+    products.sort(key=lambda p: (
+        category_order.get(_product_category_key(p), 99),
+        _product_category_key(p),
+        p.id,
+    ))
+
+    category_groups_by_key = OrderedDict()
+    for product in products:
+        category_label = _product_category_label(product)
+        category_key = _product_category_key(product)
+        group = category_groups_by_key.setdefault(category_key, {
+            'id': _category_dom_id(category_label),
+            'display_name': category_label,
+            'products': [],
+        })
+        group['products'].append(product)
+    category_groups = list(category_groups_by_key.values())
 
     prev_inventory = DailyEndingInventory.query.filter_by(
         store_id=store.id,
@@ -6423,6 +6449,7 @@ def invensync():
         store=store,
         inventory=inventory,
         products=products,
+        category_groups=category_groups,
         inventory_items=inventory_items,
         selected_date=selected_date.strftime('%Y-%m-%d'),
         today=date.today().strftime('%Y-%m-%d'),
