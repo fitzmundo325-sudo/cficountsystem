@@ -1274,6 +1274,7 @@ def _get_or_create_global_invensync_config():
         'locked_cells': [],
         'editable_columns': [],
         'force_beginning_store_ids': [],
+        'store_configs': {},
     }
     config = GlobalInvenSyncConfig.query.first()
     if not config:
@@ -1287,10 +1288,25 @@ def _get_or_create_global_invensync_config():
         config_data = {}
 
     for key, value in default_data.items():
-        if key not in config_data or not isinstance(config_data.get(key), list):
-            config_data[key] = list(value)
+        expected_type = dict if isinstance(value, dict) else list
+        if key not in config_data or not isinstance(config_data.get(key), expected_type):
+            config_data[key] = dict(value) if isinstance(value, dict) else list(value)
 
     return config, config_data
+
+
+def _get_effective_invensync_config(global_config_data, store_id):
+    effective_config = dict(global_config_data or {})
+    store_configs = effective_config.get('store_configs', {})
+    store_config = store_configs.get(str(store_id), {}) if isinstance(store_configs, dict) else {}
+    if not isinstance(store_config, dict):
+        store_config = {}
+
+    for key in ['hidden_columns', 'locked_columns', 'editable_columns']:
+        if key in store_config and isinstance(store_config.get(key), list):
+            effective_config[key] = store_config.get(key, [])
+
+    return effective_config
 
 
 def _lock_global_invensync_column(column_name):
@@ -5882,6 +5898,7 @@ def save_daily_ending_inventory():
                 'error': 'This inventory day is already finalized and can no longer be edited.'
             }), 423
         config, global_config_data = _get_or_create_global_invensync_config()
+        effective_config_data = _get_effective_invensync_config(global_config_data, inventory.store_id)
         force_beginning_entry = inventory.store_id in {
             int(item) for item in global_config_data.get('force_beginning_store_ids', [])
             if str(item).isdigit()
@@ -5916,7 +5933,7 @@ def save_daily_ending_inventory():
                 'success': False,
                 'error': 'Beginning inventory save requires beginning quantities.'
             }), 400
-        beginning_qty_is_locked = 'beginning_qty' in global_config_data.get('locked_columns', [])
+        beginning_qty_is_locked = 'beginning_qty' in effective_config_data.get('locked_columns', [])
         allow_beginning_qty_update = (
             force_beginning_entry
             or (
@@ -6366,6 +6383,7 @@ def invensync():
                 _recalculate_inventory_item(inv_item, sold_override=inv_item.draft_quantity_sold)
 
     _, global_config_data = _get_or_create_global_invensync_config()
+    effective_config_data = _get_effective_invensync_config(global_config_data, store.id)
     force_beginning_entry = store.id in {
         int(item) for item in global_config_data.get('force_beginning_store_ids', [])
         if str(item).isdigit()
@@ -6408,7 +6426,7 @@ def invensync():
         inventory_items=inventory_items,
         selected_date=selected_date.strftime('%Y-%m-%d'),
         today=date.today().strftime('%Y-%m-%d'),
-        global_config_data=global_config_data,
+        global_config_data=effective_config_data,
         is_first_time=is_first_time,
         allow_beginning_stock_entry=allow_beginning_stock_entry,
         store_beginning_baseline_finalized=store_beginning_baseline_finalized,
