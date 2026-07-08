@@ -1688,6 +1688,8 @@ def targets():
     clusters = Cluster.query.order_by(Cluster.name.asc()).all()
     selected_cluster_id = request.args.get('cluster_id', type=int)
     selected_store_id = request.args.get('store_id', type=int)
+    selected_month = (request.args.get('target_month') or date.today().strftime('%Y-%m')).strip()
+    clear_target_draft = request.args.get('saved') == '1'
 
     # Filter stores by selected cluster (or show all when cluster is not selected)
     if selected_cluster_id:
@@ -1701,11 +1703,58 @@ def targets():
         selected_store_id = None
 
     targets_data = []
+    target_rows = []
+    target_cluster_data_url = None
     
     if selected_store_id:
-        # Fetch targets for selected store
-        targets = StoreTarget.query.filter_by(store_id=selected_store_id).order_by(StoreTarget.target_date.asc()).all()
+        selected_store = Store.query.get(selected_store_id)
+        if selected_store and not selected_cluster_id:
+            selected_cluster_id = selected_store.cluster_id
+
+        # Fetch targets for selected store, optionally filtered by month.
+        targets_query = StoreTarget.query.filter_by(store_id=selected_store_id)
+        month_start = None
+        next_month = None
+        if selected_month:
+            try:
+                month_start = datetime.strptime(selected_month, '%Y-%m').date().replace(day=1)
+                next_month = datetime(month_start.year + 1, 1, 1).date() if month_start.month == 12 else datetime(month_start.year, month_start.month + 1, 1).date()
+                targets_query = targets_query.filter(
+                    StoreTarget.target_date >= month_start,
+                    StoreTarget.target_date < next_month,
+                )
+            except ValueError:
+                selected_month = date.today().strftime('%Y-%m')
+                month_start = datetime.strptime(selected_month, '%Y-%m').date().replace(day=1)
+                next_month = datetime(month_start.year + 1, 1, 1).date() if month_start.month == 12 else datetime(month_start.year, month_start.month + 1, 1).date()
+                targets_query = targets_query.filter(
+                    StoreTarget.target_date >= month_start,
+                    StoreTarget.target_date < next_month,
+                )
+        targets = targets_query.order_by(StoreTarget.target_date.asc()).all()
         targets_data = targets
+
+        if month_start and next_month:
+            target_by_date = {target.target_date: target for target in targets}
+            current_date = month_start
+            while current_date < next_month:
+                target = target_by_date.get(current_date)
+                target_rows.append({
+                    'date': current_date,
+                    'target_net': float(target.target_net or 0) if target else 0.0,
+                    'last_year_net': float(target.last_year_net or 0) if target else 0.0,
+                    'gbi_target': float(target.gbi_target or 0) if target else 0.0,
+                })
+                current_date += timedelta(days=1)
+
+            if selected_store and selected_store.cluster_id:
+                target_cluster_data_url = url_for(
+                    'views.cluster_manager_cluster_data',
+                    cluster_id=selected_store.cluster_id,
+                    store_id=selected_store_id,
+                    month=f'{month_start.month:02d}',
+                    year=str(month_start.year),
+                )
     
     return render_template(
         'admin/targets.html',
@@ -1714,8 +1763,106 @@ def targets():
         stores=stores,
         selected_cluster_id=selected_cluster_id,
         selected_store_id=selected_store_id,
+        selected_month=selected_month,
         targets_data=targets_data,
+        target_rows=target_rows,
+        target_cluster_data_url=target_cluster_data_url,
+        clear_target_draft=clear_target_draft,
     )
+
+
+@admin.route('/admin/targets/save', methods=['POST'])
+@login_required
+def save_targets():
+    if current_user.role != 'Superadmin':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    cluster_id = request.form.get('cluster_id', type=int)
+    store_id = request.form.get('store_id', type=int)
+    selected_month = (request.form.get('target_month') or '').strip()
+
+    if not store_id:
+        flash('Please select a store.', category='error')
+        return redirect(url_for('admin.targets', cluster_id=cluster_id, target_month=selected_month))
+
+    selected_store = Store.query.get(store_id)
+    if not selected_store:
+        flash('Selected store was not found.', category='error')
+        return redirect(url_for('admin.targets', cluster_id=cluster_id, target_month=selected_month))
+
+    if not cluster_id:
+        cluster_id = selected_store.cluster_id
+
+    try:
+        month_start = datetime.strptime(selected_month, '%Y-%m').date().replace(day=1)
+    except ValueError:
+        flash('Please select a valid month.', category='error')
+        return redirect(url_for('admin.targets', cluster_id=cluster_id, store_id=store_id))
+
+    next_month = datetime(month_start.year + 1, 1, 1).date() if month_start.month == 12 else datetime(month_start.year, month_start.month + 1, 1).date()
+    existing_targets = {
+        target.target_date: target
+        for target in StoreTarget.query.filter(
+            StoreTarget.store_id == store_id,
+            StoreTarget.target_date >= month_start,
+            StoreTarget.target_date < next_month,
+        ).all()
+    }
+
+    date_values = request.form.getlist('target_date[]')
+    target_net_values = request.form.getlist('target_net[]')
+    last_year_net_values = request.form.getlist('last_year_net[]')
+    gbi_target_values = request.form.getlist('gbi_target[]')
+
+    saved_count = 0
+    save_success = False
+    try:
+        for idx, raw_date in enumerate(date_values):
+            target_date = datetime.strptime(str(raw_date or '').strip(), '%Y-%m-%d').date()
+            if target_date < month_start or target_date >= next_month:
+                continue
+
+            target = existing_targets.get(target_date)
+            if not target:
+                target = StoreTarget(
+                    store_id=store_id,
+                    target_date=target_date,
+                    uploaded_by=current_user.id,
+                )
+                db.session.add(target)
+
+            target.target_net = float(target_net_values[idx] or 0) if idx < len(target_net_values) else 0.0
+            target.last_year_net = float(last_year_net_values[idx] or 0) if idx < len(last_year_net_values) else 0.0
+            target.gbi_target = float(gbi_target_values[idx] or 0) if idx < len(gbi_target_values) else 0.0
+            saved_count += 1
+
+        log_audit_event(
+            action='admin.targets.month_save',
+            entity_type='StoreTarget',
+            entity_id=store_id,
+            reason='Monthly store targets saved from grid.',
+            details={
+                'store_id': store_id,
+                'target_month': selected_month,
+                'records_saved': saved_count,
+            },
+        )
+        db.session.commit()
+        save_success = True
+        flash(f'Saved {saved_count} target rows for {selected_month}. Cluster Data will show them under TARGET (NET), LAST YEAR (NET), and GBI TARGET for {selected_store.name}.', category='success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error saving targets: {str(e)}', category='error')
+
+    redirect_params = {
+        'cluster_id': cluster_id,
+        'store_id': store_id,
+        'target_month': selected_month,
+    }
+    if save_success:
+        redirect_params['saved'] = '1'
+    return redirect(url_for('admin.targets', **redirect_params))
 
 
 @admin.route('/admin/targets/upload', methods=['POST'])

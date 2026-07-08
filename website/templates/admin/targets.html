@@ -4,6 +4,21 @@
 <!-- Include Modal.js -->
 {% block extra_head %}
 <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
+<style>
+  .target-sheet-input.is-selected {
+    border-color: #6366f1;
+    background: #eef2ff;
+    box-shadow: inset 0 0 0 1px #6366f1;
+  }
+  .target-sheet-input.is-range-selected {
+    border-color: #818cf8;
+    background: #eef2ff;
+  }
+  .target-sheet-header.is-selected {
+    background: #e0e7ff;
+    color: #3730a3;
+  }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -46,24 +61,24 @@
 <!-- Main Content -->
 <div class="p-6 md:p-8 bg-slate-50 min-h-screen">
   
-  <!-- Page Header & Upload Section Combined -->
+  <!-- Page Header & Filter Section Combined -->
   <div class="mb-6">
     <div class="flex items-center justify-between mb-4">
       <div>
-        <h1 class="text-2xl font-bold text-slate-900">Store Targets Upload</h1>
-        <p class="text-sm text-slate-600 mt-1">Upload target data for stores from Excel files</p>
+        <h1 class="text-2xl font-bold text-slate-900">Store Targets</h1>
+        <p class="text-sm text-slate-600 mt-1">View and edit target data by cluster and store</p>
       </div>
     </div>
 
-    <!-- Compact Upload Card -->
+    <!-- Compact Filter Card -->
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-      <form action="/admin/targets/upload" method="POST" enctype="multipart/form-data">
+      <form id="target-save-form" action="/admin/targets/save" method="POST">
         <div class="flex flex-col md:flex-row gap-3">
 
           <!-- Cluster Selection -->
           <div class="flex-1">
             <label class="block text-xs font-medium text-slate-700 mb-1.5">Select Cluster</label>
-            <select name="cluster_id" id="cluster-select" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" onchange="document.getElementById('store-select').value=''; this.form.action='/admin/targets'; this.form.method='GET'; this.form.submit();">
+            <select name="cluster_id" id="cluster-select" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" onchange="window.location.href='/admin/targets?cluster_id=' + encodeURIComponent(this.value) + '&target_month=' + encodeURIComponent(document.getElementById('target-month-select').value || '')">
               <option value="">-- All Clusters --</option>
               {% for cluster in clusters %}
               <option value="{{ cluster.id }}" {% if selected_cluster_id == cluster.id %}selected{% endif %}>{{ cluster.name }}</option>
@@ -74,7 +89,7 @@
           <!-- Store Selection -->
           <div class="flex-1">
             <label class="block text-xs font-medium text-slate-700 mb-1.5">Select Store</label>
-            <select name="store_id" id="store-select" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" required onchange="this.form.action='/admin/targets'; this.form.method='GET'; this.form.submit();">
+            <select name="store_id" id="store-select" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" required onchange="window.location.href='/admin/targets?cluster_id=' + encodeURIComponent(document.getElementById('cluster-select').value || '') + '&store_id=' + encodeURIComponent(this.value) + '&target_month=' + encodeURIComponent(document.getElementById('target-month-select').value || '')">
               <option value="">-- Choose a Store --</option>
               {% for store in stores %}
               <option value="{{ store.id }}" {% if selected_store_id == store.id %}selected{% endif %}>{{ store.name }}</option>
@@ -82,359 +97,355 @@
             </select>
           </div>
 
-          {% if selected_store_id %}
-          <!-- File Upload -->
+          <!-- Month Selection -->
           <div class="flex-1">
-            <label class="block text-xs font-medium text-slate-700 mb-1.5">Excel File (.xlsx, .xls)</label>
-            <input type="file" name="file" accept=".xlsx,.xls" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" required>
+            <label class="block text-xs font-medium text-slate-700 mb-1.5">Select Month</label>
+            <input type="month" name="target_month" id="target-month-select" value="{{ selected_month or '' }}" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" onchange="window.location.href='/admin/targets?cluster_id=' + encodeURIComponent(document.getElementById('cluster-select').value || '') + '&store_id=' + encodeURIComponent(document.getElementById('store-select').value || '') + '&target_month=' + encodeURIComponent(this.value || '')">
           </div>
-          
-          <!-- Upload Button -->
+
+          <!-- Save Button -->
           <div class="flex items-end">
-            <button type="submit" onclick="this.form.action='/admin/targets/upload'; this.form.method='POST';" class="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors shadow-sm active:scale-95">
-              <span class="flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="17 8 12 3 7 8"></polyline>
-                  <line x1="12" y1="3" x2="12" y2="15"></line>
-                </svg>
-                Upload
-              </span>
+            <button type="submit" class="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors shadow-sm active:scale-95">
+              Save
             </button>
           </div>
-          {% endif %}
-          
+
         </div>
       </form>
     </div>
   </div>
 
-  <!-- Data Display Section -->
-  {% if selected_store_id and targets_data %}
-  <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-    <div class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-      <div>
-        <h2 class="text-lg font-bold text-slate-900">Target Data for {{ stores|selectattr('id', 'equalto', selected_store_id)|map(attribute='name')|first }}</h2>
-        <p class="text-xs text-slate-600 mt-1">Total Records: {{ targets_data|length }}</p>
-      </div>
-      
-      <!-- Date Filter & Edit Mode Toggle -->
-      <div class="flex items-center gap-4">
-        <!-- Edit Mode Toggle Switch (Like Dark Mode) -->
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-medium text-slate-700">Edit Mode</span>
-          <button id="edit-mode-toggle" type="button" onclick="toggleEditMode()" class="relative inline-flex h-6 w-11 items-center rounded-full bg-slate-300 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
-            <span id="toggle-circle" class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform translate-x-1"></span>
-          </button>
-          <span id="edit-mode-status" class="text-xs font-semibold text-slate-500">OFF</span>
+  {% if selected_store_id %}
+  <div class="mb-6 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200 bg-slate-50">
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900">Target Data for {{ stores|selectattr('id', 'equalto', selected_store_id)|map(attribute='name')|first }}</h2>
+          <p class="text-xs text-slate-600 mt-1">{{ selected_month }} monthly target sheet. Saved values reflect in Cluster Data by date and selected store.</p>
         </div>
-        
-        <!-- Date Filter -->
-        <div class="flex items-center gap-2">
-          <label class="text-xs font-medium text-slate-700">Filter by Date:</label>
-          <input type="month" id="date-filter" class="px-3 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" onchange="filterByDate()">
-          <button onclick="clearFilter()" class="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors">
-            Clear
+        <div class="flex items-center gap-2 self-start md:self-auto">
+          {% if target_cluster_data_url %}
+          <a href="{{ target_cluster_data_url }}" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100">
+            View Cluster Data
+          </a>
+          {% endif %}
+          <span id="undo-target-sheet-change" class="px-1 text-xs font-semibold text-slate-700">
+            Use Ctrl + Z to Undo
+          </span>
+          <button type="button" id="clear-selected-target-cell" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100">
+            Clear Selected
           </button>
         </div>
       </div>
     </div>
-    
+
     <div class="overflow-x-auto">
-      <table class="w-full" id="targets-table">
-        <thead class="bg-slate-50 border-b border-slate-200">
+      <table class="w-full border-collapse text-sm">
+        <thead class="bg-slate-100 border-b border-slate-300">
           <tr>
-            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Date</th>
-            <th class="px-6 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">Target (Net)</th>
-            <th class="px-6 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">GBI Target</th>
-            <th class="px-6 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">Last Year (Net)</th>
-            <th class="px-6 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider">Uploaded At</th>
+            <th class="w-48 border-r border-slate-300 px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Date</th>
+            <th data-col-header="0" tabindex="0" class="target-sheet-header cursor-pointer border-r border-slate-300 px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select TARGET (NET) column">TARGET (NET)</th>
+            <th data-col-header="1" tabindex="0" class="target-sheet-header cursor-pointer border-r border-slate-300 px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select LAST YEAR (NET) column">LAST YEAR (NET)</th>
+            <th data-col-header="2" tabindex="0" class="target-sheet-header cursor-pointer px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select GBI TARGET column">GBI TARGET</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-slate-100">
-          {% for target in targets_data %}
-          <tr class="hover:bg-slate-50 transition-colors" data-date="{{ target.target_date.strftime('%Y-%m') }}" data-target-id="{{ target.id }}">
-            <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-900" data-field="date">{{ target.target_date.strftime('%B %d, %Y') }}</td>
-            <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-900 text-right font-semibold editable" data-field="target_net" data-value="{{ target.target_net }}">₱{{ "{:,.2f}".format(target.target_net) }}</td>
-            <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-900 text-right font-semibold editable" data-field="gbi_target" data-value="{{ target.gbi_target }}">₱{{ "{:,.2f}".format(target.gbi_target) }}</td>
-            <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-600 text-right editable" data-field="last_year_net" data-value="{{ target.last_year_net }}">₱{{ "{:,.2f}".format(target.last_year_net) }}</td>
-            <td class="px-6 py-3 whitespace-nowrap text-xs text-slate-500 text-center" data-field="uploaded_at">{{ target.uploaded_at.strftime('%b %d, %Y %I:%M %p') }}</td>
+        <tbody class="divide-y divide-slate-200 bg-white">
+          {% for row in target_rows %}
+          <tr class="hover:bg-slate-50">
+            <td data-row-header="{{ loop.index0 }}" tabindex="0" class="target-sheet-header cursor-pointer border-r border-slate-200 px-4 py-2 font-medium text-slate-800" title="Select this row">
+              <input type="hidden" name="target_date[]" value="{{ row.date.strftime('%Y-%m-%d') }}" form="target-save-form">
+              {{ row.date.strftime('%b %d, %Y') }}
+            </td>
+            <td class="border-r border-slate-200 px-2 py-1">
+              <input type="number" min="0" step="0.01" name="target_net[]" value="{{ '%.2f'|format(row.target_net) if row.target_net else '' }}" form="target-save-form" data-row="{{ loop.index0 }}" data-col="0" class="target-sheet-input w-full rounded-md border border-transparent bg-transparent px-3 py-2 text-right text-sm font-semibold text-slate-900 outline-none hover:border-slate-300 focus:border-indigo-500 focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-100">
+            </td>
+            <td class="border-r border-slate-200 px-2 py-1">
+              <input type="number" min="0" step="0.01" name="last_year_net[]" value="{{ '%.2f'|format(row.last_year_net) if row.last_year_net else '' }}" form="target-save-form" data-row="{{ loop.index0 }}" data-col="1" class="target-sheet-input w-full rounded-md border border-transparent bg-transparent px-3 py-2 text-right text-sm text-slate-800 outline-none hover:border-slate-300 focus:border-indigo-500 focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-100">
+            </td>
+            <td class="px-2 py-1">
+              <input type="number" min="0" step="0.01" name="gbi_target[]" value="{{ '%.2f'|format(row.gbi_target) if row.gbi_target else '' }}" form="target-save-form" data-row="{{ loop.index0 }}" data-col="2" class="target-sheet-input w-full rounded-md border border-transparent bg-transparent px-3 py-2 text-right text-sm text-slate-800 outline-none hover:border-slate-300 focus:border-indigo-500 focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-100">
+            </td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
-  
   <script>
-    let editMode = false;
-    
-    // Add hover effect dynamically based on edit mode
-    const style = document.createElement('style');
-    style.id = 'edit-mode-styles';
-    document.head.appendChild(style);
-    
-    function updateHoverStyles() {
-      const styleSheet = document.getElementById('edit-mode-styles');
-      if (editMode) {
-        styleSheet.textContent = `
-          .editable:hover {
-            background-color: #f0f9ff !important;
-            transition: background-color 0.2s;
-          }
-        `;
-      } else {
-        styleSheet.textContent = '';
+    (() => {
+      const cells = Array.from(document.querySelectorAll('.target-sheet-input'));
+      const clearButton = document.getElementById('clear-selected-target-cell');
+      const draftKey = [
+        'admin-target-sheet-draft',
+        {{ selected_store_id|tojson }},
+        {{ selected_month|tojson }}
+      ].join(':');
+      const shouldClearSavedDraft = {{ clear_target_draft|tojson }};
+      let selectedCell = null;
+      let selectedCells = [];
+      const undoStack = [];
+
+      function displaySheetValue(value) {
+        const rawValue = String(value ?? '').trim();
+        if (!rawValue) return '';
+        const numberValue = Number(rawValue.replace(/,/g, ''));
+        return Number.isFinite(numberValue) && numberValue === 0 ? '' : rawValue;
       }
-    }
-    
-    // Set current month/year on page load and filter automatically
-    document.addEventListener('DOMContentLoaded', function() {
-      const dateFilter = document.getElementById('date-filter');
-      if (dateFilter) {
-        // Get current date in YYYY-MM format
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const currentMonthYear = `${year}-${month}`;
-        
-        // Set the filter value to current month/year
-        dateFilter.value = currentMonthYear;
-        
-        // Apply filter automatically
-        filterByDate();
+
+      function getDraftPayload() {
+        return {
+          storeId: {{ selected_store_id|tojson }},
+          targetMonth: {{ selected_month|tojson }},
+          savedAt: new Date().toISOString(),
+          values: cells.map((cell) => ({
+            row: cell.dataset.row,
+            col: cell.dataset.col,
+            name: cell.name,
+            value: displaySheetValue(cell.value),
+          })),
+        };
       }
-      
-      // Restore edit mode from localStorage
-      const savedEditMode = localStorage.getItem('targetsEditMode');
-      if (savedEditMode === 'true') {
-        // Trigger edit mode on
-        toggleEditMode();
-      }
-    });
-    
-    function toggleEditMode() {
-      editMode = !editMode;
-      const editableCells = document.querySelectorAll('.editable');
-      const toggleButton = document.getElementById('edit-mode-toggle');
-      const toggleCircle = document.getElementById('toggle-circle');
-      const toggleStatus = document.getElementById('edit-mode-status');
-      
-      // Save to localStorage
-      localStorage.setItem('targetsEditMode', editMode);
-      
-      // Update hover styles
-      updateHoverStyles();
-      
-      if (editMode) {
-        // Enable edit mode - slide switch to right and change color
-        toggleButton.classList.remove('bg-slate-300');
-        toggleButton.classList.add('bg-indigo-600');
-        toggleCircle.classList.remove('translate-x-1');
-        toggleCircle.classList.add('translate-x-6');
-        if (toggleStatus) {
-          toggleStatus.textContent = 'ON';
-          toggleStatus.classList.remove('text-slate-500');
-          toggleStatus.classList.add('text-indigo-600');
+
+      function saveDraft() {
+        try {
+          localStorage.setItem(draftKey, JSON.stringify(getDraftPayload()));
+        } catch (error) {
+          // Ignore storage failures so editing still works in private/restricted browsers.
         }
-        
-        editableCells.forEach(cell => {
-          cell.style.cursor = 'pointer';
-          cell.title = 'Double-click to edit';
-        });
-        
-        // Add double-click listeners
-        editableCells.forEach(cell => {
-          cell.addEventListener('dblclick', makeEditable);
-        });
-      } else {
-        // Disable edit mode - slide switch to left and reset color
-        toggleButton.classList.remove('bg-indigo-600');
-        toggleButton.classList.add('bg-slate-300');
-        toggleCircle.classList.remove('translate-x-6');
-        toggleCircle.classList.add('translate-x-1');
-        if (toggleStatus) {
-          toggleStatus.textContent = 'OFF';
-          toggleStatus.classList.remove('text-indigo-600');
-          toggleStatus.classList.add('text-slate-500');
-        }
-        
-        editableCells.forEach(cell => {
-          cell.style.cursor = '';
-          cell.title = '';
-          cell.removeEventListener('dblclick', makeEditable);
-        });
       }
-    }
-    
-    function makeEditable(event) {
-      if (!editMode) return;
-      
-      const cell = event.target;
-      const currentValue = cell.getAttribute('data-value');
-      const field = cell.getAttribute('data-field');
-      const targetId = cell.closest('tr').getAttribute('data-target-id');
-      
-      // Store original content
-      const originalContent = cell.innerHTML;
-      
-      // Create input field that matches cell styling but shows it's editable
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.step = '0.01';
-      input.value = currentValue;
-      // Keep cell styling intact but add subtle edit indicators
-      input.style.width = '100%';
-      input.style.textAlign = 'right';
-      input.style.fontSize = 'inherit';
-      input.style.fontWeight = 'inherit';
-      input.style.color = 'inherit';
-      // Visible but minimal styling - no padding/margin to prevent movement
-      input.style.background = '#f0f9ff'; // Very light blue background
-      input.style.border = '1px solid #6366f1'; // Subtle indigo border
-      input.style.borderRadius = '4px';
-      input.style.outline = 'none';
-      input.style.padding = '2px 4px'; // Minimal padding
-      input.style.margin = '0';
-      input.style.boxSizing = 'border-box';
-      input.style.height = '100%';
-      
-      // Replace cell content with input
-      cell.innerHTML = '';
-      cell.appendChild(input);
-      
-      // Focus without selecting
-      setTimeout(() => {
-        input.focus();
-        // Move cursor to end of text
-        input.setSelectionRange(input.value.length, input.value.length);
-      }, 0);
-      
-      // Flag to prevent double execution
-      let saving = false;
-      
-      // Save on blur or Enter key
-      function saveValue() {
-        if (saving) return; // Prevent double execution
-        saving = true;
-        
-        const newValue = parseFloat(input.value);
-        
-        if (isNaN(newValue) || newValue < 0) {
-          alert('Please enter a valid positive number');
-          input.focus();
-          saving = false;
+
+      function restoreDraft() {
+        if (shouldClearSavedDraft) {
+          localStorage.removeItem(draftKey);
+          const cleanUrl = new URL(window.location.href);
+          cleanUrl.searchParams.delete('saved');
+          window.history.replaceState({}, '', cleanUrl.toString());
           return;
         }
-        
-        // Check if value actually changed
-        if (newValue === parseFloat(currentValue)) {
-          // No change, just restore the cell
-          cell.innerHTML = originalContent;
-          return;
+
+        let payload = null;
+        try {
+          payload = JSON.parse(localStorage.getItem(draftKey) || 'null');
+        } catch (error) {
+          payload = null;
         }
-        
-        // Format values for display
-        const oldValueFormatted = '₱' + parseFloat(currentValue).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const newValueFormatted = '₱' + newValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        
-        // Show confirmation modal
-        showConfirmationModal({
-          title: 'Confirm Changes',
-          message: 'Are you sure you want to apply these changes?',
-          oldValue: oldValueFormatted,
-          newValue: newValueFormatted,
-          onConfirm: () => {
-            // Update the cell
-            cell.setAttribute('data-value', newValue);
-            cell.innerHTML = newValueFormatted;
-            
-            // Send update to server
-            updateTarget(targetId, field, newValue);
-          },
-          onCancel: () => {
-            // Restore original content
-            cell.innerHTML = originalContent;
+        if (!payload || !Array.isArray(payload.values)) return;
+
+        payload.values.forEach((item) => {
+          const cell = getCell(item.row, item.col);
+          if (cell && typeof item.value !== 'undefined') {
+            cell.value = displaySheetValue(item.value);
           }
         });
       }
-      
-      input.addEventListener('blur', saveValue);
-      input.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          input.blur(); // Trigger blur which will call saveValue
-        } else if (e.key === 'Escape') {
-          saving = true; // Prevent blur from triggering
-          cell.innerHTML = originalContent;
+
+      function removeZeroPlaceholders() {
+        cells.forEach((cell) => {
+          cell.value = displaySheetValue(cell.value);
+        });
+      }
+
+      function normalizeNumber(value) {
+        const cleaned = String(value || '')
+          .replace(/[,\s₱$]/g, '')
+          .replace(/[^\d.-]/g, '');
+        if (!cleaned || cleaned === '-' || cleaned === '.') return '';
+        const numberValue = Number(cleaned);
+        if (!Number.isFinite(numberValue) || numberValue < 0 || numberValue === 0) return '';
+        return numberValue.toFixed(2);
+      }
+
+      function getCell(row, col) {
+        return document.querySelector(`.target-sheet-input[data-row="${row}"][data-col="${col}"]`);
+      }
+
+      function getCellsForRow(row) {
+        return cells.filter((cell) => Number(cell.dataset.row || -1) === Number(row));
+      }
+
+      function getCellsForColumn(col) {
+        return cells.filter((cell) => Number(cell.dataset.col || -1) === Number(col));
+      }
+
+      function pushUndo(changes) {
+        const normalizedChanges = (changes || []).filter((change) => change.cell && change.before !== change.after);
+        if (!normalizedChanges.length) return;
+        undoStack.push(normalizedChanges);
+      }
+
+      function undoLastChange() {
+        const changes = undoStack.pop();
+        if (!changes) return;
+        changes.forEach((change) => {
+          change.cell.value = displaySheetValue(change.before);
+          change.cell.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        saveDraft();
+        changes[0]?.cell?.focus();
+      }
+
+      function clearSelectionStyles() {
+        cells.forEach((cell) => cell.classList.remove('is-selected', 'is-range-selected'));
+        document.querySelectorAll('.target-sheet-header.is-selected').forEach((header) => {
+          header.classList.remove('is-selected');
+        });
+      }
+
+      function selectCells(nextCells, primaryCell, header) {
+        clearSelectionStyles();
+        selectedCells = (nextCells || []).filter(Boolean);
+        selectedCell = primaryCell || selectedCells[0] || null;
+        selectedCells.forEach((cell) => {
+          cell.classList.add(cell === selectedCell ? 'is-selected' : 'is-range-selected');
+        });
+        header?.classList.add('is-selected');
+      }
+
+      function selectCell(cell) {
+        if (!cell) return;
+        selectCells([cell], cell);
+      }
+
+      function clearCells(cellsToClear) {
+        const changes = [];
+        (cellsToClear || []).forEach((cell) => {
+          if (!cell) return;
+          const before = cell.value;
+          cell.value = '';
+          cell.dispatchEvent(new Event('input', { bubbles: true }));
+          changes.push({ cell, before, after: cell.value });
+        });
+        saveDraft();
+        pushUndo(changes);
+      }
+
+      function clearSelection() {
+        clearCells(selectedCells.length ? selectedCells : [selectedCell]);
+      }
+
+      function pasteTable(startCell, clipboardText) {
+        const startRow = Number(startCell.dataset.row || 0);
+        const startCol = Number(startCell.dataset.col || 0);
+        const rows = String(clipboardText || '')
+          .replace(/\r/g, '')
+          .split('\n')
+          .filter((row, index, list) => row.length || index < list.length - 1)
+          .map(row => row.split('\t'));
+
+        const changes = [];
+        rows.forEach((rowValues, rowOffset) => {
+          rowValues.forEach((value, colOffset) => {
+            const cell = getCell(startRow + rowOffset, startCol + colOffset);
+            if (cell) {
+              const before = cell.value;
+              const after = normalizeNumber(value);
+              cell.value = after;
+              cell.dispatchEvent(new Event('input', { bubbles: true }));
+              changes.push({ cell, before, after });
+            }
+          });
+        });
+        saveDraft();
+        pushUndo(changes);
+      }
+
+      restoreDraft();
+      removeZeroPlaceholders();
+      saveDraft();
+
+      cells.forEach((cell) => {
+        cell.addEventListener('input', saveDraft);
+
+        cell.addEventListener('focus', () => {
+          cell.dataset.undoValue = cell.value;
+        });
+
+        cell.addEventListener('change', () => {
+          const before = cell.dataset.undoValue || '';
+          const after = cell.value;
+          pushUndo([{ cell, before, after }]);
+          cell.dataset.undoValue = after;
+        });
+
+        cell.addEventListener('focus', () => {
+          selectCell(cell);
+          cell.select();
+        });
+
+        cell.addEventListener('click', () => selectCell(cell));
+
+        cell.addEventListener('paste', (event) => {
+          const text = event.clipboardData?.getData('text/plain') || '';
+          if (!text.includes('\t') && !text.includes('\n')) {
+            return;
+          }
+          event.preventDefault();
+          selectCell(cell);
+          pasteTable(cell, text);
+        });
+
+        cell.addEventListener('keydown', (event) => {
+          const row = Number(cell.dataset.row || 0);
+          const col = Number(cell.dataset.col || 0);
+
+          if ((event.key === 'Delete' || event.key === 'Backspace') && cell.selectionStart === 0 && cell.selectionEnd === cell.value.length) {
+            event.preventDefault();
+            clearSelection();
+            return;
+          }
+
+          if (event.key === 'Enter' || event.key === 'ArrowDown') {
+            event.preventDefault();
+            getCell(row + 1, col)?.focus();
+          } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            getCell(row - 1, col)?.focus();
+          } else if (event.key === 'ArrowRight' && cell.selectionStart === cell.value.length) {
+            getCell(row, col + 1)?.focus();
+          } else if (event.key === 'ArrowLeft' && cell.selectionStart === 0) {
+            getCell(row, col - 1)?.focus();
+          }
+        });
+      });
+
+      document.querySelectorAll('[data-row-header]').forEach((header) => {
+        header.addEventListener('click', () => {
+          const rowCells = getCellsForRow(header.dataset.rowHeader);
+          selectCells(rowCells, rowCells[0], header);
+          header.focus();
+        });
+      });
+
+      document.querySelectorAll('[data-col-header]').forEach((header) => {
+        header.addEventListener('click', () => {
+          const columnCells = getCellsForColumn(header.dataset.colHeader);
+          selectCells(columnCells, columnCells[0], header);
+          header.focus();
+        });
+      });
+
+      clearButton?.addEventListener('click', () => {
+        clearSelection();
+        selectedCell?.focus();
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          undoLastChange();
+          return;
+        }
+
+        if ((event.key === 'Delete' || event.key === 'Backspace') && selectedCells.length > 1 && !event.target?.classList?.contains('target-sheet-input')) {
+          event.preventDefault();
+          clearSelection();
         }
       });
-    }
-    
-    function updateTarget(targetId, field, value) {
-      fetch('/admin/targets/update', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          target_id: targetId,
-          field: field,
-          value: value
-        })
-      })
-      .then(response => response.json())
-      .then(data => {
-        if (data.success) {
-          // Show success message (you can use toast notification)
-          console.log('Updated successfully');
-        } else {
-          alert('Error updating: ' + data.message);
-        }
-      })
-      .catch(error => {
-        console.error('Error:', error);
-        alert('Failed to update target');
-      });
-    }
-    
-    function filterByDate() {
-      const filterValue = document.getElementById('date-filter').value;
-      const rows = document.querySelectorAll('#targets-table tbody tr');
-      
-      rows.forEach(row => {
-        const rowDate = row.getAttribute('data-date');
-        if (!filterValue || rowDate === filterValue) {
-          row.style.display = '';
-        } else {
-          row.style.display = 'none';
-        }
-      });
-    }
-    
-    function clearFilter() {
-      document.getElementById('date-filter').value = '';
-      const rows = document.querySelectorAll('#targets-table tbody tr');
-      rows.forEach(row => {
-        row.style.display = '';
-      });
-    }
+
+    })();
   </script>
-  
-  {% elif selected_store_id and not targets_data %}
-  <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center">
-    <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-slate-400">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-        <polyline points="14 2 14 8 20 8"></polyline>
-        <line x1="12" y1="18" x2="12" y2="12"></line>
-        <line x1="9" y1="15" x2="15" y2="15"></line>
-      </svg>
-    </div>
-    <h3 class="text-lg font-semibold text-slate-900 mb-2">No Target Data</h3>
-    <p class="text-slate-600">Upload an Excel file to import target data for this store.</p>
-  </div>
   {% endif %}
+
 
 </div>
 
