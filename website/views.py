@@ -3622,6 +3622,7 @@ def _generate_taf_control_no(transaction_date, transaction_type='Product Transfe
     prefix_key_map = {
         'Product Transfer': 'PTR',
         'Wastage Transfer': 'WTR',
+        'EGI Plant Transfer': 'STR',
         'Supplies Transfer': 'STR',
         'Supplies Request': 'SRQ',
     }
@@ -4011,10 +4012,11 @@ def store_manager_transaction_activity_form():
 
     if request.method == 'POST':
         transaction_type = str(request.form.get('transaction_type', '') or '').strip()
-        allowed_transaction_types = {'Product Transfer', 'Wastage Transfer'}
+        allowed_transaction_types = {'Product Transfer', 'Wastage Transfer', 'EGI Plant Transfer'}
         if transaction_type not in allowed_transaction_types:
-            flash('Only Product Transfer and Wastage Transfer submission are enabled for now.', category='error')
+            flash('Only Product Transfer, Wastage Transfer, and EGI Plant Transfer submission are enabled for now.', category='error')
             return redirect(url_for('views.store_manager_transaction_activity_form', date=selected_date.strftime('%Y-%m-%d')))
+        is_egi_plant_transfer = transaction_type == 'EGI Plant Transfer'
 
         taf_date = _parse_iso_date(request.form.get('taf_date')) or today_date
         if taf_date > today_date:
@@ -4104,8 +4106,8 @@ def store_manager_transaction_activity_form():
             transfer_from=transfer_from,
             transfer_to=transfer_to,
             prepared_by_name=prepared_by_name,
-            # Receiver is intentionally optional/disabled for sender-side submission.
-            received_by_name=received_by_name or None,
+            received_by_name=(received_by_name or 'EGI Plant') if is_egi_plant_transfer else (received_by_name or None),
+            status='Received' if is_egi_plant_transfer else 'Pending',
             grand_total=grand_total,
             submitted_by=current_user.id,
         )
@@ -4119,6 +4121,8 @@ def store_manager_transaction_activity_form():
                     item_name=item['item_name'],
                     unit_cost=item['unit_cost'],
                     quantity=item['quantity'],
+                    received_quantity=item['quantity'] if is_egi_plant_transfer else None,
+                    short_over_qty=0,
                     line_total=item['line_total'],
                     remarks=item['remarks'],
                 )
@@ -4129,13 +4133,23 @@ def store_manager_transaction_activity_form():
             # quantity sent rather than any later received quantity.
             db.session.flush()
             _update_inventory_wastage_on_receive(transfer_record, [])
+        elif is_egi_plant_transfer:
+            # EGI Plant transfers are finalized on submit and immediately
+            # reflect as Trans-Out for the sender. EGI Plant is not treated as
+            # a destination store, so this does not create Trans-In.
+            db.session.flush()
+            _update_inventory_trans_quantities(transfer_record, parsed_items)
 
         # Update inventory Trans-In/Trans-Out quantities only after receiving is confirmed
         # This is now handled in store_manager_incoming_transfer_view when Confirm Receiving is clicked
         # _update_inventory_trans_quantities(transfer_record, parsed_items)
 
         log_audit_event(
-            action='taf.product_transfer.submit' if transaction_type == 'Product Transfer' else 'taf.wastage_transfer.submit',
+            action={
+                'Product Transfer': 'taf.product_transfer.submit',
+                'Wastage Transfer': 'taf.wastage_transfer.submit',
+                'EGI Plant Transfer': 'taf.egi_plant_transfer.submit',
+            }.get(transaction_type, 'taf.transfer.submit'),
             entity_type='TafTransfer',
             entity_id=transfer_record.id,
             reason=f'Store manager submitted {transaction_type} TAF.',
@@ -4144,6 +4158,7 @@ def store_manager_transaction_activity_form():
                 'transaction_date': taf_date.strftime('%Y-%m-%d'),
                 'control_no': control_no,
                 'transaction_type': transaction_type,
+                'status': transfer_record.status,
                 'item_count': len(parsed_items),
                 'grand_total': round(grand_total, 2),
             },
@@ -4383,7 +4398,7 @@ def store_manager_outgoing_transfers():
     outgoing_transfers = (
         TafTransfer.query
         .filter(TafTransfer.store_id == store.id)
-        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer', 'supplies transfer']))
         .order_by(TafTransfer.transaction_date.desc(), TafTransfer.id.desc())
         .all()
     )

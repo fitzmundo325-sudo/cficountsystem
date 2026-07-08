@@ -132,14 +132,17 @@
                 </span>
                 <span class="text-sm font-semibold text-slate-800">Wastage Transfer</span>
             </button>
-            <button type="button" data-transaction-type="Supplies Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
+            <button type="button" data-transaction-type="EGI Plant Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
                 <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-100 text-blue-700">
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="7" width="18" height="13" rx="2"></rect>
-                    <path d="M8 7V5h8v2"></path>
+                    <path d="M3 21h18"></path>
+                    <path d="M5 21V9l5 3V9l5 3V6h4v15"></path>
+                    <path d="M8 16h2"></path>
+                    <path d="M13 16h2"></path>
+                    <path d="M8 20c0-1.7 1.8-3 4-3s4 1.3 4 3"></path>
                   </svg>
                 </span>
-                <span class="text-sm font-semibold text-slate-800">Supplies Transfer</span>
+                <span class="text-sm font-semibold text-slate-800">EGI Plant Transfer</span>
             </button>
             <button type="button" data-transaction-type="Supplies Request" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
                 <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
@@ -311,6 +314,13 @@
     const tafTourStartModal = document.getElementById('taf-tour-start-modal');
     const tafTourStartBtn = document.getElementById('taf-tour-start-btn');
     const tafTourHelpBtn = document.getElementById('taf-tour-help-btn');
+    const EGI_PLANT_DESTINATION = 'EGI Plant';
+    const transferToStoreOptions = Array.from(transferToStoreEl?.options || []).map((option) => ({
+      text: option.text,
+      value: option.value,
+      disabled: option.disabled,
+      selected: option.selected
+    }));
     let tafTourActive = false;
     let tafTourStepIndex = 0;
     let hasConfirmedSubmit = false;
@@ -356,7 +366,7 @@
     }
 
     function usesProductMasterLookup(transactionType) {
-      return transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer';
+      return transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer';
     }
 
     function syncItemNameMode() {
@@ -380,14 +390,29 @@
       }
     }
 
+    function setSelectOptions(selectEl, options, selectedValue) {
+      if (!selectEl) return;
+      selectEl.replaceChildren();
+      options.forEach((item) => {
+        const option = new Option(item.text, item.value);
+        option.disabled = Boolean(item.disabled);
+        option.selected = item.value === selectedValue || (!selectedValue && Boolean(item.selected));
+        selectEl.add(option);
+      });
+      if (selectedValue) {
+        selectEl.value = selectedValue;
+      }
+    }
+
     function syncTransferMode() {
       const transactionType = transactionTypeEl?.value || '';
       const isProductTransfer = transactionType === 'Product Transfer';
       const isWastageTransfer = transactionType === 'Wastage Transfer';
+      const isEgiPlantTransfer = transactionType === 'EGI Plant Transfer';
       const currentStoreName = transferFromEl?.dataset?.currentStore || '';
       if (!transferFromEl || !transferToEl || !transferToStoreEl || !transferToWastageEl) return;
 
-      if (isProductTransfer) {
+      if (isProductTransfer || isEgiPlantTransfer) {
         transferFromEl.value = currentStoreName;
         transferFromEl.readOnly = true;
         transferFromEl.classList.add('cursor-not-allowed', 'text-slate-600');
@@ -398,6 +423,11 @@
         transferToStoreEl.classList.remove('hidden');
         transferToStoreEl.setAttribute('name', 'transfer_to');
         transferToStoreEl.required = true;
+        if (isEgiPlantTransfer) {
+          setSelectOptions(transferToStoreEl, [{ text: EGI_PLANT_DESTINATION, value: EGI_PLANT_DESTINATION }], EGI_PLANT_DESTINATION);
+        } else {
+          setSelectOptions(transferToStoreEl, transferToStoreOptions, '');
+        }
         transferToWastageEl.classList.add('hidden');
         transferToWastageEl.removeAttribute('name');
         transferToWastageEl.required = false;
@@ -433,7 +463,7 @@
 
     function syncSubmitMode() {
       const transactionType = transactionTypeEl?.value || '';
-      const canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer';
+      const canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer';
       if (submitBtnEl) {
         submitBtnEl.disabled = !canSubmit;
         submitBtnEl.classList.toggle('opacity-60', !canSubmit);
@@ -709,7 +739,7 @@
       }
       event.preventDefault();
       const transactionType = transactionTypeEl?.value || '';
-      const canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer';
+      const canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer';
       if (!canSubmit) {
         return;
       }
