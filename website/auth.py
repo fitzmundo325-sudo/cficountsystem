@@ -26,7 +26,7 @@ def login():
         if user:
             if check_password_hash(user.password, password):
                 flash('Logged in successfully!', category='success')
-                login_user(user, remember=True)
+                login_user(user, remember=True) 
                 session['login_selected_date'] = selected_date.strftime('%Y-%m-%d')
                 log_audit_event(
                     action='auth.login.success',
