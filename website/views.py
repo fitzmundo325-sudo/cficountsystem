@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file
 from flask_login import login_required, current_user
 from .models import (
     Store,
@@ -5885,6 +5885,123 @@ def daily_ending_inventory():
     if date_param:
         return redirect(url_for('views.invensync', date=date_param))
     return redirect(url_for('views.invensync'))
+
+
+@views.route('/store-manager/data-export')
+@login_required
+def store_manager_data_export():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        return jsonify({'error': 'Access denied.'}), 403
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        return jsonify({'error': 'No working store is selected.'}), 404
+
+    export_type = str(request.args.get('type', '') or '').strip().lower()
+    if export_type not in {'pos-sold', 'trans-in', 'trans-out', 'wastage', 'delivery'}:
+        return jsonify({'error': 'Invalid export type.'}), 400
+
+    selected_date = None
+    raw_date = str(request.args.get('date', '') or '').strip()
+    if raw_date:
+        try:
+            selected_date = datetime.strptime(raw_date, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'error': 'Invalid export date.'}), 400
+
+    rows = []
+    if export_type == 'pos-sold':
+        query = (
+            db.session.query(PosSold, DailyReport.report_date)
+            .join(DailyReport, PosSold.daily_report_id == DailyReport.id)
+            .filter(DailyReport.store_id == store.id)
+        )
+        if selected_date:
+            query = query.filter(DailyReport.report_date == selected_date)
+        rows = [{
+            'Date': report_date, 'Product': item.product_name, 'Quantity': item.quantity,
+            'Gross Sales': item.gross_sales, 'Discount': item.discount, 'Net Sales': item.net_sales,
+        } for item, report_date in query.order_by(DailyReport.report_date, PosSold.product_name).all()]
+    elif export_type == 'delivery':
+        query = RsoDelivery.query.filter(RsoDelivery.store_id == store.id)
+        if selected_date:
+            query = query.filter(RsoDelivery.report_date == selected_date)
+        rows = [{
+            'Date': item.report_date, 'RSO No': item.rso_no, 'Product': item.product_name,
+            'Quantity': item.quantity, 'Received Quantity': item.received_quantity,
+            'Source': item.upload_source, 'Reviewed Date': item.delivery_reviewed_date,
+        } for item in query.order_by(RsoDelivery.report_date, RsoDelivery.rso_no, RsoDelivery.product_name).all()]
+    else:
+        normalized_store_name = str(store.name or '').strip().lower()
+        query = (
+            db.session.query(TafTransfer, TafTransferItem)
+            .join(TafTransferItem, TafTransferItem.transfer_id == TafTransfer.id)
+        )
+        if export_type == 'trans-in':
+            query = query.filter(
+                func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name,
+                TafTransfer.store_id != store.id,
+            )
+        elif export_type == 'trans-out':
+            query = query.filter(
+                TafTransfer.store_id == store.id,
+                func.lower(func.trim(TafTransfer.transaction_type)).in_(
+                    ['product transfer', 'egi plant transfer', 'supplies transfer']
+                ),
+            )
+        else:
+            query = query.filter(
+                func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer',
+                (
+                    (
+                        (func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name)
+                        & (TafTransfer.store_id != store.id)
+                    )
+                    | (
+                        (TafTransfer.store_id == store.id)
+                        & (func.lower(func.trim(TafTransfer.transfer_to)) == 'main office')
+                    )
+                ),
+            )
+        rows = [{
+            'Date': transfer.transaction_date, 'Control No': transfer.control_no,
+            'Type': transfer.transaction_type, 'From': transfer.transfer_from, 'To': transfer.transfer_to,
+            'Status': transfer.status, 'Item': item.item_name, 'Quantity': item.quantity,
+            'Received Quantity': item.received_quantity, 'Short/Over': item.short_over_qty,
+            'Unit Cost': item.unit_cost, 'Line Total': item.line_total, 'Remarks': item.remarks,
+        } for transfer, item in query.order_by(
+            TafTransfer.transaction_date, TafTransfer.control_no, TafTransferItem.id
+        ).all()]
+
+    columns_by_type = {
+        'pos-sold': ['Date', 'Product', 'Quantity', 'Gross Sales', 'Discount', 'Net Sales'],
+        'delivery': ['Date', 'RSO No', 'Product', 'Quantity', 'Received Quantity', 'Source', 'Reviewed Date'],
+        'trans-in': ['Date', 'Control No', 'Type', 'From', 'To', 'Status', 'Item', 'Quantity', 'Received Quantity', 'Short/Over', 'Unit Cost', 'Line Total', 'Remarks'],
+        'trans-out': ['Date', 'Control No', 'Type', 'From', 'To', 'Status', 'Item', 'Quantity', 'Received Quantity', 'Short/Over', 'Unit Cost', 'Line Total', 'Remarks'],
+        'wastage': ['Date', 'Control No', 'Type', 'From', 'To', 'Status', 'Item', 'Quantity', 'Received Quantity', 'Short/Over', 'Unit Cost', 'Line Total', 'Remarks'],
+    }
+    dataframe = pd.DataFrame(rows, columns=columns_by_type[export_type])
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        dataframe.to_excel(writer, index=False, sheet_name='Data')
+        sheet = writer.book['Data']
+        sheet.freeze_panes = 'A2'
+        sheet.auto_filter.ref = sheet.dimensions
+        for cells in sheet.columns:
+            sheet.column_dimensions[cells[0].column_letter].width = min(
+                max((len(str(cell.value or '')) for cell in cells), default=10) + 2,
+                45,
+            )
+    output.seek(0)
+    store_name = re.sub(r'[^A-Za-z0-9_-]+', '_', store.name or 'store').strip('_')
+    period = selected_date.strftime('%Y-%m-%d') if selected_date else 'all'
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f'{store_name}_{export_type}_{period}.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
 
 
 @views.route('/store-manager/daily-ending-inventory/save', methods=['POST'])
