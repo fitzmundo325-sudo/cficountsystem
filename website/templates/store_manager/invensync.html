@@ -180,6 +180,17 @@
       <p class="mt-1 text-slate-600">Daily stock counts, deliveries, transfers, wastage, and variance tracking.</p>
     </div>
     <div class="flex items-center gap-2">
+      {% if current_user.role in ['Admin', 'Superadmin'] %}
+      <button id="admin-unlock-selected-btn" data-admin-selected-toggle type="button" onclick="toggleAdminSelectedCell()" class="flex items-center gap-2 border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-amber-100 transition-all" title="Unlock the selected cells, row, or column">
+        <span>Unlock Selected</span>
+      </button>
+      <button id="admin-unlock-all-btn" data-admin-all-toggle type="button" onclick="toggleAllAdminCells()" class="flex items-center gap-2 border border-sky-300 bg-sky-50 text-sky-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-sky-100 transition-all" title="Unlock every input cell on this page">
+        <span>Unlock All</span>
+      </button>
+      <button id="admin-save-corrections-btn" data-admin-save-corrections type="button" onclick="saveAdminCorrections()" disabled class="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300">
+        Save Changes
+      </button>
+      {% endif %}
       {% if not is_view_only %}
       <button onclick="syncProducts()" class="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-all" title="Sync products from Product Masterlist">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -519,6 +530,225 @@ let isSavingBeginningInventory = requiresBeginningStockFirst;
 let missingBeginningNoticeOpen = false;
 let beginningGuideActive = false;
 let beginningGuideStepIndex = 0;
+const isAdminCorrectionMode = {{ (current_user.role in ['Admin', 'Superadmin'])|tojson }};
+let adminAllCellsUnlocked = false;
+let adminSelectedInput = null;
+let adminSelectedInputs = [];
+const adminOriginalValues = new Map();
+const adminCellInstructionKey = 'invensyncAdminSelectionInstructionSeenV2';
+
+function adminEditableInputs() {
+  const fullscreenModal = document.getElementById('fullscreen-modal');
+  const scope = fullscreenModal && !fullscreenModal.classList.contains('hidden')
+    ? fullscreenModal
+    : document.getElementById('main-content');
+  return Array.from(scope?.querySelectorAll('tbody tr[data-product-id] td[data-field] input:not([type="hidden"])') || []);
+}
+
+function unlockAdminInput(input) {
+  if (!input || !isAdminCorrectionMode) return;
+  if (!adminOriginalValues.has(input)) adminOriginalValues.set(input, input.value);
+  input.disabled = false;
+  input.readOnly = false;
+  input.classList.remove('readonly', 'cursor-not-allowed', 'opacity-75');
+  input.classList.add('ring-2', 'ring-amber-300', 'border-amber-400');
+  input.addEventListener('input', refreshAdminCorrectionButton);
+}
+
+function toggleAdminSelectedCell() {
+  const selectedInputs = adminSelectedInputs.length
+    ? adminSelectedInputs
+    : (adminSelectedInput ? [adminSelectedInput] : []);
+  if (!selectedInputs.length) {
+    notify('Select a cell, product row, or column first.', 'warning');
+    return;
+  }
+
+  const shouldUnlock = selectedInputs.every(input => input.readOnly || input.disabled);
+  if (shouldUnlock) {
+    selectedInputs.forEach(unlockAdminInput);
+    if (selectedInputs.length === 1) {
+      selectedInputs[0].focus();
+      selectedInputs[0].select();
+    }
+    updateAdminSelectedButton();
+    notify(`${selectedInputs.length} selected cell(s) unlocked.`, 'success');
+  } else {
+    selectedInputs.forEach(input => {
+      input.readOnly = true;
+      input.classList.remove('ring-2', 'ring-amber-300', 'border-amber-400');
+      input.classList.add('readonly', 'cursor-not-allowed', 'opacity-75');
+    });
+    updateAdminSelectedButton();
+    refreshAdminCorrectionButton();
+    notify(`${selectedInputs.length} selected cell(s) locked. Pending changes remain ready to save.`, 'info');
+  }
+}
+
+function toggleAllAdminCells() {
+  if (adminAllCellsUnlocked) {
+    lockAllAdminCells();
+  } else {
+    unlockAllAdminCells();
+  }
+}
+
+function unlockAllAdminCells() {
+  adminEditableInputs().forEach(unlockAdminInput);
+  adminAllCellsUnlocked = true;
+  resetAdminSelectionButton();
+  document.querySelectorAll('[data-admin-all-toggle]').forEach(button => {
+    button.querySelector('span').textContent = 'Lock All';
+    button.title = 'Lock every input cell on this page';
+    button.classList.remove('border-sky-300', 'bg-sky-50', 'text-sky-800', 'hover:bg-sky-100');
+    button.classList.add('border-slate-300', 'bg-slate-100', 'text-slate-800', 'hover:bg-slate-200');
+  });
+  notify('All input cells are unlocked for this correction session.', 'success');
+}
+
+function lockAllAdminCells() {
+  adminEditableInputs().forEach(input => {
+    input.readOnly = true;
+    input.classList.remove('ring-2', 'ring-amber-300', 'border-amber-400');
+    input.classList.add('readonly', 'cursor-not-allowed', 'opacity-75');
+  });
+  adminAllCellsUnlocked = false;
+  resetAdminSelectionButton();
+  document.querySelectorAll('[data-admin-all-toggle]').forEach(button => {
+    button.querySelector('span').textContent = 'Unlock All';
+    button.title = 'Unlock every input cell on this page';
+    button.classList.remove('border-slate-300', 'bg-slate-100', 'text-slate-800', 'hover:bg-slate-200');
+    button.classList.add('border-sky-300', 'bg-sky-50', 'text-sky-800', 'hover:bg-sky-100');
+  });
+  refreshAdminCorrectionButton();
+  notify('All input cells are locked. Pending changes are still ready to save.', 'info');
+}
+
+function resetAdminSelectionButton() {
+  adminEditableInputs().forEach(input => {
+    input.classList.remove('ring-2', 'ring-violet-400', 'border-violet-400');
+    if (input.readOnly) input.classList.add('opacity-75');
+  });
+  adminSelectedInput = null;
+  adminSelectedInputs = [];
+  document.querySelectorAll('.admin-range-selected').forEach(element => {
+    element.classList.remove('admin-range-selected', 'ring-2', 'ring-inset', 'ring-violet-400');
+  });
+  document.querySelectorAll('[data-admin-selected-toggle]').forEach(button => {
+    button.querySelector('span').textContent = 'Unlock Selected';
+    button.title = 'Unlock the selected cells, row, or column';
+    button.classList.remove('ring-2', 'ring-violet-400');
+  });
+}
+
+function updateAdminSelectedButton() {
+  const selectedInputs = adminSelectedInputs.length
+    ? adminSelectedInputs
+    : (adminSelectedInput ? [adminSelectedInput] : []);
+  if (!selectedInputs.length) return;
+  const isLocked = selectedInputs.every(input => input.readOnly || input.disabled);
+  document.querySelectorAll('[data-admin-selected-toggle]').forEach(button => {
+    button.querySelector('span').textContent = isLocked ? 'Unlock Selected' : 'Lock Selected';
+    button.title = isLocked ? 'Unlock the selected cells, row, or column' : 'Lock the selected cells, row, or column';
+    button.classList.add('ring-2', 'ring-violet-400');
+  });
+}
+
+function showAdminCellInstructionOnce() {
+  try {
+    if (localStorage.getItem(adminCellInstructionKey) === '1') return;
+    localStorage.setItem(adminCellInstructionKey, '1');
+  } catch (error) {
+    // Show the instruction when browser storage is unavailable.
+  }
+  notify('Select a cell, click a product name for a row, or click a column header. Then use Unlock Selected or Lock Selected.', 'info');
+}
+
+function refreshAdminCorrectionButton() {
+  const changed = Array.from(adminOriginalValues.entries()).some(([input, original]) => input.value !== original);
+  document.querySelectorAll('[data-admin-save-corrections]').forEach(button => {
+    button.disabled = !changed;
+  });
+}
+
+document.addEventListener('click', event => {
+  if (!isAdminCorrectionMode) return;
+
+  const header = event.target.closest('#main-content thead tr:nth-child(2) th, #fullscreen-modal thead tr:nth-child(2) th');
+  if (header && header.cellIndex > 0) {
+    event.preventDefault();
+    const table = header.closest('table');
+    const columnInputs = Array.from(table.querySelectorAll('tbody tr[data-product-id]'))
+      .map(row => row.cells[header.cellIndex]?.querySelector('input:not([type="hidden"])'))
+      .filter(Boolean);
+    if (!columnInputs.length) return;
+    resetAdminSelectionButton();
+    adminSelectedInputs = columnInputs;
+    header.classList.add('admin-range-selected', 'ring-2', 'ring-inset', 'ring-violet-400');
+    columnInputs.forEach(input => input.classList.add('ring-2', 'ring-violet-400'));
+    updateAdminSelectedButton();
+    showAdminCellInstructionOnce();
+    return;
+  }
+
+  const productCell = event.target.closest('#main-content tbody tr[data-product-id] td:first-child, #fullscreen-modal tbody tr[data-product-id] td:first-child');
+  if (productCell) {
+    event.preventDefault();
+    const rowInputs = Array.from(productCell.closest('tr').querySelectorAll('td[data-field] input:not([type="hidden"])'));
+    if (!rowInputs.length) return;
+    resetAdminSelectionButton();
+    adminSelectedInputs = rowInputs;
+    productCell.classList.add('admin-range-selected', 'ring-2', 'ring-inset', 'ring-violet-400');
+    rowInputs.forEach(input => input.classList.add('ring-2', 'ring-violet-400'));
+    updateAdminSelectedButton();
+    showAdminCellInstructionOnce();
+    return;
+  }
+
+  const input = event.target.closest('tbody tr[data-product-id] td[data-field] input:not([type="hidden"])');
+  if (!input) return;
+  if (input.readOnly || input.disabled) event.preventDefault();
+  resetAdminSelectionButton();
+  adminSelectedInput = input;
+  adminSelectedInputs = [input];
+  if (input.readOnly || input.disabled) input.classList.remove('opacity-75');
+  input.classList.add('ring-2', 'ring-violet-400', 'border-violet-400');
+  updateAdminSelectedButton();
+  showAdminCellInstructionOnce();
+}, true);
+
+function saveAdminCorrections() {
+  const changes = [];
+  adminOriginalValues.forEach((original, input) => {
+    if (input.value === original) return;
+    const row = input.closest('tr[data-product-id]');
+    const cell = input.closest('td[data-field]');
+    const itemId = row?.querySelector('.inv-item-id')?.value;
+    if (itemId && cell?.dataset.field) {
+      changes.push({item_id: itemId, field: cell.dataset.field, value: input.value});
+    }
+  });
+  if (!changes.length) return;
+
+  document.querySelectorAll('[data-admin-save-corrections]').forEach(button => {
+    button.disabled = true;
+  });
+  fetch('/admin/invensync/inventory-correction', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({inventory_id: inventoryId, changes})
+  })
+  .then(async response => {
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.message || 'Unable to save changes.');
+    notify(data.message, 'success');
+    window.location.reload();
+  })
+  .catch(error => {
+    notify(error.message, 'error');
+    refreshAdminCorrectionButton();
+  });
+}
 
 function notify(message, type = 'info') {
   if (typeof toast !== 'undefined' && typeof toast.show === 'function') {
@@ -1404,7 +1634,7 @@ function attachEnterNavigation(scope) {
   });
 }
 
-// Keyboard shortcut for fullscreen (F11 to toggle, Escape to close)
+// Keyboard shortcuts for fullscreen (F or F11 to toggle, Escape to close)
 function isEscapeKey(e) {
   return e.key === 'Escape' || e.key === 'Esc' || e.keyCode === 27 || e.which === 27;
 }
@@ -1413,11 +1643,19 @@ function isF11Key(e) {
   return e.key === 'F11' || e.keyCode === 122 || e.which === 122;
 }
 
+function isFullscreenShortcut(e) {
+  if (isF11Key(e)) return true;
+  if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return false;
+  const target = e.target;
+  if (target && (target.matches('input, textarea, select') || target.isContentEditable)) return false;
+  return String(e.key || '').toLowerCase() === 'f';
+}
+
 function handleFullscreenKey(e) {
   const modal = document.getElementById('fullscreen-modal');
-  if (!modal) return;
+  if (!modal || e.repeat) return;
 
-  if (isF11Key(e)) {
+  if (isFullscreenShortcut(e)) {
     e.preventDefault();
     toggleFullscreen();
   } else if (isEscapeKey(e) && !modal.classList.contains('hidden')) {
@@ -1427,9 +1665,6 @@ function handleFullscreenKey(e) {
 }
 
 document.addEventListener('keydown', handleFullscreenKey);
-document.addEventListener('keyup', handleFullscreenKey);
-window.addEventListener('keydown', handleFullscreenKey);
-window.addEventListener('keyup', handleFullscreenKey);
 window.addEventListener('resize', function() {
   if (beginningGuideActive) renderBeginningSpotlight();
 });
@@ -1585,6 +1820,17 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
       </div>
       <div class="flex items-center gap-3">
+        {% if current_user.role in ['Admin', 'Superadmin'] %}
+        <button data-admin-selected-toggle type="button" onclick="toggleAdminSelectedCell()" class="flex items-center gap-2 border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-amber-100 transition-all" title="Unlock the selected cells, row, or column">
+          <span>Unlock Selected</span>
+        </button>
+        <button data-admin-all-toggle type="button" onclick="toggleAllAdminCells()" class="flex items-center gap-2 border border-sky-300 bg-sky-50 text-sky-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-sky-100 transition-all" title="Unlock every input cell on this page">
+          <span>Unlock All</span>
+        </button>
+        <button data-admin-save-corrections type="button" onclick="saveAdminCorrections()" disabled class="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300">
+          Save Changes
+        </button>
+        {% endif %}
         <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-700 transition-all">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
