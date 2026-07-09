@@ -3058,6 +3058,92 @@ def update_store_invensync_config():
         return jsonify({'success': False, 'message': str(exc)}), 500
 
 
+@admin.route('/admin/invensync/inventory-correction', methods=['POST'])
+@login_required
+def save_invensync_inventory_correction():
+    """Apply explicit, cell-level corrections without changing the day's lock state."""
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    editable_fields = {
+        'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
+        'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+        'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
+        'ending_d3_qty', 'remarks',
+    }
+    numeric_fields = editable_fields - {'remarks'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return jsonify({'success': False, 'message': 'Inventory not found.'}), 404
+
+        changes = data.get('changes', [])
+        if not isinstance(changes, list) or not changes:
+            return jsonify({'success': False, 'message': 'No changes were submitted.'}), 400
+
+        changed_items = {}
+        audit_changes = []
+        for change in changes:
+            field = str(change.get('field', '')).strip()
+            if field not in editable_fields:
+                return jsonify({'success': False, 'message': f'{field or "Unknown field"} cannot be edited.'}), 400
+
+            item_id = int(change.get('item_id', 0) or 0)
+            item = DailyEndingInventoryItem.query.filter_by(
+                id=item_id,
+                inventory_id=inventory.id,
+            ).first()
+            if not item:
+                return jsonify({'success': False, 'message': 'An inventory item was not found.'}), 404
+
+            old_value = getattr(item, field)
+            if field in numeric_fields:
+                raw_value = change.get('value', 0)
+                new_value = int(float(raw_value)) if str(raw_value).strip() else 0
+            else:
+                new_value = str(change.get('value', '') or '').strip()
+
+            setattr(item, field, new_value)
+            changed_items[item.id] = item
+            audit_changes.append({
+                'item_id': item.id,
+                'product': item.product_description,
+                'field': field,
+                'old': old_value,
+                'new': new_value,
+            })
+
+        # Keep totals, theoretical inventory, and variances consistent.
+        from .views import _recalculate_inventory_item
+        for item in changed_items.values():
+            _recalculate_inventory_item(item)
+
+        log_audit_event(
+            action='UPDATE',
+            entity_type='InvenSync Admin Correction',
+            entity_id=inventory.id,
+            details={
+                'store_id': inventory.store_id,
+                'inventory_date': str(inventory.inventory_date),
+                'changes': audit_changes,
+            },
+        )
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': f'{len(audit_changes)} inventory cell change(s) saved.',
+        })
+    except (TypeError, ValueError):
+        db.session.rollback()
+        return jsonify({'success': False, 'message': 'Enter a valid whole number.'}), 400
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
 @admin.route('/admin/invensync/force-beginning', methods=['POST'])
 @login_required
 def force_invensync_beginning():
