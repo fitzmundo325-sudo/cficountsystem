@@ -165,7 +165,7 @@
   <div class="flex flex-wrap items-center gap-3 sm:justify-end">
     <a href="{{ url_for('views.store_manager_data_export', type='delivery', store_id=store.id, date=selected_report_date if selected_report_date else today) }}" class="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700" title="Download Delivery Excel">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-      <span>Download Excel File</span>
+      <span>Export Excel</span>
     </a>
     <button id="delivery-tour-help-btn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50" title="Restart help guide">
       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
