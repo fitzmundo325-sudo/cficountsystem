@@ -276,6 +276,12 @@
         </div>
         <span class="nav-label whitespace-nowrap truncate">Oracle</span>
       </a>
+      <a href="{{ url_for('views.starlink') }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path == url_for('views.starlink') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Starlink">
+        <div class="shrink-0 {% if request.path == url_for('views.starlink') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1"/><path d="M12 4V2"/><path d="m4.9 6.9-1.4-1.4"/><path d="m19.1 6.9 1.4-1.4"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Starlink</span>
+      </a>
 
       <a href="{{ cluster_sbase_href }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_cluster_sbase_nav_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="CL Sbase">
         <div class="shrink-0 {% if is_cluster_sbase_nav_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">

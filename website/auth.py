@@ -42,7 +42,7 @@ def login():
                 )
                 
                 # Redirect based on role
-                if user.role == 'Superadmin':
+                if user.role in ('Superadmin', 'General Manager'):
                     return redirect(url_for('admin.dashboard'))
                 else:
                     return redirect(url_for('views.home'))

@@ -2,6 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from .models import (
     Store,
+    Cluster,
     DailyReport,
     PosSold,
     ProductMaster,
@@ -35,6 +36,73 @@ from sqlalchemy import func
 from sqlalchemy.sql.sqltypes import Integer as SAInteger, Float as SAFloat, Numeric as SANumeric
 
 views = Blueprint('views', __name__)
+
+
+@views.route('/starlink')
+@login_required
+def starlink():
+    role = (current_user.role or '').strip()
+    if role not in ('Admin', 'Superadmin', 'Cluster Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+    if role in ('Admin', 'Superadmin'):
+        return redirect(url_for('admin.dashboard'))
+
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        stores = (
+            Store.query.filter_by(cluster_id=cluster.id).order_by(Store.name.asc()).all()
+            if cluster else []
+        )
+    else:
+        stores = Store.query.order_by(Store.name.asc()).all()
+
+    stores = [
+        store for store in stores
+        if 'starlink' in str(store.name or '').strip().lower()
+    ]
+
+    month_start = date.today().replace(day=1)
+    store_ids = [store.id for store in stores]
+    reports = (
+        DailyReport.query
+        .filter(
+            DailyReport.store_id.in_(store_ids),
+            DailyReport.report_date >= month_start,
+            DailyReport.report_date <= date.today(),
+        )
+        .all()
+        if store_ids else []
+    )
+    reports_by_store = {}
+    for report in reports:
+        reports_by_store.setdefault(report.store_id, []).append(report)
+
+    starlink_rows = []
+    for store in stores:
+        store_reports = reports_by_store.get(store.id, [])
+        net_sales = sum(
+            float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+            for report in store_reports
+        )
+        transaction_count = sum(
+            int(report.pos_tc or 0) + int(report.ci_tc or 0)
+            for report in store_reports
+        )
+        starlink_rows.append({
+            'store': store,
+            'net_sales': net_sales,
+            'transaction_count': transaction_count,
+            'ads': net_sales / 31,
+            'adtc': transaction_count / 31,
+        })
+
+    return render_template(
+        'starlink.html',
+        user=current_user,
+        starlink_rows=starlink_rows,
+        period_label=month_start.strftime('%B %Y'),
+    )
 
 
 def _safe_ratio(numerator, denominator):
@@ -1275,6 +1343,7 @@ def _get_or_create_global_invensync_config():
         'editable_columns': [],
         'force_beginning_store_ids': [],
         'store_configs': {},
+        'admin_unlocks': {},
     }
     config = GlobalInvenSyncConfig.query.first()
     if not config:
@@ -1307,6 +1376,35 @@ def _get_effective_invensync_config(global_config_data, store_id):
             effective_config[key] = store_config.get(key, [])
 
     return effective_config
+
+
+def _get_invensync_admin_unlock(global_config_data, store_id, inventory_date):
+    admin_unlocks = (global_config_data or {}).get('admin_unlocks', {})
+    if not isinstance(admin_unlocks, dict):
+        return {'all': False, 'cells': []}
+
+    store_unlocks = admin_unlocks.get(str(store_id), {})
+    if not isinstance(store_unlocks, dict):
+        return {'all': False, 'cells': []}
+
+    date_key = inventory_date.isoformat() if hasattr(inventory_date, 'isoformat') else str(inventory_date or '')
+    unlock_data = store_unlocks.get(date_key, {})
+    if not isinstance(unlock_data, dict):
+        return {'all': False, 'cells': []}
+
+    return {
+        'all': bool(unlock_data.get('all')),
+        'cells': [str(item).strip() for item in unlock_data.get('cells', []) if str(item).strip()],
+    }
+
+
+def _is_invensync_admin_unlocked(admin_unlock_scope, item_id, field_name):
+    if not isinstance(admin_unlock_scope, dict):
+        return False
+    if admin_unlock_scope.get('all'):
+        return True
+    cell_key = f'{item_id}|{field_name}'
+    return cell_key in set(admin_unlock_scope.get('cells') or [])
 
 
 def _lock_global_invensync_column(column_name):
@@ -2418,6 +2516,8 @@ def home():
 
     if role == 'Superadmin':
         return redirect(url_for('admin.dashboard'))
+    if role == 'General Manager':
+        return redirect(url_for('admin.dashboard'))
     if role == 'Admin':
         return redirect(url_for('admin.users'))
     if role == 'Cluster Manager':
@@ -2469,9 +2569,18 @@ def cluster_dashboard():
     
     # Get stores in this cluster.
     # Fallback to all stores when cluster-store assignment is missing so dashboard widgets remain usable.
-    stores = Store.query.filter_by(cluster_id=cluster.id).all()
-    if not stores:
-        stores = Store.query.all()
+    cluster_stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    if not cluster_stores:
+        cluster_stores = Store.query.all()
+    starlink_stores = [
+        store for store in cluster_stores
+        if 'starlink' in str(store.name or '').strip().lower()
+    ]
+    stores = cluster_stores
+    stores = [
+        store for store in stores
+        if 'starlink' not in str(store.name or '').strip().lower()
+    ]
     
     # Get store IDs
     store_ids = [s.id for s in stores]
@@ -2506,6 +2615,39 @@ def cluster_dashboard():
     ).all()
     _coalesce_numeric_fields_for_reports(reports)
     _apply_pos_qty_from_pos_categories(reports)
+
+    starlink_store_ids = [int(store.id) for store in starlink_stores]
+    starlink_reports = (
+        DailyReport.query.filter(
+            DailyReport.store_id.in_(starlink_store_ids),
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= end_date,
+            DailyReport.status == 'Approved',
+        ).all()
+        if starlink_store_ids else []
+    )
+    _coalesce_numeric_fields_for_reports(starlink_reports)
+    starlink_reports_by_store = {}
+    for report in starlink_reports:
+        starlink_reports_by_store.setdefault(report.store_id, []).append(report)
+    starlink_rows = []
+    for store in sorted(starlink_stores, key=lambda item: (item.name or '').lower()):
+        store_reports = starlink_reports_by_store.get(store.id, [])
+        net_sales = sum(
+            float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+            for report in store_reports
+        )
+        transaction_count = sum(
+            int(report.pos_tc or 0) + int(report.ci_tc or 0)
+            for report in store_reports
+        )
+        starlink_rows.append({
+            'store': store,
+            'net_sales': net_sales,
+            'transaction_count': transaction_count,
+            'ads': net_sales / 31,
+            'adtc': transaction_count / 31,
+        })
     
     # Fetch store targets for the selected month
     targets = StoreTarget.query.filter(
@@ -2760,7 +2902,8 @@ def cluster_dashboard():
                             pos_sold_products_by_store=pos_sold_products_by_store,
                             icu_stores=icu_stores,
                             wastage_performance=wastage_performance,
-                            discount_performance=discount_performance)
+                            discount_performance=discount_performance,
+                            starlink_rows=starlink_rows)
 
 
 # Store Manager Daily Report Routes
@@ -6024,13 +6167,18 @@ def save_daily_ending_inventory():
         inventory = DailyEndingInventory.query.get(inventory_id)
         if not inventory:
             return jsonify({'success': False, 'error': 'Inventory not found'}), 404
-        if inventory.is_finalized:
+        config, global_config_data = _get_or_create_global_invensync_config()
+        effective_config_data = _get_effective_invensync_config(global_config_data, inventory.store_id)
+        admin_unlock_scope = _get_invensync_admin_unlock(global_config_data, inventory.store_id, inventory.inventory_date)
+        has_admin_unlock = bool(admin_unlock_scope.get('all') or admin_unlock_scope.get('cells'))
+        if inventory.is_finalized and not has_admin_unlock:
             return jsonify({
                 'success': False,
                 'error': 'This inventory day is already finalized and can no longer be edited.'
             }), 423
-        config, global_config_data = _get_or_create_global_invensync_config()
-        effective_config_data = _get_effective_invensync_config(global_config_data, inventory.store_id)
+        if inventory.is_finalized and has_admin_unlock:
+            finalize_day = False
+            finalize_beginning = False
         force_beginning_entry = inventory.store_id in {
             int(item) for item in global_config_data.get('force_beginning_store_ids', [])
             if str(item).isdigit()
@@ -6076,10 +6224,35 @@ def save_daily_ending_inventory():
         )
         
         # Update items
+        editable_fields = [
+            'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty',
+            'trans_out_qty', 'wastage_qty', 'csi_qty', 'quantity_sold',
+            'ending_d5_qty', 'ending_d4_qty', 'ending_d3_qty', 'remarks',
+        ]
+        numeric_fields = [field for field in editable_fields if field != 'remarks']
         for item_data in items_data:
             item_id = item_data.get('item_id')
             item = DailyEndingInventoryItem.query.get(item_id)
             if item:
+                if item.inventory_id != inventory.id:
+                    continue
+                if inventory.is_finalized and has_admin_unlock:
+                    if (
+                        'beginning_qty' in item_data
+                        and _is_invensync_admin_unlocked(admin_unlock_scope, item.id, 'beginning_qty')
+                    ):
+                        item.beginning_qty = int(item_data.get('beginning_qty', 0))
+                    for field in numeric_fields:
+                        if field in item_data and _is_invensync_admin_unlocked(admin_unlock_scope, item.id, field):
+                            setattr(item, field, int(item_data.get(field, 0)))
+                    if (
+                        'remarks' in item_data
+                        and _is_invensync_admin_unlocked(admin_unlock_scope, item.id, 'remarks')
+                    ):
+                        item.remarks = item_data.get('remarks', '')
+                    _recalculate_inventory_item(item)
+                    continue
+
                 if allow_beginning_qty_update and 'beginning_qty' in item_data:
                     item.beginning_qty = int(item_data.get('beginning_qty', 0))
                 item.delivery_qty = int(item_data.get('delivery_qty', 0))
@@ -6542,6 +6715,7 @@ def invensync():
 
     _, global_config_data = _get_or_create_global_invensync_config()
     effective_config_data = _get_effective_invensync_config(global_config_data, store.id)
+    admin_unlock_scope = _get_invensync_admin_unlock(global_config_data, store.id, selected_date)
     force_beginning_entry = store.id in {
         int(item) for item in global_config_data.get('force_beginning_store_ids', [])
         if str(item).isdigit()
@@ -6586,6 +6760,7 @@ def invensync():
         selected_date=selected_date.strftime('%Y-%m-%d'),
         today=date.today().strftime('%Y-%m-%d'),
         global_config_data=effective_config_data,
+        admin_unlock_scope=admin_unlock_scope,
         is_first_time=is_first_time,
         allow_beginning_stock_entry=allow_beginning_stock_entry,
         store_beginning_baseline_finalized=store_beginning_baseline_finalized,

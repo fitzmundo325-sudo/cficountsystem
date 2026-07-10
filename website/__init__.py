@@ -385,7 +385,7 @@ def create_app():
         mode = MaintenanceMode.query.first()
         if not mode or not mode.is_enabled:
             return redirect(url_for('views.home') if current_user.is_authenticated else url_for('auth.login'))
-        if current_user.is_authenticated and getattr(current_user, 'role', None) in ('Admin', 'Superadmin'):
+        if current_user.is_authenticated and getattr(current_user, 'role', None) in ('Admin', 'Superadmin', 'General Manager'):
             return redirect(url_for('admin.dashboard'))
         return render_template('maintenance.html', maintenance_mode=mode)
 
@@ -395,7 +395,7 @@ def create_app():
             return None
         if not current_user.is_authenticated:
             return None
-        if getattr(current_user, 'role', None) in ('Admin', 'Superadmin'):
+        if getattr(current_user, 'role', None) in ('Admin', 'Superadmin', 'General Manager'):
             return None
         mode = MaintenanceMode.query.first()
         if mode and mode.is_enabled:
