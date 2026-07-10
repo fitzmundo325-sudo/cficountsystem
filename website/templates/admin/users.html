@@ -43,13 +43,15 @@
     </div>
 
     <!-- Search -->
-    <form method="GET" class="w-full sm:w-72">
+    <div class="w-full sm:w-72">
       <div class="relative">
         <input
+          id="users-live-search"
           type="text"
           name="q"
           placeholder="Search users..."
           value="{{ search_query or '' }}"
+          autocomplete="off"
           class="block w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
         >
         <div class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
@@ -59,7 +61,7 @@
           </svg>
         </div>
       </div>
-    </form>
+    </div>
   </section>
 
   <!-- Users Table -->
@@ -79,7 +81,7 @@
         </thead>
         <tbody class="divide-y divide-slate-100">
         {% for user in users %}
-        <tr class="hover:bg-slate-50 transition-colors">
+        <tr class="hover:bg-slate-50 transition-colors" data-user-row>
             <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
             #{{ user.id }}
             </td>
@@ -149,6 +151,11 @@
             </td>
         </tr>
         {% endfor %}
+        <tr id="users-live-search-empty" class="hidden">
+            <td colspan="7" class="px-4 py-8 text-center text-slate-400 text-sm">
+            No users match your search.
+            </td>
+        </tr>
         </tbody>
       </table>
     </div>
@@ -233,6 +240,7 @@
               <option value="">Select a role</option>
               <option value="Superadmin">Superadmin</option>
               <option value="Admin">Admin</option>
+              <option value="General Manager">General Manager</option>
               <option value="Cluster Manager">Cluster Manager</option>
               <option value="Store Manager">Store Manager</option>
               <option value="Inventory Staff">Inventory Staff</option>
@@ -346,6 +354,7 @@
               <option value="">Select a role</option>
               <option value="Superadmin">Superadmin</option>
               <option value="Admin">Admin</option>
+              <option value="General Manager">General Manager</option>
               <option value="Cluster Manager">Cluster Manager</option>
               <option value="Store Manager">Store Manager</option>
               <option value="Inventory Staff">Inventory Staff</option>
@@ -396,6 +405,27 @@
   const editRoleEl = document.getElementById('edit_role');
   const editStoreEl = document.getElementById('edit_assigned_store_id');
   const editStoreGroupEl = document.getElementById('edit_assigned_store_group');
+  const usersSearchInput = document.getElementById('users-live-search');
+  const usersSearchRows = Array.from(document.querySelectorAll('[data-user-row]'));
+  const usersSearchEmptyRow = document.getElementById('users-live-search-empty');
+
+  function normalizeUsersSearchText(value) {
+    return (value || '').toString().toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  function filterUsersTable() {
+    if (!usersSearchInput) return;
+    const query = normalizeUsersSearchText(usersSearchInput.value);
+    let visibleCount = 0;
+    usersSearchRows.forEach((row) => {
+      const matches = !query || normalizeUsersSearchText(row.textContent).includes(query);
+      row.classList.toggle('hidden', !matches);
+      if (matches) visibleCount += 1;
+    });
+    if (usersSearchEmptyRow) {
+      usersSearchEmptyRow.classList.toggle('hidden', visibleCount > 0);
+    }
+  }
 
   function syncAssignedStoreRequirement(roleEl, storeEl, groupEl) {
     if (!roleEl || !storeEl || !groupEl) return;
@@ -435,6 +465,8 @@
   editRoleEl?.addEventListener('change', () => syncAssignedStoreRequirement(editRoleEl, editStoreEl, editStoreGroupEl));
   syncAssignedStoreRequirement(createRoleEl, createStoreEl, createStoreGroupEl);
   syncAssignedStoreRequirement(editRoleEl, editStoreEl, editStoreGroupEl);
+  usersSearchInput?.addEventListener('input', filterUsersTable);
+  filterUsersTable();
 
   document.getElementById('newUserForm').addEventListener('submit', (e) => {
     const password = document.getElementById('password');

@@ -2,7 +2,7 @@ from flask import Blueprint, redirect, render_template, request, url_for, flash,
 from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, MaintenanceMode, PosSold, RsoDelivery, RsoDeliveryDraft, MenuInventoryItem, DailyEndingInventory, DailyEndingInventoryItem, TafTransfer, TafTransferItem, StoreProductBuffer
 from . import db
 from .audit import log_audit_event, verify_audit_chain
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from flask_login import login_required, current_user
 from sqlalchemy import or_, cast, String, func
 from sqlalchemy.orm import selectinload
@@ -18,7 +18,7 @@ from difflib import SequenceMatcher
 admin = Blueprint('admin', __name__)
 
 def _can_manage_users():
-    return current_user.role in ('Superadmin', 'Admin')
+    return current_user.role in ('Superadmin', 'Admin', 'General Manager')
 
 
 _CLEAR_DATA_OPTIONS = {
@@ -173,17 +173,22 @@ def _resolve_dashboard_month_year(month_arg, year_arg):
 @admin.route('/admin/pos-sold')
 @login_required
 def pos_sold():
-    if current_user.role not in ('Superadmin', 'Admin'):
-        flash('Access denied. Only Admins and Superadmins can access this page.', category='error')
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied. Only Admins, Superadmins, and General Managers can access this page.', category='error')
         return redirect(url_for('views.home'))
 
+    active_tab = (request.args.get('tab') or 'consolidated').strip()
+    if active_tab not in ('consolidated', 'review'):
+        active_tab = 'consolidated'
     apply_filter = (request.args.get('apply') or '').strip() == '1'
     selected_cluster_id = request.args.get('cluster_id', type=int)
     selected_store_id = request.args.get('store_id', type=int)
+    review_store_id = request.args.get('review_store_id', type=int)
     today = datetime.today().date()
     default_start_date_str = today.replace(day=1).strftime('%Y-%m-%d')
     start_date_raw = (request.args.get('start_date') or default_start_date_str).strip()
     end_date_raw = (request.args.get('end_date') or '').strip()
+    review_date_raw = (request.args.get('review_date') or today.strftime('%Y-%m-%d')).strip()
 
     clusters = Cluster.query.order_by(Cluster.name.asc()).all()
     cluster_lookup = {int(cluster.id): cluster for cluster in clusters}
@@ -199,6 +204,15 @@ def pos_sold():
     total_discount = 0.0
     total_net_sales = 0.0
     distinct_store_ids = set()
+    review_rows = []
+    review_report = None
+    review_summary = {
+        'rows_count': 0,
+        'total_qty': 0,
+        'total_gross_sales': 0.0,
+        'total_discount': 0.0,
+        'total_net_sales': 0.0,
+    }
 
     can_show_results = False
     start_date_value = start_date_raw
@@ -211,6 +225,33 @@ def pos_sold():
             return datetime.strptime(value, '%Y-%m-%d').date()
         except (TypeError, ValueError):
             return None
+
+    review_date = _parse_iso_date(review_date_raw) or today
+    review_date_value = review_date.strftime('%Y-%m-%d')
+    if active_tab == 'review' and review_store_id:
+        review_store = Store.query.get(review_store_id)
+        if not review_store:
+            flash('Selected review store does not exist.', category='error')
+            review_store_id = None
+        else:
+            review_report = DailyReport.query.filter_by(
+                store_id=review_store_id,
+                report_date=review_date,
+            ).first()
+            if review_report:
+                review_rows = (
+                    PosSold.query
+                    .filter_by(daily_report_id=review_report.id)
+                    .order_by(PosSold.product_name.asc(), PosSold.id.asc())
+                    .all()
+                )
+                review_summary = {
+                    'rows_count': len(review_rows),
+                    'total_qty': sum(int(row.quantity or 0) for row in review_rows),
+                    'total_gross_sales': sum(float(row.gross_sales or 0.0) for row in review_rows),
+                    'total_discount': sum(float(row.discount or 0.0) for row in review_rows),
+                    'total_net_sales': sum(float(row.net_sales or 0.0) for row in review_rows),
+                }
 
     if apply_filter:
         if not selected_cluster_id:
@@ -374,6 +415,7 @@ def pos_sold():
     return render_template(
         'admin/pos_sold.html',
         user=current_user,
+        active_tab=active_tab,
         clusters=clusters,
         stores=stores,
         stores_for_selected_cluster=stores_for_selected_cluster,
@@ -381,6 +423,11 @@ def pos_sold():
         can_show_results=can_show_results,
         selected_cluster_id=selected_cluster_id,
         selected_store_id=selected_store_id,
+        review_store_id=review_store_id,
+        review_date=review_date_value,
+        review_report=review_report,
+        review_rows=review_rows,
+        review_summary=review_summary,
         start_date=start_date_value,
         end_date=end_date_value,
         rows=table_rows,
@@ -394,6 +441,448 @@ def pos_sold():
             'total_net_sales': total_net_sales,
         },
     )
+
+
+@admin.route('/admin/pos-sold/<int:pos_sold_id>/delete', methods=['POST'])
+@login_required
+def delete_pos_sold_entry(pos_sold_id):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    pos_item = PosSold.query.get_or_404(pos_sold_id)
+    report = DailyReport.query.get(pos_item.daily_report_id)
+    review_store_id = request.form.get('review_store_id', type=int)
+    review_date = (request.form.get('review_date') or '').strip()
+    admin_password = request.form.get('admin_password') or ''
+    redirect_params = {'tab': 'review'}
+    if review_store_id:
+        redirect_params['review_store_id'] = review_store_id
+    if review_date:
+        redirect_params['review_date'] = review_date
+
+    if not admin_password or not check_password_hash(current_user.password or '', admin_password):
+        flash('Admin password is incorrect. Delete was cancelled.', category='error')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+
+    try:
+        details = {
+            'pos_sold_id': pos_item.id,
+            'daily_report_id': pos_item.daily_report_id,
+            'store_id': report.store_id if report else None,
+            'report_date': report.report_date.strftime('%Y-%m-%d') if report and report.report_date else None,
+            'product_name': pos_item.product_name,
+            'quantity': pos_item.quantity,
+            'gross_sales': pos_item.gross_sales,
+            'discount': pos_item.discount,
+            'net_sales': pos_item.net_sales,
+        }
+        db.session.delete(pos_item)
+        log_audit_event(
+            action='admin.pos_sold.delete',
+            entity_type='PosSold',
+            entity_id=pos_sold_id,
+            reason='Admin deleted POS Sold entry from store/date review.',
+            details=details,
+        )
+        db.session.commit()
+        flash('POS Sold entry deleted successfully.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error deleting POS Sold entry: {exc}', category='error')
+
+    return redirect(url_for('admin.pos_sold', **redirect_params))
+
+
+@admin.route('/admin/pos-sold/delete-all', methods=['POST'])
+@login_required
+def delete_all_pos_sold_entries():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    review_store_id = request.form.get('review_store_id', type=int)
+    review_date_raw = (request.form.get('review_date') or '').strip()
+    admin_password = request.form.get('admin_password') or ''
+    redirect_params = {'tab': 'review'}
+    if review_store_id:
+        redirect_params['review_store_id'] = review_store_id
+    if review_date_raw:
+        redirect_params['review_date'] = review_date_raw
+
+    if not admin_password or not check_password_hash(current_user.password or '', admin_password):
+        flash('Admin password is incorrect. Delete All was cancelled.', category='error')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+
+    try:
+        review_date = datetime.strptime(review_date_raw, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        flash('Please select a valid review date before deleting all POS Sold entries.', category='error')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+
+    report = DailyReport.query.filter_by(
+        store_id=review_store_id,
+        report_date=review_date,
+    ).first()
+    if not report:
+        flash('No daily report found for the selected store/date.', category='error')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+
+    pos_items = PosSold.query.filter_by(daily_report_id=report.id).all()
+    if not pos_items:
+        flash('No POS Sold entries found to delete.', category='info')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+
+    try:
+        deleted_count = len(pos_items)
+        details = {
+            'daily_report_id': report.id,
+            'store_id': report.store_id,
+            'report_date': review_date.strftime('%Y-%m-%d'),
+            'deleted_count': deleted_count,
+            'total_qty': sum(int(item.quantity or 0) for item in pos_items),
+            'total_gross_sales': sum(float(item.gross_sales or 0.0) for item in pos_items),
+            'total_discount': sum(float(item.discount or 0.0) for item in pos_items),
+            'total_net_sales': sum(float(item.net_sales or 0.0) for item in pos_items),
+        }
+        for item in pos_items:
+            db.session.delete(item)
+        log_audit_event(
+            action='admin.pos_sold.delete_all',
+            entity_type='DailyReport',
+            entity_id=report.id,
+            reason='Admin deleted all POS Sold entries from store/date review.',
+            details=details,
+        )
+        db.session.commit()
+        flash(f'Deleted {deleted_count} POS Sold entries for the selected store/date.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error deleting POS Sold entries: {exc}', category='error')
+
+    return redirect(url_for('admin.pos_sold', **redirect_params))
+
+
+def _clear_delivery_from_inventory_for_rso_records(store_id, report_date, rso_records):
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store_id,
+        inventory_date=report_date,
+    ).first()
+    if not inventory or not rso_records:
+        return 0
+
+    from .views import _match_rso_to_inventory
+
+    alias_lookup = {
+        str(normalized_alias or '').strip(): int(product_master_id)
+        for normalized_alias, product_master_id in (
+            db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
+            .all()
+        )
+        if str(normalized_alias or '').strip()
+    }
+    items = DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
+    cleared_count = 0
+    for item in items:
+        if not item.product_master_id:
+            continue
+        product = ProductMaster.query.get(item.product_master_id)
+        if not product:
+            continue
+        if any(_match_rso_to_inventory(rso_record, product, alias_lookup) for rso_record in rso_records):
+            item.delivery_qty = 0
+            item.delivery_reviewed_date = None
+            cleared_count += 1
+    return cleared_count
+
+
+@admin.route('/admin/delivery')
+@login_required
+def delivery():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied. Only Admins, Superadmins, and General Managers can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    active_tab = (request.args.get('tab') or 'consolidated').strip()
+    if active_tab not in ('consolidated', 'review'):
+        active_tab = 'consolidated'
+    apply_filter = (request.args.get('apply') or '').strip() == '1'
+    selected_cluster_id = request.args.get('cluster_id', type=int)
+    selected_store_id = request.args.get('store_id', type=int)
+    review_store_id = request.args.get('review_store_id', type=int)
+    today = datetime.today().date()
+    default_start_date_str = today.replace(day=1).strftime('%Y-%m-%d')
+    start_date_raw = (request.args.get('start_date') or default_start_date_str).strip()
+    end_date_raw = (request.args.get('end_date') or '').strip()
+    review_date_raw = (request.args.get('review_date') or today.strftime('%Y-%m-%d')).strip()
+
+    clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    cluster_lookup = {int(cluster.id): cluster for cluster in clusters}
+    stores = Store.query.order_by(Store.name.asc()).all()
+    stores_for_selected_cluster = [
+        store for store in stores if selected_cluster_id and int(store.cluster_id or 0) == int(selected_cluster_id)
+    ] if selected_cluster_id else []
+
+    table_rows = []
+    distinct_store_ids = set()
+    total_qty = 0
+    total_received_qty = 0
+    review_rows = []
+    review_summary = {
+        'rows_count': 0,
+        'total_qty': 0,
+        'total_received_qty': 0,
+    }
+    start_date_value = start_date_raw
+    end_date_value = end_date_raw
+    can_show_results = False
+
+    def _parse_iso_date(value):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            return None
+
+    review_date = _parse_iso_date(review_date_raw) or today
+    review_date_value = review_date.strftime('%Y-%m-%d')
+    if active_tab == 'review' and review_store_id:
+        review_store = Store.query.get(review_store_id)
+        if not review_store:
+            flash('Selected review store does not exist.', category='error')
+            review_store_id = None
+        else:
+            review_rows = (
+                RsoDelivery.query
+                .filter_by(store_id=review_store_id, report_date=review_date)
+                .order_by(RsoDelivery.rso_no.asc(), RsoDelivery.product_name.asc(), RsoDelivery.id.asc())
+                .all()
+            )
+            review_summary = {
+                'rows_count': len(review_rows),
+                'total_qty': sum(int(row.quantity or 0) for row in review_rows),
+                'total_received_qty': sum(int(row.received_quantity if row.received_quantity is not None else row.quantity or 0) for row in review_rows),
+            }
+
+    if apply_filter:
+        if not selected_cluster_id:
+            flash('Please select a cluster first.', category='error')
+        elif selected_cluster_id not in cluster_lookup:
+            flash('Selected cluster does not exist.', category='error')
+            selected_cluster_id = None
+        else:
+            start_date = _parse_iso_date(start_date_raw)
+            end_date = _parse_iso_date(end_date_raw)
+            if not start_date or not end_date:
+                flash('Please select valid start and end dates.', category='error')
+            else:
+                if start_date > end_date:
+                    start_date, end_date = end_date, start_date
+                start_date_value = start_date.strftime('%Y-%m-%d')
+                end_date_value = end_date.strftime('%Y-%m-%d')
+
+                allowed_store_ids = {int(store.id) for store in stores_for_selected_cluster}
+                if selected_store_id and selected_store_id not in allowed_store_ids:
+                    flash('Selected store does not belong to the chosen cluster.', category='error')
+                    selected_store_id = None
+
+                delivery_query = (
+                    db.session.query(
+                        Store.id.label('store_id'),
+                        Store.name.label('store_name'),
+                        Cluster.name.label('cluster_name'),
+                        RsoDelivery.product_name.label('product_name'),
+                        RsoDelivery.report_date.label('report_date'),
+                        RsoDelivery.upload_source.label('upload_source'),
+                        func.count(RsoDelivery.id).label('entry_count'),
+                        func.sum(RsoDelivery.quantity).label('total_qty'),
+                        func.sum(func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity)).label('total_received_qty'),
+                    )
+                    .join(Store, Store.id == RsoDelivery.store_id)
+                    .outerjoin(Cluster, Cluster.id == Store.cluster_id)
+                    .filter(
+                        Store.cluster_id == selected_cluster_id,
+                        RsoDelivery.report_date >= start_date,
+                        RsoDelivery.report_date <= end_date,
+                    )
+                )
+                if selected_store_id:
+                    delivery_query = delivery_query.filter(Store.id == selected_store_id)
+
+                delivery_rows = (
+                    delivery_query
+                    .group_by(Store.id, Store.name, Cluster.name, RsoDelivery.product_name, RsoDelivery.report_date, RsoDelivery.upload_source)
+                    .order_by(Store.name.asc(), RsoDelivery.report_date.asc(), RsoDelivery.product_name.asc())
+                    .all()
+                )
+                table_rows = [
+                    {
+                        'cluster_name': row.cluster_name or 'Unassigned',
+                        'store_id': int(row.store_id),
+                        'store_name': row.store_name or f'Store {row.store_id}',
+                        'report_date': row.report_date,
+                        'product_name': (row.product_name or '').strip() or 'Unnamed Product',
+                        'upload_source': row.upload_source or 'delivery',
+                        'entry_count': int(row.entry_count or 0),
+                        'quantity': int(row.total_qty or 0),
+                        'received_quantity': int(row.total_received_qty or 0),
+                    }
+                    for row in delivery_rows
+                ]
+                for row in table_rows:
+                    distinct_store_ids.add(int(row['store_id']))
+                    total_qty += int(row['quantity'] or 0)
+                    total_received_qty += int(row['received_quantity'] or 0)
+                can_show_results = True
+
+    return render_template(
+        'admin/delivery.html',
+        user=current_user,
+        active_tab=active_tab,
+        clusters=clusters,
+        stores=stores,
+        stores_for_selected_cluster=stores_for_selected_cluster,
+        apply_filter=apply_filter,
+        can_show_results=can_show_results,
+        selected_cluster_id=selected_cluster_id,
+        selected_store_id=selected_store_id,
+        review_store_id=review_store_id,
+        review_date=review_date_value,
+        review_rows=review_rows,
+        review_summary=review_summary,
+        start_date=start_date_value,
+        end_date=end_date_value,
+        rows=table_rows,
+        summary={
+            'rows_count': len(table_rows),
+            'stores_count': len(distinct_store_ids),
+            'total_qty': total_qty,
+            'total_received_qty': total_received_qty,
+        },
+    )
+
+
+@admin.route('/admin/delivery/<int:delivery_id>/delete', methods=['POST'])
+@login_required
+def delete_delivery_entry(delivery_id):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    delivery_item = RsoDelivery.query.get_or_404(delivery_id)
+    review_store_id = request.form.get('review_store_id', type=int)
+    review_date = (request.form.get('review_date') or '').strip()
+    admin_password = request.form.get('admin_password') or ''
+    redirect_params = {'tab': 'review'}
+    if review_store_id:
+        redirect_params['review_store_id'] = review_store_id
+    if review_date:
+        redirect_params['review_date'] = review_date
+
+    if not admin_password or not check_password_hash(current_user.password or '', admin_password):
+        flash('Admin password is incorrect. Delete was cancelled.', category='error')
+        return redirect(url_for('admin.delivery', **redirect_params))
+
+    try:
+        details = {
+            'delivery_id': delivery_item.id,
+            'store_id': delivery_item.store_id,
+            'report_date': delivery_item.report_date.strftime('%Y-%m-%d') if delivery_item.report_date else None,
+            'rso_no': delivery_item.rso_no,
+            'product_name': delivery_item.product_name,
+            'quantity': delivery_item.quantity,
+            'received_quantity': delivery_item.received_quantity,
+            'upload_source': delivery_item.upload_source,
+        }
+        cleared_count = _clear_delivery_from_inventory_for_rso_records(
+            delivery_item.store_id,
+            delivery_item.report_date,
+            [delivery_item],
+        )
+        details['inventory_items_cleared'] = cleared_count
+        db.session.delete(delivery_item)
+        log_audit_event(
+            action='admin.delivery.delete',
+            entity_type='RsoDelivery',
+            entity_id=delivery_id,
+            reason='Admin deleted Delivery entry from store/date review.',
+            details=details,
+        )
+        db.session.commit()
+        flash('Delivery entry deleted successfully.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error deleting Delivery entry: {exc}', category='error')
+
+    return redirect(url_for('admin.delivery', **redirect_params))
+
+
+@admin.route('/admin/delivery/delete-all', methods=['POST'])
+@login_required
+def delete_all_delivery_entries():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    review_store_id = request.form.get('review_store_id', type=int)
+    review_date_raw = (request.form.get('review_date') or '').strip()
+    admin_password = request.form.get('admin_password') or ''
+    redirect_params = {'tab': 'review'}
+    if review_store_id:
+        redirect_params['review_store_id'] = review_store_id
+    if review_date_raw:
+        redirect_params['review_date'] = review_date_raw
+
+    if not admin_password or not check_password_hash(current_user.password or '', admin_password):
+        flash('Admin password is incorrect. Delete All was cancelled.', category='error')
+        return redirect(url_for('admin.delivery', **redirect_params))
+
+    try:
+        review_date = datetime.strptime(review_date_raw, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        flash('Please select a valid review date before deleting all Delivery entries.', category='error')
+        return redirect(url_for('admin.delivery', **redirect_params))
+
+    delivery_items = RsoDelivery.query.filter_by(
+        store_id=review_store_id,
+        report_date=review_date,
+    ).all()
+    if not delivery_items:
+        flash('No Delivery entries found to delete.', category='info')
+        return redirect(url_for('admin.delivery', **redirect_params))
+
+    try:
+        deleted_count = len(delivery_items)
+        details = {
+            'store_id': review_store_id,
+            'report_date': review_date.strftime('%Y-%m-%d'),
+            'deleted_count': deleted_count,
+            'total_qty': sum(int(item.quantity or 0) for item in delivery_items),
+            'total_received_qty': sum(int(item.received_quantity if item.received_quantity is not None else item.quantity or 0) for item in delivery_items),
+        }
+        cleared_count = _clear_delivery_from_inventory_for_rso_records(
+            review_store_id,
+            review_date,
+            delivery_items,
+        )
+        details['inventory_items_cleared'] = cleared_count
+        for item in delivery_items:
+            db.session.delete(item)
+        log_audit_event(
+            action='admin.delivery.delete_all',
+            entity_type='Store',
+            entity_id=review_store_id,
+            reason='Admin deleted all Delivery entries from store/date review.',
+            details=details,
+        )
+        db.session.commit()
+        flash(f'Deleted {deleted_count} Delivery entries for the selected store/date.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error deleting Delivery entries: {exc}', category='error')
+
+    return redirect(url_for('admin.delivery', **redirect_params))
 
 
 @admin.route('/admin/maintenance-mode', methods=['POST'])
@@ -429,8 +918,8 @@ def toggle_maintenance_mode():
 @admin.route('/admin/dashboard')
 @login_required
 def dashboard():
-    if current_user.role not in ('Superadmin', 'Admin'):
-        flash('Access denied. Only Admins and Superadmins can access this page.', category='error')
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied. Only Admins, Superadmins, and General Managers can access this page.', category='error')
         return redirect(url_for('views.home'))
 
     month_arg = request.args.get('month')
@@ -480,7 +969,17 @@ def dashboard():
     from types import SimpleNamespace
 
     clusters = Cluster.query.order_by(Cluster.name.asc()).all()
-    stores = Store.query.all()
+    all_stores = Store.query.all()
+    starlink_stores = [
+        store for store in all_stores
+        if 'starlink' in str(store.name or '').strip().lower()
+    ]
+    stores = [
+        store for store in all_stores
+        if 'starlink' not in str(store.name or '').strip().lower()
+    ]
+    dashboard_store_ids = [int(store.id) for store in stores]
+    starlink_store_ids = [int(store.id) for store in starlink_stores]
     stores_by_cluster = {}
     store_to_cluster = {}
     for store in stores:
@@ -489,13 +988,46 @@ def dashboard():
             store_to_cluster[store.id] = store.cluster_id
 
     reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(dashboard_store_ids),
         DailyReport.report_date >= start_date,
         DailyReport.report_date <= end_date,
         DailyReport.status == 'Approved',
     ).all()
     _apply_pos_qty_from_pos_categories(reports)
 
+    starlink_reports = (
+        DailyReport.query.filter(
+            DailyReport.store_id.in_(starlink_store_ids),
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= end_date,
+            DailyReport.status == 'Approved',
+        ).all()
+        if starlink_store_ids else []
+    )
+    starlink_reports_by_store = {}
+    for report in starlink_reports:
+        starlink_reports_by_store.setdefault(report.store_id, []).append(report)
+    starlink_rows = []
+    for store in sorted(starlink_stores, key=lambda item: (item.name or '').lower()):
+        store_reports = starlink_reports_by_store.get(store.id, [])
+        net_sales = sum(
+            float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+            for report in store_reports
+        )
+        transaction_count = sum(
+            int(report.pos_tc or 0) + int(report.ci_tc or 0)
+            for report in store_reports
+        )
+        starlink_rows.append({
+            'store': store,
+            'net_sales': net_sales,
+            'transaction_count': transaction_count,
+            'ads': net_sales / 31,
+            'adtc': transaction_count / 31,
+        })
+
     targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(dashboard_store_ids),
         StoreTarget.target_date >= start_date,
         StoreTarget.target_date <= end_date
     ).all()
@@ -919,6 +1451,7 @@ def dashboard():
         icu_stores=icu_stores,
         wastage_performance=wastage_performance,
         discount_performance=discount_performance,
+        starlink_rows=starlink_rows,
     )
 
 @admin.route('admin/users')
@@ -1681,8 +2214,8 @@ def assign_manager(cluster_id):
 @admin.route('/admin/targets')
 @login_required
 def targets():
-    if current_user.role != 'Superadmin':
-        flash('Access denied. Only Superadmins can access this page.', category='error')
+    if current_user.role not in ('Superadmin', 'General Manager'):
+        flash('Access denied. Only Superadmins and General Managers can access this page.', category='error')
         return redirect(url_for('views.home'))
     
     clusters = Cluster.query.order_by(Cluster.name.asc()).all()
@@ -2809,7 +3342,8 @@ def _get_global_invensync_config():
             'locked_cells': [],
             'editable_columns': [],
             'force_beginning_store_ids': [],
-            'store_configs': {}
+            'store_configs': {},
+            'admin_unlocks': {},
         }
         config = GlobalInvenSyncConfig(config_data=json.dumps(default_data))
         db.session.add(config)
@@ -2827,11 +3361,14 @@ def _get_global_invensync_config():
             'locked_cells': [],
             'editable_columns': [],
             'force_beginning_store_ids': [],
-            'store_configs': {}
+            'store_configs': {},
+            'admin_unlocks': {},
         }
 
     if not isinstance(config_data.get('store_configs'), dict):
         config_data['store_configs'] = {}
+    if not isinstance(config_data.get('admin_unlocks'), dict):
+        config_data['admin_unlocks'] = {}
 
     return config, config_data
 
@@ -2840,32 +3377,43 @@ def _get_global_invensync_config():
 @login_required
 def invensync():
     """Admin view for Invensync ending inventory from all stores"""
-    if current_user.role not in ('Superadmin', 'Admin'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
     selected_tab = request.args.get('tab', 'summary')
 
-    # Get selected date (default to today)
-    selected_date_str = request.args.get('date', '')
-    if selected_date_str:
-        try:
-            selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
-        except ValueError:
-            selected_date = date.today()
-    else:
-        selected_date = date.today()
+    selected_date = date.today()
 
     # Get all stores
     stores = Store.query.order_by(Store.name.asc()).all()
-    
-    # Get inventory data for selected date from all stores
-    inventory_records = DailyEndingInventory.query.filter_by(
-        inventory_date=selected_date
-    ).all()
+
+    # Admin/GM summary should not depend on one selected date. Show each
+    # store's latest available InvenSync day so stores with older records do
+    # not appear as "No Data" just because today's date has no entry.
+    latest_inventory_dates = (
+        db.session.query(
+            DailyEndingInventory.store_id.label('store_id'),
+            func.max(DailyEndingInventory.inventory_date).label('latest_date'),
+        )
+        .group_by(DailyEndingInventory.store_id)
+        .subquery()
+    )
+    inventory_records = (
+        DailyEndingInventory.query
+        .join(
+            latest_inventory_dates,
+            (DailyEndingInventory.store_id == latest_inventory_dates.c.store_id)
+            & (DailyEndingInventory.inventory_date == latest_inventory_dates.c.latest_date),
+        )
+        .order_by(DailyEndingInventory.store_id.asc(), DailyEndingInventory.id.desc())
+        .all()
+    )
 
     # Organize by store
-    inventory_by_store = {i.store_id: i for i in inventory_records}
+    inventory_by_store = {}
+    for inventory in inventory_records:
+        inventory_by_store.setdefault(inventory.store_id, inventory)
 
     # Build store summary data
     store_summaries = []
@@ -2923,7 +3471,7 @@ def invensync():
 @admin.route('/admin/oracle')
 @login_required
 def admin_oracle():
-    if current_user.role not in ('Superadmin', 'Admin'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
@@ -3010,7 +3558,8 @@ def update_invensync_config():
                 for item in data.get('force_beginning_store_ids', existing_data.get('force_beginning_store_ids', []))
                 if str(item).isdigit()
             ],
-            'store_configs': existing_data.get('store_configs', {}) if isinstance(existing_data.get('store_configs'), dict) else {}
+            'store_configs': existing_data.get('store_configs', {}) if isinstance(existing_data.get('store_configs'), dict) else {},
+            'admin_unlocks': existing_data.get('admin_unlocks', {}) if isinstance(existing_data.get('admin_unlocks'), dict) else {},
         }
 
         config.config_data = json.dumps(normalized_data)
@@ -3139,6 +3688,131 @@ def save_invensync_inventory_correction():
     except (TypeError, ValueError):
         db.session.rollback()
         return jsonify({'success': False, 'message': 'Enter a valid whole number.'}), 400
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+@admin.route('/admin/invensync/unlock-scope', methods=['POST'])
+@login_required
+def update_invensync_unlock_scope():
+    """Persist admin unlock/lock scope for a selected store/date inventory page."""
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        action = str(data.get('action') or '').strip().lower()
+        scope = str(data.get('scope') or '').strip().lower()
+        raw_cells = data.get('cells', [])
+
+        if action not in ('unlock', 'lock') or scope not in ('all', 'cells'):
+            return jsonify({'success': False, 'message': 'Invalid lock action.'}), 400
+
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return jsonify({'success': False, 'message': 'Inventory not found.'}), 404
+
+        allowed_fields = {
+            'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
+            'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+            'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
+            'ending_d3_qty', 'remarks',
+        }
+        valid_item_ids = {
+            int(item_id)
+            for item_id, in (
+                db.session.query(DailyEndingInventoryItem.id)
+                .filter(DailyEndingInventoryItem.inventory_id == inventory.id)
+                .all()
+            )
+        }
+
+        normalized_cells = []
+        if isinstance(raw_cells, list):
+            for cell in raw_cells:
+                if not isinstance(cell, dict):
+                    continue
+                item_id = int(cell.get('item_id', 0) or 0)
+                field = str(cell.get('field') or '').strip()
+                if item_id in valid_item_ids and field in allowed_fields:
+                    normalized_cells.append(f'{item_id}|{field}')
+
+        config, config_data = _get_global_invensync_config()
+        admin_unlocks = config_data.get('admin_unlocks', {})
+        if not isinstance(admin_unlocks, dict):
+            admin_unlocks = {}
+        store_key = str(inventory.store_id)
+        date_key = inventory.inventory_date.isoformat()
+        store_unlocks = admin_unlocks.get(store_key, {})
+        if not isinstance(store_unlocks, dict):
+            store_unlocks = {}
+        unlock_data = store_unlocks.get(date_key, {})
+        if not isinstance(unlock_data, dict):
+            unlock_data = {}
+
+        current_cells = {
+            str(item).strip()
+            for item in unlock_data.get('cells', [])
+            if str(item).strip()
+        }
+
+        if action == 'unlock' and scope == 'all':
+            unlock_data['all'] = True
+            unlock_data['cells'] = []
+        elif action == 'lock' and scope == 'all':
+            unlock_data = {}
+        elif action == 'unlock' and scope == 'cells':
+            if not normalized_cells:
+                return jsonify({'success': False, 'message': 'No valid cells selected.'}), 400
+            current_cells.update(normalized_cells)
+            unlock_data['all'] = bool(unlock_data.get('all'))
+            unlock_data['cells'] = sorted(current_cells)
+        elif action == 'lock' and scope == 'cells':
+            current_cells.difference_update(normalized_cells)
+            unlock_data['all'] = bool(unlock_data.get('all'))
+            unlock_data['cells'] = sorted(current_cells)
+
+        if unlock_data.get('all') or unlock_data.get('cells'):
+            unlock_data['updated_by'] = current_user.id
+            unlock_data['updated_at'] = datetime.now().isoformat()
+            store_unlocks[date_key] = unlock_data
+            admin_unlocks[store_key] = store_unlocks
+        else:
+            store_unlocks.pop(date_key, None)
+            if store_unlocks:
+                admin_unlocks[store_key] = store_unlocks
+            else:
+                admin_unlocks.pop(store_key, None)
+
+        config_data['admin_unlocks'] = admin_unlocks
+        config.config_data = json.dumps(config_data)
+        db.session.commit()
+
+        log_audit_event(
+            action=f'admin.invensync.{action}_{scope}',
+            entity_type='DailyEndingInventory',
+            entity_id=inventory.id,
+            details={
+                'store_id': inventory.store_id,
+                'inventory_date': date_key,
+                'scope': scope,
+                'cell_count': len(normalized_cells),
+            },
+            commit=True,
+        )
+
+        message = (
+            'All InvenSync cells are now unlocked for this store/date.'
+            if action == 'unlock' and scope == 'all'
+            else 'All InvenSync cells are now locked again for this store/date.'
+            if action == 'lock' and scope == 'all'
+            else f'{len(normalized_cells)} selected cell(s) {"unlocked" if action == "unlock" else "locked"} for this store/date.'
+        )
+        return jsonify({'success': True, 'message': message})
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'Invalid unlock request.'}), 400
     except Exception as exc:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(exc)}), 500
