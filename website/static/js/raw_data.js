@@ -290,17 +290,18 @@ function setupEditableCells(root = document) {
     if (!cell.dataset.baseHtml) {
       cell.dataset.baseHtml = cell.innerHTML;
     }
-    if (!cell.querySelector('.edit-icon') && !nonEditableComputedFields.includes(fieldName)) {
+    const isComputedField = nonEditableComputedFields.includes(fieldName);
+    if (!cell.querySelector('.edit-icon') && !isComputedField) {
       cell.innerHTML = `${cell.dataset.baseHtml}${globalPencilIcon}`;
     }
-    cell.style.cursor = 'pointer';
+    cell.style.cursor = isComputedField ? 'default' : 'pointer';
 
     if (cell.dataset.editListenersBound === '1') {
       return;
     }
 
     cell.addEventListener('mouseenter', function() {
-      if (!isEditModeEnabled) {
+      if (!isEditModeEnabled || isComputedField) {
         return;
       }
       const icon = this.querySelector('.edit-icon');
@@ -317,7 +318,7 @@ function setupEditableCells(root = document) {
     });
 
     cell.addEventListener('click', function() {
-      if (!isEditModeEnabled) {
+      if (!isEditModeEnabled || isComputedField) {
         return;
       }
       if (typeof window.openEditModal !== 'undefined') {

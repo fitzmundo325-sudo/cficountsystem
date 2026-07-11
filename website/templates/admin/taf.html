@@ -45,14 +45,16 @@
   </section>
 
   <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-    <div class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_180px_auto]">
-      <input id="taf-search" type="search" placeholder="Search control no, store, from, to..." class="rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
-      <select id="taf-type-filter" class="rounded-xl border border-slate-300 px-3 py-2 text-sm"><option value="">All Types</option>{% for type_name in ['Product Transfer','Wastage Transfer','EGI Plant Transfer','Supplies Request'] %}<option value="{{ type_name|lower }}">{{ type_name }}</option>{% endfor %}</select>
-      <select id="taf-status-filter" class="rounded-xl border border-slate-300 px-3 py-2 text-sm"><option value="">All Statuses</option>{% for status_name in ['Pending','Received','Received - Short','Received - Over','Received - Short/Over'] %}<option value="{{ status_name|lower }}">{{ status_name }}</option>{% endfor %}</select>
-      <select id="taf-store-filter" class="rounded-xl border border-slate-300 px-3 py-2 text-sm"><option value="">All Stores</option>{% for store in filter_stores %}<option value="{{ store.name|lower }}">{{ store.name }}</option>{% endfor %}</select>
-      <button id="taf-clear-filters" type="button" class="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Clear</button>
-    </div>
-    <p id="taf-filter-count" class="mt-3 text-xs font-medium text-slate-500"></p>
+    <form id="taf-filter-form" method="get" action="{{ url_for('admin.admin_taf') }}" class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_180px_auto_auto]">
+      <input type="hidden" name="date" value="{{ selected_date }}">
+      <input id="taf-search" name="q" value="{{ filters.q }}" type="search" placeholder="Search control no, store, from, to..." class="rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
+      <select id="taf-type-filter" name="type" class="rounded-xl border border-slate-300 px-3 py-2 text-sm"><option value="">All Types</option>{% for type_name in ['Product Transfer','Wastage Transfer','EGI Plant Transfer','Supplies Request'] %}{% set option_value = type_name|lower %}<option value="{{ option_value }}" {% if filters.type == option_value %}selected{% endif %}>{{ type_name }}</option>{% endfor %}</select>
+      <select id="taf-status-filter" name="status" class="rounded-xl border border-slate-300 px-3 py-2 text-sm"><option value="">All Statuses</option>{% for status_name in ['Pending','Received','Received - Short','Received - Over','Received - Short/Over'] %}{% set option_value = status_name|lower %}<option value="{{ option_value }}" {% if filters.status == option_value %}selected{% endif %}>{{ status_name }}</option>{% endfor %}</select>
+      <select id="taf-store-filter" name="store" class="rounded-xl border border-slate-300 px-3 py-2 text-sm"><option value="">All Stores</option>{% for store in filter_stores %}{% set option_value = store.name|lower %}<option value="{{ option_value }}" {% if filters.store == option_value %}selected{% endif %}>{{ store.name }}</option>{% endfor %}</select>
+      <button type="submit" class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Search</button>
+      <a href="{{ url_for('admin.admin_taf', date=selected_date) }}" class="rounded-xl border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50">Clear</a>
+    </form>
+    <p class="mt-3 text-xs font-medium text-slate-500">Showing {{ pagination.total }} matching record{{ '' if pagination.total == 1 else 's' }} across all pages.</p>
   </section>
 
   <!-- Transfers Table -->
@@ -122,7 +124,6 @@
             </td>
           </tr>
           {% endfor %}
-          <tr id="taf-no-filter-results" class="hidden"><td colspan="10" class="px-4 py-8 text-center text-sm text-slate-500">No TAF records match the selected filters.</td></tr>
         </tbody>
       </table>
       {% else %}
@@ -132,7 +133,7 @@
           <polyline points="14 2 14 8 20 8"/>
         </svg>
         <h3 class="text-lg font-bold text-slate-900 mb-1">No Transfers Found</h3>
-        <p class="text-sm text-slate-600">No transaction activity forms have been submitted yet.</p>
+        <p class="text-sm text-slate-600">{% if filters.q or filters.type or filters.status or filters.store %}No TAF records match the selected filters.{% else %}No transaction activity forms have been submitted yet.{% endif %}</p>
       </div>
       {% endif %}
     </div>
@@ -140,11 +141,11 @@
     <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4">
       <p class="text-sm text-slate-500">Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }}–{{ [pagination.page * pagination.per_page, pagination.total]|min }} of {{ pagination.total }}</p>
       <nav class="flex items-center gap-1">
-        {% if pagination.has_prev %}<a href="{{ url_for('admin.admin_taf', page=pagination.prev_num, date=selected_date) }}" class="rounded-lg border px-3 py-1.5 text-sm">Previous</a>{% endif %}
+        {% if pagination.has_prev %}<a href="{{ url_for('admin.admin_taf', page=pagination.prev_num, date=selected_date, q=filters.q, type=filters.type, status=filters.status, store=filters.store) }}" class="rounded-lg border px-3 py-1.5 text-sm">Previous</a>{% endif %}
         {% for page_num in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
-          {% if page_num %}<a href="{{ url_for('admin.admin_taf', page=page_num, date=selected_date) }}" class="rounded-lg border px-3 py-1.5 text-sm {% if page_num == pagination.page %}bg-slate-900 text-white{% endif %}">{{ page_num }}</a>{% else %}<span class="px-1">…</span>{% endif %}
+          {% if page_num %}<a href="{{ url_for('admin.admin_taf', page=page_num, date=selected_date, q=filters.q, type=filters.type, status=filters.status, store=filters.store) }}" class="rounded-lg border px-3 py-1.5 text-sm {% if page_num == pagination.page %}bg-slate-900 text-white{% endif %}">{{ page_num }}</a>{% else %}<span class="px-1">…</span>{% endif %}
         {% endfor %}
-        {% if pagination.has_next %}<a href="{{ url_for('admin.admin_taf', page=pagination.next_num, date=selected_date) }}" class="rounded-lg border px-3 py-1.5 text-sm">Next</a>{% endif %}
+        {% if pagination.has_next %}<a href="{{ url_for('admin.admin_taf', page=pagination.next_num, date=selected_date, q=filters.q, type=filters.type, status=filters.status, store=filters.store) }}" class="rounded-lg border px-3 py-1.5 text-sm">Next</a>{% endif %}
       </nav>
     </div>
     {% endif %}
@@ -156,7 +157,10 @@
 function updateDate() {
     const dateInput = document.getElementById('dateInput').value;
     if (dateInput) {
-        window.location.href = `{{ url_for('admin.admin_taf') }}?date=${dateInput}`;
+        const params = new URLSearchParams(new FormData(document.getElementById('taf-filter-form')));
+        params.set('date', dateInput);
+        params.delete('page');
+        window.location.href = `{{ url_for('admin.admin_taf') }}?${params.toString()}`;
     }
 }
 
@@ -171,39 +175,17 @@ const tafSearch = document.getElementById('taf-search');
 const tafTypeFilter = document.getElementById('taf-type-filter');
 const tafStatusFilter = document.getElementById('taf-status-filter');
 const tafStoreFilter = document.getElementById('taf-store-filter');
-const tafRows = Array.from(document.querySelectorAll('.taf-transfer-row'));
-const tafFilterCount = document.getElementById('taf-filter-count');
-const tafNoResults = document.getElementById('taf-no-filter-results');
+const tafFilterForm = document.getElementById('taf-filter-form');
+let tafSearchTimer = null;
 
-function applyTafFilters() {
-    const query = (tafSearch?.value || '').trim().toLowerCase();
-    const type = tafTypeFilter?.value || '';
-    const status = tafStatusFilter?.value || '';
-    const store = tafStoreFilter?.value || '';
-    let visible = 0;
-    tafRows.forEach(row => {
-        const matches = (!query || row.dataset.search.includes(query))
-            && (!type || row.dataset.type === type)
-            && (!status || row.dataset.status === status)
-            && (!store || row.dataset.store === store);
-        row.classList.toggle('hidden', !matches);
-        if (matches) visible += 1;
-    });
-    if (tafFilterCount) tafFilterCount.textContent = `${visible} of ${tafRows.length} records shown on this page`;
-    if (tafNoResults) tafNoResults.classList.toggle('hidden', visible !== 0);
-}
+tafSearch?.addEventListener('input', function() {
+    window.clearTimeout(tafSearchTimer);
+    tafSearchTimer = window.setTimeout(() => tafFilterForm?.requestSubmit(), 500);
+});
 
-[tafSearch, tafTypeFilter, tafStatusFilter, tafStoreFilter].forEach(control => {
-    if (control) control.addEventListener(control === tafSearch ? 'input' : 'change', applyTafFilters);
+[tafTypeFilter, tafStatusFilter, tafStoreFilter].forEach(control => {
+    if (control) control.addEventListener('change', () => tafFilterForm?.requestSubmit());
 });
-document.getElementById('taf-clear-filters')?.addEventListener('click', function() {
-    if (tafSearch) tafSearch.value = '';
-    if (tafTypeFilter) tafTypeFilter.value = '';
-    if (tafStatusFilter) tafStatusFilter.value = '';
-    if (tafStoreFilter) tafStoreFilter.value = '';
-    applyTafFilters();
-});
-applyTafFilters();
 
 // Delete transfer function
 function deleteTransfer(transferId, controlNo) {

@@ -1,11 +1,14 @@
 import os
 import json
+import traceback
+import uuid
 from pathlib import Path
 from re import A
 from flask import Flask, redirect, render_template, request, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, current_user
 from sqlalchemy import text, func
+from werkzeug.exceptions import HTTPException
 
 db = SQLAlchemy()
 
@@ -459,5 +462,91 @@ def create_app():
         return {
             'pending_trans_in_count': pending_trans_in_count,
         }
+
+    def _safe_error_form_snapshot():
+        sensitive_markers = ('password', 'secret', 'token', 'csrf')
+        snapshot = {}
+        try:
+            for key in request.form.keys():
+                normalized_key = str(key or '').lower()
+                values = request.form.getlist(key)
+                if any(marker in normalized_key for marker in sensitive_markers):
+                    snapshot[key] = '[redacted]'
+                elif len(values) > 1:
+                    snapshot[key] = [str(value)[:300] for value in values[:20]]
+                else:
+                    snapshot[key] = str(values[0] if values else '')[:300]
+        except Exception:
+            return {'_error': 'Unable to read form payload.'}
+        return snapshot
+
+    def _log_application_error(error, status_code=None):
+        error_id = uuid.uuid4().hex[:12]
+        status = int(status_code or getattr(error, 'code', 500) or 500)
+        error_type = type(error).__name__
+        message = str(getattr(error, 'description', None) or error)
+        details = {
+            'error_id': error_id,
+            'status_code': status,
+            'exception_type': error_type,
+            'message': message[:1000],
+            'path': request.path,
+            'full_path': request.full_path,
+            'endpoint': request.endpoint,
+            'blueprint': request.blueprint,
+            'method': request.method,
+            'query_args': request.args.to_dict(flat=False),
+            'form': _safe_error_form_snapshot() if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') else {},
+            'user_agent': str(request.user_agent)[:500],
+            'referrer': str(request.referrer or '')[:500],
+            'is_json': request.is_json,
+            'pythonanywhere_hint': 'Check PythonAnywhere error logs for the same timestamp and error_id.',
+        }
+        if status >= 500 and not isinstance(error, HTTPException):
+            details['traceback'] = ''.join(
+                traceback.format_exception(type(error), error, getattr(error, '__traceback__', None))
+            )[-8000:]
+
+        try:
+            db.session.rollback()
+            from .audit import log_audit_event
+
+            log_audit_event(
+                action='system.error',
+                entity_type='ApplicationError',
+                entity_id=error_id,
+                reason=f'{status} {error_type} on {request.method} {request.path}',
+                details=details,
+                commit=True,
+            )
+        except Exception:
+            db.session.rollback()
+            app.logger.exception('Unable to write application error to audit log. error_id=%s', error_id)
+
+        app.logger.error(
+            'Application error captured. error_id=%s status=%s path=%s type=%s',
+            error_id,
+            status,
+            request.path,
+            error_type,
+            exc_info=status >= 500 and not isinstance(error, HTTPException),
+        )
+        return error_id
+
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(error):
+        status = int(getattr(error, 'code', 500) or 500)
+        if status >= 400:
+            _log_application_error(error, status)
+        return error
+
+    @app.errorhandler(Exception)
+    def handle_unexpected_exception(error):
+        error_id = _log_application_error(error, 500)
+        return (
+            f'Internal Server Error. Error ID: {error_id}',
+            500,
+            {'Content-Type': 'text/plain; charset=utf-8'},
+        )
     
     return app

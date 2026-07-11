@@ -285,7 +285,7 @@
   <!-- Products Table -->
   <div id="main-content" class="bg-white rounded-xl border border-slate-200 shadow-sm">
     <div class="relative border border-slate-200 rounded-xl">
-      <div class="inventory-scroll-container overflow-auto max-h-[calc(100vh-220px)]">
+      <div class="inventory-scroll-container overflow-x-auto overflow-y-visible">
       <table class="w-full text-sm">
         <thead class="bg-slate-100 text-black">
           <tr>
@@ -519,10 +519,44 @@
 
 </div>
 
+{% if current_user.role == 'Store Manager' and missing_dates %}
+<div id="missing-dates-modal" class="fixed inset-0 z-50 hidden">
+  <div id="missing-dates-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+    <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200">
+        <h3 class="text-lg font-bold text-slate-900">Missing InvenSync Dates</h3>
+        <p class="text-sm text-red-600 mt-1">
+          {{ missing_dates|length }} unfinalized date{{ '' if missing_dates|length == 1 else 's' }} found for this month.
+        </p>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to open the oldest missing date and finalize InvenSync.</p>
+        <div class="max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100">
+          {% for missing in missing_dates %}
+          <div class="px-3 py-2 flex items-center justify-between">
+            <span class="text-sm font-semibold text-red-700">{{ missing.label }}</span>
+            <span class="text-xs text-red-500">{{ missing.iso }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
+        <button id="missing-dates-go" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-slate-700 hover:bg-slate-800 rounded-lg transition-colors shadow-sm">
+          Go
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script>
 const inventoryId = {{ inventory.id }};
 let inventoryInitialSnapshot = '';
 const inventoryDraftKey = `invensyncInventoryDraft:${inventoryId}`;
+const missingDates = {{ missing_dates|default([])|tojson }};
+const nextMissingDate = {{ next_missing_date|default(none)|tojson }};
 const requiresBeginningStockFirst = {{ allow_beginning_stock_entry|default(false)|tojson }};
 let isDayFinalized = {{ is_day_locked|tojson }};
 let isBeginningFinalized = {{ is_beginning_locked|tojson }};
@@ -791,6 +825,37 @@ function buildInvenSyncDateUrl(dateValue) {
 function changeDate(newDate) {
   window.location.href = buildInvenSyncDateUrl(newDate);
 }
+
+function showMissingDatesModal() {
+  const modal = document.getElementById('missing-dates-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  document.body.classList.add('overflow-hidden');
+}
+
+function hideMissingDatesModal() {
+  const modal = document.getElementById('missing-dates-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  document.body.classList.remove('overflow-hidden');
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const goMissingBtn = document.getElementById('missing-dates-go');
+  if (goMissingBtn) {
+    goMissingBtn.addEventListener('click', function() {
+      if (!nextMissingDate) {
+        hideMissingDatesModal();
+        return;
+      }
+      window.location.href = buildInvenSyncDateUrl(nextMissingDate);
+    });
+  }
+
+  if (Array.isArray(missingDates) && missingDates.length > 0) {
+    showMissingDatesModal();
+  }
+});
 
 function updateDateHeaders() {
   const selectedDateStr = document.getElementById('selected_date')?.value;

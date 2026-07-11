@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file, current_app
 from flask_login import login_required, current_user
 from .models import (
     Store,
@@ -32,6 +32,7 @@ from collections import OrderedDict
 from types import SimpleNamespace
 import pandas as pd
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql.sqltypes import Integer as SAInteger, Float as SAFloat, Numeric as SANumeric
 
 views = Blueprint('views', __name__)
@@ -2948,13 +2949,14 @@ def store_manager_pos_sold():
         for draft_key, draft_items in pos_drafts.items()
     )
     force_pos_flow_guide = str(request.args.get('guide') or '').strip() == '1'
-    show_pos_flow_guide = role == 'Store Manager' and (
-        force_pos_flow_guide
-        or (
-            not saved_pos_exists
-            and not store_has_pos_draft
-            and not pos_sold_locked
-            and not missing_dates
+    show_pos_flow_guide = (
+        role == 'Store Manager'
+        and not saved_pos_exists
+        and not store_has_pos_draft
+        and not pos_sold_locked
+        and (
+            force_pos_flow_guide
+            or not missing_dates
         )
     )
 
@@ -3650,11 +3652,16 @@ def _update_inventory_trans_quantities(transfer_record, parsed_items):
     """
     Update Trans-In or Trans-Out quantities in DailyEndingInventoryItem when a TAF is submitted.
     - Product Transfer: Updates Trans-Out for source store, Trans-In for destination store
-    - Wastage Transfer: Updates Trans-Out for source store only
+    - EGI Plant Transfer: Updates Trans-Out for source store only
+    - Wastage Transfer: Updates Waste Qty only through _update_inventory_wastage_on_receive
     """
     from .models import DailyEndingInventory, DailyEndingInventoryItem
     
-    transaction_type = transfer_record.transaction_type
+    transaction_type = str(transfer_record.transaction_type or '').strip()
+    if transaction_type == 'Wastage Transfer':
+        _update_inventory_wastage_on_receive(transfer_record, parsed_items)
+        return
+
     transaction_date = transfer_record.transaction_date
     transfer_from = transfer_record.transfer_from
     transfer_to = transfer_record.transfer_to
@@ -4098,72 +4105,85 @@ def store_manager_transaction_activity_form():
         
         grand_total = float(sum(item['line_total'] for item in parsed_items))
 
-        transfer_record = TafTransfer(
-            store_id=store.id,
-            transaction_date=taf_date,
-            control_no=control_no,
-            transaction_type=transaction_type,
-            transfer_from=transfer_from,
-            transfer_to=transfer_to,
-            prepared_by_name=prepared_by_name,
-            received_by_name=(received_by_name or 'EGI Plant') if is_egi_plant_transfer else (received_by_name or None),
-            status='Received' if is_egi_plant_transfer else 'Pending',
-            grand_total=grand_total,
-            submitted_by=current_user.id,
-        )
-        db.session.add(transfer_record)
-        db.session.flush()
-
-        for item in parsed_items:
-            db.session.add(
-                TafTransferItem(
-                    transfer_id=transfer_record.id,
-                    item_name=item['item_name'],
-                    unit_cost=item['unit_cost'],
-                    quantity=item['quantity'],
-                    received_quantity=item['quantity'] if is_egi_plant_transfer else None,
-                    short_over_qty=0,
-                    line_total=item['line_total'],
-                    remarks=item['remarks'],
-                )
+        try:
+            transfer_record = TafTransfer(
+                store_id=store.id,
+                transaction_date=taf_date,
+                control_no=control_no,
+                transaction_type=transaction_type,
+                transfer_from=transfer_from,
+                transfer_to=transfer_to,
+                prepared_by_name=prepared_by_name,
+                received_by_name=(received_by_name or 'EGI Plant') if is_egi_plant_transfer else (received_by_name or None),
+                status='Received' if is_egi_plant_transfer else 'Pending',
+                grand_total=grand_total,
+                submitted_by=current_user.id,
             )
-
-        if transaction_type == 'Wastage Transfer':
-            # Pending wastage must appear in InvenSync immediately, using the
-            # quantity sent rather than any later received quantity.
+            db.session.add(transfer_record)
             db.session.flush()
-            _update_inventory_wastage_on_receive(transfer_record, [])
-        elif is_egi_plant_transfer:
-            # EGI Plant transfers are finalized on submit and immediately
-            # reflect as Trans-Out for the sender. EGI Plant is not treated as
-            # a destination store, so this does not create Trans-In.
-            db.session.flush()
-            _update_inventory_trans_quantities(transfer_record, parsed_items)
 
-        # Update inventory Trans-In/Trans-Out quantities only after receiving is confirmed
-        # This is now handled in store_manager_incoming_transfer_view when Confirm Receiving is clicked
-        # _update_inventory_trans_quantities(transfer_record, parsed_items)
+            for item in parsed_items:
+                db.session.add(
+                    TafTransferItem(
+                        transfer_id=transfer_record.id,
+                        item_name=item['item_name'],
+                        unit_cost=item['unit_cost'],
+                        quantity=item['quantity'],
+                        received_quantity=item['quantity'] if is_egi_plant_transfer else None,
+                        short_over_qty=0,
+                        line_total=item['line_total'],
+                        remarks=item['remarks'],
+                    )
+                )
 
-        log_audit_event(
-            action={
-                'Product Transfer': 'taf.product_transfer.submit',
-                'Wastage Transfer': 'taf.wastage_transfer.submit',
-                'EGI Plant Transfer': 'taf.egi_plant_transfer.submit',
-            }.get(transaction_type, 'taf.transfer.submit'),
-            entity_type='TafTransfer',
-            entity_id=transfer_record.id,
-            reason=f'Store manager submitted {transaction_type} TAF.',
-            details={
-                'store_id': store.id,
-                'transaction_date': taf_date.strftime('%Y-%m-%d'),
-                'control_no': control_no,
-                'transaction_type': transaction_type,
-                'status': transfer_record.status,
-                'item_count': len(parsed_items),
-                'grand_total': round(grand_total, 2),
-            },
-        )
-        db.session.commit()
+            if transaction_type == 'Wastage Transfer':
+                # Pending wastage must appear in InvenSync immediately, using the
+                # quantity sent rather than any later received quantity.
+                db.session.flush()
+                _update_inventory_wastage_on_receive(transfer_record, [])
+            elif is_egi_plant_transfer:
+                # EGI Plant transfers are finalized on submit and immediately
+                # reflect as Trans-Out for the sender. EGI Plant is not treated as
+                # a destination store, so this does not create Trans-In.
+                db.session.flush()
+                _update_inventory_trans_quantities(transfer_record, parsed_items)
+
+            # Update inventory Trans-In/Trans-Out quantities only after receiving is confirmed
+            # This is now handled in store_manager_incoming_transfer_view when Confirm Receiving is clicked
+            # _update_inventory_trans_quantities(transfer_record, parsed_items)
+
+            log_audit_event(
+                action={
+                    'Product Transfer': 'taf.product_transfer.submit',
+                    'Wastage Transfer': 'taf.wastage_transfer.submit',
+                    'EGI Plant Transfer': 'taf.egi_plant_transfer.submit',
+                }.get(transaction_type, 'taf.transfer.submit'),
+                entity_type='TafTransfer',
+                entity_id=transfer_record.id,
+                reason=f'Store manager submitted {transaction_type} TAF.',
+                details={
+                    'store_id': store.id,
+                    'transaction_date': taf_date.strftime('%Y-%m-%d'),
+                    'control_no': control_no,
+                    'transaction_type': transaction_type,
+                    'status': transfer_record.status,
+                    'item_count': len(parsed_items),
+                    'grand_total': round(grand_total, 2),
+                },
+            )
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            flash(
+                f'Control Number "{control_no}" was already submitted. Please refresh the form and try again with the next control number.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+        except SQLAlchemyError:
+            db.session.rollback()
+            current_app.logger.exception('TAF submit database error for %s %s', transaction_type, control_no)
+            flash('Unable to submit this TAF due to a database issue. Please refresh the form and try again.', category='error')
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
 
         flash(f'{transaction_type} submitted successfully. Control No: {control_no}', category='success')
         return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
@@ -5735,9 +5755,9 @@ def update_report_value():
         if not report:
             return jsonify({'success': False, 'error': 'Report not found'}), 404
         
-        # Allow edits for pending and approved reports in cluster manager edit mode flows.
-        if report.status not in ('Pending', 'Approved'):
-            return jsonify({'success': False, 'error': 'Only pending or approved reports can be edited'}), 400
+        # Cluster manager tables expose edit controls for pending, approved, and rejected rows.
+        if report.status not in ('Pending', 'Approved', 'Rejected'):
+            return jsonify({'success': False, 'error': 'Only pending, approved, or rejected reports can be edited'}), 400
         
         # Update the field based on field name
         # Check if field is numeric (sales fields)
@@ -5785,7 +5805,7 @@ def update_report_value():
                 action='report.update_field',
                 entity_type='DailyReport',
                 entity_id=report.id,
-                reason='Cluster manager updated a pending report field.',
+                reason='Cluster manager updated a report field.',
                 details={
                     'field_name': field_name,
                     'previous_value': previous_value,
@@ -6294,14 +6314,12 @@ def invensync():
     else:
         selected_date = date.today()
 
-    if not selected_date_str:
+    missing_invensync_dates = []
+    if current_user.role == 'Store Manager' and not selected_date_str:
         today_date = date.today()
         month_start = today_date.replace(day=1)
-        missing_invensync_dates = _build_missing_invensync_dates(store.id, month_start, today_date)
-        if missing_invensync_dates:
-            query_args = request.args.to_dict(flat=True)
-            query_args['date'] = missing_invensync_dates[0]['iso']
-            return redirect(url_for('views.invensync', **query_args))
+        cutoff_date = today_date - timedelta(days=1)
+        missing_invensync_dates = _build_missing_invensync_dates(store.id, month_start, cutoff_date)
 
     # Get or create inventory record
     inventory = DailyEndingInventory.query.filter_by(
@@ -6589,6 +6607,8 @@ def invensync():
         is_first_time=is_first_time,
         allow_beginning_stock_entry=allow_beginning_stock_entry,
         store_beginning_baseline_finalized=store_beginning_baseline_finalized,
+        missing_dates=missing_invensync_dates,
+        next_missing_date=missing_invensync_dates[0]['iso'] if missing_invensync_dates else None,
         **cluster_sidebar_ctx,
     )
 
