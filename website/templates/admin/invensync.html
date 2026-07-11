@@ -23,13 +23,13 @@
   </div>
 
   <div class="flex items-center gap-4">
-    <input type="date" id="dateInput" onchange="updateDate()" class="px-4 py-2 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 transition text-sm font-medium" value="{{ selected_date }}">
-    <button onclick="updateDate()" class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 active:scale-95">
+    <div class="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 2.2" />
+        <path d="M12 8v5l3 3"/>
+        <circle cx="12" cy="12" r="10"/>
       </svg>
-      <span>Refresh</span>
-    </button>
+      <span>Showing latest records</span>
+    </div>
   </div>
 </header>
 
@@ -40,7 +40,7 @@
   <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <div>
       <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Invensync Dashboard</h1>
-      <p class="mt-1 text-slate-600">Real-time ending inventory overview for all stores</p>
+      <p class="mt-1 text-slate-600">Latest ending inventory overview for all stores</p>
     </div>
   </section>
 
@@ -60,10 +60,21 @@
   </div>
 
   <div id="summaryTab" style="display: {{ 'block' if selected_tab == 'summary' else 'none' }};">
+    <div class="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <label for="invensyncStoreSearch" class="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Search Store</label>
+      <div class="relative max-w-xl">
+        <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="m21 21-4.3-4.3"/>
+        </svg>
+        <input id="invensyncStoreSearch" type="search" placeholder="Search store name or ID..." class="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm font-medium text-slate-800 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10">
+      </div>
+    </div>
+
     <!-- Store Cards Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <div id="invensyncStoreGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     {% for store_summary in store_summaries %}
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-300 overflow-hidden">
+    <div class="invensync-store-card bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-300 overflow-hidden" data-store-search="{{ (store_summary.store.name ~ ' ' ~ store_summary.store.id)|lower }}">
       <!-- Card Header -->
       <div class="bg-gradient-to-br from-slate-800 to-slate-900 px-6 py-4">
         <div class="flex items-center justify-between">
@@ -107,7 +118,7 @@
           {% endif %}
         {% else %}
           <div class="text-sm text-slate-600 py-2">
-            No invensync records available for this date
+            No invensync records available
           </div>
         {% endif %}
       </div>
@@ -131,7 +142,7 @@
         <!-- View Details Button -->
         <div class="flex gap-2">
           {% if store_summary.has_data %}
-          <a href="{{ url_for('views.invensync', date=selected_date, store_id=store_summary.store.id) }}" 
+          <a href="{{ url_for('views.invensync', date=store_summary.inventory.inventory_date.strftime('%Y-%m-%d'), store_id=store_summary.store.id) }}" 
              class="flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition">
             View Details
           </a>
@@ -143,6 +154,15 @@
       </div>
     </div>
     {% endfor %}
+    </div>
+
+    <div id="invensyncStoreNoResults" class="hidden text-center py-12 bg-white rounded-2xl border border-slate-200">
+      <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-slate-300 mb-4">
+        <circle cx="11" cy="11" r="8"/>
+        <path d="m21 21-4.3-4.3"/>
+      </svg>
+      <h3 class="text-lg font-bold text-slate-900 mb-1">No matching stores</h3>
+      <p class="text-sm text-slate-600">Try another store name or ID.</p>
     </div>
 
     {% if store_summaries %}{% else %}
@@ -322,24 +342,6 @@
 </div>
 
 <script>
-function updateDate() {
-    const dateInput = document.getElementById('dateInput').value;
-    if (dateInput) {
-        const tab = document.querySelector('#summaryTab').style.display === 'block'
-            ? 'summary'
-            : (document.querySelector('#storeConfigTab').style.display === 'block' ? 'store_config' : 'config');
-        try {
-            sessionStorage.setItem('invensyncLoadedDateNotice', dateInput);
-        } catch (error) {
-            // Navigation still works when browser storage is unavailable.
-        }
-        const url = new URL(`{{ url_for('admin.invensync') }}`, window.location.origin);
-        url.searchParams.set('date', dateInput);
-        url.searchParams.set('tab', tab);
-        window.location.href = url.toString();
-    }
-}
-
 function switchAdminInvenSyncTab(tab) {
     const summaryTab = document.getElementById('summaryTab');
     const configTab = document.getElementById('configTab');
@@ -364,6 +366,27 @@ function switchAdminInvenSyncTab(tab) {
         button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
 }
+
+function filterInvensyncStores() {
+    const searchInput = document.getElementById('invensyncStoreSearch');
+    const query = String(searchInput?.value || '').trim().toLowerCase();
+    const cards = Array.from(document.querySelectorAll('.invensync-store-card'));
+    let visibleCount = 0;
+
+    cards.forEach((card) => {
+        const haystack = String(card.dataset.storeSearch || '').toLowerCase();
+        const isMatch = !query || haystack.includes(query);
+        card.classList.toggle('hidden', !isMatch);
+        if (isMatch) visibleCount += 1;
+    });
+
+    const noResults = document.getElementById('invensyncStoreNoResults');
+    if (noResults) {
+        noResults.classList.toggle('hidden', visibleCount !== 0);
+    }
+}
+
+document.getElementById('invensyncStoreSearch')?.addEventListener('input', filterInvensyncStores);
 
 function saveInvensyncConfig() {
     const url = `{{ url_for('admin.update_invensync_config') }}`;
@@ -564,13 +587,6 @@ function toggleSelectAll(cls, btn) {
     btn.textContent = allChecked ? 'Select All' : 'Deselect All';
 }
 
-// Allow Enter key to submit date
-document.getElementById('dateInput').addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-        updateDate();
-    }
-});
-
 // Change pricing tier for store
 function changePricingTier(storeId, tier) {
     const url = `{{ url_for('admin.update_store_pricing') }}`;
@@ -628,22 +644,5 @@ function showToast(message, type = 'success') {
     setTimeout(() => toast.remove(), 3000);
 }
 
-window.addEventListener('DOMContentLoaded', function() {
-    let loadedDate = '';
-    try {
-        loadedDate = sessionStorage.getItem('invensyncLoadedDateNotice') || '';
-        sessionStorage.removeItem('invensyncLoadedDateNotice');
-    } catch (error) {
-        return;
-    }
-    if (!loadedDate || loadedDate !== document.getElementById('dateInput')?.value) return;
-
-    const formattedDate = new Date(`${loadedDate}T00:00:00`).toLocaleDateString('en-US', {
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric'
-    });
-    showToast(`InvenSync data for ${formattedDate} has been loaded.`);
-});
 </script>
 {% endblock %}
