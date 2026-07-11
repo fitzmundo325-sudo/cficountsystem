@@ -5044,17 +5044,7 @@ def submit_daily_report():
             )
             return redirect(url_for('views.store_manager_report', date=report_date.strftime('%Y-%m-%d')))
 
-        has_existing_saved_pos_for_date = bool(
-            existing_report and PosSold.query.filter_by(daily_report_id=existing_report.id).first()
-        )
         draft_pos_sold_items = _sanitize_pos_sold_items(_get_pos_sold_draft(store.id, report_date))
-        if not has_existing_saved_pos_for_date and not draft_pos_sold_items:
-            flash(
-                f'POS Sold is not yet uploaded for {report_date.strftime("%B %d, %Y")}. '
-                f'Please attach POS Sold file, click Review Data, then click Next to continue Daily Report.',
-                category='error'
-            )
-            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d'), guide=1))
         
         # Helper function to get float value
         def get_float(key, default=0.0):
