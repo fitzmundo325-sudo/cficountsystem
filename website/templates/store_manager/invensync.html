@@ -565,6 +565,8 @@ let missingBeginningNoticeOpen = false;
 let beginningGuideActive = false;
 let beginningGuideStepIndex = 0;
 const isAdminCorrectionMode = {{ (current_user.role in ['Admin', 'Superadmin'])|tojson }};
+const adminUnlockScope = {{ admin_unlock_scope|default({'all': false, 'cells': []})|tojson }};
+let hasAdminStoreUnlock = Boolean(adminUnlockScope?.all || (adminUnlockScope?.cells || []).length);
 let adminAllCellsUnlocked = false;
 let adminSelectedInput = null;
 let adminSelectedInputs = [];
@@ -589,6 +591,84 @@ function unlockAdminInput(input) {
   input.addEventListener('input', refreshAdminCorrectionButton);
 }
 
+function getAdminUnlockCellsFromInputs(inputs) {
+  const cells = [];
+  const seen = new Set();
+  (inputs || []).forEach(input => {
+    const row = input.closest('tr[data-product-id]');
+    const fieldCell = input.closest('td[data-field]');
+    const itemId = row?.querySelector('.inv-item-id')?.value;
+    const field = fieldCell?.dataset.field;
+    if (!itemId || !field) return;
+    const key = `${itemId}|${field}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    cells.push({ item_id: itemId, field });
+  });
+  return cells;
+}
+
+function syncAdminUnlockScope(action, scope, inputs = []) {
+  if (!isAdminCorrectionMode) return Promise.resolve();
+  const cells = scope === 'cells' ? getAdminUnlockCellsFromInputs(inputs) : [];
+  if (scope === 'cells' && !cells.length) return Promise.resolve();
+
+  return fetch('/admin/invensync/unlock-scope', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      inventory_id: inventoryId,
+      action,
+      scope,
+      cells
+    })
+  })
+  .then(async response => {
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.message || 'Unable to update store unlock state.');
+    notify(data.message, action === 'unlock' ? 'success' : 'info');
+    return data;
+  })
+  .catch(error => {
+    notify(error.message, 'error');
+  });
+}
+
+function unlockStoreInputFromAdmin(input) {
+  if (!input) return;
+  input.disabled = false;
+  input.readOnly = false;
+  input.classList.remove('readonly', 'cursor-not-allowed', 'opacity-75');
+  input.classList.add('ring-2', 'ring-emerald-300', 'border-emerald-400');
+  if (!input.dataset.adminUnlockedNotice) {
+    input.title = input.title ? `${input.title} · Admin unlocked` : 'Admin unlocked';
+    input.dataset.adminUnlockedNotice = '1';
+  }
+}
+
+function applyAdminStoreUnlocks() {
+  if (!hasAdminStoreUnlock) return;
+  const unlockedCells = new Set(adminUnlockScope?.cells || []);
+  document.querySelectorAll('#main-content tbody tr[data-product-id]').forEach(row => {
+    const itemId = row.querySelector('.inv-item-id')?.value;
+    row.querySelectorAll('td[data-field] input:not([type="hidden"])').forEach(input => {
+      const field = input.closest('td[data-field]')?.dataset.field;
+      if (!itemId || !field) return;
+      if (adminUnlockScope?.all || unlockedCells.has(`${itemId}|${field}`)) {
+        unlockStoreInputFromAdmin(input);
+      }
+    });
+  });
+
+  if (isDayFinalized) {
+    const button = document.getElementById('save-inventory-btn');
+    if (button) {
+      button.textContent = 'Save';
+      button.disabled = true;
+    }
+  }
+}
+
 function toggleAdminSelectedCell() {
   const selectedInputs = adminSelectedInputs.length
     ? adminSelectedInputs
@@ -601,6 +681,7 @@ function toggleAdminSelectedCell() {
   const shouldUnlock = selectedInputs.every(input => input.readOnly || input.disabled);
   if (shouldUnlock) {
     selectedInputs.forEach(unlockAdminInput);
+    syncAdminUnlockScope('unlock', 'cells', selectedInputs);
     if (selectedInputs.length === 1) {
       selectedInputs[0].focus();
       selectedInputs[0].select();
@@ -613,6 +694,7 @@ function toggleAdminSelectedCell() {
       input.classList.remove('ring-2', 'ring-amber-300', 'border-amber-400');
       input.classList.add('readonly', 'cursor-not-allowed', 'opacity-75');
     });
+    syncAdminUnlockScope('lock', 'cells', selectedInputs);
     updateAdminSelectedButton();
     refreshAdminCorrectionButton();
     notify(`${selectedInputs.length} selected cell(s) locked. Pending changes remain ready to save.`, 'info');
@@ -629,6 +711,7 @@ function toggleAllAdminCells() {
 
 function unlockAllAdminCells() {
   adminEditableInputs().forEach(unlockAdminInput);
+  syncAdminUnlockScope('unlock', 'all');
   adminAllCellsUnlocked = true;
   resetAdminSelectionButton();
   document.querySelectorAll('[data-admin-all-toggle]').forEach(button => {
@@ -646,6 +729,7 @@ function lockAllAdminCells() {
     input.classList.remove('ring-2', 'ring-amber-300', 'border-amber-400');
     input.classList.add('readonly', 'cursor-not-allowed', 'opacity-75');
   });
+  syncAdminUnlockScope('lock', 'all');
   adminAllCellsUnlocked = false;
   resetAdminSelectionButton();
   document.querySelectorAll('[data-admin-all-toggle]').forEach(button => {
@@ -1139,8 +1223,8 @@ function refreshBeginningSaveMode() {
   if (isDayFinalized) {
     const button = document.getElementById('save-inventory-btn');
     if (button) {
-      button.textContent = 'Finalized';
-      button.disabled = true;
+      button.textContent = hasAdminStoreUnlock ? 'Save' : 'Finalized';
+      if (!hasAdminStoreUnlock) button.disabled = true;
     }
     return;
   }
@@ -1289,7 +1373,7 @@ function buildInventorySnapshot() {
 function setSaveButtonEnabled(enabled) {
   const button = document.getElementById('save-inventory-btn');
   if (button) {
-    button.disabled = isDayFinalized || !enabled;
+    button.disabled = (isDayFinalized && !hasAdminStoreUnlock) || !enabled;
     refreshBeginningSaveMode();
   }
 }
@@ -1358,9 +1442,35 @@ function clearInventoryDraft() {
   }
 }
 
+function clearConsumedAdminStoreUnlock() {
+  if (!hasAdminStoreUnlock) return Promise.resolve();
+  return fetch('/admin/invensync/unlock-scope', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      inventory_id: inventoryId,
+      action: 'lock',
+      scope: 'all'
+    })
+  })
+  .catch(error => {
+    console.warn('Could not clear consumed admin unlock:', error);
+  });
+}
+
+function finalizeAdminUnlockedViewAfterSave() {
+  hasAdminStoreUnlock = false;
+  lockDayInputs();
+  const button = document.getElementById('save-inventory-btn');
+  if (button) {
+    button.textContent = 'Finalized';
+    button.disabled = true;
+  }
+}
+
 function saveAll() {
   const button = document.getElementById('save-inventory-btn');
-  if (isDayFinalized) {
+  if (isDayFinalized && !hasAdminStoreUnlock) {
     notify('This inventory day is finalized and locked.', 'info');
     return;
   }
@@ -1368,16 +1478,22 @@ function saveAll() {
 
   const missingBeginningRow = findFirstRowMissingBeginning();
   const isBeginningSave = isSavingBeginningInventory;
-  const isEndOfDaySave = !isBeginningSave;
+  const isEndOfDaySave = !isBeginningSave && !(isDayFinalized && hasAdminStoreUnlock);
   if (missingBeginningRow && !isBeginningSave) {
     showMissingBeginningPopup(missingBeginningRow);
     return;
   }
   if (typeof showConfirmationModal === 'function') {
     showConfirmationModal({
-      title: isBeginningSave ? 'Save Beginning Inventory?' : 'Save End of Day Inventory?',
+      title: isBeginningSave
+        ? 'Save Beginning Inventory?'
+        : (isDayFinalized && hasAdminStoreUnlock)
+        ? 'Save Inventory Changes?'
+        : 'Save End of Day Inventory?',
       message: isBeginningSave
         ? 'Blank Beg cells will be saved as 0. After saving, the Beg column will be locked and cannot be edited.'
+        : (isDayFinalized && hasAdminStoreUnlock)
+        ? 'This will save the admin-unlocked cells for this finalized inventory day.'
         : 'This will finalize and lock this inventory day for all users. After saving, users can view this date but can no longer edit it.',
       confirmText: 'Save',
       cancelText: 'Cancel',
@@ -1449,10 +1565,11 @@ function saveInventory(isBeginningSave = false, finalizeDay = false) {
   .then(res => res.json())
   .then(data => {
     if (data.success) {
+      const wasAdminUnlockedFinalizedSave = isDayFinalized && hasAdminStoreUnlock && !finalizeDay && !isBeginningSave;
       notify(
         isBeginningSave
           ? 'Beginning inventory saved and locked!'
-          : (finalizeDay ? 'End of day inventory finalized and locked!' : 'Inventory saved!'),
+          : (finalizeDay || wasAdminUnlockedFinalizedSave ? 'Inventory saved and finalized!' : 'Inventory changes saved!'),
         'success'
       );
       clearInventoryDraft();
@@ -1464,6 +1581,14 @@ function saveInventory(isBeginningSave = false, finalizeDay = false) {
       if (finalizeDay) {
         isDayFinalized = true;
         lockDayInputs();
+      }
+      if (wasAdminUnlockedFinalizedSave) {
+        return clearConsumedAdminStoreUnlock().then(() => {
+          finalizeAdminUnlockedViewAfterSave();
+          captureInventorySnapshot();
+          refreshBeginningSaveMode();
+          return data;
+        });
       }
       captureInventorySnapshot();
       refreshBeginningSaveMode();
@@ -1619,6 +1744,7 @@ document.addEventListener('DOMContentLoaded', function() {
   if (isDayFinalized) {
     lockDayInputs();
   }
+  applyAdminStoreUnlocks();
   captureInventorySnapshot();
   restoreInventoryDraft();
   refreshBeginningSaveMode();

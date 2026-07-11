@@ -322,7 +322,7 @@
         </p>
       </div>
       <div class="px-5 py-4">
-        <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to auto-select the oldest missing date and lock the report date field.</p>
+        <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to auto-select the oldest missing Daily Report date and lock the report date field.</p>
         <div class="max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100">
           {% for missing in missing_dates %}
           <div class="px-3 py-2 flex items-center justify-between">
@@ -504,7 +504,6 @@
     const missingDates = {{ missing_dates|tojson }};
     const nextMissingDate = {{ next_missing_date|tojson }};
     const reportBaseUrl = {{ url_for('views.store_manager_report')|tojson }};
-    const posSoldBaseUrl = {{ url_for('views.store_manager_pos_sold')|tojson }};
     const lockReportDateOnLoad = {{ lock_report_date|tojson }};
 
     function applyInitialFormValues(values) {
@@ -563,7 +562,7 @@
           hideMissingDatesModal();
           return;
         }
-        window.location.href = `${posSoldBaseUrl}?date=${encodeURIComponent(nextMissingDate)}&guide=1`;
+        window.location.href = `${reportBaseUrl}?date=${encodeURIComponent(nextMissingDate)}&lock_date=1`;
       });
     }
 
