@@ -70,6 +70,7 @@
     flex-shrink: 0;
     margin-top: 0;
   }
+
 </style>
 
 {% macro rso_review_table(items, number, status, save_form_id) %}
@@ -119,7 +120,12 @@
 
 {% macro manual_product_form(source, save_form_id) %}
 <div class="manual-product-form rounded-lg border border-dashed border-slate-300 bg-white p-3" data-save-form="{{ save_form_id }}">
-  <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Add product not included in the RSO file</p>
+  <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-600">Add product not included in the RSO file</p>
+    <button type="submit" form="{{ save_form_id }}" disabled class="manual-product-save-btn inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow-md shadow-indigo-600/25 transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-white disabled:shadow-none md:w-auto">
+      Save
+    </button>
+  </div>
   <div class="manual-product-rows space-y-2">
   <div class="manual-product-row grid grid-cols-1 gap-2 sm:grid-cols-[130px_minmax(0,1fr)_130px_42px] sm:items-end">
     <div>
@@ -212,6 +218,16 @@
       {% set show_delivery_draft_actions = delivery_data.status == 'draft' %}
       {% set show_bulk_draft_actions = bulk_data.status == 'draft' %}
       <div class="space-y-3">
+        <div class="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+          <button type="button" data-delivery-tab="rso" class="delivery-tab-btn rounded-lg bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-slate-950/20 transition-colors">
+            RSO
+          </button>
+          <button type="button" data-delivery-tab="bulk" class="delivery-tab-btn rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-50">
+            Bulk Order
+          </button>
+        </div>
+
+        <div id="delivery-tab-panel-rso" class="delivery-tab-panel space-y-3">
         <form action="{{ url_for('views.review_rso_excel') }}" method="POST" enctype="multipart/form-data" class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 space-y-2">
           <input type="hidden" name="report_date" id="rso-upload-report-date" value="{{ selected_report_date if selected_report_date else today }}">
           <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 md:items-end">
@@ -311,7 +327,9 @@
           </div>
         </div>
         {% endif %}
+        </div>
 
+        <div id="delivery-tab-panel-bulk" class="delivery-tab-panel hidden space-y-3">
         <form action="{{ url_for('views.review_rso_excel') }}" method="POST" enctype="multipart/form-data" class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 space-y-2">
           <input type="hidden" name="report_date" id="bulk-rso-upload-report-date" value="{{ selected_report_date if selected_report_date else today }}">
           <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 md:items-end">
@@ -360,6 +378,7 @@
           {% endif %}
         </form>
         {{ manual_product_form('bulk', 'save-bulk-rso-form') }}
+        </div>
       </div>
       {% else %}
         {% if user and user.role == 'Inventory Staff' %}
@@ -447,15 +466,63 @@
     const rsoFileInputs = document.querySelectorAll('.rso-file-input');
     const rsoLiveSearchInputs = document.querySelectorAll('.rso-live-search');
     const manualProductForms = document.querySelectorAll('.manual-product-form');
+    const deliveryTabButtons = document.querySelectorAll('.delivery-tab-btn');
+    const deliveryTabPanels = document.querySelectorAll('.delivery-tab-panel');
     const baseUrl = {{ url_for('views.store_manager_delivery')|tojson }};
     const rsoReceivedDraftKey = `deliveryRsoReceived:{{ store.id }}:{{ selected_report_date if selected_report_date else today }}`;
     const shouldShowDeliveryTour = {{ show_delivery_guide|tojson }};
+    const initialDeliveryTab = {{ ('bulk' if bulk_data.status in ['draft', 'saved'] and delivery_data.status not in ['draft', 'saved'] else 'rso')|tojson }};
     const deliveryTourSampleCard = document.getElementById('delivery-tour-sample-card');
     let deliveryTourActive = false;
     let deliveryTourStepIndex = 0;
     let allowRsoSaveSubmit = false;
 
+    function formatReportDateLong(isoDate) {
+      if (!isoDate) return '--';
+      const date = new Date(`${isoDate}T00:00:00`);
+      if (Number.isNaN(date.getTime())) return isoDate;
+      return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    }
+
+    function setDeliveryTab(activeTab) {
+      deliveryTabButtons.forEach(function(button) {
+        const isActive = button.dataset.deliveryTab === activeTab;
+        button.classList.toggle('bg-slate-950', isActive);
+        button.classList.toggle('text-white', isActive);
+        button.classList.toggle('shadow-sm', isActive);
+        button.classList.toggle('shadow-slate-950/20', isActive);
+        button.classList.toggle('border', !isActive);
+        button.classList.toggle('border-slate-200', !isActive);
+        button.classList.toggle('bg-white', !isActive);
+        button.classList.toggle('text-slate-900', !isActive);
+        button.classList.toggle('hover:bg-slate-50', !isActive);
+      });
+
+      deliveryTabPanels.forEach(function(panel) {
+        panel.classList.toggle('hidden', panel.id !== `delivery-tab-panel-${activeTab}`);
+      });
+    }
+
+    deliveryTabButtons.forEach(function(button) {
+      button.addEventListener('click', function() {
+        setDeliveryTab(button.dataset.deliveryTab || 'rso');
+      });
+    });
+    setDeliveryTab(initialDeliveryTab);
+
     manualProductForms.forEach(function(container) {
+      function updateManualSaveState() {
+        const saveButton = container.querySelector('.manual-product-save-btn');
+        if (!saveButton) return;
+        const hasValidManualProduct = Array.from(container.querySelectorAll('.manual-product-row')).some(function(row) {
+          const productSelect = row.querySelector('.manual-product-select');
+          const quantityInput = row.querySelector('input[name="manual_quantity[]"]');
+          const quantity = Number(quantityInput?.value || 0);
+          return Boolean(productSelect?.value) && quantity > 0;
+        });
+        saveButton.disabled = !hasValidManualProduct;
+      }
+
       container.addEventListener('click', function(event) {
         const addButton = event.target.closest('.add-manual-product-row');
         if (!addButton) return;
@@ -463,22 +530,35 @@
         const rows = container.querySelector('.manual-product-rows');
         if (!currentRow || !rows) return;
         const newRow = currentRow.cloneNode(true);
+        const saveButton = newRow.querySelector('.manual-product-save-btn');
         const select = newRow.querySelector('.manual-product-select');
         const quantity = newRow.querySelector('input[name="manual_quantity[]"]');
         const codeField = newRow.querySelector('.manual-product-code');
+        if (saveButton) saveButton.remove();
         if (select) select.value = '';
         if (quantity) quantity.value = '';
         if (codeField) codeField.textContent = '—';
         rows.appendChild(newRow);
+        updateManualSaveState();
       });
       container.addEventListener('change', function(event) {
         const select = event.target.closest('.manual-product-select');
-        if (!select) return;
+        if (!select) {
+          updateManualSaveState();
+          return;
+        }
         const row = select.closest('.manual-product-row');
         const codeField = row ? row.querySelector('.manual-product-code') : null;
         const option = select.options[select.selectedIndex];
         if (codeField) codeField.textContent = option && option.value ? (option.dataset.code || '-') : '—';
+        updateManualSaveState();
       });
+      container.addEventListener('input', function(event) {
+        if (event.target.closest('input[name="manual_quantity[]"]')) {
+          updateManualSaveState();
+        }
+      });
+      updateManualSaveState();
     });
 
     function updateRsoReceivedState(row) {
@@ -861,9 +941,20 @@
         event.preventDefault();
 
         if (typeof showConfirmationModal === 'function') {
+          const savingDate = reportDateInput ? reportDateInput.value : '';
+          const isBulkSave = saveRsoForm.id === 'save-bulk-rso-form';
           showConfirmationModal({
-            title: 'Save RSO Data?',
-            message: 'Are you sure you want to save this delivery data?',
+            title: isBulkSave ? 'Save Bulk RSO Data?' : 'Save RSO Data?',
+            size: 'large',
+            modalWidth: '980px',
+            messageHtml: `
+              <div class="rounded-3xl border border-emerald-200 bg-emerald-50 px-8 py-7 text-left">
+                <p class="text-base font-bold uppercase tracking-wide text-emerald-700">Saving Date Indicator</p>
+                <p class="mt-3 text-4xl font-extrabold leading-tight text-slate-900">You are saving for the day of: ${formatReportDateLong(savingDate)}</p>
+                <p class="mt-3 text-lg text-slate-600">This follows the date selected in the calendar.</p>
+              </div>
+              <p class="mt-7 text-xl text-slate-700">Are you sure you want to save this delivery data?</p>
+            `,
             confirmText: 'Save Data',
             cancelText: 'Cancel',
             onConfirm: function() {
@@ -898,6 +989,19 @@
         if (input.readOnly) return;
         updateRsoReceivedState(input.closest('.rso-row'));
         saveRsoReceivedDraft();
+      });
+      input.addEventListener('keydown', function(event) {
+        if (event.key !== 'Enter' || input.readOnly) return;
+        event.preventDefault();
+        const inputs = Array.from(document.querySelectorAll('.rso-received-input')).filter(function(item) {
+          return !item.readOnly && item.offsetParent !== null;
+        });
+        const currentIndex = inputs.indexOf(input);
+        const nextInput = inputs[currentIndex + 1];
+        if (nextInput) {
+          nextInput.focus();
+          nextInput.select();
+        }
       });
       input.addEventListener('wheel', function() {
         input.blur();
