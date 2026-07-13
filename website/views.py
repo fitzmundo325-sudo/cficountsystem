@@ -5612,27 +5612,36 @@ def cluster_manager_invensync():
             return redirect(url_for('admin.clusters'))
         cluster = Cluster.query.get_or_404(cluster_id)
 
-    # Get selected date (default to today)
-    selected_date_str = request.args.get('date', '')
-    if selected_date_str:
-        try:
-            selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
-        except ValueError:
-            selected_date = _date.today()
-    else:
-        selected_date = _date.today()
+    selected_date = _date.today()
 
     # Get stores in this cluster only
     stores = Store.query.filter_by(cluster_id=cluster.id).order_by(Store.name.asc()).all()
     store_ids = [s.id for s in stores]
 
-    # Get inventory data for selected date from cluster stores
-    inventory_records = DailyEndingInventory.query.filter(
-        DailyEndingInventory.inventory_date == selected_date,
-        DailyEndingInventory.store_id.in_(store_ids)
-    ).all() if store_ids else []
+    latest_inventory_dates = (
+        db.session.query(
+            DailyEndingInventory.store_id.label('store_id'),
+            func.max(DailyEndingInventory.inventory_date).label('latest_date'),
+        )
+        .filter(DailyEndingInventory.store_id.in_(store_ids))
+        .group_by(DailyEndingInventory.store_id)
+        .subquery()
+    ) if store_ids else None
 
-    inventory_by_store = {i.store_id: i for i in inventory_records}
+    inventory_records = (
+        DailyEndingInventory.query
+        .join(
+            latest_inventory_dates,
+            (DailyEndingInventory.store_id == latest_inventory_dates.c.store_id)
+            & (DailyEndingInventory.inventory_date == latest_inventory_dates.c.latest_date),
+        )
+        .order_by(DailyEndingInventory.store_id.asc(), DailyEndingInventory.id.desc())
+        .all()
+    ) if latest_inventory_dates is not None else []
+
+    inventory_by_store = {}
+    for inventory in inventory_records:
+        inventory_by_store.setdefault(inventory.store_id, inventory)
 
     store_summaries = []
     for store in stores:
