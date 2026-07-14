@@ -124,6 +124,7 @@ class Modal {
  * @param {string} options.newValue - New value to display
  * @param {string} options.confirmText - Confirm button label
  * @param {string} options.cancelText - Cancel button label
+ * @param {string} options.size - Optional size preset, use "large" for roomier confirmation dialogs
  * @param {string} options.variant - Optional visual variant
  * @param {Function} options.onConfirm - Callback when confirmed
  * @param {Function} options.onCancel - Callback when cancelled
@@ -138,6 +139,7 @@ function showConfirmationModal(options) {
     newValue,
     confirmText = 'Confirm',
     cancelText = 'Cancel',
+    size = '',
     variant = '',
     onConfirm,
     onCancel
@@ -145,35 +147,48 @@ function showConfirmationModal(options) {
   const hasCustomBody = Boolean(String(messageHtml || '').trim());
   const hasValueComparison = Boolean(oldValue && newValue);
   const isInvenSyncVariant = variant === 'invensync';
+  const isLarge = size === 'large';
+  const standardBodyPadding = isLarge ? 'px-10 pt-12 pb-10' : 'px-6 pt-8 pb-6';
+  const standardIconClass = isLarge
+    ? 'mb-7 inline-flex h-24 w-24 items-center justify-center rounded-full bg-indigo-100 text-indigo-600'
+    : 'mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600';
+  const standardIconSvgClass = isLarge ? 'h-12 w-12' : 'h-8 w-8';
+  const standardTitleClass = isLarge ? 'text-3xl font-bold text-slate-900' : 'text-xl font-bold text-slate-900';
+  const standardMessageClass = isLarge ? 'mt-4 text-lg leading-8 text-slate-600' : 'mt-2 text-sm leading-6 text-slate-600';
+  const standardCustomBodyClass = isLarge ? 'mt-7 text-lg text-slate-700' : 'mt-4 text-sm text-slate-700';
+  const standardFooterClass = isLarge
+    ? 'px-10 py-6 border-t border-slate-200 flex justify-end gap-3'
+    : 'px-6 py-4 border-t border-slate-200 grid grid-cols-2 gap-3';
+  const standardButtonClass = isLarge ? 'h-11 min-w-[140px] px-4 text-sm' : 'h-11 px-4 text-sm';
   const defaultBodyHtml = `
     <div class="flex flex-col items-center text-center">
-      <div class="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <div class="${standardIconClass}">
+        <svg xmlns="http://www.w3.org/2000/svg" class="${standardIconSvgClass}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 12h13"></path>
           <path d="m13 6 6 6-6 6"></path>
           <path d="M5 6v12"></path>
         </svg>
       </div>
-      <h3 class="text-xl font-bold text-slate-900">${title}</h3>
-      <p class="mt-2 text-sm leading-6 text-slate-600">${message}</p>
+      <h3 class="${standardTitleClass}">${title}</h3>
+      <p class="${standardMessageClass}">${message}</p>
     </div>
   `;
   const standardModalInnerHtml = `
     <!-- Body -->
-    <div class="px-6 pt-8 pb-6">
+    <div class="${standardBodyPadding}">
       ${hasCustomBody
         ? `
           <div class="flex flex-col items-center text-center">
-            <div class="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <div class="${standardIconClass}">
+              <svg xmlns="http://www.w3.org/2000/svg" class="${standardIconSvgClass}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M5 12h13"></path>
                 <path d="m13 6 6 6-6 6"></path>
                 <path d="M5 6v12"></path>
               </svg>
             </div>
-            <h3 class="text-xl font-bold text-slate-900">${title}</h3>
+            <h3 class="${standardTitleClass}">${title}</h3>
           </div>
-          <div class="mt-4 text-sm text-slate-700" style="max-height:55vh;overflow-y:auto;">${messageHtml}</div>
+          <div class="${standardCustomBodyClass}" style="max-height:${isLarge ? '65vh' : '55vh'};overflow-y:auto;">${messageHtml}</div>
         `
         : defaultBodyHtml
       }
@@ -194,11 +209,11 @@ function showConfirmationModal(options) {
     </div>
 
     <!-- Footer -->
-    <div class="px-6 py-4 border-t border-slate-200 grid grid-cols-2 gap-3">
-      <button data-modal-cancel class="h-11 px-4 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+    <div class="${standardFooterClass}">
+      <button data-modal-cancel class="${standardButtonClass} font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
         ${cancelText}
       </button>
-      <button data-modal-confirm class="h-11 px-4 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-lg shadow-indigo-600/25">
+      <button data-modal-confirm class="${standardButtonClass} inline-flex items-center justify-center gap-2 font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-lg shadow-indigo-600/25">
         ${confirmText}
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 12h14"></path>

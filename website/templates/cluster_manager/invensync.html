@@ -23,13 +23,13 @@
   </div>
 
   <div class="flex items-center gap-4">
-    <input type="date" id="dateInput" class="px-4 py-2 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 transition text-sm font-medium" value="{{ selected_date }}">
-    <button onclick="updateDate()" class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 active:scale-95">
+    <div class="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 2.2" />
+        <path d="M12 8v5l3 3"/>
+        <circle cx="12" cy="12" r="10"/>
       </svg>
-      <span>Refresh</span>
-    </button>
+      <span>Showing latest records</span>
+    </div>
   </div>
 </header>
 
@@ -40,7 +40,7 @@
   <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <div>
       <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Invensync Dashboard</h1>
-      <p class="mt-1 text-slate-600">Real-time ending inventory overview for {{ cluster.name }} stores</p>
+      <p class="mt-1 text-slate-600">Latest ending inventory overview for {{ cluster.name }} stores</p>
     </div>
   </section>
 
@@ -90,7 +90,7 @@
         {% endif %}
       {% else %}
         <div class="text-sm text-slate-600 py-2">
-          No invensync records available for this date
+          No invensync records available
         </div>
       {% endif %}
     </div>
@@ -98,7 +98,7 @@
     <!-- Card Footer -->
     <div class="px-6 py-3 bg-slate-50 border-t border-slate-200">
       {% if store_summary.has_data %}
-      <a href="{{ url_for('views.invensync', date=selected_date, store_id=store_summary.store.id) }}"
+      <a href="{{ url_for('views.invensync', date=store_summary.inventory.inventory_date.strftime('%Y-%m-%d'), store_id=store_summary.store.id) }}"
          class="block w-full text-center px-3 py-2 text-xs font-medium rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition">
         View Details
       </a>
@@ -122,23 +122,4 @@
   {% endif %}
 </div>
 
-<script>
-function updateDate() {
-    const dateInput = document.getElementById('dateInput').value;
-    if (dateInput) {
-        const base = '{{ url_for("views.cluster_manager_invensync") }}';
-        const params = new URLSearchParams({date: dateInput});
-        {% if cluster_sidebar_cluster_id %}
-        params.set('cluster_id', '{{ cluster_sidebar_cluster_id }}');
-        {% endif %}
-        window.location.href = base + '?' + params.toString();
-    }
-}
-
-document.getElementById('dateInput').addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-        updateDate();
-    }
-});
-</script>
 {% endblock %}
