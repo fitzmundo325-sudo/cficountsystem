@@ -1308,6 +1308,116 @@ def _apply_pos_qty_from_pos_categories(reports):
             report.pos_qty_premium = int(report.pos_qty_premium or 0) + qty
 
 
+def _apply_ending_inventory_from_invensync(reports):
+    if not reports:
+        return
+
+    report_keys = {
+        (int(report.store_id), report.report_date)
+        for report in reports
+        if getattr(report, 'store_id', None) and getattr(report, 'report_date', None)
+    }
+    if not report_keys:
+        return
+
+    for report in reports:
+        report.ending_inv_gc = 0
+        report.ending_inv_rolls = 0
+        report.ending_inv_premium = 0
+
+    store_ids = sorted({store_id for store_id, _ in report_keys})
+    report_dates = sorted({report_date for _, report_date in report_keys})
+
+    inventories = (
+        DailyEndingInventory.query
+        .filter(
+            DailyEndingInventory.store_id.in_(store_ids),
+            DailyEndingInventory.inventory_date.in_(report_dates),
+        )
+        .all()
+    )
+    inventory_ids = [inventory.id for inventory in inventories]
+    if not inventory_ids:
+        return
+
+    product_meta_by_id = {
+        int(product_id): {
+            'description': description or '',
+            'category': category or '',
+            'sub_category': sub_category or '',
+        }
+        for product_id, description, category, sub_category in (
+            ProductMaster.query
+            .with_entities(
+                ProductMaster.id,
+                ProductMaster.description,
+                ProductMaster.category,
+                ProductMaster.sub_category,
+            )
+            .all()
+        )
+    }
+
+    def _normalize(value):
+        return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+    product_meta_by_description = {
+        _normalize(meta['description']): meta
+        for meta in product_meta_by_id.values()
+        if _normalize(meta.get('description'))
+    }
+
+    def _resolve_bucket(item):
+        meta = product_meta_by_id.get(int(item.product_master_id or 0))
+        if not meta:
+            meta = product_meta_by_description.get(_normalize(item.product_description), {})
+        category = _normalize(meta.get('category', ''))
+        sub_category = _normalize(meta.get('sub_category', ''))
+        product_text = _normalize(item.product_description)
+        combined = f'{category} {sub_category} {product_text}'
+        if 'greetingcake' in combined or category == 'gc':
+            return 'gc'
+        if 'roll' in combined:
+            return 'rolls'
+        if 'premium' in combined:
+            return 'premium'
+        return None
+
+    totals_by_key = {}
+    inventory_key_by_id = {
+        inventory.id: (int(inventory.store_id), inventory.inventory_date)
+        for inventory in inventories
+    }
+
+    items = (
+        DailyEndingInventoryItem.query
+        .filter(DailyEndingInventoryItem.inventory_id.in_(inventory_ids))
+        .all()
+    )
+    for item in items:
+        key = inventory_key_by_id.get(item.inventory_id)
+        if not key:
+            continue
+        bucket = _resolve_bucket(item)
+        if not bucket:
+            continue
+        component_ending_qty = (
+            int(item.ending_d5_qty or 0)
+            + int(item.ending_d4_qty or 0)
+            + int(item.ending_d3_qty or 0)
+        )
+        ending_qty = int(item.total_ending_qty or component_ending_qty or 0)
+        bucket_totals = totals_by_key.setdefault(key, {'gc': 0, 'rolls': 0, 'premium': 0})
+        bucket_totals[bucket] += ending_qty
+
+    for report in reports:
+        key = (int(report.store_id), report.report_date)
+        totals = totals_by_key.get(key, {})
+        report.ending_inv_gc = int(totals.get('gc', 0) or 0)
+        report.ending_inv_rolls = int(totals.get('rolls', 0) or 0)
+        report.ending_inv_premium = int(totals.get('premium', 0) or 0)
+
+
 def _resolve_scope_month_year(month_arg, year_arg, store_ids=None):
     if month_arg and year_arg:
         return int(year_arg), int(month_arg)
@@ -3647,6 +3757,7 @@ def store_manager_store_data():
     ).all()
     _coalesce_numeric_fields_for_reports(reports)
     _apply_pos_qty_from_pos_categories(reports)
+    _apply_ending_inventory_from_invensync(reports)
     approved_reports = [report for report in reports if (report.status or '') == 'Approved']
 
     targets = StoreTarget.query.filter(
@@ -5270,6 +5381,7 @@ def cluster_manager_raw_data():
     ).all()
     _coalesce_numeric_fields_for_reports(reports)
     _apply_pos_qty_from_pos_categories(reports)
+    _apply_ending_inventory_from_invensync(reports)
     _apply_taf_wastage_amounts(reports)
     
     # Fetch store targets for the selected month
@@ -5439,6 +5551,7 @@ def cluster_manager_cluster_data():
     ).all()
     _coalesce_numeric_fields_for_reports(reports)
     _apply_pos_qty_from_pos_categories(reports)
+    _apply_ending_inventory_from_invensync(reports)
     consolidated_reports = _consolidate_cluster_reports_by_date(reports)
     
     # Fetch store targets for the selected month
@@ -5891,6 +6004,12 @@ def update_report_value():
         # Cluster manager tables expose edit controls for pending, approved, and rejected rows.
         if report.status not in ('Pending', 'Approved', 'Rejected'):
             return jsonify({'success': False, 'error': 'Only pending, approved, or rejected reports can be edited'}), 400
+
+        computed_fields = [
+            'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium',
+        ]
+        if field_name in computed_fields:
+            return jsonify({'success': False, 'error': 'Ending inventory is automated from InvenSync'}), 400
         
         # Update the field based on field name
         # Check if field is numeric (sales fields)
@@ -5914,9 +6033,7 @@ def update_report_value():
             'ldts_gc', 'ldts_rolls', 'ldts_premium'
         ]
         
-        int_fields = [
-            'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium',
-        ]
+        int_fields = []
         
         # Determine field type and convert value
         if field_name in numeric_fields:
