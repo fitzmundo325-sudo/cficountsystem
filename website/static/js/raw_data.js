@@ -76,11 +76,7 @@ function getEditableFieldMapByTab(tabId) {
     };
   }
   if (tabId === 'inventory') {
-    return {
-      7: { field: 'ending_inv_gc' },
-      8: { field: 'ending_inv_rolls' },
-      9: { field: 'ending_inv_premium' },
-    };
+    return {};
   }
   return {};
 }
@@ -568,8 +564,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const formattedFieldName = formatFieldName(fieldName);
     const isTcField = ['gds_tc', 'grab_tc', 'foodpanda_tc', 'boothselling_tc',
-                       'bulk_order_tc', 'reseller_tc', 'tieup_tc', 'ambulant_tc',
-                       'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium'].includes(fieldName);
+                       'bulk_order_tc', 'reseller_tc', 'tieup_tc', 'ambulant_tc'].includes(fieldName);
     
     const inputStep = isTcField ? '1' : '0.01';
     const inputType = 'number';
