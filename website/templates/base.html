@@ -16,7 +16,7 @@
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
-  <link href="{{ url_for('static', filename='css/styles.css') }}?v=sidebar-scroll-2" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/styles.css') }}?v=fixed-modal-scroll-lock-1" rel="stylesheet">
   <style>
     html,
     body {
@@ -51,8 +51,9 @@
       }
     }
   </style>
-  <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-escape-lock-1"></script>
   <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
+  <script src="{{ url_for('static', filename='js/auto_scrollbar.js') }}?v=scrollbar-fade-1"></script>
 </head>
 <body class="m-0 overflow-x-hidden">
 
@@ -362,19 +363,19 @@
           <span class="block truncate text-xs text-indigo-200">Desktop shortcut</span>
         </span>
       </button>
-      <div class="flex items-center gap-3 hover:bg-slate-800/50 p-2 rounded-xl cursor-pointer transition-colors group">
+      <div class="flex items-center gap-2 hover:bg-slate-800/50 p-2 rounded-xl cursor-pointer transition-colors group">
         <div class="relative">
           <div class="w-10 h-10 rounded-full border-2 border-slate-800 group-hover:border-indigo-500 transition-colors bg-indigo-500 flex items-center justify-center text-white font-bold">
             {% if user %}{{ user.username[:1].upper() }}{% else %}U{% endif %}
           </div>
           <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-900 rounded-full"></div>
         </div>
-        <div class="user-info flex-1 min-w-0">
+        <div class="user-info flex-1 min-w-0 pr-1">
           <p class="text-sm font-semibold text-white truncate">{% if user %}{{ user.full_name }}{% else %}Guest{% endif %}</p>
           <p class="text-xs text-slate-500 truncate">{% if user %}{{ user.role }}{% else %}Not Logged In{% endif %}</p>
         </div>
         {% if user %}
-        <a href="/logout" class="text-slate-400 hover:text-red-500 transition-colors" title="Logout">
+        <a href="/logout" class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-500 transition-colors" title="Logout" aria-label="Logout">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
 
         </a>
@@ -387,7 +388,7 @@
   <main id="main-content" class="sidebar-transition flex-1 min-h-screen lg:ml-64 flex flex-col">
     {% block content %}{% endblock %}
       
-    <script src="{{ url_for('static', filename='js/sidebar.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-overlay-scrollbar-1"></script>
     <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-1"></script>
     {% if user and user.role == 'Inventory Staff' %}
     <script>

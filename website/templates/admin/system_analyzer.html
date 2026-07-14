@@ -2,6 +2,36 @@
 {% block title %}System Analyzer{% endblock %}
 
 {% block content %}
+<style>
+  html.admin-dark #upload-details-modal [data-upload-modal-card] {
+    background: #0f172a;
+    border-color: #334155;
+  }
+
+  html.admin-dark #upload-details-modal [data-upload-modal-header] {
+    background: #164e63;
+    border-color: #0e7490;
+  }
+
+  html.admin-dark #upload-details-title {
+    color: #f8fafc;
+  }
+
+  html.admin-dark #upload-details-subtitle,
+  html.admin-dark #upload-details-close {
+    color: #bae6fd;
+  }
+
+  html.admin-dark #upload-details-close:hover {
+    color: #ffffff;
+  }
+
+  html.admin-dark #upload-details-body {
+    background: #0f172a;
+    color: #e2e8f0;
+  }
+</style>
+
 <header class="sticky top-0 z-20 bg-white/85 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
   <div class="flex items-center gap-4">
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
@@ -74,8 +104,15 @@
             <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ item.store_count }}</td>
             <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ item.entry_count }}</td>
             <td class="px-4 py-3 text-sm text-slate-700">{{ item.latest_report_date.strftime('%Y-%m-%d') if item.latest_report_date else '-' }}</td>
-            <td class="px-4 py-3 text-sm">
-              <button type="button" class="open-link-modal inline-flex items-center justify-center w-8 h-8 rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors" data-alias="{{ item.product_name }}" title="Link to Master" aria-label="Link to Master">
+            <td class="px-4 py-3 text-sm whitespace-nowrap">
+              <button type="button" class="open-upload-modal inline-flex items-center justify-center w-8 h-8 rounded-md bg-sky-100 text-sky-700 hover:bg-sky-200 transition-colors" data-source="pos" data-product="{{ item.product_name }}" title="View Upload Stores" aria-label="View Upload Stores">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 21h18"></path>
+                  <path d="M5 21V7l8-4v18"></path>
+                  <path d="M19 21V11l-6-4"></path>
+                </svg>
+              </button>
+              <button type="button" class="open-link-modal ml-1 inline-flex items-center justify-center w-8 h-8 rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors" data-alias="{{ item.product_name }}" title="Link to Master" aria-label="Link to Master">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 1 0-7.07-7.07L11 4" />
                   <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 1 0 7.07 7.07L13 20" />
@@ -142,7 +179,8 @@
             <td class="px-4 py-3 text-sm text-right">{{ item.store_count }}</td>
             <td class="px-4 py-3 text-sm text-right">{{ item.entry_count }}</td>
             <td class="px-4 py-3 text-sm text-slate-700">{{ item.latest_report_date.strftime('%Y-%m-%d') if item.latest_report_date else '-' }}</td>
-            <td class="px-4 py-3 text-sm">
+            <td class="px-4 py-3 text-sm whitespace-nowrap">
+              <button type="button" class="open-upload-modal inline-flex items-center justify-center w-8 h-8 rounded-md bg-sky-100 text-sky-700 hover:bg-sky-200" data-source="rso" data-product="{{ item.product_name }}" title="View Upload Stores" aria-label="View Upload Stores">⌂</button>
               <button type="button" class="open-link-modal inline-flex items-center justify-center w-8 h-8 rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200" data-alias="{{ item.product_name }}" title="Link to Master">🔗</button>
               <a href="{{ url_for('admin.product_masterlist', q=item.product_name) }}" class="ml-1 inline-flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 text-indigo-700 hover:bg-indigo-200" title="Search Masterlist">⌕</a>
             </td>
@@ -164,6 +202,22 @@
     </div>
   </section>
 
+</div>
+
+<div id="upload-details-modal" class="fixed inset-0 z-50 hidden">
+  <div id="upload-details-backdrop" class="absolute inset-0 bg-black/40"></div>
+  <div id="upload-details-positioner" class="relative z-10 h-full w-full flex items-center justify-center p-4">
+    <div data-upload-modal-card class="w-full max-w-5xl rounded-2xl border border-sky-200 bg-white shadow-xl overflow-hidden">
+      <div data-upload-modal-header class="px-5 py-4 bg-sky-50 border-b border-sky-200 flex items-center justify-between gap-3">
+        <div>
+          <h2 id="upload-details-title" class="text-sm md:text-base font-bold text-sky-950">Upload Details</h2>
+          <p id="upload-details-subtitle" class="text-xs text-sky-800 mt-1">Store upload source and timestamp details.</p>
+        </div>
+        <button type="button" id="upload-details-close" class="text-sky-700 hover:text-sky-900 text-sm font-semibold">Close</button>
+      </div>
+      <div id="upload-details-body" class="max-h-[70vh] overflow-y-auto p-5"></div>
+    </div>
+  </div>
 </div>
 
 <div id="link-product-modal" class="fixed inset-0 z-50 hidden">
@@ -218,6 +272,148 @@
 </div>
 
 <script>
+  (function () {
+    const posUploadDetails = {{ pos_upload_details|default({}, true)|tojson }};
+    const rsoUploadDetails = {{ rso_upload_details|default({}, true)|tojson }};
+    const modal = document.getElementById('upload-details-modal');
+    const backdrop = document.getElementById('upload-details-backdrop');
+    const positioner = document.getElementById('upload-details-positioner');
+    const closeBtn = document.getElementById('upload-details-close');
+    const title = document.getElementById('upload-details-title');
+    const subtitle = document.getElementById('upload-details-subtitle');
+    const body = document.getElementById('upload-details-body');
+    let uploadModalScrollTop = 0;
+
+    function lockPageScroll() {
+      uploadModalScrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+      document.documentElement.classList.add('modal-open');
+      document.body.classList.add('modal-open');
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${uploadModalScrollTop}px`;
+      document.body.style.left = '0';
+      document.body.style.right = '0';
+      document.body.style.width = '100%';
+    }
+
+    function unlockPageScroll() {
+      document.documentElement.classList.remove('modal-open');
+      document.body.classList.remove('modal-open');
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      document.body.style.width = '';
+      window.scrollTo(0, uploadModalScrollTop);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function closeModal() {
+      if (modal) modal.classList.add('hidden');
+      unlockPageScroll();
+    }
+
+    function positionModalInsideMainContent() {
+      if (!positioner) return;
+      const mainContent = document.getElementById('main-content');
+      if (!mainContent || window.innerWidth < 1024) {
+        positioner.style.marginLeft = '0px';
+        positioner.style.width = '100%';
+        return;
+      }
+
+      const rect = mainContent.getBoundingClientRect();
+      const leftOffset = Math.max(0, Math.round(rect.left) - 64);
+      positioner.style.marginLeft = `${leftOffset}px`;
+      positioner.style.width = `calc(100% - ${leftOffset}px)`;
+    }
+
+    function openModal(source, productName) {
+      const isRso = source === 'rso';
+      const rows = (isRso ? rsoUploadDetails : posUploadDetails)[productName] || [];
+      if (title) title.textContent = `${isRso ? 'RSO' : 'POS Sold'} Upload Details`;
+      if (subtitle) subtitle.textContent = productName || 'Selected product';
+
+      if (body) {
+        if (!rows.length) {
+          body.innerHTML = '<div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No upload details found for this product in the selected date range.</div>';
+        } else {
+          const headers = isRso
+            ? ['Store', 'Report Date', 'Source', 'Rows', 'Qty', 'Received', 'Uploaded By', 'Latest Upload']
+            : ['Store', 'Report Date', 'Rows', 'Qty', 'Net Sales', 'Uploaded By', 'Latest Upload'];
+          const rowsHtml = rows.map((row) => isRso ? `
+            <tr class="hover:bg-slate-50">
+              <td class="px-4 py-3 text-sm font-semibold text-slate-900">${escapeHtml(row.store_name)}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">${escapeHtml(row.report_date)}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">${escapeHtml(row.upload_source)}</td>
+              <td class="px-4 py-3 text-sm text-right text-slate-800">${escapeHtml(row.entry_count)}</td>
+              <td class="px-4 py-3 text-sm text-right text-slate-800">${escapeHtml(row.total_qty)}</td>
+              <td class="px-4 py-3 text-sm text-right text-slate-800">${escapeHtml(row.total_received_qty)}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">${escapeHtml(row.uploaded_by)}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">${escapeHtml(row.latest_uploaded_at)}</td>
+            </tr>
+          ` : `
+            <tr class="hover:bg-slate-50">
+              <td class="px-4 py-3 text-sm font-semibold text-slate-900">${escapeHtml(row.store_name)}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">${escapeHtml(row.report_date)}</td>
+              <td class="px-4 py-3 text-sm text-right text-slate-800">${escapeHtml(row.entry_count)}</td>
+              <td class="px-4 py-3 text-sm text-right text-slate-800">${escapeHtml(row.total_qty)}</td>
+              <td class="px-4 py-3 text-sm text-right text-slate-800">₱${Number(row.total_net_sales || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">${escapeHtml(row.uploaded_by)}</td>
+              <td class="px-4 py-3 text-sm text-slate-700">${escapeHtml(row.latest_uploaded_at)}</td>
+            </tr>
+          `).join('');
+          body.innerHTML = `
+            <div class="overflow-x-auto rounded-xl border border-slate-200">
+              <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                  <tr>${headers.map((header, index) => `<th class="px-4 py-3 text-${index >= 3 && header !== 'Uploaded By' && header !== 'Latest Upload' ? 'right' : 'left'} text-xs font-semibold text-slate-500 uppercase">${escapeHtml(header)}</th>`).join('')}</tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">${rowsHtml}</tbody>
+              </table>
+            </div>
+          `;
+        }
+      }
+
+      positionModalInsideMainContent();
+      if (modal) {
+        modal.classList.remove('hidden');
+        lockPageScroll();
+      }
+    }
+
+    document.addEventListener('click', function (event) {
+      const button = event.target.closest('.open-upload-modal');
+      if (!button) return;
+      event.preventDefault();
+      openModal(button.dataset.source || 'pos', button.dataset.product || '');
+    });
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) {
+      backdrop.addEventListener('wheel', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }, { passive: false });
+    }
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    });
+    window.addEventListener('resize', function () {
+      if (modal && !modal.classList.contains('hidden')) positionModalInsideMainContent();
+    });
+  })();
+
   (function () {
     const rowsPerPage = 10;
 
@@ -349,17 +545,40 @@
     const masterInput = document.querySelector('input[name="master_product_name"]');
     const openButtons = Array.from(document.querySelectorAll('.open-link-modal'));
     const presetAlias = {{ (link_alias or '')|tojson }};
+    let linkModalScrollTop = 0;
+
+    function lockPageScroll() {
+      linkModalScrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+      document.documentElement.classList.add('modal-open');
+      document.body.classList.add('modal-open');
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${linkModalScrollTop}px`;
+      document.body.style.left = '0';
+      document.body.style.right = '0';
+      document.body.style.width = '100%';
+    }
+
+    function unlockPageScroll() {
+      document.documentElement.classList.remove('modal-open');
+      document.body.classList.remove('modal-open');
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      document.body.style.width = '';
+      window.scrollTo(0, linkModalScrollTop);
+    }
 
     function openModal(aliasValue) {
       if (aliasInput) aliasInput.value = aliasValue || '';
       if (modal) modal.classList.remove('hidden');
-      document.body.classList.add('overflow-hidden');
+      lockPageScroll();
       if (aliasInput) aliasInput.focus();
     }
 
     function closeModal() {
       if (modal) modal.classList.add('hidden');
-      document.body.classList.remove('overflow-hidden');
+      unlockPageScroll();
     }
 
     openButtons.forEach((btn) => {
@@ -369,10 +588,19 @@
     });
 
     if (backdrop) backdrop.addEventListener('click', closeModal);
+    if (backdrop) {
+      backdrop.addEventListener('wheel', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }, { passive: false });
+    }
     if (closeX) closeX.addEventListener('click', closeModal);
     if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
     document.addEventListener('keydown', function (event) {
-      if (event.key === 'Escape') closeModal();
+      if (event.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     });
 
     if (presetAlias) {
