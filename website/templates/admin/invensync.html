@@ -4,6 +4,40 @@
 
 {% block content %}
 
+<style>
+  html.admin-dark .invensync-update-status.is-current {
+    border-color: rgba(52, 211, 153, 0.35) !important;
+    background: rgba(6, 95, 70, 0.28) !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing {
+    border-color: rgba(251, 191, 36, 0.4) !important;
+    background: rgba(120, 53, 15, 0.28) !important;
+  }
+
+  html.admin-dark .invensync-update-status .status-pill {
+    background: rgba(15, 23, 42, 0.78) !important;
+    border-color: rgba(251, 191, 36, 0.42) !important;
+    color: #fde68a !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-current .status-title {
+    color: #6ee7b7 !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-current .status-copy {
+    color: #a7f3d0 !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing .status-title {
+    color: #fde68a !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing .status-copy {
+    color: #fcd34d !important;
+  }
+</style>
+
 <!-- Top Header -->
 <header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
   <div class="flex items-center gap-4">
@@ -50,12 +84,14 @@
       <button id="summaryTabBtn" onclick="switchAdminInvenSyncTab('summary')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'summary' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'summary' else 'false' }}">
         Summary
       </button>
+      {% if user.role != 'General Manager' %}
       <button id="configTabBtn" onclick="switchAdminInvenSyncTab('config')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'config' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'config' else 'false' }}">
         Global Config
       </button>
       <button id="storeConfigTabBtn" onclick="switchAdminInvenSyncTab('store_config')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'store_config' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'store_config' else 'false' }}">
         Store Config
       </button>
+      {% endif %}
     </div>
   </div>
 
@@ -121,6 +157,47 @@
             No invensync records available
           </div>
         {% endif %}
+
+        {% set update_status = store_summary.update_status %}
+        <div class="invensync-update-status rounded-xl border px-3 py-2 {% if update_status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
+          {% if update_status.is_up_to_date %}
+          <div class="status-title flex items-center gap-2 text-sm font-semibold text-emerald-700">
+            <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+            Up to date
+          </div>
+          <p class="status-copy mt-1 text-xs text-emerald-700/80">Finalized through {{ today }}.</p>
+          {% else %}
+          <div class="status-title flex items-center gap-2 text-sm font-semibold text-amber-800">
+            <span class="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500"></span>
+            Not updated
+          </div>
+          <p class="status-copy mt-1 text-xs text-amber-800/80">
+            {{ update_status.missing_count }} missing date{{ '' if update_status.missing_count == 1 else 's' }} this month.
+          </p>
+          {% if update_status.missing_dates %}
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            {% if update_status.missing_count <= 3 %}
+            {% for missing_date in update_status.missing_dates %}
+            <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+              {{ missing_date.label }}
+            </span>
+            {% endfor %}
+            {% else %}
+            {% for missing_range in update_status.missing_ranges[:3] %}
+            <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+              {{ missing_range.label }}
+            </span>
+            {% endfor %}
+            {% if update_status.missing_ranges|length > 3 %}
+            <span class="status-pill rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200">
+              +{{ update_status.missing_ranges|length - 3 }} more range{{ '' if update_status.missing_ranges|length - 3 == 1 else 's' }}
+            </span>
+            {% endif %}
+            {% endif %}
+          </div>
+          {% endif %}
+          {% endif %}
+        </div>
       </div>
 
       <!-- Card Footer -->
@@ -179,6 +256,7 @@
     {% endif %}
   </div>
 
+  {% if user.role != 'General Manager' %}
   <div id="configTab" style="display: {{ 'block' if selected_tab == 'config' else 'none' }};">
     <div class="grid gap-4">
       <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">
@@ -274,7 +352,9 @@
       </section>
     </div>
   </div>
+  {% endif %}
 
+  {% if user.role != 'General Manager' %}
   <div id="storeConfigTab" style="display: {{ 'block' if selected_tab == 'store_config' else 'none' }};">
     <div class="grid gap-4">
       <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">
@@ -339,6 +419,7 @@
       </section>
     </div>
   </div>
+  {% endif %}
 </div>
 
 <script>
@@ -350,15 +431,16 @@ function switchAdminInvenSyncTab(tab) {
     const configBtn = document.getElementById('configTabBtn');
     const storeConfigBtn = document.getElementById('storeConfigTabBtn');
 
-    summaryTab.style.display = tab === 'summary' ? 'block' : 'none';
-    configTab.style.display = tab === 'config' ? 'block' : 'none';
-    storeConfigTab.style.display = tab === 'store_config' ? 'block' : 'none';
+    if (summaryTab) summaryTab.style.display = tab === 'summary' ? 'block' : 'none';
+    if (configTab) configTab.style.display = tab === 'config' ? 'block' : 'none';
+    if (storeConfigTab) storeConfigTab.style.display = tab === 'store_config' ? 'block' : 'none';
 
     [
         [summaryBtn, tab === 'summary'],
         [configBtn, tab === 'config'],
         [storeConfigBtn, tab === 'store_config']
     ].forEach(([button, isActive]) => {
+        if (!button) return;
         button.classList.toggle('bg-slate-900', isActive);
         button.classList.toggle('text-white', isActive);
         button.classList.toggle('bg-slate-100', !isActive);
@@ -457,7 +539,9 @@ function getCheckboxGroupValues(cls) {
 }
 
 function loadStoreInvensyncConfig() {
-    const storeId = document.getElementById('storeConfigSelect').value;
+    const storeSelect = document.getElementById('storeConfigSelect');
+    if (!storeSelect) return;
+    const storeId = storeSelect.value;
     const saveBtn = document.getElementById('saveStoreConfigBtn');
     const message = document.getElementById('storeConfigSaveMessage');
     const storeConfig = storeId && storeInvensyncConfigs[String(storeId)]
@@ -480,7 +564,9 @@ function loadStoreInvensyncConfig() {
 }
 
 function saveStoreInvensyncConfig() {
-    const storeId = document.getElementById('storeConfigSelect').value;
+    const storeSelect = document.getElementById('storeConfigSelect');
+    if (!storeSelect) return;
+    const storeId = storeSelect.value;
     const saveBtn = document.getElementById('saveStoreConfigBtn');
     const message = document.getElementById('storeConfigSaveMessage');
     const saveStartedAt = Date.now();

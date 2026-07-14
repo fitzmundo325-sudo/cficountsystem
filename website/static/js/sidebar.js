@@ -4,6 +4,49 @@ const sidebarOverlay = document.getElementById('sidebar-overlay');
 const toggleDesktop = document.getElementById('toggle-desktop');
 const toggleMobile = document.getElementById('toggle-mobile');
 const sidebarNav = sidebar ? sidebar.querySelector('nav.custom-scrollbar') : null;
+let sidebarScrollHideTimer;
+let sidebarScrollbarThumb = null;
+
+function ensureSidebarScrollbarThumb() {
+    if (!sidebar || sidebarScrollbarThumb) return sidebarScrollbarThumb;
+    sidebarScrollbarThumb = document.createElement('div');
+    sidebarScrollbarThumb.className = 'sidebar-scrollbar-thumb';
+    sidebar.appendChild(sidebarScrollbarThumb);
+    return sidebarScrollbarThumb;
+}
+
+function updateSidebarScrollbar(showThumb = false) {
+    if (!sidebar || !sidebarNav) return;
+    const thumb = ensureSidebarScrollbarThumb();
+    if (!thumb) return;
+
+    const scrollHeight = sidebarNav.scrollHeight;
+    const viewHeight = sidebarNav.clientHeight;
+    if (scrollHeight <= viewHeight + 1) {
+        thumb.classList.remove('is-visible');
+        return;
+    }
+
+    const sidebarRect = sidebar.getBoundingClientRect();
+    const navRect = sidebarNav.getBoundingClientRect();
+    const trackTop = navRect.top - sidebarRect.top;
+    const trackHeight = navRect.height;
+    const thumbHeight = Math.max(32, Math.round((viewHeight / scrollHeight) * trackHeight));
+    const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+    const scrollRatio = sidebarNav.scrollTop / Math.max(1, scrollHeight - viewHeight);
+    const thumbTop = trackTop + Math.round(scrollRatio * maxThumbTop);
+
+    thumb.style.top = `${thumbTop}px`;
+    thumb.style.height = `${thumbHeight}px`;
+
+    if (showThumb) {
+        thumb.classList.add('is-visible');
+        clearTimeout(sidebarScrollHideTimer);
+        sidebarScrollHideTimer = setTimeout(function() {
+            thumb.classList.remove('is-visible');
+        }, 1600);
+    }
+}
 
 function restoreSidebarScroll() {
     if (!sidebarNav) return;
@@ -36,12 +79,14 @@ function saveSidebarState(isCollapsed) {
 if (sidebarNav) {
     sidebarNav.addEventListener('scroll', function() {
         localStorage.setItem('sidebarScrollTop', sidebarNav.scrollTop);
+        updateSidebarScrollbar(true);
     });
 }
 
 // Initialize sidebar state on page load
 loadSidebarState();
 restoreSidebarScroll();
+updateSidebarScrollbar(false);
 
 // Toggle Desktop (Collapsed/Expanded)
 toggleDesktop.addEventListener('click', () => {
@@ -83,6 +128,7 @@ window.addEventListener('resize', () => {
     } else {
         mainContent.style.marginLeft = '0';
     }
+    updateSidebarScrollbar(false);
 });
 
 // Dynamic tooltip positioning for collapsed sidebar

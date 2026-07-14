@@ -3140,6 +3140,83 @@ def system_analyzer():
         reverse=True,
     )
 
+    pos_upload_details = {}
+    unmatched_pos_names = [item['product_name'] for item in unmatched_items if item.get('product_name')]
+    if unmatched_pos_names:
+        pos_upload_rows = (
+            db.session.query(
+                PosSold.product_name,
+                Store.name.label('store_name'),
+                DailyReport.report_date.label('report_date'),
+                func.count(PosSold.id).label('entry_count'),
+                func.sum(PosSold.quantity).label('total_qty'),
+                func.sum(PosSold.net_sales).label('total_net_sales'),
+                func.max(PosSold.uploaded_at).label('latest_uploaded_at'),
+                func.max(User.username).label('uploaded_by'),
+            )
+            .select_from(PosSold)
+            .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+            .join(Store, Store.id == DailyReport.store_id)
+            .outerjoin(User, User.id == DailyReport.submitted_by)
+            .filter(
+                DailyReport.report_date >= start_date,
+                DailyReport.report_date <= end_date,
+                PosSold.product_name.in_(unmatched_pos_names),
+            )
+            .group_by(PosSold.product_name, Store.id, Store.name, DailyReport.report_date)
+            .order_by(func.max(PosSold.uploaded_at).desc(), DailyReport.report_date.desc(), Store.name.asc())
+            .all()
+        )
+        for row in pos_upload_rows:
+            pos_upload_details.setdefault(row.product_name, []).append({
+                'store_name': row.store_name or '-',
+                'report_date': row.report_date.strftime('%Y-%m-%d') if row.report_date else '-',
+                'entry_count': int(row.entry_count or 0),
+                'total_qty': int(row.total_qty or 0),
+                'total_net_sales': float(row.total_net_sales or 0.0),
+                'uploaded_by': row.uploaded_by or '-',
+                'latest_uploaded_at': row.latest_uploaded_at.strftime('%Y-%m-%d %H:%M') if row.latest_uploaded_at else '-',
+            })
+
+    rso_upload_details = {}
+    unmatched_rso_names = [item['product_name'] for item in unmatched_rso_items if item.get('product_name')]
+    if unmatched_rso_names:
+        rso_upload_rows = (
+            db.session.query(
+                RsoDelivery.product_name,
+                Store.name.label('store_name'),
+                RsoDelivery.report_date.label('report_date'),
+                RsoDelivery.upload_source.label('upload_source'),
+                func.count(RsoDelivery.id).label('entry_count'),
+                func.sum(RsoDelivery.quantity).label('total_qty'),
+                func.sum(func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity)).label('total_received_qty'),
+                func.max(RsoDelivery.uploaded_at).label('latest_uploaded_at'),
+                func.max(User.username).label('uploaded_by'),
+            )
+            .select_from(RsoDelivery)
+            .join(Store, Store.id == RsoDelivery.store_id)
+            .outerjoin(User, User.id == RsoDelivery.uploaded_by)
+            .filter(
+                RsoDelivery.report_date >= start_date,
+                RsoDelivery.report_date <= end_date,
+                RsoDelivery.product_name.in_(unmatched_rso_names),
+            )
+            .group_by(RsoDelivery.product_name, Store.id, Store.name, RsoDelivery.report_date, RsoDelivery.upload_source)
+            .order_by(func.max(RsoDelivery.uploaded_at).desc(), RsoDelivery.report_date.desc(), Store.name.asc())
+            .all()
+        )
+        for row in rso_upload_rows:
+            rso_upload_details.setdefault(row.product_name, []).append({
+                'store_name': row.store_name or '-',
+                'report_date': row.report_date.strftime('%Y-%m-%d') if row.report_date else '-',
+                'upload_source': 'Bulk Order' if row.upload_source == 'bulk' else 'Delivery RSO',
+                'entry_count': int(row.entry_count or 0),
+                'total_qty': int(row.total_qty or 0),
+                'total_received_qty': int(row.total_received_qty or 0),
+                'uploaded_by': row.uploaded_by or '-',
+                'latest_uploaded_at': row.latest_uploaded_at.strftime('%Y-%m-%d %H:%M') if row.latest_uploaded_at else '-',
+            })
+
     return render_template(
         'admin/system_analyzer.html',
         user=current_user,
@@ -3149,6 +3226,8 @@ def system_analyzer():
         master_name_options=master_name_options,
         unmatched_items=unmatched_items,
         unmatched_rso_items=unmatched_rso_items,
+        pos_upload_details=pos_upload_details,
+        rso_upload_details=rso_upload_details,
         summary={
             'total_unique_pos_products': total_unique_pos_products,
             'matched_unique_products': matched_unique_products,
@@ -3373,6 +3452,78 @@ def _get_global_invensync_config():
     return config, config_data
 
 
+def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return {
+            'is_up_to_date': False,
+            'missing_dates': [],
+            'missing_ranges': [],
+            'missing_count': 0,
+            'latest_finalized_date': None,
+        }
+
+    finalized_dates = {
+        row.inventory_date for row in DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= month_start,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).with_entities(DailyEndingInventory.inventory_date).all()
+        if row.inventory_date
+    }
+
+    missing_date_values = []
+    missing_dates = []
+    cursor = month_start
+    while cursor <= cutoff_date:
+        if cursor not in finalized_dates:
+            missing_date_values.append(cursor)
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+
+    def format_missing_range(start, end):
+        if start == end:
+            return f"{start.strftime('%b')} {start.day}, {start.year}"
+        if start.year == end.year and start.month == end.month:
+            return f"{start.strftime('%b')} {start.day}-{end.day}, {start.year}"
+        if start.year == end.year:
+            return f"{start.strftime('%b')} {start.day} - {end.strftime('%b')} {end.day}, {start.year}"
+        return f"{start.strftime('%b')} {start.day}, {start.year} - {end.strftime('%b')} {end.day}, {end.year}"
+
+    missing_ranges = []
+    if missing_date_values:
+        range_start = missing_date_values[0]
+        previous = missing_date_values[0]
+        for missing_date in missing_date_values[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            missing_ranges.append({
+                'start': range_start.strftime('%Y-%m-%d'),
+                'end': previous.strftime('%Y-%m-%d'),
+                'label': format_missing_range(range_start, previous),
+            })
+            range_start = missing_date
+            previous = missing_date
+        missing_ranges.append({
+            'start': range_start.strftime('%Y-%m-%d'),
+            'end': previous.strftime('%Y-%m-%d'),
+            'label': format_missing_range(range_start, previous),
+        })
+
+    latest_finalized_date = max(finalized_dates) if finalized_dates else None
+    return {
+        'is_up_to_date': len(missing_dates) == 0,
+        'missing_dates': missing_dates,
+        'missing_ranges': missing_ranges,
+        'missing_count': len(missing_dates),
+        'latest_finalized_date': latest_finalized_date,
+    }
+
+
 @admin.route('/admin/invensync')
 @login_required
 def invensync():
@@ -3382,8 +3533,11 @@ def invensync():
         return redirect(url_for('views.home'))
 
     selected_tab = request.args.get('tab', 'summary')
+    if current_user.role == 'General Manager' and selected_tab in ('config', 'store_config'):
+        selected_tab = 'summary'
 
     selected_date = date.today()
+    month_start = selected_date.replace(day=1)
 
     # Get all stores
     stores = Store.query.order_by(Store.name.asc()).all()
@@ -3419,11 +3573,13 @@ def invensync():
     store_summaries = []
     for store in stores:
         inventory = inventory_by_store.get(store.id)
+        update_status = _build_admin_invensync_update_status(store.id, month_start, selected_date)
         
         store_summaries.append({
             'store': store,
             'inventory': inventory,
-            'has_data': bool(inventory)
+            'has_data': bool(inventory),
+            'update_status': update_status,
         })
 
     products = ProductMaster.query.order_by(ProductMaster.category.asc(), ProductMaster.description.asc()).all()

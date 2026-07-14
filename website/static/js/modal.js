@@ -3,6 +3,37 @@
  * Creates and manages modal dialogs with animations
  */
 
+let modalScrollLockCount = 0;
+let modalScrollTop = 0;
+
+function lockPageScroll() {
+  modalScrollLockCount += 1;
+  if (modalScrollLockCount > 1) return;
+
+  modalScrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+  document.documentElement.classList.add('modal-open');
+  document.body.classList.add('modal-open');
+  document.body.style.position = 'fixed';
+  document.body.style.top = `-${modalScrollTop}px`;
+  document.body.style.left = '0';
+  document.body.style.right = '0';
+  document.body.style.width = '100%';
+}
+
+function unlockPageScroll() {
+  modalScrollLockCount = Math.max(0, modalScrollLockCount - 1);
+  if (modalScrollLockCount > 0) return;
+
+  document.documentElement.classList.remove('modal-open');
+  document.body.classList.remove('modal-open');
+  document.body.style.position = '';
+  document.body.style.top = '';
+  document.body.style.left = '';
+  document.body.style.right = '';
+  document.body.style.width = '';
+  window.scrollTo(0, modalScrollTop);
+}
+
 class Modal {
   constructor(modalId) {
     this.modal = document.getElementById(modalId);
@@ -25,27 +56,34 @@ class Modal {
       btn.addEventListener('click', () => this.close());
     });
     
-    // Close on backdrop click
+    // Do not close on backdrop click; require explicit action buttons.
     if (this.backdrop) {
-      this.backdrop.addEventListener('click', () => this.close());
+      this.backdrop.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      this.backdrop.addEventListener('wheel', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }, { passive: false });
     }
-    
-    // Close on ESC key
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !this.modal.classList.contains('hidden')) {
-        this.close();
-      }
-    });
     
     // Add input focus animations if form exists
     if (this.form) {
       this.addInputAnimations();
     }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && this.modal && !this.modal.classList.contains('hidden')) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    });
   }
   
   open() {
     this.modal.classList.remove('hidden');
-    document.body.style.overflow = 'hidden';
+    lockPageScroll();
     
     // Trigger animation
     setTimeout(() => {
@@ -72,7 +110,7 @@ class Modal {
     
     setTimeout(() => {
       this.modal.classList.add('hidden');
-      document.body.style.overflow = 'auto';
+      unlockPageScroll();
       if (this.form) {
         this.form.reset();
       }
@@ -142,23 +180,27 @@ function showConfirmationModal(options) {
     size = '',
     variant = '',
     onConfirm,
-    onCancel
+    onCancel,
+    compactHeader = false
   } = options;
+
   const hasCustomBody = Boolean(String(messageHtml || '').trim());
   const hasValueComparison = Boolean(oldValue && newValue);
   const isInvenSyncVariant = variant === 'invensync';
   const isLarge = size === 'large';
-  const standardBodyPadding = isLarge ? 'px-10 pt-12 pb-10' : 'px-6 pt-8 pb-6';
-  const standardIconClass = isLarge
+  const standardBodyPadding = isLarge ? 'px-10 pt-8 pb-6 flex-1 min-h-0 flex flex-col' : 'px-6 pt-8 pb-6';
+  const standardIconClass = compactHeader
+    ? 'mb-3 inline-flex h-14 w-14 items-center justify-center rounded-full bg-indigo-100 text-indigo-600'
+    : isLarge
     ? 'mb-7 inline-flex h-24 w-24 items-center justify-center rounded-full bg-indigo-100 text-indigo-600'
     : 'mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600';
-  const standardIconSvgClass = isLarge ? 'h-12 w-12' : 'h-8 w-8';
-  const standardTitleClass = isLarge ? 'text-3xl font-bold text-slate-900' : 'text-xl font-bold text-slate-900';
+  const standardIconSvgClass = compactHeader ? 'h-8 w-8' : isLarge ? 'h-12 w-12' : 'h-8 w-8';
+  const standardTitleClass = compactHeader ? 'text-2xl font-bold text-slate-900' : isLarge ? 'text-3xl font-bold text-slate-900' : 'text-xl font-bold text-slate-900';
   const standardMessageClass = isLarge ? 'mt-4 text-lg leading-8 text-slate-600' : 'mt-2 text-sm leading-6 text-slate-600';
-  const standardCustomBodyClass = isLarge ? 'mt-7 text-lg text-slate-700' : 'mt-4 text-sm text-slate-700';
+  const standardCustomBodyClass = isLarge ? 'mt-7 text-lg text-slate-700 flex-1 min-h-0 flex flex-col' : 'mt-4 text-sm text-slate-700';
   const standardFooterClass = isLarge
-    ? 'px-10 py-6 border-t border-slate-200 flex justify-end gap-3'
-    : 'px-6 py-4 border-t border-slate-200 grid grid-cols-2 gap-3';
+    ? 'px-10 py-6 border-t border-slate-200 flex justify-end gap-3 shrink-0 bg-white'
+    : 'px-6 py-4 border-t border-slate-200 grid grid-cols-2 gap-3 shrink-0 bg-white';
   const standardButtonClass = isLarge ? 'h-11 min-w-[140px] px-4 text-sm' : 'h-11 px-4 text-sm';
   const defaultBodyHtml = `
     <div class="flex flex-col items-center text-center">
@@ -188,7 +230,7 @@ function showConfirmationModal(options) {
             </div>
             <h3 class="${standardTitleClass}">${title}</h3>
           </div>
-          <div class="${standardCustomBodyClass}" style="max-height:${isLarge ? '65vh' : '55vh'};overflow-y:auto;">${messageHtml}</div>
+          <div class="${standardCustomBodyClass}">${messageHtml}</div>
         `
         : defaultBodyHtml
       }
@@ -210,10 +252,10 @@ function showConfirmationModal(options) {
 
     <!-- Footer -->
     <div class="${standardFooterClass}">
-      <button data-modal-cancel class="${standardButtonClass} font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+      <button data-modal-cancel class="${standardButtonClass} font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors">
         ${cancelText}
       </button>
-      <button data-modal-confirm class="${standardButtonClass} inline-flex items-center justify-center gap-2 font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-lg shadow-indigo-600/25">
+      <button data-modal-confirm class="${standardButtonClass} inline-flex items-center justify-center gap-2 font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors shadow-lg shadow-indigo-600/25">
         ${confirmText}
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 12h14"></path>
@@ -267,12 +309,12 @@ function showConfirmationModal(options) {
 
   // Create modal HTML
   const modalHTML = `
-    <div id="confirmation-modal" class="fixed inset-0 z-[1000] flex items-center justify-center hidden px-4">
+    <div id="confirmation-modal" class="fixed inset-0 z-[1000] flex items-center justify-center hidden px-4 py-4">
       <!-- Backdrop -->
       <div data-modal-backdrop class="absolute inset-0 bg-black/60 backdrop-blur-[1px] opacity-0 transition-opacity duration-300"></div>
       
       <!-- Modal Content -->
-      <div data-modal-content class="relative bg-white ${isInvenSyncVariant ? 'rounded-2xl' : 'rounded-xl'} shadow-2xl w-full scale-95 opacity-0 transition-all duration-300 overflow-hidden" style="max-width: ${modalWidth};">
+      <div data-modal-content class="relative bg-white ${isInvenSyncVariant ? 'rounded-2xl' : 'rounded-xl'} shadow-2xl w-full scale-95 opacity-0 transition-all duration-300 overflow-hidden ${isLarge && !isInvenSyncVariant ? 'h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] flex flex-col' : 'max-h-[calc(100vh-2rem)] overflow-y-auto'}" style="max-width: ${modalWidth};">
         ${isInvenSyncVariant ? invensyncModalInnerHtml : standardModalInnerHtml}
       </div>
     </div>
@@ -297,13 +339,13 @@ function showConfirmationModal(options) {
     
     setTimeout(() => {
       modal.remove();
-      document.body.style.overflow = 'auto';
+      unlockPageScroll();
     }, 300);
   }
 
   // Open modal with animation
   modal.classList.remove('hidden');
-  document.body.style.overflow = 'hidden';
+  lockPageScroll();
   
   setTimeout(() => {
     backdrop.classList.remove('opacity-0');
@@ -323,20 +365,21 @@ function showConfirmationModal(options) {
     if (onCancel) onCancel();
   });
 
-  backdrop.addEventListener('click', () => {
-    closeModal();
-    if (onCancel) onCancel();
+  // Keep confirmation dialogs open until the user chooses Cancel or Confirm.
+  backdrop.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
   });
-
-  // ESC key to close
-  const escHandler = (e) => {
-    if (e.key === 'Escape') {
-      closeModal();
-      if (onCancel) onCancel();
-      document.removeEventListener('keydown', escHandler);
+  backdrop.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }, { passive: false });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && modal && document.body.contains(modal)) {
+      event.preventDefault();
+      event.stopPropagation();
     }
-  };
-  document.addEventListener('keydown', escHandler);
+  });
 }
 
 // Export for use in other files
