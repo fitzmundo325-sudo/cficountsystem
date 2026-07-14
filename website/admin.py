@@ -4073,10 +4073,47 @@ def admin_taf():
         selected_date = date.today()
 
     page = request.args.get('page', 1, type=int)
+    search_query = (request.args.get('q') or '').strip()
+    type_filter = (request.args.get('type') or '').strip().lower()
+    status_filter = (request.args.get('status') or '').strip().lower()
+    store_filter = (request.args.get('store') or '').strip().lower()
+
     transfer_query = TafTransfer.query.options(
         selectinload(TafTransfer.store),
         selectinload(TafTransfer.submitter)
-    ).order_by(
+    ).outerjoin(Store, TafTransfer.store_id == Store.id)
+
+    if search_query:
+        like_query = f'%{search_query.lower()}%'
+        transfer_query = transfer_query.filter(or_(
+            func.lower(TafTransfer.control_no).like(like_query),
+            func.lower(TafTransfer.transaction_type).like(like_query),
+            func.lower(TafTransfer.transfer_from).like(like_query),
+            func.lower(TafTransfer.transfer_to).like(like_query),
+            func.lower(Store.name).like(like_query),
+        ))
+
+    if type_filter:
+        type_values = [type_filter]
+        if type_filter == 'egi plant transfer':
+            type_values.append('supplies transfer')
+        transfer_query = transfer_query.filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(type_values))
+
+    if status_filter:
+        status_expression = func.lower(func.trim(TafTransfer.status))
+        if status_filter == 'pending':
+            transfer_query = transfer_query.filter(or_(
+                status_expression == status_filter,
+                TafTransfer.status.is_(None),
+                func.trim(TafTransfer.status) == '',
+            ))
+        else:
+            transfer_query = transfer_query.filter(status_expression == status_filter)
+
+    if store_filter:
+        transfer_query = transfer_query.filter(func.lower(func.trim(Store.name)) == store_filter)
+
+    transfer_query = transfer_query.order_by(
         TafTransfer.transaction_date.desc(),
         TafTransfer.id.desc()
     )
@@ -4113,7 +4150,90 @@ def admin_taf():
         pending_transfers=pending_transfers,
         received_transfers=max(0, total_transfers - pending_transfers),
         filter_stores=Store.query.order_by(Store.name.asc()).all(),
+        filters={
+            'q': search_query,
+            'type': type_filter,
+            'status': status_filter,
+            'store': store_filter,
+        },
     )
+
+
+def _recalculate_daily_inventory_item(item):
+    from .views import _recalculate_inventory_item
+    _recalculate_inventory_item(item)
+
+
+def _find_or_create_inventory_item_for_product(inventory, product):
+    inventory_item = DailyEndingInventoryItem.query.filter_by(
+        inventory_id=inventory.id,
+        product_master_id=product.id,
+    ).first()
+    if not inventory_item:
+        inventory_item = DailyEndingInventoryItem(
+            inventory_id=inventory.id,
+            product_master_id=product.id,
+            product_code=product.code,
+            product_description=product.description,
+            srp_price=product.sp_p or 0.0,
+        )
+        db.session.add(inventory_item)
+        db.session.flush()
+    return inventory_item
+
+
+def _non_wastage_taf_trans_out_quantity(store, transaction_date, item_name):
+    if not store or not transaction_date or not item_name:
+        return 0
+    quantity = (
+        db.session.query(func.coalesce(func.sum(TafTransferItem.quantity), 0))
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(TafTransferItem.item_name == item_name)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_([
+            'product transfer',
+            'egi plant transfer',
+            'supplies transfer',
+        ]))
+        .scalar()
+    )
+    return int(quantity or 0)
+
+
+def _clamp_taf_trans_out_without_wastage(store, transaction_date, item_name, current_qty, wastage_qty):
+    expected_non_wastage_qty = _non_wastage_taf_trans_out_quantity(store, transaction_date, item_name)
+    adjusted_qty = max(0, int(current_qty or 0) - int(wastage_qty or 0))
+    return max(expected_non_wastage_qty, adjusted_qty)
+
+
+def _sync_taf_wastage_inventory_for_store_date(store, transaction_date):
+    from .views import _build_taf_wastage_quantity_by_master_id
+
+    if not store or not transaction_date:
+        return
+
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=transaction_date,
+    ).first()
+    if not inventory:
+        inventory = DailyEndingInventory(
+            store_id=store.id,
+            inventory_date=transaction_date,
+            created_by=current_user.id,
+        )
+        db.session.add(inventory)
+        db.session.flush()
+
+    wastage_by_master_id = _build_taf_wastage_quantity_by_master_id(store, transaction_date)
+    for product_master_id, quantity in wastage_by_master_id.items():
+        product = ProductMaster.query.get(product_master_id)
+        if not product:
+            continue
+        inventory_item = _find_or_create_inventory_item_for_product(inventory, product)
+        inventory_item.wastage_qty = max(0, int(quantity or 0))
+        _recalculate_daily_inventory_item(inventory_item)
 
 
 def _reverse_inventory_trans_quantities(transfer_record):
@@ -4123,7 +4243,7 @@ def _reverse_inventory_trans_quantities(transfer_record):
     """
     from .models import DailyEndingInventory, DailyEndingInventoryItem
     
-    transaction_type = transfer_record.transaction_type
+    transaction_type = str(transfer_record.transaction_type or '').strip()
     transaction_date = transfer_record.transaction_date
     transfer_from = transfer_record.transfer_from
     transfer_to = transfer_record.transfer_to
@@ -4141,7 +4261,7 @@ def _reverse_inventory_trans_quantities(transfer_record):
         ).first()
         
         if source_inventory:
-            # Reverse Trans-Out quantities for source store
+            # Reverse source-side quantities for the transfer type.
             for item in transfer_items:
                 item_name = item.item_name
                 quantity = item.quantity
@@ -4153,8 +4273,17 @@ def _reverse_inventory_trans_quantities(transfer_record):
                 ).first()
                 
                 if source_inventory_item:
-                    # Subtract from trans_out_qty
-                    source_inventory_item.trans_out_qty = max(0, (source_inventory_item.trans_out_qty or 0) - quantity)
+                    if transaction_type == 'Wastage Transfer':
+                        source_inventory_item.wastage_qty = max(0, (source_inventory_item.wastage_qty or 0) - quantity)
+                        source_inventory_item.trans_out_qty = _clamp_taf_trans_out_without_wastage(
+                            source_store,
+                            transaction_date,
+                            item_name,
+                            source_inventory_item.trans_out_qty,
+                            quantity,
+                        )
+                    else:
+                        source_inventory_item.trans_out_qty = max(0, (source_inventory_item.trans_out_qty or 0) - quantity)
                     
                     # Recalculate theoretical ending quantity
                     source_inventory_item.theo_ending_qty = (
@@ -4211,6 +4340,7 @@ def _reverse_inventory_trans_quantities(transfer_record):
 
 def _apply_inventory_trans_quantities(transfer_record):
     """Apply the inventory effect represented by a TAF after an admin edit."""
+    transaction_type = str(transfer_record.transaction_type or '').strip()
     source_store = Store.query.filter_by(name=transfer_record.transfer_from).first()
     source_inventory = DailyEndingInventory.query.filter_by(
         store_id=source_store.id,
@@ -4221,7 +4351,11 @@ def _apply_inventory_trans_quantities(transfer_record):
     destination_inventory = DailyEndingInventory.query.filter_by(
         store_id=destination_store.id,
         inventory_date=transfer_record.transaction_date,
-    ).first() if destination_store and transfer_record.transaction_type == 'Product Transfer' else None
+    ).first() if destination_store and transaction_type == 'Product Transfer' else None
+
+    if transaction_type == 'Wastage Transfer':
+        _sync_taf_wastage_inventory_for_store_date(source_store, transfer_record.transaction_date)
+        return
 
     for transfer_item in transfer_record.items:
         if source_inventory:
@@ -4271,7 +4405,12 @@ def admin_edit_taf(transfer_id):
             transfer.transaction_date = datetime.strptime(request.form['transaction_date'], '%Y-%m-%d').date()
             transfer.control_no = (request.form.get('control_no') or '').strip()
             transfer.transaction_type = (request.form.get('transaction_type') or '').strip()
-            transfer.transfer_to = (request.form.get('transfer_to') or '').strip()
+            transfer_to = (request.form.get('transfer_to') or '').strip()
+            if transfer.transaction_type == 'Wastage Transfer':
+                transfer_to = 'Main Office'
+            elif transfer.transaction_type in ('EGI Plant Transfer', 'Supplies Transfer'):
+                transfer_to = 'EGI Plant'
+            transfer.transfer_to = transfer_to
             transfer.prepared_by_name = (request.form.get('prepared_by_name') or '').strip()
             transfer.received_by_name = (request.form.get('received_by_name') or '').strip() or None
             transfer.status = (request.form.get('status') or 'Pending').strip()

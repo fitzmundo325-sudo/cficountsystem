@@ -76,11 +76,7 @@ function getEditableFieldMapByTab(tabId) {
     };
   }
   if (tabId === 'inventory') {
-    return {
-      7: { field: 'ending_inv_gc' },
-      8: { field: 'ending_inv_rolls' },
-      9: { field: 'ending_inv_premium' },
-    };
+    return {};
   }
   return {};
 }
@@ -290,17 +286,18 @@ function setupEditableCells(root = document) {
     if (!cell.dataset.baseHtml) {
       cell.dataset.baseHtml = cell.innerHTML;
     }
-    if (!cell.querySelector('.edit-icon') && !nonEditableComputedFields.includes(fieldName)) {
+    const isComputedField = nonEditableComputedFields.includes(fieldName);
+    if (!cell.querySelector('.edit-icon') && !isComputedField) {
       cell.innerHTML = `${cell.dataset.baseHtml}${globalPencilIcon}`;
     }
-    cell.style.cursor = 'pointer';
+    cell.style.cursor = isComputedField ? 'default' : 'pointer';
 
     if (cell.dataset.editListenersBound === '1') {
       return;
     }
 
     cell.addEventListener('mouseenter', function() {
-      if (!isEditModeEnabled) {
+      if (!isEditModeEnabled || isComputedField) {
         return;
       }
       const icon = this.querySelector('.edit-icon');
@@ -317,7 +314,7 @@ function setupEditableCells(root = document) {
     });
 
     cell.addEventListener('click', function() {
-      if (!isEditModeEnabled) {
+      if (!isEditModeEnabled || isComputedField) {
         return;
       }
       if (typeof window.openEditModal !== 'undefined') {
@@ -567,8 +564,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const formattedFieldName = formatFieldName(fieldName);
     const isTcField = ['gds_tc', 'grab_tc', 'foodpanda_tc', 'boothselling_tc',
-                       'bulk_order_tc', 'reseller_tc', 'tieup_tc', 'ambulant_tc',
-                       'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium'].includes(fieldName);
+                       'bulk_order_tc', 'reseller_tc', 'tieup_tc', 'ambulant_tc'].includes(fieldName);
     
     const inputStep = isTcField ? '1' : '0.01';
     const inputType = 'number';
