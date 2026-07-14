@@ -216,6 +216,30 @@
         </div>
       </div>
 
+      <div class="rounded-none border border-slate-200 overflow-hidden bg-white shadow-sm">
+        <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-slate-200">
+          <h3 class="text-sm md:text-base font-bold text-slate-900">Cost Monitoring</h3>
+          <p class="text-xs text-slate-500 mt-0.5">Enter discount amounts for daily monitoring.</p>
+        </div>
+        <div class="p-4 md:p-5">
+          <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Discount Monitoring</h4>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-700 mb-1">Senior / PWD</label>
+              <input type="number" step="0.01" min="0" name="senior_pwd_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-700 mb-1">Promo (LDTS)</label>
+              <input type="number" step="0.01" min="0" name="promo_ldts_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-700 mb-1">Bulk Order</label>
+              <input type="number" step="0.01" min="0" name="bulk_orders_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="border-t border-slate-200 px-4 md:px-5 pt-4 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <p class="text-xs text-slate-500">Review values before submitting. Empty fields are treated as blank entries.</p>
         <div class="flex items-center justify-end gap-3">
@@ -461,6 +485,11 @@
       `✅Foodpanda/TC: ${formatPair(form, 'foodpanda_sales', 'foodpanda_tc')}`,
       `✅Paymaya/TC: ${formatPair(form, 'paymaya_sales', 'paymaya_tc')}`,
       `✅Gcash/TC: ${formatPair(form, 'gcash_sales', 'gcash_tc')}`,
+      '',
+      `🔴Discount Monitoring`,
+      `✅Senior / PWD: ${formatAmount(getRawValue(form, 'senior_pwd_discount'))}`,
+      `✅Promo (LDTS): ${formatAmount(getRawValue(form, 'promo_ldts_discount'))}`,
+      `✅Bulk Order: ${formatAmount(getRawValue(form, 'bulk_orders_discount'))}`,
     ];
 
     return lines.join('\n');
