@@ -51,7 +51,7 @@
               <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Items</th>
               <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Grand Total</th>
               <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Status</th>
-              <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+              <th class="transfer-action-guide-target px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
@@ -72,7 +72,7 @@
                 </span>
               </td>
               <td class="px-4 py-2 text-center">
-                <a href="{{ url_for('views.store_manager_outgoing_transfer_view', transfer_id=transfer.id) }}" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors" title="View TAF" aria-label="View TAF">
+                <a href="{{ url_for('views.store_manager_outgoing_transfer_view', transfer_id=transfer.id) }}" class="transfer-action-guide-target inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors" title="View TAF" aria-label="View TAF">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path>
                     <circle cx="12" cy="12" r="3"></circle>

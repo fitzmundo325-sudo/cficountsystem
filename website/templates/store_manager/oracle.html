@@ -30,6 +30,13 @@
   .weekly-average-scroll {
     max-height: min(52vh, 430px);
   }
+  .weekly-average-scroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 8;
+    background: #f1f5f9;
+    box-shadow: inset 0 -1px 0 #cbd5e1;
+  }
 </style>
 
 <!-- Header -->
@@ -55,6 +62,9 @@
     {% if not is_cluster_buffer_view %}
     <button onclick="navigate('order-form')" class="flex items-center gap-1.5 bg-sky-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-sky-700 transition-colors whitespace-nowrap">
       <i class="bi bi-plus-lg"></i> New Order
+    </button>
+    <button onclick="submitOrder()" class="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors whitespace-nowrap">
+      <i class="bi bi-check-lg"></i> Submit Order
     </button>
     {% endif %}
     {% if is_cluster_buffer_view %}
@@ -211,7 +221,6 @@
         <button onclick="refreshSuggested()" class="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
         {% if not is_cluster_buffer_view %}
         <button onclick="clearFinalOrders()" class="px-3 py-1.5 bg-white border border-slate-300 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors">Clear Overrides</button>
-        <button onclick="submitOrder()" class="flex items-center gap-1 px-3 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors"><i class="bi bi-check-lg"></i> Submit Order</button>
         {% endif %}
       </div>
     </div>
@@ -225,21 +234,21 @@
       <button onclick="renderHistory()" class="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
     </div>
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="oracle-scroll"><table class="w-full text-xs" style="min-width:900px">
+      <div class="oracle-scroll"><table class="w-full text-xs" style="min-width:720px">
         <thead class="bg-slate-100 text-slate-600"><tr>
           <th class="px-3 py-3 text-left font-semibold">Order Date</th>
-          <th class="px-3 py-3 text-left font-semibold">Delivery</th>
-          <th class="px-3 py-3 text-left font-semibold">Product</th>
-          <th class="px-3 py-3 text-left font-semibold">Forecast / Mode</th>
-          <th class="px-3 py-3 text-center font-semibold text-emerald-600">Suggested</th>
-          <th class="px-3 py-3 text-center font-semibold text-sky-600">Final</th>
-          <th class="px-3 py-3 text-center font-semibold">Unit Cost</th>
+          <th class="px-3 py-3 text-center font-semibold">Products</th>
+          <th class="px-3 py-3 text-left font-semibold">Delivery Dates</th>
+          <th class="px-3 py-3 text-center font-semibold text-emerald-600">Suggested Total</th>
+          <th class="px-3 py-3 text-center font-semibold text-sky-600">Final Total</th>
           <th class="px-3 py-3 text-center font-semibold">Total Cost</th>
           <th class="px-3 py-3 text-left font-semibold">Manager</th>
+          <th class="px-3 py-3 text-center font-semibold">Action</th>
         </tr></thead>
         <tbody id="history-tbody" class="divide-y divide-slate-100"></tbody>
       </table></div>
     </div>
+    <div id="history-detail-panel" class="mt-4 hidden rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden"></div>
   </div>
 
   <!-- DAILY AVERAGES -->
@@ -289,6 +298,8 @@ const INVENSYNC_DATA = {{ invensync_data|tojson if invensync_data is defined els
 const PREV_INVENTORY_DATE = {{ prev_inventory_date|tojson if prev_inventory_date is defined else 'null' }};
 const ORACLE_DATE = {{ oracle_date|tojson if oracle_date is defined else 'null' }};
 const POS_SALES_DATA = {{ pos_sales_data|tojson if pos_sales_data is defined else '{}' }};
+const BULK_ORDER_WEEKS = {{ bulk_order_weeks|tojson if bulk_order_weeks is defined else '[]' }};
+const BULK_ORDER_PRODUCT_DATA = {{ bulk_order_product_data|tojson if bulk_order_product_data is defined else '{}' }};
 const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const DAYS_DISPLAY=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const DISP_TO_JS=[1,2,3,4,5,6,0];
@@ -519,9 +530,11 @@ function submitOrder(){
     const sug=useTarget?calcTarget(p,dayIdx,tSales,mult,ne,tIn,tOut):calcAvg(p,dayName,mult,ne,tIn,tOut);
     const minS=Math.max(0,Math.floor(sug*0.8)),maxS=Math.ceil(sug*1.2);
     const fv=orderFinalQtys[p.id],fo=fv!==undefined&&fv!==''?(parseInt(fv)||0):sug;
+    if(fo<=0)return;
     const obj={id:'ORD-'+Math.random().toString(36).substr(2,6).toUpperCase(),orderDateActual:od,delivDate:dd,dayName,event,mode:useTarget?'Target Sales':'Avg Consumption',productId:p.id,productName:p.name,suggested:sug,minSug:minS,maxSug:maxS,finalOrder:fo,unitCost:p.plantPrice,totalCost:fo*p.plantPrice,multiplier:mult,manager,timestamp:new Date().toISOString()};
     if(fo<minS||fo>maxS){DB.pendingApprovals.push(obj);pendC++;}else{DB.orderHistory.push(obj);autoC++;}
   });
+  if(autoC+pendC===0){showToast('No Oracle history saved because all final order quantities are zero.','info');return;}
   orderFinalQtys={};updateApprovalsBadge();
   showToast(pendC>0?`${autoC} auto-approved. ${pendC} require Manager Approval.`:'Order submitted!',pendC>0?'info':'success');
   renderOrderTable();
@@ -539,7 +552,7 @@ function renderApprovals(){
     return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${a.orderDateActual}</div><div class="text-[10px] text-slate-400">${t}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${a.productName}</div><div class="text-[10px] text-slate-400">${a.productId}</div></td><td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"><span class="text-[10px] text-slate-500">${a.minSug}</span><span class="font-bold text-emerald-600">${a.suggested}</span><span class="text-[10px] text-slate-500">${a.maxSug}</span></div></td><td class="px-3 py-2.5 text-center font-bold text-rose-500 text-sm">${a.finalOrder}</td><td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${a.totalCost.toLocaleString()}</td><td class="px-3 py-2.5 text-slate-500 text-xs">${a.manager}</td><td class="px-3 py-2.5 text-center"><div class="flex gap-2 justify-center"><button onclick="approveOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors"><i class="bi bi-check-lg"></i> Approve</button><button onclick="rejectOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 text-rose-500 rounded-lg text-xs font-semibold hover:bg-rose-50 transition-colors"><i class="bi bi-x-lg"></i> Reject</button></div></td></tr>`;
   }).join('');
 }
-function approveOrder(id){const i=DB.pendingApprovals.findIndex(x=>x.id===id);if(i<0)return;const o=DB.pendingApprovals.splice(i,1)[0];o.timestamp=new Date().toISOString();DB.orderHistory.push(o);updateApprovalsBadge();renderApprovals();showToast('Order approved!','success');}
+function approveOrder(id){const i=DB.pendingApprovals.findIndex(x=>x.id===id);if(i<0)return;const o=DB.pendingApprovals.splice(i,1)[0];o.timestamp=new Date().toISOString();if(Number(o.finalOrder||0)>0)DB.orderHistory.push(o);updateApprovalsBadge();renderApprovals();showToast('Order approved!','success');}
 function rejectOrder(id){const i=DB.pendingApprovals.findIndex(x=>x.id===id);if(i<0)return;DB.pendingApprovals.splice(i,1);updateApprovalsBadge();renderApprovals();showToast('Order rejected.','info');}
 
 function renderHistory(){
@@ -549,6 +562,102 @@ function renderHistory(){
     const t=new Date(h.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
     return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${h.orderDateActual}</div><div class="text-[10px] text-slate-400">${t}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${h.delivDate}</div><div class="text-[10px] text-slate-400">${h.dayName}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${h.productName}</div><div class="text-[10px] text-slate-400">${h.productId}</div></td><td class="px-3 py-2.5"><div class="text-slate-600">${h.event} (${h.multiplier}×)</div><div class="text-[10px] text-purple-500 font-semibold">${h.mode}</div></td><td class="px-3 py-2.5 text-center font-bold text-emerald-600">${h.suggested}</td><td class="px-3 py-2.5 text-center font-bold text-sky-600">${h.finalOrder}</td><td class="px-3 py-2.5 text-center text-slate-600">₱${h.unitCost.toLocaleString()}</td><td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${h.totalCost.toLocaleString()}</td><td class="px-3 py-2.5 text-slate-500 text-xs">${h.manager}</td></tr>`;
   }).join('');
+}
+
+function escapeHtml(value){
+  return String(value ?? '').replace(/[&<>"']/g,(char)=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  })[char]);
+}
+
+function groupOrderHistoryByDate(){
+  const groups={};
+  DB.orderHistory.filter(order=>Number(order.finalOrder||0)>0).forEach((order)=>{
+    const key=order.orderDateActual||'No Date';
+    if(!groups[key])groups[key]={date:key,items:[],deliveryDates:new Set(),managers:new Set(),suggestedTotal:0,finalTotal:0,totalCost:0,latestTimestamp:''};
+    groups[key].items.push(order);
+    if(order.delivDate)groups[key].deliveryDates.add(order.delivDate);
+    if(order.manager)groups[key].managers.add(order.manager);
+    groups[key].suggestedTotal+=Number(order.suggested||0);
+    groups[key].finalTotal+=Number(order.finalOrder||0);
+    groups[key].totalCost+=Number(order.totalCost||0);
+    if(!groups[key].latestTimestamp||new Date(order.timestamp)>new Date(groups[key].latestTimestamp))groups[key].latestTimestamp=order.timestamp;
+  });
+  return Object.values(groups).sort((a,b)=>new Date(b.date)-new Date(a.date));
+}
+
+function renderHistory(){
+  const tbody=document.getElementById('history-tbody');
+  const detailPanel=document.getElementById('history-detail-panel');
+  if(detailPanel){detailPanel.classList.add('hidden');detailPanel.innerHTML='';}
+  const groups=groupOrderHistoryByDate();
+  if(!groups.length){tbody.innerHTML=`<tr><td colspan="8" class="px-4 py-8 text-center text-slate-400"><i class="bi bi-clock-history text-2xl block mb-2"></i>No order history found.</td></tr>`;return;}
+  tbody.innerHTML=groups.map(g=>{
+    const t=g.latestTimestamp?new Date(g.latestTimestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+    const deliveryDates=[...g.deliveryDates].sort().join(', ')||'--';
+    const managers=[...g.managers].sort().join(', ')||'--';
+    return `<tr class="cursor-pointer hover:bg-sky-50 transition-colors" onclick="showHistoryDate('${escapeHtml(g.date)}')"><td class="px-3 py-3"><div class="font-bold text-slate-800">${escapeHtml(g.date)}</div><div class="text-[10px] text-slate-400">Latest: ${escapeHtml(t)}</div></td><td class="px-3 py-3 text-center font-bold text-slate-700">${g.items.length}</td><td class="px-3 py-3 text-slate-600">${escapeHtml(deliveryDates)}</td><td class="px-3 py-3 text-center font-bold text-emerald-600">${g.suggestedTotal.toLocaleString()}</td><td class="px-3 py-3 text-center font-bold text-sky-600">${g.finalTotal.toLocaleString()}</td><td class="px-3 py-3 text-center font-semibold text-slate-800">₱${g.totalCost.toLocaleString()}</td><td class="px-3 py-3 text-slate-500 text-xs">${escapeHtml(managers)}</td><td class="px-3 py-3 text-center"><button type="button" class="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">View</button></td></tr>`;
+  }).join('');
+}
+
+function showHistoryDate(orderDate){
+  const detailPanel=document.getElementById('history-detail-panel');
+  if(!detailPanel)return;
+  const items=DB.orderHistory.filter(order=>String(order.orderDateActual||'No Date')===String(orderDate)&&Number(order.finalOrder||0)>0).sort((a,b)=>String(a.productName||'').localeCompare(String(b.productName||'')));
+  if(!items.length){detailPanel.classList.add('hidden');detailPanel.innerHTML='';return;}
+  const totalFinal=items.reduce((sum,item)=>sum+Number(item.finalOrder||0),0);
+  const totalCost=items.reduce((sum,item)=>sum+Number(item.totalCost||0),0);
+  detailPanel.innerHTML=`<div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3"><div><h2 class="text-base font-bold text-slate-900">Order Details - ${escapeHtml(orderDate)}</h2><p class="mt-0.5 text-xs text-slate-500">${items.length} products | Final Qty: ${totalFinal.toLocaleString()} | Total Cost: ₱${totalCost.toLocaleString()}</p></div><button type="button" onclick="document.getElementById('history-detail-panel').classList.add('hidden')" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">Close</button></div><div class="oracle-scroll"><table class="w-full text-xs" style="min-width:900px"><thead class="bg-slate-100 text-slate-600"><tr><th class="px-3 py-2.5 text-left font-semibold">Product</th><th class="px-3 py-2.5 text-left font-semibold">Delivery</th><th class="px-3 py-2.5 text-left font-semibold">Forecast / Mode</th><th class="px-3 py-2.5 text-center font-semibold text-emerald-600">Suggested</th><th class="px-3 py-2.5 text-center font-semibold text-sky-600">Final</th><th class="px-3 py-2.5 text-center font-semibold">Unit Cost</th><th class="px-3 py-2.5 text-center font-semibold">Total Cost</th><th class="px-3 py-2.5 text-left font-semibold">Manager</th></tr></thead><tbody class="divide-y divide-slate-100 bg-white">${items.map(h=>`<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${escapeHtml(h.productName)}</div><div class="text-[10px] text-slate-400">${escapeHtml(h.productId)}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${escapeHtml(h.delivDate)}</div><div class="text-[10px] text-slate-400">${escapeHtml(h.dayName)}</div></td><td class="px-3 py-2.5"><div class="text-slate-600">${escapeHtml(h.event)} (${escapeHtml(h.multiplier)}x)</div><div class="text-[10px] text-purple-500 font-semibold">${escapeHtml(h.mode)}</div></td><td class="px-3 py-2.5 text-center font-bold text-emerald-600">${Number(h.suggested||0).toLocaleString()}</td><td class="px-3 py-2.5 text-center font-bold text-sky-600">${Number(h.finalOrder||0).toLocaleString()}</td><td class="px-3 py-2.5 text-center text-slate-600">₱${Number(h.unitCost||0).toLocaleString()}</td><td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${Number(h.totalCost||0).toLocaleString()}</td><td class="px-3 py-2.5 text-slate-500 text-xs">${escapeHtml(h.manager)}</td></tr>`).join('')}</tbody></table></div>`;
+  const detailHeader = detailPanel.querySelector('.border-b');
+  const closeButton = detailHeader ? detailHeader.querySelector('button') : null;
+  if(detailHeader && closeButton && !detailHeader.querySelector('[data-export-history-excel]')){
+    const exportButton=document.createElement('button');
+    exportButton.type='button';
+    exportButton.dataset.exportHistoryExcel='1';
+    exportButton.className='rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700';
+    exportButton.innerHTML='<i class="bi bi-file-earmark-excel"></i> Export Excel';
+    exportButton.addEventListener('click',()=>exportHistoryDateExcel(orderDate));
+    const buttonWrap=document.createElement('div');
+    buttonWrap.className='flex flex-wrap items-center gap-2';
+    closeButton.parentNode.insertBefore(buttonWrap, closeButton);
+    buttonWrap.appendChild(exportButton);
+    buttonWrap.appendChild(closeButton);
+  }
+  detailPanel.classList.remove('hidden');
+  detailPanel.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+function exportHistoryDateExcel(orderDate){
+  const items=DB.orderHistory.filter(order=>String(order.orderDateActual||'No Date')===String(orderDate)&&Number(order.finalOrder||0)>0).sort((a,b)=>String(a.productName||'').localeCompare(String(b.productName||'')));
+  if(!items.length){showToast('No Oracle history data to export.','info');return;}
+  const rows=items.map(h=>`
+    <tr>
+      <td>${escapeHtml(h.productId)}</td>
+      <td>${escapeHtml(h.productName)}</td>
+      <td>${Number(h.finalOrder||0)}</td>
+      <td>${escapeHtml(h.delivDate)}</td>
+      <td>${escapeHtml(h.dayName)}</td>
+    </tr>
+  `).join('');
+  const totalFinal=items.reduce((sum,item)=>sum+Number(item.finalOrder||0),0);
+  const html=`<!doctype html><html><head><meta charset="utf-8"></head><body>
+    <table border="1">
+      <tr><th colspan="5">Oracle Order History - ${escapeHtml(DB.settings.store||'Store')} - ${escapeHtml(orderDate)}</th></tr>
+      <tr><td colspan="5">Total Products: ${items.length} | Total Quantity: ${totalFinal}</td></tr>
+      <tr>
+        <th>Product ID</th><th>Product Name</th><th>Quantity</th><th>Delivery Date</th><th>Delivery Day</th>
+      </tr>
+      ${rows}
+    </table>
+  </body></html>`;
+  const blob=new Blob([html],{type:'application/vnd.ms-excel;charset=utf-8;'});
+  const link=document.createElement('a');
+  link.href=URL.createObjectURL(blob);
+  link.download=`oracle-history-${String(orderDate).replace(/[^0-9A-Za-z_-]/g,'-')}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  link.remove();
 }
 
 function renderTransfers(){
@@ -617,6 +726,12 @@ const WEEK_META=[
   {label:'Week 3 (2 Weeks Ago)',hCls:'bg-emerald-800',iBg:'#ECFDF5',iBd:'rgba(5,150,105,0.3)',iClr:'#064e3b'},
   {label:'Week 4 (Last Week)',  hCls:'bg-rose-800', iBg:'#FFF1F2',iBd:'rgba(225,29,72,0.3)', iClr:'#881337'}
 ];
+function getBulkOrderCell(productId,w,di){
+  const raw=(BULK_ORDER_PRODUCT_DATA[productId]&&BULK_ORDER_PRODUCT_DATA[productId][w]&&BULK_ORDER_PRODUCT_DATA[productId][w][di])||null;
+  if(!raw) return {qty:0,date:''};
+  if(typeof raw==='number') return {qty:Number(raw)||0,date:''};
+  return {qty:Number(raw.qty||0)||0,date:raw.date||raw.upload_date||''};
+}
 function renderDailyAverages(){renderWeeklyTables();renderAvgSummary();}
 function renderWeeklyTables(){
   const con=document.getElementById('weekly-sales-tables-container');let html='';
@@ -625,13 +740,33 @@ function renderWeeklyTables(){
     const dTots=DISP_TO_JS.map(di=>PRODUCTS.reduce((s,p)=>s+(salesData[p.id][w][di]||0),0));
     const wTot=dTots.reduce((s,v)=>s+v,0);
     const totRev=PRODUCTS.reduce((s,p)=>s+DISP_TO_JS.reduce((ss,di)=>ss+(salesData[p.id][w][di]||0),0)*p.sellingPrice,0);
-    const rows=PRODUCTS.map(p=>{
-      const cells=DISP_TO_JS.map(di=>`<td class="px-2 py-2 text-center"><input type="number" min="0" value="${salesData[p.id][w][di]||0}" style="width:52px;text-align:center;padding:3px 4px;font-size:11px;font-weight:600;background:${m.iBg};border:1px solid ${m.iBd};border-radius:5px;color:${m.iClr};outline:none" oninput="onWkCell(${w},'${p.id}',${di},this.value)"></td>`).join('');
-      const rTot=DISP_TO_JS.reduce((s,di)=>s+(salesData[p.id][w][di]||0),0);
-      return `<tr class="hover:bg-slate-50"><td class="px-3 py-2 font-semibold text-slate-800 text-xs min-w-[140px]">${p.name}</td>${cells}<td id="wrt-${w}-${p.id}" class="px-3 py-2 text-center font-bold text-xs text-slate-700">${rTot}</td><td class="px-3 py-2 text-center text-xs text-amber-700 font-semibold" id="wrr-${w}-${p.id}">₱${(rTot*p.sellingPrice).toLocaleString()}</td></tr>`;
+    const bulkInfo=BULK_ORDER_WEEKS[w]||{};
+    const bulkBadge=bulkInfo.has_bulk_order
+      ? `<span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-amber-200"><i class="bi bi-box-seam"></i> Bulk Order</span>`
+      : `<span class="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/70 ring-1 ring-white/15"><i class="bi bi-dash-circle"></i> No Bulk Order</span>`;
+    const bulkDetail=bulkInfo.has_bulk_order
+      ? ` | Bulk: <strong class="text-white">₱${Number(bulkInfo.sales||0).toLocaleString()}</strong> / TC <strong class="text-white">${Number(bulkInfo.tc||0).toLocaleString()}</strong>`
+      : '';
+    const bulkDayTotals=DISP_TO_JS.map(di=>PRODUCTS.reduce((s,p)=>s+getBulkOrderCell(p.id,w,di).qty,0));
+    const dayHeaders=DAYS_DISPLAY.map((d,idx)=>{
+      return `<th class="w-[120px] border-l border-slate-300 px-2 py-2 text-center font-semibold"><div>${d.slice(0,3)}</div></th>`;
     }).join('');
-    const fCells=dTots.map((t,ci)=>`<td id="wdt-${w}-${ci}" class="px-2 py-2 text-center font-bold text-xs text-white">${t}</td>`).join('');
-    html+=`<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="${m.hCls} px-5 py-3 flex flex-wrap gap-2 items-center justify-between"><span class="text-sm font-bold text-white">${m.label}</span><span id="whs-${w}" class="text-xs text-white/70">Units: <strong class="text-white">${wTot}</strong> | Rev: <strong class="text-white">₱${totRev.toLocaleString()}</strong></span></div><div class="oracle-scroll daily-average-scroll weekly-average-scroll"><table class="w-full text-xs" style="min-width:800px"><thead class="bg-slate-100 text-slate-600"><tr><th class="px-3 py-2 text-left font-semibold">Product</th>${DAYS_DISPLAY.map(d=>`<th class="px-2 py-2 text-center font-semibold">${d.slice(0,3)}</th>`).join('')}<th class="px-3 py-2 text-center font-semibold">Total</th><th class="px-3 py-2 text-center font-semibold">Revenue</th></tr></thead><tbody class="divide-y divide-slate-100">${rows}</tbody><tfoot><tr class="${m.hCls}"><td class="px-3 py-2 font-bold text-xs text-white">Day Total</td>${fCells}<td id="wwt-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">${wTot}</td><td id="wwr-${w}" class="px-3 py-2 text-center font-bold text-xs text-white">₱${totRev.toLocaleString()}</td></tr></tfoot></table></div></div>`;
+    const rows=PRODUCTS.map(p=>{
+      const cells=DISP_TO_JS.map(di=>{
+        const bulkCell=getBulkOrderCell(p.id,w,di);
+        const bulkQty=bulkCell.qty||0;
+        const totalQty=salesData[p.id][w][di]||0;
+        const posQty=Math.max(totalQty-bulkQty,0);
+        const bulkTitle=bulkQty>0?`Bulk Order: ${bulkQty} qty${bulkCell.date?` • Uploaded ${bulkCell.date}`:''}`:'';
+        const posTitle=`Actual POS Sold: ${posQty} qty (Total Sold ${totalQty} - Bulk Order ${bulkQty})`;
+        const tagsHtml=bulkQty>0?`<div class="flex shrink-0 flex-col items-start gap-1"><span title="${posTitle}" class="inline-flex min-h-[18px] min-w-[48px] items-center justify-center rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-bold leading-none text-sky-800 ring-1 ring-sky-200 cursor-help">POS ${posQty}</span><span title="${bulkTitle}" class="inline-flex min-h-[18px] min-w-[48px] items-center justify-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold leading-none text-amber-800 ring-1 ring-amber-200 cursor-help">BO ${bulkQty}</span></div>`:'';
+        return `<td class="w-[120px] border-l border-slate-200 px-2 py-2 text-center"><div class="flex min-h-[52px] items-center justify-center gap-2"><span class="inline-flex w-[44px] shrink-0 items-center justify-center rounded-md px-2 py-1 text-[11px] font-semibold" style="background:${m.iBg};border:1px solid ${m.iBd};color:${m.iClr};">${totalQty}</span>${tagsHtml}</div></td>`;
+      }).join('');
+      const rTot=DISP_TO_JS.reduce((s,di)=>s+(salesData[p.id][w][di]||0),0);
+      return `<tr class="hover:bg-slate-50"><td class="w-[180px] px-3 py-2 font-semibold text-slate-800 text-xs">${p.name}</td>${cells}<td id="wrt-${w}-${p.id}" class="w-[80px] border-l border-slate-300 px-3 py-2 text-center font-bold text-xs text-slate-700">${rTot}</td><td class="w-[110px] border-l border-slate-300 px-3 py-2 text-center text-xs text-amber-700 font-semibold" id="wrr-${w}-${p.id}">₱${(rTot*p.sellingPrice).toLocaleString()}</td></tr>`;
+    }).join('');
+    const fCells=dTots.map((t,ci)=>`<td id="wdt-${w}-${ci}" class="w-[120px] border-l border-white/25 px-2 py-2 text-center font-bold text-xs text-white">${t}</td>`).join('');
+    html+=`<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"><div class="${m.hCls} px-5 py-3 flex flex-wrap gap-2 items-center justify-between"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-bold text-white">${m.label}</span>${bulkBadge}</div><span id="whs-${w}" class="text-xs text-white/70">Units: <strong class="text-white">${wTot}</strong> | Rev: <strong class="text-white">₱${totRev.toLocaleString()}</strong>${bulkDetail}</span></div><div class="oracle-scroll daily-average-scroll weekly-average-scroll"><table class="w-full table-fixed border-collapse text-xs" style="min-width:1230px"><thead class="bg-slate-100 text-slate-600"><tr><th class="w-[180px] px-3 py-2 text-left font-semibold">Product</th>${dayHeaders}<th class="w-[80px] border-l border-slate-300 px-3 py-2 text-center font-semibold">Total</th><th class="w-[110px] border-l border-slate-300 px-3 py-2 text-center font-semibold">Revenue</th></tr></thead><tbody class="divide-y divide-slate-100">${rows}</tbody><tfoot><tr class="${m.hCls}"><td class="w-[180px] px-3 py-2 font-bold text-xs text-white">Day Total</td>${fCells}<td id="wwt-${w}" class="w-[80px] border-l border-white/25 px-3 py-2 text-center font-bold text-xs text-white">${wTot}</td><td id="wwr-${w}" class="w-[110px] border-l border-white/25 px-3 py-2 text-center font-bold text-xs text-white">₱${totRev.toLocaleString()}</td></tr></tfoot></table></div></div>`;
   }
   con.innerHTML=html;
 }

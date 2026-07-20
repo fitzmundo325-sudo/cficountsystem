@@ -4,7 +4,7 @@ from . import db
 from .audit import log_audit_event, verify_audit_chain
 from werkzeug.security import check_password_hash, generate_password_hash
 from flask_login import login_required, current_user
-from sqlalchemy import or_, cast, String, func
+from sqlalchemy import or_, cast, String, func, case
 from sqlalchemy.orm import selectinload
 import pandas as pd
 from datetime import datetime, timedelta, date
@@ -494,6 +494,77 @@ def delete_pos_sold_entry(pos_sold_id):
     return redirect(url_for('admin.pos_sold', **redirect_params))
 
 
+@admin.route('/admin/pos-sold/<int:pos_sold_id>/edit', methods=['POST'])
+@login_required
+def edit_pos_sold_entry(pos_sold_id):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    pos_item = PosSold.query.get_or_404(pos_sold_id)
+    report = DailyReport.query.get(pos_item.daily_report_id)
+    review_store_id = request.form.get('review_store_id', type=int)
+    review_date = (request.form.get('review_date') or '').strip()
+    redirect_params = {'tab': 'review'}
+    if review_store_id:
+        redirect_params['review_store_id'] = review_store_id
+    if review_date:
+        redirect_params['review_date'] = review_date
+
+    try:
+        new_quantity = max(0, int(request.form.get('quantity', 0)))
+    except (TypeError, ValueError):
+        flash('Please enter a valid POS Sold quantity.', category='error')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+
+    try:
+        old_quantity = int(pos_item.quantity or 0)
+        old_values = {
+            'quantity': old_quantity,
+            'gross_sales': float(pos_item.gross_sales or 0.0),
+            'discount': float(pos_item.discount or 0.0),
+            'net_sales': float(pos_item.net_sales or 0.0),
+        }
+        pos_item.quantity = new_quantity
+        if old_quantity > 0:
+            factor = new_quantity / old_quantity
+            pos_item.gross_sales = round(old_values['gross_sales'] * factor, 2)
+            pos_item.discount = round(old_values['discount'] * factor, 2)
+            pos_item.net_sales = round(old_values['net_sales'] * factor, 2)
+        elif new_quantity == 0:
+            pos_item.gross_sales = 0.0
+            pos_item.discount = 0.0
+            pos_item.net_sales = 0.0
+
+        log_audit_event(
+            action='admin.pos_sold.edit',
+            entity_type='PosSold',
+            entity_id=pos_sold_id,
+            reason='Admin edited POS Sold quantity from store/date review.',
+            details={
+                'pos_sold_id': pos_item.id,
+                'daily_report_id': pos_item.daily_report_id,
+                'store_id': report.store_id if report else None,
+                'report_date': report.report_date.strftime('%Y-%m-%d') if report and report.report_date else None,
+                'product_name': pos_item.product_name,
+                'old': old_values,
+                'new': {
+                    'quantity': pos_item.quantity,
+                    'gross_sales': pos_item.gross_sales,
+                    'discount': pos_item.discount,
+                    'net_sales': pos_item.net_sales,
+                },
+            },
+        )
+        db.session.commit()
+        flash('POS Sold quantity updated successfully.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error updating POS Sold entry: {exc}', category='error')
+
+    return redirect(url_for('admin.pos_sold', **redirect_params))
+
+
 @admin.route('/admin/pos-sold/delete-all', methods=['POST'])
 @login_required
 def delete_all_pos_sold_entries():
@@ -698,6 +769,8 @@ def delivery():
                         func.count(RsoDelivery.id).label('entry_count'),
                         func.sum(RsoDelivery.quantity).label('total_qty'),
                         func.sum(func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity)).label('total_received_qty'),
+                        func.max(case((RsoDelivery.rso_no == 'Manual Entry', 1), else_=0)).label('manual_entry_count'),
+                        func.max(RsoDelivery.manual_note).label('manual_note'),
                     )
                     .join(Store, Store.id == RsoDelivery.store_id)
                     .outerjoin(Cluster, Cluster.id == Store.cluster_id)
@@ -724,6 +797,8 @@ def delivery():
                         'report_date': row.report_date,
                         'product_name': (row.product_name or '').strip() or 'Unnamed Product',
                         'upload_source': row.upload_source or 'delivery',
+                        'has_manual': bool(row.manual_entry_count),
+                        'manual_note': row.manual_note,
                         'entry_count': int(row.entry_count or 0),
                         'quantity': int(row.total_qty or 0),
                         'received_quantity': int(row.total_received_qty or 0),
@@ -814,6 +889,64 @@ def delete_delivery_entry(delivery_id):
     except Exception as exc:
         db.session.rollback()
         flash(f'Error deleting Delivery entry: {exc}', category='error')
+
+    return redirect(url_for('admin.delivery', **redirect_params))
+
+
+@admin.route('/admin/delivery/<int:delivery_id>/edit', methods=['POST'])
+@login_required
+def edit_delivery_entry(delivery_id):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    delivery_item = RsoDelivery.query.get_or_404(delivery_id)
+    review_store_id = request.form.get('review_store_id', type=int)
+    review_date = (request.form.get('review_date') or '').strip()
+    redirect_params = {'tab': 'review'}
+    if review_store_id:
+        redirect_params['review_store_id'] = review_store_id
+    if review_date:
+        redirect_params['review_date'] = review_date
+
+    try:
+        new_quantity = max(0, int(request.form.get('quantity', 0)))
+        received_raw = (request.form.get('received_quantity') or '').strip()
+        new_received_quantity = max(0, int(received_raw)) if received_raw else None
+    except (TypeError, ValueError):
+        flash('Please enter valid Delivery quantities.', category='error')
+        return redirect(url_for('admin.delivery', **redirect_params))
+
+    try:
+        old_values = {
+            'quantity': int(delivery_item.quantity or 0),
+            'received_quantity': delivery_item.received_quantity,
+        }
+        delivery_item.quantity = new_quantity
+        delivery_item.received_quantity = new_received_quantity
+        log_audit_event(
+            action='admin.delivery.edit',
+            entity_type='RsoDelivery',
+            entity_id=delivery_id,
+            reason='Admin edited Delivery quantity from store/date review.',
+            details={
+                'delivery_id': delivery_item.id,
+                'store_id': delivery_item.store_id,
+                'report_date': delivery_item.report_date.strftime('%Y-%m-%d') if delivery_item.report_date else None,
+                'rso_no': delivery_item.rso_no,
+                'product_name': delivery_item.product_name,
+                'old': old_values,
+                'new': {
+                    'quantity': delivery_item.quantity,
+                    'received_quantity': delivery_item.received_quantity,
+                },
+            },
+        )
+        db.session.commit()
+        flash('Delivery quantity updated successfully.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error updating Delivery entry: {exc}', category='error')
 
     return redirect(url_for('admin.delivery', **redirect_params))
 
@@ -1025,6 +1158,122 @@ def dashboard():
             'ads': net_sales / 31,
             'adtc': transaction_count / 31,
         })
+
+    def _format_tracker_date_range(range_start, range_end):
+        if range_start == range_end:
+            return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year}"
+        if range_start.year == range_end.year and range_start.month == range_end.month:
+            return f"{range_start.strftime('%b')} {range_start.day}-{range_end.day}, {range_start.year}"
+        if range_start.year == range_end.year:
+            return f"{range_start.strftime('%b')} {range_start.day} - {range_end.strftime('%b')} {range_end.day}, {range_start.year}"
+        return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year} - {range_end.strftime('%b')} {range_end.day}, {range_end.year}"
+
+    def _summarize_missing_dates(missing_dates):
+        if not missing_dates:
+            return []
+        missing_dates = sorted(missing_dates)
+        ranges = []
+        range_start = missing_dates[0]
+        previous = missing_dates[0]
+        for missing_date in missing_dates[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            ranges.append(_format_tracker_date_range(range_start, previous))
+            range_start = missing_date
+            previous = missing_date
+        ranges.append(_format_tracker_date_range(range_start, previous))
+        return ranges
+
+    expected_dates = []
+    tracker_cursor = start_date
+    while tracker_cursor <= end_date:
+        expected_dates.append(tracker_cursor)
+        tracker_cursor += timedelta(days=1)
+
+    dashboard_store_count = len(dashboard_store_ids)
+    daily_report_dates_by_store = {}
+    if dashboard_store_ids:
+        daily_report_date_rows = (
+            db.session.query(DailyReport.store_id, DailyReport.report_date)
+            .filter(
+                DailyReport.store_id.in_(dashboard_store_ids),
+                DailyReport.report_date >= start_date,
+                DailyReport.report_date <= end_date,
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, report_date in daily_report_date_rows:
+            if store_id and report_date:
+                daily_report_dates_by_store.setdefault(int(store_id), set()).add(report_date)
+
+    invensync_dates_by_store = {}
+    if dashboard_store_ids:
+        invensync_date_rows = (
+            db.session.query(DailyEndingInventory.store_id, DailyEndingInventory.inventory_date)
+            .filter(
+                DailyEndingInventory.store_id.in_(dashboard_store_ids),
+                DailyEndingInventory.inventory_date >= start_date,
+                DailyEndingInventory.inventory_date <= end_date,
+                DailyEndingInventory.is_finalized.is_(True),
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, inventory_date in invensync_date_rows:
+            if store_id and inventory_date:
+                invensync_dates_by_store.setdefault(int(store_id), set()).add(inventory_date)
+
+    def _build_missing_tool_rows(date_map):
+        rows = []
+        for store in sorted(stores, key=lambda item: (item.name or '').lower()):
+            available_dates = date_map.get(int(store.id), set())
+            missing_dates = [expected_date for expected_date in expected_dates if expected_date not in available_dates]
+            if not missing_dates:
+                continue
+            rows.append({
+                'store_name': store.name,
+                'missing_count': len(missing_dates),
+                'date_ranges': _summarize_missing_dates(missing_dates),
+            })
+        return rows
+
+    daily_report_missing_rows = _build_missing_tool_rows(daily_report_dates_by_store)
+    invensync_missing_rows = _build_missing_tool_rows(invensync_dates_by_store)
+    daily_report_store_count = dashboard_store_count - len(daily_report_missing_rows)
+    invensync_store_count = dashboard_store_count - len(invensync_missing_rows)
+    oracle_store_count = (
+        db.session.query(StoreProductBuffer.store_id)
+        .filter(StoreProductBuffer.store_id.in_(dashboard_store_ids))
+        .distinct()
+        .count()
+        if dashboard_store_ids else 0
+    )
+    icount_tool_tracker = {
+        'total_stores': dashboard_store_count,
+        'daily_reports': {
+            'label': 'Daily Reports',
+            'count': daily_report_store_count,
+            'subtitle': 'stores with complete uploads',
+            'missing_rows': daily_report_missing_rows,
+            'show_missing_details': True,
+        },
+        'invensync': {
+            'label': 'Invensync',
+            'count': invensync_store_count,
+            'subtitle': 'stores with complete updates',
+            'missing_rows': invensync_missing_rows,
+            'show_missing_details': True,
+        },
+        'oracle': {
+            'label': 'Oracle',
+            'count': oracle_store_count,
+            'subtitle': 'stores with Oracle buffer setup',
+            'missing_rows': [],
+            'show_missing_details': False,
+        },
+    }
 
     targets = StoreTarget.query.filter(
         StoreTarget.store_id.in_(dashboard_store_ids),
@@ -1452,6 +1701,7 @@ def dashboard():
         wastage_performance=wastage_performance,
         discount_performance=discount_performance,
         starlink_rows=starlink_rows,
+        icount_tool_tracker=icount_tool_tracker,
     )
 
 @admin.route('admin/users')
@@ -1991,7 +2241,12 @@ def update_store(store_id):
 
 # Cluster Routes
 @admin.route('admin/clusters')
+@login_required
 def clusters():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
     clusters = Cluster.query.all()
     # Get users with Cluster Manager role who are not already managing a cluster
     assigned_manager_ids = [c.manager_id for c in clusters if c.manager_id]
@@ -1999,11 +2254,22 @@ def clusters():
         User.role == 'Cluster Manager',
         ~User.id.in_(assigned_manager_ids)
     ).all()
-    return render_template('admin/clusters.html', user=current_user, clusters=clusters, managers=managers)
+    return render_template(
+        'admin/clusters.html',
+        user=current_user,
+        clusters=clusters,
+        managers=managers,
+        can_manage_clusters=current_user.role in ('Superadmin', 'Admin'),
+    )
 
 
 @admin.route('admin/clusters/create', methods=['POST'])
+@login_required
 def create_cluster():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('admin.clusters'))
+
     try:
         name = request.form.get('name')
         description = request.form.get('description')
@@ -2051,7 +2317,12 @@ def create_cluster():
 
 
 @admin.route('admin/clusters/<int:cluster_id>/manage')
+@login_required
 def manage_cluster(cluster_id):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
     cluster = Cluster.query.get_or_404(cluster_id)
     # Get stores that are not assigned to any cluster
     available_stores = Store.query.filter_by(cluster_id=None).all()
@@ -2061,11 +2332,23 @@ def manage_cluster(cluster_id):
         User.role == 'Cluster Manager',
         ~User.id.in_(assigned_manager_ids)
     ).all()
-    return render_template('admin/cluster_manage.html', user=current_user, cluster=cluster, available_stores=available_stores, available_managers=available_managers)
+    return render_template(
+        'admin/cluster_manage.html',
+        user=current_user,
+        cluster=cluster,
+        available_stores=available_stores,
+        available_managers=available_managers,
+        can_manage_clusters=current_user.role in ('Superadmin', 'Admin'),
+    )
 
 
 @admin.route('admin/clusters/<int:cluster_id>/add-stores', methods=['POST'])
+@login_required
 def add_stores_to_cluster(cluster_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('admin.manage_cluster', cluster_id=cluster_id))
+
     try:
         cluster = Cluster.query.get_or_404(cluster_id)
         store_ids = request.form.getlist('store_ids')
@@ -2106,7 +2389,12 @@ def add_stores_to_cluster(cluster_id):
 
 
 @admin.route('admin/clusters/<int:cluster_id>/remove-store/<int:store_id>', methods=['POST'])
+@login_required
 def remove_store_from_cluster(cluster_id, store_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('admin.manage_cluster', cluster_id=cluster_id))
+
     try:
         store = Store.query.get_or_404(store_id)
         
@@ -2139,7 +2427,12 @@ def remove_store_from_cluster(cluster_id, store_id):
 
 
 @admin.route('admin/clusters/<int:cluster_id>/delete', methods=['POST'])
+@login_required
 def delete_cluster(cluster_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('admin.clusters'))
+
     try:
         cluster = Cluster.query.get_or_404(cluster_id)
         affected_store_ids = [store.id for store in cluster.stores]
@@ -2171,7 +2464,12 @@ def delete_cluster(cluster_id):
 
 
 @admin.route('admin/clusters/<int:cluster_id>/assign-manager', methods=['POST'])
+@login_required
 def assign_manager(cluster_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('admin.manage_cluster', cluster_id=cluster_id))
+
     try:
         cluster = Cluster.query.get_or_404(cluster_id)
         manager_id = request.form.get('manager_id')
@@ -3537,6 +3835,7 @@ def invensync():
         selected_tab = 'summary'
 
     selected_date = date.today()
+    update_cutoff_date = selected_date - timedelta(days=1)
     month_start = selected_date.replace(day=1)
 
     # Get all stores
@@ -3573,7 +3872,7 @@ def invensync():
     store_summaries = []
     for store in stores:
         inventory = inventory_by_store.get(store.id)
-        update_status = _build_admin_invensync_update_status(store.id, month_start, selected_date)
+        update_status = _build_admin_invensync_update_status(store.id, month_start, update_cutoff_date)
         
         store_summaries.append({
             'store': store,
@@ -3617,6 +3916,7 @@ def invensync():
         preview_store=preview_store,
         selected_tab=selected_tab,
         selected_date=selected_date.strftime('%Y-%m-%d'),
+        update_cutoff_date=update_cutoff_date.strftime('%Y-%m-%d'),
         today=date.today().strftime('%Y-%m-%d'),
         global_invensync_config=config_data,
         store_invensync_configs=config_data.get('store_configs', {}),

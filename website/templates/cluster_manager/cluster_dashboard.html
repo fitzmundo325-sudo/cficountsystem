@@ -3,6 +3,57 @@
 {% block title %}Cluster Dashboard{% endblock %}
 
 {% block content %}
+<style>
+  .icount-tracker-scroll {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .icount-tracker-scroll::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  .icount-scrollbar {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    top: 0;
+    width: 7px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.35);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 700ms ease;
+  }
+
+  .icount-scrollbar-thumb {
+    position: absolute;
+    left: 1px;
+    right: 1px;
+    top: 0;
+    min-height: 28px;
+    border-radius: 999px;
+    background: #64748b;
+  }
+
+  .icount-scrollbar.is-hidden {
+    display: none;
+  }
+
+  .icount-scroll-wrap.is-scrolling .icount-scrollbar {
+    opacity: 1;
+  }
+
+  html.admin-dark .icount-scrollbar {
+    background: rgba(51, 65, 85, 0.95);
+  }
+
+  html.admin-dark .icount-scrollbar-thumb {
+    background: #cbd5e1;
+  }
+</style>
 <!-- Top Header -->
 <header class="admin-dashboard-surface sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex items-center justify-between">
   <div class="flex items-center gap-4">
@@ -639,7 +690,130 @@
 
     </div>
 
-    <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+    <div class="mt-4 space-y-4">
+    {% set tracker = icount_tool_tracker|default(none) %}
+    <div class="rounded-xl border border-slate-200 overflow-hidden">
+      <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+        <h3 class="text-sm font-bold text-slate-800">Icount Tool Tracker</h3>
+        <span class="text-[11px] font-semibold text-slate-500">
+          {{ selected_start_date_display }}{% if selected_start_date != selected_end_date %} - {{ selected_end_date_display }}{% endif %}
+        </span>
+      </div>
+      <div class="hidden overflow-x-auto md:block">
+        <table class="min-w-full divide-y divide-slate-200 text-sm">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Daily Reports</th>
+              <th class="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Invensync</th>
+              <th class="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Oracle</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 bg-white">
+            <tr>
+              {% for item in [tracker.daily_reports if tracker else none, tracker.invensync if tracker else none, tracker.oracle if tracker else none] %}
+              <td class="w-1/3 px-4 py-4 align-top">
+                {% if item %}
+                <div class="flex min-h-28 flex-col justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2">
+                  <div class="min-w-0">
+                    <div class="break-words text-xs font-bold uppercase tracking-wide text-slate-500">{{ item.subtitle }}</div>
+                    <div class="mt-0.5 text-sm font-semibold text-slate-700">
+                      {% if item.show_missing_details %}
+                        {{ item.missing_rows|length }} store{{ '' if item.missing_rows|length == 1 else 's' }} need update
+                      {% else %}
+                        Setup progress
+                      {% endif %}
+                    </div>
+                  </div>
+                  <div class="text-left text-xl font-extrabold text-slate-900">{{ item.count }}/{{ tracker.total_stores }}</div>
+                </div>
+                {% if item.show_missing_details and item.missing_rows %}
+                <div class="icount-scroll-wrap relative mt-3">
+                <div class="icount-tracker-scroll max-h-72 overflow-y-auto pr-4 text-left">
+                  <table class="min-w-full table-fixed text-xs">
+                    <tbody class="divide-y divide-amber-100">
+                  {% for missing in item.missing_rows %}
+                  <tr>
+                    <td class="w-2/5 break-words py-2 pr-3 align-top font-bold text-slate-900">{{ missing.store_name }}</td>
+                    <td class="w-3/5 break-words py-2 align-top text-right">
+                      <div class="font-semibold text-amber-800">{{ missing.missing_count }} missing</div>
+                      <div class="mt-0.5 whitespace-normal break-words text-[11px] leading-snug text-slate-600">{{ missing.date_ranges|join(', ') }}</div>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+                <div class="icount-scrollbar" aria-hidden="true"><div class="icount-scrollbar-thumb"></div></div>
+                </div>
+                {% elif item.show_missing_details %}
+                <div class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-xs font-bold text-emerald-700">
+                  All stores complete
+                </div>
+                {% endif %}
+                {% else %}
+                <div class="text-center text-sm font-semibold text-slate-500">--</div>
+                {% endif %}
+              </td>
+              {% endfor %}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="space-y-3 bg-white p-3 md:hidden">
+        {% for item in [tracker.daily_reports if tracker else none, tracker.invensync if tracker else none, tracker.oracle if tracker else none] %}
+        <section class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+          <div class="border-b border-slate-200 bg-slate-50 px-3 py-2">
+            <h4 class="text-xs font-bold uppercase tracking-wide text-slate-600">
+              {% if loop.index == 1 %}Daily Reports{% elif loop.index == 2 %}Invensync{% else %}Oracle{% endif %}
+            </h4>
+          </div>
+          <div class="p-3">
+            {% if item %}
+            <div class="flex min-h-24 flex-col justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2">
+              <div class="min-w-0">
+                <div class="whitespace-normal break-words text-[11px] font-bold uppercase tracking-wide text-slate-500">{{ item.subtitle }}</div>
+                <div class="mt-0.5 text-xs font-semibold text-slate-700">
+                  {% if item.show_missing_details %}
+                    {{ item.missing_rows|length }} store{{ '' if item.missing_rows|length == 1 else 's' }} need update
+                  {% else %}
+                    Setup progress
+                  {% endif %}
+                </div>
+              </div>
+              <div class="text-left text-lg font-extrabold text-slate-900">{{ item.count }}/{{ tracker.total_stores }}</div>
+            </div>
+            {% if item.show_missing_details and item.missing_rows %}
+            <div class="icount-scroll-wrap relative mt-3">
+            <div class="icount-tracker-scroll max-h-72 overflow-y-auto overscroll-contain pr-4">
+              <div class="divide-y divide-amber-100">
+                {% for missing in item.missing_rows %}
+                <div class="py-2">
+                  <div class="flex flex-wrap items-start justify-between gap-2">
+                    <div class="min-w-0 flex-1 break-words font-bold text-slate-900 text-xs">{{ missing.store_name }}</div>
+                    <div class="shrink-0 text-xs font-semibold text-amber-800">{{ missing.missing_count }} missing</div>
+                  </div>
+                  <div class="mt-1 whitespace-normal break-words text-[11px] leading-snug text-slate-600">{{ missing.date_ranges|join(', ') }}</div>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            <div class="icount-scrollbar" aria-hidden="true"><div class="icount-scrollbar-thumb"></div></div>
+            </div>
+            {% elif item.show_missing_details %}
+            <div class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-xs font-bold text-emerald-700">
+              All stores complete
+            </div>
+            {% endif %}
+            {% else %}
+            <div class="text-center text-sm font-semibold text-slate-500">--</div>
+            {% endif %}
+          </div>
+        </section>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
     <div class="rounded-xl border border-slate-200">
       <div class="border-b border-slate-200 bg-slate-50 px-4 py-2.5">
         <h3 class="text-sm font-bold text-slate-800">{{ discount_performance.title_label if discount_performance else 'Discount Performance Breakdown' }}</h3>
@@ -714,6 +888,7 @@
       </div>
     </div>
     {% endif %}
+    </div>
     </div>
   </div>
 
@@ -1931,6 +2106,57 @@
       renderPosSoldProducts('all');
       renderPosMixCategoryPie('all');
     }
+
+    function syncIcountScrollbars() {
+      document.querySelectorAll('.icount-scroll-wrap').forEach((wrap) => {
+        const scroller = wrap.querySelector('.icount-tracker-scroll');
+        const track = wrap.querySelector('.icount-scrollbar');
+        const thumb = wrap.querySelector('.icount-scrollbar-thumb');
+        if (!scroller || !track || !thumb) return;
+
+        const scrollHeight = scroller.scrollHeight || 0;
+        const clientHeight = scroller.clientHeight || 0;
+        const canScroll = scrollHeight > clientHeight + 2;
+        track.classList.toggle('is-hidden', !canScroll);
+        if (!canScroll) return;
+
+        const trackHeight = track.clientHeight || clientHeight;
+        const thumbHeight = Math.max(28, Math.round((clientHeight / scrollHeight) * trackHeight));
+        const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+        const maxScrollTop = Math.max(1, scrollHeight - clientHeight);
+        const thumbTop = Math.round((scroller.scrollTop / maxScrollTop) * maxThumbTop);
+
+        thumb.style.height = `${thumbHeight}px`;
+        thumb.style.transform = `translateY(${thumbTop}px)`;
+      });
+    }
+
+    const icountScrollTimers = new WeakMap();
+    function showIcountScrollbar(scroller) {
+      const wrap = scroller.closest('.icount-scroll-wrap');
+      if (!wrap) return;
+      wrap.classList.add('is-scrolling');
+      const existingTimer = icountScrollTimers.get(wrap);
+      if (existingTimer) clearTimeout(existingTimer);
+      const timer = setTimeout(() => {
+        wrap.classList.remove('is-scrolling');
+        icountScrollTimers.delete(wrap);
+      }, 1600);
+      icountScrollTimers.set(wrap, timer);
+    }
+
+    document.querySelectorAll('.icount-tracker-scroll').forEach((scroller) => {
+      scroller.addEventListener('scroll', () => {
+        syncIcountScrollbars();
+        showIcountScrollbar(scroller);
+      }, { passive: true });
+      scroller.addEventListener('touchstart', () => showIcountScrollbar(scroller), { passive: true });
+      scroller.addEventListener('wheel', () => showIcountScrollbar(scroller), { passive: true });
+      scroller.addEventListener('mouseenter', () => showIcountScrollbar(scroller));
+    });
+    window.addEventListener('resize', syncIcountScrollbars);
+    setTimeout(syncIcountScrollbars, 0);
+    setTimeout(syncIcountScrollbars, 300);
   });
 </script>
 

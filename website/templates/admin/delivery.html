@@ -114,7 +114,19 @@
           <tr class="hover:bg-slate-50 transition-colors">
             <td class="px-4 py-3 text-sm text-slate-700">{{ row.store_name }}</td>
             <td class="px-4 py-3 text-sm text-slate-700">{{ row.report_date.strftime('%Y-%m-%d') if row.report_date else '--' }}</td>
-            <td class="px-4 py-3 text-sm font-medium text-slate-800">{{ row.product_name }}</td>
+            <td class="px-4 py-3 text-sm font-medium text-slate-800">
+              <div class="flex flex-wrap items-center gap-2">
+                <span>{{ row.product_name }}</span>
+                {% if row.has_manual %}
+                <span class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">Manual</span>
+                {% endif %}
+              </div>
+              {% if row.manual_note %}
+              <div class="mt-1 rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-xs text-indigo-800">
+                {{ row.manual_note }}
+              </div>
+              {% endif %}
+            </td>
             <td class="px-4 py-3 text-sm text-slate-700">{{ row.upload_source or 'delivery' }}</td>
             <td class="px-4 py-3 text-sm text-slate-700 text-right">{{ row.entry_count }}</td>
             <td class="px-4 py-3 text-sm text-slate-800 text-right">{{ row.quantity }}</td>
@@ -208,13 +220,34 @@
           {% for row in review_rows %}
           <tr class="transition-colors hover:bg-slate-50">
             <td class="px-4 py-3 text-sm text-slate-700">{{ row.rso_no or '--' }}</td>
-            <td class="px-4 py-3 text-sm font-medium text-slate-800">{{ row.product_name }}</td>
+            <td class="px-4 py-3 text-sm font-medium text-slate-800">
+              <div class="flex flex-wrap items-center gap-2">
+                <span>{{ row.product_name }}</span>
+                {% if (row.rso_no or '').strip().lower() == 'manual entry' %}
+                <span class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">Manual</span>
+                {% endif %}
+              </div>
+              {% if row.manual_note %}
+              <div class="mt-1 rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-xs text-indigo-800">
+                {{ row.manual_note }}
+              </div>
+              {% endif %}
+            </td>
             <td class="px-4 py-3 text-right text-sm text-slate-700">{{ row.quantity }}</td>
             <td class="px-4 py-3 text-right text-sm font-semibold text-slate-900">{{ row.received_quantity if row.received_quantity is not none else row.quantity }}</td>
             <td class="px-4 py-3 text-sm text-slate-700">{{ row.upload_source or 'delivery' }}</td>
             <td class="px-4 py-3 text-sm text-slate-700">{{ row.delivery_reviewed_date.strftime('%Y-%m-%d') if row.delivery_reviewed_date else '--' }}</td>
             <td class="px-4 py-3 text-right">
-              <button type="button" class="openDeleteDeliveryModal rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100" data-delete-url="{{ url_for('admin.delete_delivery_entry', delivery_id=row.id) }}" data-product-name="{{ row.product_name }}" data-quantity="{{ row.quantity }}" data-received="{{ row.received_quantity if row.received_quantity is not none else row.quantity }}">
+              <button
+                type="button"
+                class="openEditDeliveryModal rounded-lg bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+                data-edit-url="{{ url_for('admin.edit_delivery_entry', delivery_id=row.id) }}"
+                data-product-name="{{ row.product_name }}"
+                data-quantity="{{ row.quantity }}"
+                data-received="{{ row.received_quantity if row.received_quantity is not none else '' }}">
+                Edit
+              </button>
+              <button type="button" class="openDeleteDeliveryModal ml-2 rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100" data-delete-url="{{ url_for('admin.delete_delivery_entry', delivery_id=row.id) }}" data-product-name="{{ row.product_name }}" data-quantity="{{ row.quantity }}" data-received="{{ row.received_quantity if row.received_quantity is not none else row.quantity }}">
                 Delete
               </button>
             </td>
@@ -233,6 +266,37 @@
 </div>
 
 {% if active_tab == 'review' and review_rows %}
+<div id="editDeliveryModal" class="fixed inset-0 z-50 hidden overflow-y-auto">
+  <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm" data-edit-row-close></div>
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative w-full max-w-md rounded-2xl border border-indigo-200 bg-white shadow-2xl">
+      <div class="border-b border-slate-200 px-6 py-4">
+        <h3 class="text-xl font-bold text-slate-900">Edit Delivery Quantity</h3>
+        <p class="mt-1 text-sm text-slate-500">Update the quantity for this product row.</p>
+      </div>
+      <form id="editDeliveryForm" method="POST" class="space-y-4 px-6 py-5">
+        <input type="hidden" name="review_store_id" value="{{ review_store_id or '' }}">
+        <input type="hidden" name="review_date" value="{{ review_date }}">
+        <div class="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+          <p class="font-semibold" id="editDeliveryProductName">This item</p>
+        </div>
+        <div>
+          <label for="edit_delivery_quantity" class="mb-1 block text-sm font-semibold text-slate-700">Quantity</label>
+          <input id="edit_delivery_quantity" name="quantity" type="number" min="0" step="1" required class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
+        </div>
+        <div>
+          <label for="edit_delivery_received_quantity" class="mb-1 block text-sm font-semibold text-slate-700">Received Quantity</label>
+          <input id="edit_delivery_received_quantity" name="received_quantity" type="number" min="0" step="1" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500" placeholder="Leave blank to use Qty">
+        </div>
+        <div class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" data-edit-row-close class="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100">Cancel</button>
+          <button type="submit" class="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div id="deleteDeliveryModal" class="fixed inset-0 z-50 hidden overflow-y-auto">
   <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm" data-delete-row-close></div>
   <div class="flex min-h-screen items-center justify-center p-4">
@@ -329,6 +393,31 @@
       storeSelect.disabled = !Boolean((clusterSelect.value || '').trim());
     });
     syncStoreState();
+  })();
+
+  (function() {
+    const modal = document.getElementById('editDeliveryModal');
+    const form = document.getElementById('editDeliveryForm');
+    const productNameEl = document.getElementById('editDeliveryProductName');
+    const quantityInput = document.getElementById('edit_delivery_quantity');
+    const receivedInput = document.getElementById('edit_delivery_received_quantity');
+    if (!modal || !form) return;
+    function openModal(button) {
+      form.action = button.dataset.editUrl || '';
+      if (productNameEl) productNameEl.textContent = button.dataset.productName || 'This item';
+      if (quantityInput) quantityInput.value = button.dataset.quantity || '0';
+      if (receivedInput) receivedInput.value = button.dataset.received || '';
+      modal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+      setTimeout(() => quantityInput?.focus(), 50);
+    }
+    function closeModal() {
+      modal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+      form.action = '';
+    }
+    document.querySelectorAll('.openEditDeliveryModal').forEach((button) => button.addEventListener('click', () => openModal(button)));
+    modal.querySelectorAll('[data-edit-row-close]').forEach((el) => el.addEventListener('click', closeModal));
   })();
 
   (function() {

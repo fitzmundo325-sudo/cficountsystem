@@ -28,13 +28,18 @@
 
   .pos-tour-label {
     position: fixed;
-    z-index: 9999;
+    z-index: 10000;
     max-width: min(360px, calc(100vw - 32px));
+    background: #0f172a;
     color: #ffffff;
+    padding: 18px 20px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
     font-size: 17px;
-    font-weight: 600;
+    font-weight: 700;
     line-height: 1.35;
     text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
     pointer-events: auto;
   }
 
@@ -55,6 +60,57 @@
   }
 
   .pos-tour-label button:hover {
+    background: #f8fafc;
+    transform: translateY(-1px);
+  }
+
+  .motif-tour-panel {
+    position: fixed;
+    z-index: 10030;
+    background: rgba(15, 23, 42, 0.72);
+    pointer-events: auto;
+  }
+
+  .motif-tour-target {
+    position: relative;
+    z-index: 10031 !important;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.45), 0 0 24px rgba(14, 165, 233, 0.6);
+  }
+
+  .motif-tour-label {
+    position: fixed;
+    z-index: 10032;
+    max-width: min(360px, calc(100vw - 32px));
+    background: #0f172a;
+    color: #ffffff;
+    padding: 18px 20px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.35;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
+    pointer-events: auto;
+  }
+
+  .motif-tour-label button {
+    margin-top: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 800;
+    text-shadow: none;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .motif-tour-label button:hover {
     background: #f8fafc;
     transform: translateY(-1px);
   }
@@ -165,7 +221,6 @@
           {% endif %}
         </div>
       </form>
-      {% if show_pos_flow_guide %}
       <div id="pos-tour-sample-card" class="hidden rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p class="text-[11px] font-semibold text-amber-700">Showing extracted preview data (not yet saved).</p>
@@ -204,7 +259,6 @@
           </table>
         </div>
       </div>
-      {% endif %}
       {% elif pos_sold_items %}
       <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
         <p class="text-xs font-semibold text-emerald-800">POS sold already uploaded for this report date (one-time upload only).</p>
@@ -383,6 +437,111 @@
 </div>
 {% endif %}
 
+{% if user and user.role == 'Store Manager' and motif_charge_payload %}
+<div id="pos-motif-breakdown-modal" class="fixed inset-0 z-[9998] hidden">
+  <div class="absolute inset-0 bg-slate-950/60"></div>
+  <div class="relative z-10 flex min-h-full items-center justify-center p-4">
+    <div class="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div class="w-[calc(100%+1.25rem)] bg-slate-900 px-6 py-4 text-white">
+        <h3 class="text-xl font-bold">Additional Charge for Motif Detected</h3>
+        <p class="mt-1 text-sm text-slate-200">Enter the 2 or 3 products included in this motif charge, their prices, and any discount.</p>
+      </div>
+      <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-950">
+          <div class="text-xs font-bold uppercase text-slate-700">Quantity</div>
+          <div class="mt-1 text-lg font-black">{{ motif_charge_payload.quantity }}</div>
+        </div>
+
+        <div id="pos-motif-groups" class="space-y-4">
+          {% for motif_num in range(1, (motif_charge_payload.quantity|int) + 1) %}
+          <div class="pos-motif-group overflow-hidden rounded-xl border border-slate-200" data-motif-index="{{ motif_num }}">
+            <div class="flex items-center justify-between bg-slate-50 px-4 py-3">
+              <h4 class="text-sm font-black text-slate-950">Motif #{{ motif_num }}</h4>
+              <span class="text-xs font-semibold text-slate-700">Select 2 or 3 products</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                  <tr>
+                    <th class="px-3 py-2 text-left text-xs font-bold uppercase text-slate-500">Product Included / Combo With</th>
+                    <th class="w-28 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Sold Qty</th>
+                    <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Price</th>
+                    <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Discount</th>
+                    <th class="w-12 px-3 py-2 text-center text-xs font-bold uppercase text-slate-500">Clear</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  {% for row_num in range(1, 4) %}
+                  <tr data-motif-index="{{ motif_num }}" data-row-index="{{ row_num }}">
+                    <td class="px-3 py-2">
+                      <div class="relative">
+                        <input type="search" class="pos-motif-product-input w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-500" placeholder="Type to search Product Master" autocomplete="off">
+                        <div class="pos-motif-product-dropdown fixed z-[10020] hidden max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl"></div>
+                      </div>
+                    </td>
+                    <td class="px-3 py-2">
+                      <input type="number" min="0" step="1" class="pos-motif-qty-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0">
+                    </td>
+                    <td class="px-3 py-2">
+                      <input type="number" min="0" step="0.01" class="pos-motif-price-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0.00">
+                    </td>
+                    <td class="px-3 py-2">
+                      <input type="number" min="0" step="0.01" class="pos-motif-discount-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0.00">
+                    </td>
+                    <td class="px-3 py-2 text-center">
+                      <button type="button" class="clear-pos-motif-row inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100" title="Clear motif product row">×</button>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="shrink-0 flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <button type="button" id="pos-motif-close-btn" class="rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-100">Close</button>
+        <button type="button" id="pos-motif-save-btn" class="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 hover:bg-slate-800">Save Breakdown</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="pos-motif-guide-start-modal" class="fixed inset-0 z-[10040] hidden items-center justify-center bg-black/40">
+  <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
+    <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
+      <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+      </div>
+      <div>
+        <h2 class="text-white font-bold text-lg leading-tight">Motif Breakdown Guide</h2>
+        <p class="text-slate-400 text-xs mt-0.5">{{ store.name }}</p>
+      </div>
+    </div>
+    <div class="px-6 py-5 space-y-4">
+      <div class="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-500 flex-shrink-0 mt-0.5">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 16v-4M12 8h.01"/>
+        </svg>
+        <p class="text-sm text-slate-700">Additional Charge for Motif was detected. Please tell the system what products are included in each motif charge.</p>
+      </div>
+      <p class="text-sm text-slate-600">This guide will point you to product search, quantity, price/discount, and save.</p>
+    </div>
+    <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+      <button type="button" id="pos-motif-guide-start-btn" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+        Got it, start guide!
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     const reportDateInput = document.getElementById('report_date');
@@ -396,8 +555,17 @@
     const posScanSuccess = {{ (pos_scan_success | default(false)) | tojson }};
     const posScanRows = {{ (pos_scan_rows | default(0)) | tojson }};
     const selectedReportDate = {{ selected_report_date|tojson }};
+    const motifChargePayload = {{ motif_charge_payload|default(none)|tojson }};
+    const motifProductOptions = {{ motif_product_options|default([])|tojson }};
+    const motifBreakdownKey = `invensyncMotifBreakdown:{{ store.id }}:${selectedReportDate}`;
     const missingDates = {{ missing_dates|tojson }};
     const nextMissingDate = {{ next_missing_date|tojson }};
+    const isPosGuideMode = {{ (request.args.get('guide') == '1')|tojson }};
+    if (isPosGuideMode && window.history && window.history.replaceState) {
+      const cleanGuideUrl = new URL(window.location.href);
+      cleanGuideUrl.searchParams.delete('guide');
+      window.history.replaceState({}, '', `${cleanGuideUrl.pathname}${cleanGuideUrl.search}${cleanGuideUrl.hash}`);
+    }
     const missingDatesModal = document.getElementById('missing-dates-modal');
     const missingDatesGoBtn = document.getElementById('missing-dates-go');
     const shouldShowPosTour = {{ (show_pos_flow_guide | default(false)) | tojson }};
@@ -413,6 +581,435 @@
     const zReadingLocalPreviewName = document.getElementById('z-reading-local-preview-name');
     let posTourActive = false;
     let posTourStepIndex = 0;
+    let motifGuideActive = false;
+    let motifGuideStepIndex = 0;
+    const motifGuideSeenKey = 'motifBreakdownGuideSeenV2';
+
+    function notifyPos(message, type = 'info') {
+      if (typeof toast !== 'undefined' && typeof toast.show === 'function') {
+        toast.show(message, type);
+      } else {
+        alert(message);
+      }
+    }
+
+    function formatPeso(value) {
+      return `₱${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+
+    function findMotifProductOption(productName) {
+      const normalizedName = String(productName || '').trim().toLowerCase();
+      if (!normalizedName) return null;
+      return (motifProductOptions || []).find(product => String(product.description || '').trim().toLowerCase() === normalizedName) || null;
+    }
+
+    function resetMotifRow(row) {
+      if (!row) return;
+      const productInput = row.querySelector('.pos-motif-product-input');
+      if (productInput) {
+        productInput.value = '';
+        productInput.classList.remove('border-red-300');
+        productInput.title = '';
+      }
+      row.querySelectorAll('.pos-motif-qty-input, .pos-motif-price-input, .pos-motif-discount-input').forEach(input => {
+        input.value = '';
+        input.disabled = true;
+        input.classList.add('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+      });
+    }
+
+    function disableMotifRowFields(row) {
+      if (!row) return;
+      row.querySelectorAll('.pos-motif-qty-input, .pos-motif-price-input, .pos-motif-discount-input').forEach(input => {
+        input.value = '';
+        input.disabled = true;
+        input.classList.add('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+      });
+    }
+
+    function enableMotifRow(row) {
+      if (!row) return;
+      row.querySelectorAll('.pos-motif-qty-input, .pos-motif-price-input, .pos-motif-discount-input').forEach(input => {
+        input.disabled = false;
+        input.classList.remove('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+      });
+    }
+
+    function hidePosMotifProductDropdown(input) {
+      const dropdown = input?.closest('td')?.querySelector('.pos-motif-product-dropdown');
+      if (dropdown) dropdown.classList.add('hidden');
+    }
+
+    function positionPosMotifProductDropdown(input, dropdown) {
+      if (!input || !dropdown) return;
+      const rect = input.getBoundingClientRect();
+      dropdown.style.left = `${rect.left}px`;
+      dropdown.style.top = `${rect.bottom + 4}px`;
+      dropdown.style.width = `${rect.width}px`;
+    }
+
+    function renderPosMotifProductDropdown(input) {
+      const dropdown = input?.closest('td')?.querySelector('.pos-motif-product-dropdown');
+      if (!input || !dropdown) return;
+      const query = String(input.value || '').trim().toLowerCase();
+      const products = (motifProductOptions || [])
+        .filter(product => {
+          const description = String(product.description || '').toLowerCase();
+          const code = String(product.code || '').toLowerCase();
+          return !query || description.includes(query) || code.includes(query);
+        })
+        .slice(0, 80);
+
+      dropdown.innerHTML = '';
+      positionPosMotifProductDropdown(input, dropdown);
+      if (!products.length) {
+        const empty = document.createElement('div');
+        empty.className = 'px-3 py-2 text-sm text-slate-500';
+        empty.textContent = 'No product found';
+        dropdown.appendChild(empty);
+        dropdown.classList.remove('hidden');
+        return;
+      }
+
+      products.forEach(product => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-950';
+        const name = document.createElement('span');
+        name.className = 'font-semibold';
+        name.textContent = product.description || '';
+        const meta = document.createElement('span');
+        meta.className = 'mt-0.5 block text-[11px] text-slate-500';
+        meta.textContent = `${product.code || '-'} · ${formatPeso(product.price || 0)}`;
+        button.appendChild(name);
+        button.appendChild(meta);
+        button.addEventListener('mousedown', function(event) {
+          event.preventDefault();
+          input.value = product.description || '';
+          hidePosMotifProductDropdown(input);
+          syncMotifProductInput(input, { clearInvalid: true });
+        });
+        dropdown.appendChild(button);
+      });
+      dropdown.classList.remove('hidden');
+    }
+
+    function syncMotifProductInput(input, options = {}) {
+      const row = input.closest('tr');
+      const selectedProduct = findMotifProductOption(input.value);
+      input.classList.toggle('border-red-300', Boolean(input.value.trim()) && !selectedProduct);
+      input.title = selectedProduct ? `Product Master Code: ${selectedProduct.code || '-'}` : (input.value.trim() ? 'Select a product from Product Master' : '');
+      if (!selectedProduct) {
+        if (options.clearInvalid) {
+          resetMotifRow(row);
+        } else {
+          disableMotifRowFields(row);
+        }
+        return;
+      }
+      enableMotifRow(row);
+      const qtyInput = row.querySelector('.pos-motif-qty-input');
+      const priceInput = row.querySelector('.pos-motif-price-input');
+      if (qtyInput && !qtyInput.value) qtyInput.value = '1';
+      if (priceInput && !priceInput.value && Number(selectedProduct.price || 0) > 0) {
+        priceInput.value = Number(selectedProduct.price || 0).toFixed(2);
+      }
+    }
+
+    function readMotifRows() {
+      const modal = document.getElementById('pos-motif-breakdown-modal');
+      if (!modal) return [];
+      return Array.from(modal.querySelectorAll('tbody tr')).map(row => {
+        const productInput = row.querySelector('.pos-motif-product-input');
+        const selectedProduct = findMotifProductOption(productInput?.value || '');
+        return {
+          product: selectedProduct?.description || '',
+          product_id: selectedProduct?.id || null,
+          product_code: selectedProduct?.code || null,
+          motif_index: Number(row.dataset.motifIndex || row.closest('.pos-motif-group')?.dataset.motifIndex || 1),
+          row_index: Number(row.dataset.rowIndex || 1),
+          quantity: Number(row.querySelector('.pos-motif-qty-input')?.value || 0),
+          price: Number(row.querySelector('.pos-motif-price-input')?.value || 0),
+          discount: Number(row.querySelector('.pos-motif-discount-input')?.value || 0)
+        };
+      });
+    }
+
+    function loadMotifRows() {
+      const modal = document.getElementById('pos-motif-breakdown-modal');
+      if (!modal) return false;
+      let saved = null;
+      try {
+        saved = JSON.parse(localStorage.getItem(motifBreakdownKey) || 'null');
+      } catch (_) {
+        saved = null;
+      }
+      if (!saved || !Array.isArray(saved.rows)) return false;
+      Array.from(modal.querySelectorAll('tbody tr')).forEach((row, index) => {
+        const savedRow = (saved.rows || []).find(item =>
+          Number(item.motif_index || 1) === Number(row.dataset.motifIndex || 1)
+          && Number(item.row_index || 1) === Number(row.dataset.rowIndex || 1)
+        ) || saved.rows[index] || {};
+        const productInput = row.querySelector('.pos-motif-product-input');
+        const qtyInput = row.querySelector('.pos-motif-qty-input');
+        const priceInput = row.querySelector('.pos-motif-price-input');
+        const discountInput = row.querySelector('.pos-motif-discount-input');
+        if (productInput) productInput.value = savedRow.product || '';
+        if (qtyInput) qtyInput.value = savedRow.quantity || '';
+        if (priceInput) priceInput.value = savedRow.price || '';
+        if (discountInput) discountInput.value = savedRow.discount || '';
+        if (productInput) syncMotifProductInput(productInput);
+      });
+      return true;
+    }
+
+    function openMotifModal() {
+      const modal = document.getElementById('pos-motif-breakdown-modal');
+      if (!modal) return;
+      loadMotifRows();
+      modal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+    }
+
+    function closeMotifModal() {
+      const modal = document.getElementById('pos-motif-breakdown-modal');
+      if (!modal) return;
+      clearMotifGuide();
+      hideMotifGuideStartModal();
+      modal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    function getMotifGuideStartModal() {
+      return document.getElementById('pos-motif-guide-start-modal');
+    }
+
+    function showMotifGuideStartModal() {
+      const modal = getMotifGuideStartModal();
+      if (!modal || localStorage.getItem(motifGuideSeenKey) === '1') return;
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    }
+
+    function hideMotifGuideStartModal() {
+      const modal = getMotifGuideStartModal();
+      if (!modal) return;
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+
+    function getMotifElementGroupRect(elements) {
+      const visibleElements = elements.filter(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (!visibleElements.length) return null;
+      const rects = visibleElements.map(function(el) {
+        return el.getBoundingClientRect();
+      });
+      const padding = 10;
+      return {
+        top: Math.max(0, Math.min.apply(null, rects.map(function(rect) { return rect.top; })) - padding),
+        left: Math.max(0, Math.min.apply(null, rects.map(function(rect) { return rect.left; })) - padding),
+        right: Math.min(window.innerWidth, Math.max.apply(null, rects.map(function(rect) { return rect.right; })) + padding),
+        bottom: Math.min(window.innerHeight, Math.max.apply(null, rects.map(function(rect) { return rect.bottom; })) + padding)
+      };
+    }
+
+    function getMotifGuideStep() {
+      const modal = document.getElementById('pos-motif-breakdown-modal');
+      if (!modal) return null;
+      const firstRow = modal.querySelector('tbody tr[data-motif-index="1"][data-row-index="1"]');
+      const priceDiscountFields = [
+        firstRow?.querySelector('.pos-motif-price-input'),
+        firstRow?.querySelector('.pos-motif-discount-input')
+      ].filter(Boolean);
+      const steps = [
+        {
+          elements: [firstRow?.querySelector('.pos-motif-product-input')],
+          text: 'Type the product included in this motif, then select it from Product Master.',
+          placement: 'right',
+          nextText: 'Next'
+        },
+        {
+          elements: [firstRow?.querySelector('.pos-motif-qty-input')],
+          text: 'Enter how many pieces of this product belong to this motif.',
+          placement: 'left',
+          nextText: 'Next'
+        },
+        {
+          elements: priceDiscountFields,
+          text: 'Price will follow the selected product. Add discount only if this motif product has one.',
+          placement: 'left',
+          nextText: 'Next'
+        },
+        {
+          elements: [document.getElementById('pos-motif-save-btn')],
+          text: 'Click Save Breakdown so the motif products reflect in the InvenSync Sold column.',
+          placement: 'top',
+          nextText: 'Finish'
+        }
+      ];
+      return steps[motifGuideStepIndex] || null;
+    }
+
+    function removeMotifPanels() {
+      document.querySelectorAll('.motif-tour-panel').forEach(function(panel) {
+        panel.remove();
+      });
+      document.querySelectorAll('.motif-tour-label').forEach(function(label) {
+        label.remove();
+      });
+    }
+
+    function clearMotifGuide() {
+      motifGuideActive = false;
+      motifGuideStepIndex = 0;
+      removeMotifPanels();
+      document.querySelectorAll('.motif-tour-target').forEach(function(el) {
+        el.classList.remove('motif-tour-target');
+      });
+    }
+
+    function applyMotifGuideTarget() {
+      document.querySelectorAll('.motif-tour-target').forEach(function(el) {
+        el.classList.remove('motif-tour-target');
+      });
+      const step = getMotifGuideStep();
+      if (!step) return;
+      step.elements.forEach(function(el) {
+        if (el) el.classList.add('motif-tour-target');
+      });
+    }
+
+    function renderMotifGuideSpotlight() {
+      removeMotifPanels();
+      const step = getMotifGuideStep();
+      if (!step) {
+        localStorage.setItem(motifGuideSeenKey, '1');
+        clearMotifGuide();
+        return;
+      }
+      const rect = getMotifElementGroupRect(step.elements);
+      if (!rect) return;
+      [
+        { top: 0, left: 0, width: window.innerWidth, height: rect.top },
+        { top: rect.bottom, left: 0, width: window.innerWidth, height: window.innerHeight - rect.bottom },
+        { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
+        { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top }
+      ].forEach(function(panel) {
+        const el = document.createElement('div');
+        el.className = 'motif-tour-panel';
+        el.style.top = `${panel.top}px`;
+        el.style.left = `${panel.left}px`;
+        el.style.width = `${Math.max(0, panel.width)}px`;
+        el.style.height = `${Math.max(0, panel.height)}px`;
+        document.body.appendChild(el);
+      });
+
+      const label = document.createElement('div');
+      label.className = 'motif-tour-label';
+      const message = document.createElement('div');
+      message.textContent = step.text;
+      const nextButton = document.createElement('button');
+      nextButton.type = 'button';
+      nextButton.textContent = step.nextText;
+      nextButton.addEventListener('click', nextMotifGuideStep);
+      label.appendChild(message);
+      label.appendChild(nextButton);
+
+      if (step.placement === 'top') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.max(24, rect.top - 130)}px`;
+      } else if (step.placement === 'left') {
+        label.style.left = `${Math.max(16, rect.left - 380)}px`;
+        label.style.top = `${Math.max(24, rect.top)}px`;
+      } else if (step.placement === 'bottom') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+      } else {
+        const labelLeft = rect.right + 24;
+        const hasRightSpace = labelLeft + 320 <= window.innerWidth;
+        label.style.left = `${hasRightSpace ? labelLeft : Math.max(16, rect.left - 340)}px`;
+        label.style.top = `${Math.max(24, rect.top)}px`;
+      }
+      document.body.appendChild(label);
+    }
+
+    function showMotifGuideStep() {
+      const step = getMotifGuideStep();
+      if (!step) {
+        localStorage.setItem(motifGuideSeenKey, '1');
+        clearMotifGuide();
+        return;
+      }
+      const target = step.elements.find(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+      setTimeout(function() {
+        applyMotifGuideTarget();
+        renderMotifGuideSpotlight();
+      }, 350);
+    }
+
+    function nextMotifGuideStep() {
+      motifGuideStepIndex += 1;
+      showMotifGuideStep();
+    }
+
+    function startMotifGuide() {
+      hideMotifGuideStartModal();
+      localStorage.setItem(motifGuideSeenKey, '1');
+      clearMotifGuide();
+      motifGuideActive = true;
+      motifGuideStepIndex = 0;
+      showMotifGuideStep();
+    }
+
+    function saveMotifRows() {
+      const rows = readMotifRows();
+      const filledRows = rows.filter(row => row.product_id);
+      if (filledRows.length === 0) {
+        localStorage.removeItem(motifBreakdownKey);
+        notifyPos('Motif breakdown cleared for this store/date.', 'info');
+        closeMotifModal();
+        return;
+      }
+      if (filledRows.length === 1) {
+        notifyPos('Please select at least 2 Product Master items for the motif breakdown.', 'warning');
+        return;
+      }
+      const invalidGroups = Array.from(document.querySelectorAll('#pos-motif-groups .pos-motif-group')).filter(group => {
+        const groupRows = filledRows.filter(row => Number(row.motif_index || 1) === Number(group.dataset.motifIndex || 1));
+        return groupRows.length < 2;
+      });
+      if (invalidGroups.length) {
+        notifyPos('Each Motif # must have at least 2 Product Master items, or clear all rows to remove the breakdown.', 'warning');
+        return;
+      }
+      if (filledRows.some(row => !Number(row.quantity || 0))) {
+        notifyPos('Please enter Sold Qty for each motif product.', 'warning');
+        return;
+      }
+      localStorage.setItem(motifBreakdownKey, JSON.stringify({
+        saved_at: new Date().toISOString(),
+        pos_payload: motifChargePayload,
+        rows: rows.map(row => row.product_id ? row : {
+          product: '',
+          product_id: null,
+          product_code: null,
+          motif_index: row.motif_index,
+          row_index: row.row_index,
+          quantity: 0,
+          price: 0,
+          discount: 0
+        })
+      }));
+      notifyPos('Motif breakdown saved. It will reflect in InvenSync for this store/date.', 'success');
+      closeMotifModal();
+    }
 
     function formatReportDateLong(isoDate) {
       if (!isoDate) return '--';
@@ -515,6 +1112,53 @@
       window.history.replaceState({}, document.title, currentUrl.toString());
     }
 
+    const motifModal = document.getElementById('pos-motif-breakdown-modal');
+    if (motifModal && motifChargePayload?.detected) {
+      document.getElementById('pos-motif-guide-start-btn')?.addEventListener('click', startMotifGuide);
+      motifModal.querySelectorAll('tbody tr').forEach(resetMotifRow);
+      motifModal.querySelectorAll('.pos-motif-product-input').forEach(input => {
+        input.addEventListener('input', function() {
+          renderPosMotifProductDropdown(input);
+          syncMotifProductInput(input);
+        });
+        input.addEventListener('change', function() {
+          syncMotifProductInput(input, { clearInvalid: true });
+        });
+        input.addEventListener('focus', function() {
+          renderPosMotifProductDropdown(input);
+        });
+        input.addEventListener('blur', function() {
+          setTimeout(() => hidePosMotifProductDropdown(input), 150);
+        });
+      });
+      document.getElementById('pos-motif-close-btn')?.addEventListener('click', closeMotifModal);
+      document.getElementById('pos-motif-save-btn')?.addEventListener('click', saveMotifRows);
+      motifModal.querySelectorAll('.clear-pos-motif-row').forEach(button => {
+        button.addEventListener('click', function() {
+          resetMotifRow(button.closest('tr'));
+        });
+      });
+      const hasSavedMotifRows = loadMotifRows();
+      if (!hasSavedMotifRows) {
+        setTimeout(function() {
+          openMotifModal();
+          showMotifGuideStartModal();
+        }, 250);
+      }
+    }
+
+    window.addEventListener('resize', function() {
+      document.querySelectorAll('.pos-motif-product-input').forEach(input => hidePosMotifProductDropdown(input));
+      if (motifGuideActive) renderMotifGuideSpotlight();
+    });
+
+    document.addEventListener('scroll', function(event) {
+      if (event.target && event.target.closest?.('#pos-motif-breakdown-modal')) {
+        document.querySelectorAll('.pos-motif-product-input').forEach(input => hidePosMotifProductDropdown(input));
+      }
+      if (motifGuideActive) renderMotifGuideSpotlight();
+    }, true);
+
     function showMissingDatesModal() {
       if (!missingDatesModal) return;
       missingDatesModal.classList.remove('hidden');
@@ -533,11 +1177,11 @@
           hideMissingDatesModal();
           return;
         }
-        window.location.href = `${baseUrl}?date=${encodeURIComponent(nextMissingDate)}&guide=1`;
+        window.location.href = `${baseUrl}?date=${encodeURIComponent(nextMissingDate)}`;
       });
     }
 
-    if (isStoreManagerRole && Array.isArray(missingDates) && missingDates.length > 0) {
+    if (!isPosGuideMode && isStoreManagerRole && Array.isArray(missingDates) && missingDates.length > 0) {
       showMissingDatesModal();
     }
 
