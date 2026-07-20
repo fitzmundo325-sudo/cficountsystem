@@ -2855,6 +2855,7 @@ def cluster_dashboard():
     ).all()
     _coalesce_numeric_fields_for_reports(reports)
     _apply_pos_qty_from_pos_categories(reports)
+    _apply_taf_wastage_amounts(reports)
 
     starlink_store_ids = [int(store.id) for store in starlink_stores]
     starlink_reports = (
