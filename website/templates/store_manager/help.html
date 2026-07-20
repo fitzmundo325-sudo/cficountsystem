@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Help - {{ store.name }}{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span>Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Help</span>
+    </nav>
+  </div>
+  <div class="text-sm font-medium text-slate-600">
+    <span class="text-slate-900">{{ store.name }}</span>
+  </div>
+</header>
+
+<main class="px-6 pt-6 pb-10 md:px-8 max-w-6xl w-full mx-auto space-y-6">
+  <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <p class="text-sm font-bold uppercase tracking-wide text-sky-700">Store Manager Help</p>
+    <h1 class="mt-2 text-3xl font-black text-slate-950">How to use your store tools</h1>
+    <p class="mt-2 max-w-3xl text-slate-600">Step-by-step walkthroughs for daily work: InvenSync, Oracle, Daily Report, POS Sold, Delivery, TransAct tools, and Store Data.</p>
+  </section>
+
+  <section class="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 shadow-sm">
+    <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <p class="text-sm font-bold uppercase tracking-wide text-emerald-700">Need system support?</p>
+        <h2 class="mt-2 text-2xl font-black text-slate-950">Submit a ticket to the support team</h2>
+        <p class="mt-2 max-w-3xl text-slate-700">
+          If you encounter missing data, upload issues, locked records, incorrect values, or any system problem, please create a ticket so the support team can review it properly. Include the store name, affected date, menu/tool, and a short description of the issue.
+        </p>
+      </div>
+      <a
+        href="https://script.google.com/macros/s/AKfycbxzRlxWaFoNDE5sW5ZdH2ai1KzBopjES3Ua6FI2Zb07YmmuusnPNB26Yl_FEjBzA3vU/exec"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="inline-flex shrink-0 items-center justify-center rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-700"
+      >
+        Open Ticketing System
+      </a>
+    </div>
+  </section>
+
+  <section class="grid gap-4 md:grid-cols-2">
+    <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+      <h2 class="mt-1 text-xl font-bold text-slate-950">InvenSync</h2>
+      <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <li>Select the correct inventory date at the top.</li>
+        <li>Use Search or category buttons to find products faster.</li>
+        <li>Follow each column from Beg through Delivery, Trans-In, BO, Adv, Trans-Out, Waste, CSI, Sold, and ending counts.</li>
+        <li>See how Delivery, TransAct forms, Wastage, and POS Sold feed the inventory flow.</li>
+        <li>Review calculated ending inventory, theoretical ending, quantity variance, and peso variance.</li>
+        <li>Click <span class="font-semibold text-slate-900">End of Day</span> when everything is checked and ready to finalize.</li>
+      </ol>
+      <a href="/store-manager/invensync?guide=1" class="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Start Walkthrough</a>
+    </article>
+
+    <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+      <h2 class="mt-1 text-xl font-bold text-slate-950">POS Sold</h2>
+      <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <li>Choose the report date before scanning or uploading.</li>
+        <li>Select the POS Sold Excel file and click scan/upload.</li>
+        <li>Review extracted products, quantities, sales, and discounts.</li>
+        <li>If Additional Charge for Motif appears, complete the motif breakdown.</li>
+        <li>Save or proceed so POS quantities reflect in InvenSync Sold.</li>
+      </ol>
+      <a href="/store-manager/daily-report/pos-sold?guide=1" class="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Start Walkthrough</a>
+    </article>
+
+    <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+      <h2 class="mt-1 text-xl font-bold text-slate-950">Delivery</h2>
+      <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <li>Select the correct delivery date.</li>
+        <li>Upload or scan the RSO file.</li>
+        <li>Review product names and received quantities.</li>
+        <li>Use manual add only for products not included in the RSO file.</li>
+        <li>Click Save so delivery quantities reflect in InvenSync.</li>
+      </ol>
+      <a href="/store-manager/delivery?guide=1" class="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Start Walkthrough</a>
+    </article>
+
+    <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+      <h2 class="mt-1 text-xl font-bold text-slate-950">Daily Report</h2>
+      <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <li>Confirm the report date in the calendar.</li>
+        <li>Enter POS sales, CI sales, TC, sales channels, spoilage, and discounts.</li>
+        <li>Review the values before submitting.</li>
+        <li>Click Submit Report.</li>
+        <li>Confirm the send modal so the report is submitted to dashboards.</li>
+      </ol>
+      <a href="/store-manager/daily-report?guide=1" class="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Start Walkthrough</a>
+    </article>
+
+    <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+      <h2 class="mt-1 text-xl font-bold text-slate-950">Oracle</h2>
+      <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <li>Open Oracle and check the selected ordering date.</li>
+        <li>Review stock, sales average, and suggested order quantities.</li>
+        <li>Use Daily Averages as a reference only; the cells are not editable.</li>
+        <li>Review RSO / BO / POS tags when shown.</li>
+        <li>Submit or export the data when needed.</li>
+      </ol>
+      <a href="/store-manager/oracle?guide=1" class="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Start Walkthrough</a>
+    </article>
+
+    <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+      <h2 class="mt-1 text-xl font-bold text-slate-950">TransAct Form</h2>
+      <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <li>Choose the transaction type and date.</li>
+        <li>Check the generated control number.</li>
+        <li>Select source/destination store and add products.</li>
+        <li>Review product quantities and remarks.</li>
+        <li>Save or submit the transaction so it can be tracked.</li>
+      </ol>
+      <a href="/store-manager/transaction-activity-form?guide=1" class="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Start Walkthrough</a>
+    </article>
+
+    <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+      <h2 class="mt-1 text-xl font-bold text-slate-950">Trans-In</h2>
+      <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <li>Open Trans-In to view incoming transfers for your store.</li>
+        <li>Select a pending transfer to review its product list.</li>
+        <li>Check received quantities and short/over values.</li>
+        <li>Use the action button to open the transfer details, review the items, and confirm or save the received quantities.</li>
+        <li>Save the review so received stock can be reflected properly.</li>
+      </ol>
+      <a href="/store-manager/trans?guide=1" class="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Start Walkthrough</a>
+    </article>
+
+    <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+      <h2 class="mt-1 text-xl font-bold text-slate-950">Trans-Out</h2>
+      <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <li>Open Trans-Out to view transfers sent by your store.</li>
+        <li>Open a transfer record to review product and quantity details.</li>
+        <li>Check status and remarks for tracking.</li>
+        <li>Use the action button to view the full transfer details, including items, quantities, destination, status, and remarks.</li>
+        <li>Use this page to verify outgoing stock movement.</li>
+      </ol>
+      <a href="/store-manager/trans-out?guide=1" class="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Start Walkthrough</a>
+    </article>
+
+    <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+      <h2 class="mt-1 text-xl font-bold text-slate-950">Wastage</h2>
+      <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <li>Open Wastage to view wastage transfer records.</li>
+        <li>Select a record to review product quantities and remarks.</li>
+        <li>Check short/over details if applicable.</li>
+        <li>Use the information to verify wastage reflected in reporting.</li>
+      </ol>
+      <a href="/store-manager/wastage?guide=1" class="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Start Walkthrough</a>
+    </article>
+
+    <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+      <h2 class="mt-1 text-xl font-bold text-slate-950">Store Data</h2>
+      <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <li>Select month and year to view historical store data.</li>
+        <li>Review submitted Daily Report values and automated InvenSync values.</li>
+        <li>Use the table to check sales, spoilage, discounts, and ending inventory.</li>
+        <li>Export Excel when you need a file copy.</li>
+      </ol>
+      <a href="/store-manager/store-data?guide=1" class="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Start Walkthrough</a>
+    </article>
+  </section>
+</main>
+{% endblock %}

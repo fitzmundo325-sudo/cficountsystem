@@ -43,6 +43,17 @@
     -moz-appearance: textfield;
   }
 
+  /* Subtle inventory column dividers */
+  #main-content table thead th,
+  #main-content table tbody tr[data-product-id] td {
+    border-right: 1px solid rgba(203, 213, 225, 0.55);
+  }
+
+  #main-content table thead th:last-child,
+  #main-content table tbody tr[data-product-id] td:last-child {
+    border-right: none;
+  }
+
   /* Modal pop-in animation */
   @keyframes bounceIn {
     0% { opacity: 0; transform: scale(0.7); }
@@ -68,13 +79,18 @@
 
   .beginning-spotlight-label {
     position: fixed;
-    z-index: 9999;
+    z-index: 10000;
     max-width: min(360px, calc(100vw - 32px));
+    background: #0f172a;
     color: #ffffff;
+    padding: 18px 20px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
     font-size: 17px;
-    font-weight: 600;
+    font-weight: 700;
     line-height: 1.35;
     text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
     pointer-events: auto;
   }
 
@@ -98,6 +114,58 @@
     background: #f8fafc;
     transform: translateY(-1px);
   }
+
+  .motif-tour-panel {
+    position: fixed;
+    z-index: 10030;
+    background: rgba(15, 23, 42, 0.72);
+    pointer-events: auto;
+  }
+
+  .motif-tour-target {
+    position: relative;
+    z-index: 10031 !important;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.45), 0 0 24px rgba(14, 165, 233, 0.6);
+  }
+
+  .motif-tour-label {
+    position: fixed;
+    z-index: 10032;
+    max-width: min(360px, calc(100vw - 32px));
+    background: #0f172a;
+    color: #ffffff;
+    padding: 18px 20px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.35;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
+    pointer-events: auto;
+  }
+
+  .motif-tour-label button {
+    margin-top: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 800;
+    text-shadow: none;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .motif-tour-label button:hover {
+    background: #f8fafc;
+    transform: translateY(-1px);
+  }
+
 </style>
 
 <!-- Top Header -->
@@ -142,8 +210,8 @@
 
   <div class="flex flex-wrap items-center gap-3 sm:justify-end">
     {% if current_user.role == 'Store Manager' %}
-    <button onclick="startBeginningStockGuide(true)" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50" title="Restart help guide">
-      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-sky-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <button onclick="startBeginningStockGuide(true)" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50" title="Restart InvenSync guide">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10"></circle>
         <path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4"></path>
         <path d="M12 17h.01"></path>
@@ -199,6 +267,21 @@
         <span>Sync</span>
       </button>
       {% endif %}
+      {% if current_user.role == 'Store Manager' and motif_charge_payload %}
+      <button type="button" onclick="openMotifBreakdownModal()" class="flex items-center gap-2 border border-slate-300 bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-slate-800 transition-all" title="Open Additional Charge for Motif breakdown">
+        <span>Motif Breakdown</span>
+      </button>
+      {% endif %}
+      {% if current_user.role == 'Inventory Staff' %}
+      <button type="button" onclick="openInvensyncExportModal()" class="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-all" title="Export InvenSync data to Excel">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        <span>Export Excel</span>
+      </button>
+      {% endif %}
       <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-all">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
@@ -206,7 +289,7 @@
         <span>Fullscreen</span>
       </button>
       {% if not is_view_only %}
-      <button id="save-inventory-btn" onclick="saveAll()" disabled class="px-4 py-2 bg-sky-600 text-white text-sm font-semibold rounded-lg hover:bg-sky-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:hover:bg-slate-300">
+      <button id="save-inventory-btn" data-save-inventory type="button" onclick="saveAll()" disabled class="px-4 py-2 bg-sky-600 text-white text-sm font-semibold rounded-lg hover:bg-sky-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:hover:bg-slate-300">
         {{ 'Finalized' if is_day_locked else ('Save Beginning' if allow_beginning_stock_entry|default(false) else 'End of Day') }}
       </button>
       {% endif %}
@@ -244,9 +327,9 @@
             <circle cx="12" cy="12" r="10"/>
             <path d="M12 16v-4M12 8h.01"/>
           </svg>
-          <p class="text-sm text-slate-700">It looks like this is your first time here. No beginning stock has been declared yet.</p>
+          <p class="text-sm text-slate-700">It looks like this is your first time here. This walkthrough explains the complete InvenSync inventory flow.</p>
         </div>
-        <p class="text-sm text-slate-600">Please enter your beginning stock quantities in the <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-900 text-white rounded font-semibold text-xs">Beg</span> column for each product so we can start tracking your inventory accurately.</p>
+        <p class="text-sm text-slate-600">You will see how Beginning Stock connects with Delivery, TransAct transfers, Wastage, POS Sold, ending counts, theoretical ending, and variance.</p>
       </div>
       <!-- Footer -->
       <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
@@ -315,7 +398,7 @@
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40" id="header-d3"{% if 'd3_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>D+3</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'total_ending_inventory' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total Ending Inventory</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'total_peso_srp' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Total Peso</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'theo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Theoritical Ending</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'theo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Theoretical Ending</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'variance_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Variance</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'variance_peso' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Var Peso</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'remarks' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Remarks</th>
@@ -342,7 +425,7 @@
               {% for product in cat_products %}
               {% set inv_item = inventory_items.get(product.id) %}
               {% if product.id not in global_config_data.get('hidden_rows', []) %}
-              <tr class="hover:bg-slate-50" data-product-id="{{ product.id }}" data-category="{{ product.category }}" data-category-id="{{ cat_id }}" data-search-text="{{ (product.description ~ ' ' ~ (product.code or '') ~ ' ' ~ ('%.2f'|format(inv_item.srp_price if inv_item and inv_item.srp_price else product.tp if product.tp else 0)))|lower }}">
+              <tr class="hover:bg-slate-50" data-product-id="{{ product.id }}" data-product-name="{{ product.description }}" data-category="{{ product.category }}" data-category-id="{{ cat_id }}" data-search-text="{{ (product.description ~ ' ' ~ (product.code or '') ~ ' ' ~ ('%.2f'|format(inv_item.srp_price if inv_item and inv_item.srp_price else product.tp if product.tp else 0)))|lower }}">
                 <!-- Product Info (Shared) -->
                 <td class="px-2 py-2 bg-sky-50 sticky left-0 z-10 border-r border-slate-200 shadow-lg">
                   <div class="font-medium text-slate-900 text-sm">{{ product.description or 'No Description' }}</div>
@@ -354,7 +437,7 @@
                   {% if hide_beginning_stock %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" placeholder="0" class="beginning-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if lock_beginning_stock %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <input type="number" placeholder="0" class="beginning-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if lock_beginning_stock %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{% if inv_item and (inv_item.beginning_qty or lock_beginning_stock) %}{{ inv_item.beginning_qty or 0 }}{% endif %}" onchange="updateInventoryRow(this)"{% if lock_beginning_stock %} readonly{% endif %}>
                   {% endif %}
                 </td>
@@ -363,7 +446,7 @@
                     <!-- Hidden -->
                   {% else %}
                     <div class="flex items-center gap-1">
-                      <input type="number" class="delivery-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      <input type="number" class="delivery-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                         value="{{ inv_item.delivery_qty if inv_item and inv_item.delivery_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                     </div>
                   {% endif %}
@@ -372,7 +455,7 @@
                   {% if 'trans_in_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="trans-in-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'trans_in_qty' not in global_config_data.get('editable_columns', []) or 'trans_in_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <input type="number" class="trans-in-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'trans_in_qty' not in global_config_data.get('editable_columns', []) or 'trans_in_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{{ inv_item.trans_in_qty if inv_item and inv_item.trans_in_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'trans_in_qty' not in global_config_data.get('editable_columns', []) or 'trans_in_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
@@ -380,7 +463,7 @@
                   {% if 'bo_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="bo-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'bo_qty' not in global_config_data.get('editable_columns', []) or 'bo_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <input type="number" class="bo-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'bo_qty' not in global_config_data.get('editable_columns', []) or 'bo_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{{ inv_item.bo_qty if inv_item and inv_item.bo_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'bo_qty' not in global_config_data.get('editable_columns', []) or 'bo_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
@@ -388,7 +471,7 @@
                   {% if 'adv_del_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="adv-del-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'adv_del_qty' not in global_config_data.get('editable_columns', []) or 'adv_del_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <input type="number" class="adv-del-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'adv_del_qty' not in global_config_data.get('editable_columns', []) or 'adv_del_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{{ inv_item.adv_del_qty if inv_item and inv_item.adv_del_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'adv_del_qty' not in global_config_data.get('editable_columns', []) or 'adv_del_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
@@ -396,7 +479,7 @@
                   {% if 'trans_out_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="trans-out-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'trans_out_qty' not in global_config_data.get('editable_columns', []) or 'trans_out_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <input type="number" class="trans-out-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'trans_out_qty' not in global_config_data.get('editable_columns', []) or 'trans_out_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{{ inv_item.trans_out_qty if inv_item and inv_item.trans_out_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'trans_out_qty' not in global_config_data.get('editable_columns', []) or 'trans_out_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
@@ -404,7 +487,7 @@
                   {% if 'wastage_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="wastage-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'wastage_qty' not in global_config_data.get('editable_columns', []) or 'wastage_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <input type="number" class="wastage-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'wastage_qty' not in global_config_data.get('editable_columns', []) or 'wastage_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{{ inv_item.wastage_qty if inv_item and inv_item.wastage_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'wastage_qty' not in global_config_data.get('editable_columns', []) or 'wastage_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
@@ -419,7 +502,7 @@
                   {% if 'csi_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="csi-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'csi_qty' not in global_config_data.get('editable_columns', []) or 'csi_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <input type="number" class="csi-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'csi_qty' not in global_config_data.get('editable_columns', []) or 'csi_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{{ inv_item.csi_qty if inv_item and inv_item.csi_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'csi_qty' not in global_config_data.get('editable_columns', []) or 'csi_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
@@ -427,12 +510,25 @@
                   {% if 'quantity_sold' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <div class="flex items-center justify-center gap-1">
-                      <input type="number" class="sold-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <div class="flex items-center justify-center gap-0.5 min-w-[86px]">
+                      <input type="number" class="sold-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                         value="{{ inv_item.draft_quantity_sold if inv_item and inv_item.draft_quantity_sold is defined else (inv_item.quantity_sold if inv_item and inv_item.quantity_sold else '') }}" onchange="updateInventoryRow(this)"{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                      <span class="inline-flex min-w-[42px] flex-col items-start gap-0.5">
+                      {% set sold_source_qty = inv_item.draft_quantity_sold if inv_item and inv_item.draft_quantity_sold is defined else (inv_item.quantity_sold if inv_item and inv_item.quantity_sold else 0) %}
+                      {% set bitbit_slices = inv_item.bitbit_sold_tags|sum(attribute='slices') if inv_item and inv_item.bitbit_sold_tags is defined and inv_item.bitbit_sold_tags else 0 %}
+                      {% set pos_only_qty = sold_source_qty - bitbit_slices %}
+                      {% set should_show_pos_tag = bitbit_slices %}
                       {% if inv_item and inv_item.pos_reviewed_source %}
-                      <span class="pos-review-badge bg-amber-100 text-amber-700 text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap font-semibold" title="From POS Review{{ ' - ' ~ inv_item.pos_reviewed_date if inv_item.pos_reviewed_date else '' }}">POS</span>
+                      <span class="pos-review-badge{% if not should_show_pos_tag %} hidden{% endif %} bg-amber-100 text-amber-700 text-[8px] px-1 py-0.5 rounded whitespace-nowrap font-semibold leading-none cursor-default select-none transition-transform duration-150 ease-out hover:scale-110 hover:shadow-sm" title="POS Sold Qty: {{ pos_only_qty if pos_only_qty > 0 else 0 }}{{ ' | From POS Review - ' ~ inv_item.pos_reviewed_date if inv_item.pos_reviewed_date else ' | From POS Review' }}">POS {{ pos_only_qty if pos_only_qty > 0 else 0 }}</span>
                       {% endif %}
+                      {% if inv_item and inv_item.bitbit_sold_tags is defined and inv_item.bitbit_sold_tags %}
+                        {% set bitbit_packs = inv_item.bitbit_sold_tags|sum(attribute='packs') %}
+                        <span class="bitbit-sold-badge bg-violet-100 text-violet-700 text-[8px] px-1 py-0.5 rounded whitespace-nowrap font-semibold leading-none cursor-default select-none transition-transform duration-150 ease-out hover:scale-110 hover:shadow-sm"
+                          title="BIBIT Qty: {{ bitbit_slices }} slices from {{ bitbit_packs }} pack(s) | {% for tag in inv_item.bitbit_sold_tags %}{{ tag.source_name }}: {{ tag.packs }} Bitbit x 6 = {{ tag.slices }} slices | Gross: ₱{{ '%.2f'|format((tag.slices|float) * (inv_item.srp_price|float)) }} | Discount: ₱{{ '%.2f'|format((tag.packs|float) * (tag.discount_amount|default(10)|float)) }} (₱{{ tag.discount_amount|default(10) }} per Bitbit) | Net: ₱{{ '%.2f'|format(((tag.slices|float) * (inv_item.srp_price|float)) - ((tag.packs|float) * (tag.discount_amount|default(10)|float))) }}{% if not loop.last %} | {% endif %}{% endfor %}">
+                          BIBIT {{ bitbit_slices }}
+                        </span>
+                      {% endif %}
+                      </span>
                     </div>
                   {% endif %}
                 </td>
@@ -440,7 +536,7 @@
                   {% if 'ending_d5_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="ending-d5-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'ending_d5_qty' not in global_config_data.get('editable_columns', []) or 'ending_d5_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <input type="number" class="ending-d5-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'ending_d5_qty' not in global_config_data.get('editable_columns', []) or 'ending_d5_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{{ inv_item.ending_d5_qty if inv_item and inv_item.ending_d5_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'ending_d5_qty' not in global_config_data.get('editable_columns', []) or 'ending_d5_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
@@ -448,7 +544,7 @@
                   {% if 'ending_d4_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="ending-d4-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'ending_d4_qty' not in global_config_data.get('editable_columns', []) or 'ending_d4_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <input type="number" class="ending-d4-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'ending_d4_qty' not in global_config_data.get('editable_columns', []) or 'ending_d4_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{{ inv_item.ending_d4_qty if inv_item and inv_item.ending_d4_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'ending_d4_qty' not in global_config_data.get('editable_columns', []) or 'ending_d4_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
@@ -456,7 +552,7 @@
                   {% if 'ending_d3_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="ending-d3-input w-16 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'ending_d3_qty' not in global_config_data.get('editable_columns', []) or 'ending_d3_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                    <input type="number" class="ending-d3-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'ending_d3_qty' not in global_config_data.get('editable_columns', []) or 'ending_d3_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{{ inv_item.ending_d3_qty if inv_item and inv_item.ending_d3_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'ending_d3_qty' not in global_config_data.get('editable_columns', []) or 'ending_d3_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
@@ -551,12 +647,126 @@
 </div>
 {% endif %}
 
+{% if current_user.role == 'Store Manager' and motif_charge_payload %}
+<div id="motif-breakdown-modal" class="fixed inset-0 z-[9998] hidden">
+  <div class="absolute inset-0 bg-slate-950/60"></div>
+  <div class="relative z-10 flex min-h-full items-center justify-center p-4">
+    <div class="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div class="w-[calc(100%+1.25rem)] bg-slate-900 px-6 py-4 text-white">
+        <h3 class="text-xl font-bold">Additional Charge for Motif Detected</h3>
+        <p class="mt-1 text-sm text-slate-200">Enter the 2 or 3 products included in this motif charge, their prices, and any discount.</p>
+      </div>
+      <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-950">
+          <div class="text-xs font-bold uppercase text-slate-700">Quantity</div>
+          <div class="mt-1 text-lg font-black">{{ motif_charge_payload.quantity }}</div>
+        </div>
+
+        <div id="motif-groups" class="space-y-4">
+          {% for motif_num in range(1, (motif_charge_payload.quantity|int) + 1) %}
+          <div class="motif-group overflow-hidden rounded-xl border border-slate-200" data-motif-index="{{ motif_num }}">
+            <div class="flex items-center justify-between bg-slate-50 px-4 py-3">
+              <h4 class="text-sm font-black text-slate-950">Motif #{{ motif_num }}</h4>
+              <span class="text-xs font-semibold text-slate-700">Select 2 or 3 products</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                  <tr>
+                    <th class="px-3 py-2 text-left text-xs font-bold uppercase text-slate-500">Product Included / Combo With</th>
+                    <th class="w-28 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Sold Qty</th>
+                    <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Price</th>
+                    <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Discount</th>
+                    <th class="w-12 px-3 py-2 text-center text-xs font-bold uppercase text-slate-500">Clear</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  {% for row_num in range(1, 4) %}
+                  <tr data-motif-index="{{ motif_num }}" data-row-index="{{ row_num }}">
+                    <td class="px-3 py-2">
+                      <div class="relative">
+                        <input type="search" class="motif-product-input w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-500" placeholder="Type to search Product Master" autocomplete="off">
+                        <div class="motif-product-dropdown fixed z-[10020] hidden max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl"></div>
+                      </div>
+                    </td>
+                    <td class="px-3 py-2">
+                      <input type="number" min="0" step="1" class="motif-qty-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0">
+                    </td>
+                    <td class="px-3 py-2">
+                      <input type="number" min="0" step="0.01" class="motif-price-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0.00">
+                    </td>
+                    <td class="px-3 py-2">
+                      <input type="number" min="0" step="0.01" class="motif-discount-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0.00">
+                    </td>
+                    <td class="px-3 py-2 text-center">
+                      <button type="button" class="clear-motif-row inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100" title="Clear motif product row">×</button>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="shrink-0 flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <button type="button" onclick="closeMotifBreakdownModal()" class="rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-100">Close</button>
+        <button id="motif-save-guide-target" type="button" onclick="saveMotifBreakdown()" class="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 hover:bg-slate-800">Save Breakdown</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="motif-guide-start-modal" class="fixed inset-0 z-[10040] hidden items-center justify-center bg-black/40">
+  <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
+    <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
+      <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+      </div>
+      <div>
+        <h2 class="text-white font-bold text-lg leading-tight">Motif Breakdown Guide</h2>
+        <p class="text-slate-400 text-xs mt-0.5">{{ store.name }}</p>
+      </div>
+    </div>
+    <div class="px-6 py-5 space-y-4">
+      <div class="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-500 flex-shrink-0 mt-0.5">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 16v-4M12 8h.01"/>
+        </svg>
+        <p class="text-sm text-slate-700">Additional Charge for Motif was detected. Please tell the system what products are included in each motif charge.</p>
+      </div>
+      <p class="text-sm text-slate-600">This guide will point you to product search, quantity, price/discount, and save.</p>
+    </div>
+    <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+      <button type="button" onclick="startMotifBreakdownGuide()" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+        Got it, start guide!
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script>
 const inventoryId = {{ inventory.id }};
 let inventoryInitialSnapshot = '';
 const inventoryDraftKey = `invensyncInventoryDraft:${inventoryId}`;
+const motifChargePayload = {{ motif_charge_payload|default(none)|tojson }};
+const motifProductOptions = {{ motif_product_options|default([])|tojson }};
+const motifBreakdownKey = `invensyncMotifBreakdown:{{ store.id }}:{{ selected_date }}`;
 const missingDates = {{ missing_dates|default([])|tojson }};
 const nextMissingDate = {{ next_missing_date|default(none)|tojson }};
+const isInvenSyncGuideMode = {{ (request.args.get('guide') == '1')|tojson }};
+if (isInvenSyncGuideMode && window.history && window.history.replaceState) {
+  const cleanGuideUrl = new URL(window.location.href);
+  cleanGuideUrl.searchParams.delete('guide');
+  window.history.replaceState({}, '', `${cleanGuideUrl.pathname}${cleanGuideUrl.search}${cleanGuideUrl.hash}`);
+}
 const requiresBeginningStockFirst = {{ allow_beginning_stock_entry|default(false)|tojson }};
 let isDayFinalized = {{ is_day_locked|tojson }};
 let isBeginningFinalized = {{ is_beginning_locked|tojson }};
@@ -564,6 +774,9 @@ let isSavingBeginningInventory = requiresBeginningStockFirst;
 let missingBeginningNoticeOpen = false;
 let beginningGuideActive = false;
 let beginningGuideStepIndex = 0;
+let motifGuideActive = false;
+let motifGuideStepIndex = 0;
+const motifGuideSeenKey = 'motifBreakdownGuideSeenV2';
 const isAdminCorrectionMode = {{ (current_user.role in ['Admin', 'Superadmin'])|tojson }};
 const adminUnlockScope = {{ admin_unlock_scope|default({'all': false, 'cells': []})|tojson }};
 let hasAdminStoreUnlock = Boolean(adminUnlockScope?.all || (adminUnlockScope?.cells || []).length);
@@ -572,6 +785,21 @@ let adminSelectedInput = null;
 let adminSelectedInputs = [];
 const adminOriginalValues = new Map();
 const adminCellInstructionKey = 'invensyncAdminSelectionInstructionSeenV2';
+
+function getInventorySaveButtons() {
+  return Array.from(document.querySelectorAll('[data-save-inventory]'));
+}
+
+function setInventorySaveButtons(options = {}) {
+  getInventorySaveButtons().forEach(button => {
+    if (Object.prototype.hasOwnProperty.call(options, 'text')) {
+      button.textContent = options.text;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'disabled')) {
+      button.disabled = Boolean(options.disabled);
+    }
+  });
+}
 
 function adminEditableInputs() {
   const fullscreenModal = document.getElementById('fullscreen-modal');
@@ -661,11 +889,7 @@ function applyAdminStoreUnlocks() {
   });
 
   if (isDayFinalized) {
-    const button = document.getElementById('save-inventory-btn');
-    if (button) {
-      button.textContent = 'Save';
-      button.disabled = true;
-    }
+    setInventorySaveButtons({ text: 'Save', disabled: true });
   }
 }
 
@@ -900,6 +1124,581 @@ function notify(message, type = 'info') {
   }, 4000);
 }
 
+function getMotifModal() {
+  return document.getElementById('motif-breakdown-modal');
+}
+
+function formatPeso(value) {
+  const amount = Number(value || 0);
+  return `?${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function readMotifBreakdownRows() {
+  const modal = getMotifModal();
+  if (!modal) return [];
+  return Array.from(modal.querySelectorAll('tbody tr')).map(row => {
+    const productInput = row.querySelector('.motif-product-input');
+    const product = productInput?.value.trim() || '';
+    const selectedProduct = findMotifProductOption(product);
+    const quantity = Number(row.querySelector('.motif-qty-input')?.value || 0);
+    const price = Number(row.querySelector('.motif-price-input')?.value || 0);
+    const discount = Number(row.querySelector('.motif-discount-input')?.value || 0);
+    return {
+      product: selectedProduct?.description || product,
+      product_id: selectedProduct?.id || null,
+      product_code: selectedProduct?.code || null,
+      motif_index: Number(row.dataset.motifIndex || row.closest('.motif-group')?.dataset.motifIndex || 1),
+      row_index: Number(row.dataset.rowIndex || 1),
+      quantity,
+      price,
+      discount
+    };
+  });
+}
+
+function resetMotifBreakdownRow(row) {
+  if (!row) return;
+  const productInput = row.querySelector('.motif-product-input');
+  if (productInput) {
+    productInput.value = '';
+    productInput.classList.remove('border-red-300');
+    productInput.title = '';
+  }
+  const quantityInput = row.querySelector('.motif-qty-input');
+  const priceInput = row.querySelector('.motif-price-input');
+  const discountInput = row.querySelector('.motif-discount-input');
+  [quantityInput, priceInput, discountInput].forEach(input => {
+    if (!input) return;
+    input.value = '';
+    input.disabled = true;
+    input.classList.add('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+  });
+}
+
+function disableMotifBreakdownRowFields(row) {
+  if (!row) return;
+  const quantityInput = row.querySelector('.motif-qty-input');
+  const priceInput = row.querySelector('.motif-price-input');
+  const discountInput = row.querySelector('.motif-discount-input');
+  [quantityInput, priceInput, discountInput].forEach(input => {
+    if (!input) return;
+    input.value = '';
+    input.disabled = true;
+    input.classList.add('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+  });
+}
+
+function enableMotifBreakdownRow(row) {
+  if (!row) return;
+  const quantityInput = row.querySelector('.motif-qty-input');
+  const priceInput = row.querySelector('.motif-price-input');
+  const discountInput = row.querySelector('.motif-discount-input');
+  [quantityInput, priceInput, discountInput].forEach(input => {
+    if (!input) return;
+    input.disabled = false;
+    input.classList.remove('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+  });
+}
+
+function findMotifProductOption(productName) {
+  const normalizedName = String(productName || '').trim().toLowerCase();
+  if (!normalizedName) return null;
+  return (motifProductOptions || []).find(product => String(product.description || '').trim().toLowerCase() === normalizedName) || null;
+}
+
+function hideMotifProductDropdown(input) {
+  const dropdown = input?.closest('td')?.querySelector('.motif-product-dropdown');
+  if (dropdown) dropdown.classList.add('hidden');
+}
+
+function positionMotifProductDropdown(input, dropdown) {
+  if (!input || !dropdown) return;
+  const rect = input.getBoundingClientRect();
+  dropdown.style.left = `${rect.left}px`;
+  dropdown.style.top = `${rect.bottom + 4}px`;
+  dropdown.style.width = `${rect.width}px`;
+}
+
+function renderMotifProductDropdown(input) {
+  const dropdown = input?.closest('td')?.querySelector('.motif-product-dropdown');
+  if (!input || !dropdown) return;
+  const query = String(input.value || '').trim().toLowerCase();
+  const products = (motifProductOptions || [])
+    .filter(product => {
+      const description = String(product.description || '').toLowerCase();
+      const code = String(product.code || '').toLowerCase();
+      return !query || description.includes(query) || code.includes(query);
+    })
+    .slice(0, 80);
+
+  dropdown.innerHTML = '';
+  positionMotifProductDropdown(input, dropdown);
+  if (!products.length) {
+    const empty = document.createElement('div');
+    empty.className = 'px-3 py-2 text-sm text-slate-500';
+    empty.textContent = 'No product found';
+    dropdown.appendChild(empty);
+    dropdown.classList.remove('hidden');
+    return;
+  }
+
+  products.forEach(product => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-950';
+    const name = document.createElement('span');
+    name.className = 'font-semibold';
+    name.textContent = product.description || '';
+    const meta = document.createElement('span');
+    meta.className = 'mt-0.5 block text-[11px] text-slate-500';
+    meta.textContent = `${product.code || '-'} · ${formatPeso(product.price || 0)}`;
+    button.appendChild(name);
+    button.appendChild(meta);
+    button.addEventListener('mousedown', function(event) {
+      event.preventDefault();
+      input.value = product.description || '';
+      hideMotifProductDropdown(input);
+      syncMotifProductSelection(input, { clearInvalid: true });
+    });
+    dropdown.appendChild(button);
+  });
+  dropdown.classList.remove('hidden');
+}
+
+function syncMotifProductSelection(input, options = {}) {
+  if (!input) return;
+  const row = input.closest('tr');
+  const selectedProduct = findMotifProductOption(input.value);
+  input.classList.toggle('border-red-300', Boolean(input.value.trim()) && !selectedProduct);
+  input.title = selectedProduct ? `Product Master Code: ${selectedProduct.code || '-'}` : (input.value.trim() ? 'Select a product from Product Master' : '');
+  if (!row) return;
+  if (!selectedProduct) {
+    if (options.clearInvalid) {
+      resetMotifBreakdownRow(row);
+    } else {
+      disableMotifBreakdownRowFields(row);
+    }
+    return;
+  }
+  enableMotifBreakdownRow(row);
+  const quantityInput = row.querySelector('.motif-qty-input');
+  if (quantityInput && !quantityInput.value) {
+    quantityInput.value = '1';
+  }
+  const priceInput = row.querySelector('.motif-price-input');
+  if (priceInput && !priceInput.value && Number(selectedProduct.price || 0) > 0) {
+    priceInput.value = Number(selectedProduct.price || 0).toFixed(2);
+  }
+}
+
+function normalizeMotifProductName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function getSavedMotifBreakdown() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(motifBreakdownKey) || 'null');
+    return saved && Array.isArray(saved.rows) ? saved : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function buildMotifTagTitle(row, allRows = []) {
+  const product = row.product || 'Motif product';
+  const quantity = Number(row.quantity || 0);
+  const price = Number(row.price || 0);
+  const discount = Number(row.discount || 0);
+  const net = Math.max(0, price - discount);
+  const motifSet = row.motif_index ? `Motif #${row.motif_index} | ` : '';
+  const motifProducts = (allRows || [])
+    .filter(item =>
+      item
+      && item.product
+      && Number(item.motif_index || 1) === Number(row.motif_index || 1)
+      && normalizeMotifProductName(item.product) !== normalizeMotifProductName(product)
+    )
+    .map(item => {
+      const itemQty = Number(item.quantity || 0);
+      return `${item.product}${itemQty ? ` (${itemQty})` : ''}`;
+    });
+  const comboText = motifProducts.length
+    ? ` | Combo with: ${motifProducts.join(' + ')}`
+    : '';
+  return `${motifSet}${product} used in Additional Charge for Motif${comboText} | Sold Qty: ${quantity} | Price: ${formatPeso(price)} | Discount: ${formatPeso(discount)} | Net: ${formatPeso(net)}`;
+}
+
+function applyMotifTagsToSoldColumn() {
+  const saved = getSavedMotifBreakdown();
+  const savedRows = saved?.rows || [];
+  const motifRows = savedRows.filter(row => row && row.product);
+  const motifByName = new Map();
+  motifRows.forEach(row => {
+    const key = normalizeMotifProductName(row.product);
+    const existing = motifByName.get(key);
+    if (existing) {
+      existing.quantity = Number(existing.quantity || 0) + Number(row.quantity || 0);
+      existing.price = Number(existing.price || 0) + Number(row.price || 0);
+      existing.discount = Number(existing.discount || 0) + Number(row.discount || 0);
+    } else {
+      motifByName.set(key, { ...row });
+    }
+  });
+
+  document.querySelectorAll('#main-content tbody tr[data-product-id]').forEach(row => {
+    const badgeStack = row.querySelector('td[data-field="quantity_sold"] .inline-flex');
+    const soldInput = row.querySelector('.sold-input');
+    if (!badgeStack) return;
+    badgeStack.querySelectorAll('.motif-sold-badge').forEach(badge => badge.remove());
+    const posBadge = badgeStack.querySelector('.pos-review-badge');
+    const hasBitbitBadge = Boolean(badgeStack.querySelector('.bitbit-sold-badge'));
+    if (posBadge && !hasBitbitBadge) {
+      posBadge.classList.add('hidden');
+    }
+    if (soldInput) {
+      if (soldInput.dataset.motifBaseSold === undefined) {
+        soldInput.dataset.motifBaseSold = soldInput.value || '0';
+      }
+      soldInput.value = soldInput.dataset.motifBaseSold || '';
+    }
+    const matchedMotifRow = motifByName.get(normalizeMotifProductName(row.dataset.productName));
+    if (!matchedMotifRow) {
+      return;
+    }
+    const motifQuantity = Math.max(0, Number(matchedMotifRow.quantity || 0));
+    if (soldInput && motifQuantity > 0) {
+      const baseSold = Number(soldInput.dataset.motifBaseSold || 0);
+      soldInput.value = baseSold + motifQuantity;
+      if (typeof updateInventoryRow === 'function') updateInventoryRow(soldInput);
+    }
+
+    const badge = document.createElement('span');
+    badge.className = 'motif-sold-badge border border-emerald-200 bg-emerald-100 text-emerald-700 text-[8px] px-1 py-0.5 rounded whitespace-nowrap font-semibold leading-none cursor-default select-none transition-transform duration-150 ease-out hover:scale-110 hover:shadow-sm';
+    badge.textContent = `MOTIF ${motifQuantity}`;
+    badge.title = buildMotifTagTitle(matchedMotifRow, motifRows);
+    badgeStack.appendChild(badge);
+    if (posBadge) {
+      posBadge.classList.remove('hidden');
+    }
+  });
+}
+
+function loadMotifBreakdown() {
+  const modal = getMotifModal();
+  if (!modal) return false;
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(motifBreakdownKey) || 'null');
+  } catch (_) {
+    saved = null;
+  }
+  if (!saved || !Array.isArray(saved.rows)) {
+    return false;
+  }
+  const tableRows = Array.from(modal.querySelectorAll('tbody tr'));
+  tableRows.forEach((row, index) => {
+    const savedRow = (saved.rows || []).find(item =>
+      Number(item.motif_index || 1) === Number(row.dataset.motifIndex || 1)
+      && Number(item.row_index || 1) === Number(row.dataset.rowIndex || 1)
+    ) || saved.rows[index] || {};
+    const productInput = row.querySelector('.motif-product-input');
+    const quantityInput = row.querySelector('.motif-qty-input');
+    const priceInput = row.querySelector('.motif-price-input');
+    const discountInput = row.querySelector('.motif-discount-input');
+    if (productInput) productInput.value = savedRow.product || '';
+    if (quantityInput) quantityInput.value = savedRow.quantity || '';
+    if (priceInput) priceInput.value = savedRow.price || '';
+    if (discountInput) discountInput.value = savedRow.discount || '';
+    if (productInput) syncMotifProductSelection(productInput);
+  });
+  applyMotifTagsToSoldColumn();
+  return true;
+}
+
+function openMotifBreakdownModal() {
+  const modal = getMotifModal();
+  if (!modal) return;
+  loadMotifBreakdown();
+  modal.classList.remove('hidden');
+  document.body.classList.add('overflow-hidden');
+}
+
+function closeMotifBreakdownModal() {
+  const modal = getMotifModal();
+  if (!modal) return;
+  clearMotifBreakdownGuide();
+  hideMotifGuideStartModal();
+  modal.classList.add('hidden');
+  document.body.classList.remove('overflow-hidden');
+}
+
+function getMotifGuideStartModal() {
+  return document.getElementById('motif-guide-start-modal');
+}
+
+function showMotifGuideStartModal() {
+  const modal = getMotifGuideStartModal();
+  if (!modal || localStorage.getItem(motifGuideSeenKey) === '1') return;
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+}
+
+function hideMotifGuideStartModal() {
+  const modal = getMotifGuideStartModal();
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+
+function getMotifGuideStep() {
+  const modal = getMotifModal();
+  if (!modal) return null;
+  const firstRow = modal.querySelector('tbody tr[data-motif-index="1"][data-row-index="1"]');
+  const priceDiscountFields = [
+    firstRow?.querySelector('.motif-price-input'),
+    firstRow?.querySelector('.motif-discount-input')
+  ].filter(Boolean);
+  const steps = [
+    {
+      elements: [firstRow?.querySelector('.motif-product-input')],
+      text: 'Type the product included in this motif, then select it from Product Master.',
+      placement: 'right',
+      nextText: 'Next'
+    },
+    {
+      elements: [firstRow?.querySelector('.motif-qty-input')],
+      text: 'Enter how many pieces of this product belong to this motif.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: priceDiscountFields,
+      text: 'Price will follow the selected product. Add discount only if this motif product has one.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: [document.getElementById('motif-save-guide-target')],
+      text: 'Click Save Breakdown so the motif products reflect in the InvenSync Sold column.',
+      placement: 'top',
+      nextText: 'Finish'
+    }
+  ];
+  return steps[motifGuideStepIndex] || null;
+}
+
+function removeMotifTourPanels() {
+  document.querySelectorAll('.motif-tour-panel').forEach(panel => panel.remove());
+  document.querySelectorAll('.motif-tour-label').forEach(label => label.remove());
+}
+
+function clearMotifBreakdownGuide() {
+  motifGuideActive = false;
+  motifGuideStepIndex = 0;
+  removeMotifTourPanels();
+  document.querySelectorAll('.motif-tour-target').forEach(el => {
+    el.classList.remove('motif-tour-target');
+  });
+}
+
+function applyMotifGuideTarget() {
+  document.querySelectorAll('.motif-tour-target').forEach(el => {
+    el.classList.remove('motif-tour-target');
+  });
+  const step = getMotifGuideStep();
+  if (!step) return;
+  step.elements.forEach(el => {
+    if (el) el.classList.add('motif-tour-target');
+  });
+}
+
+function renderMotifGuideSpotlight() {
+  removeMotifTourPanels();
+  const step = getMotifGuideStep();
+  if (!step) {
+    localStorage.setItem(motifGuideSeenKey, '1');
+    clearMotifBreakdownGuide();
+    return;
+  }
+  const rect = getElementGroupRect(step.elements);
+  if (!rect) return;
+  const panels = [
+    { top: 0, left: 0, width: window.innerWidth, height: rect.top },
+    { top: rect.bottom, left: 0, width: window.innerWidth, height: window.innerHeight - rect.bottom },
+    { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
+    { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top }
+  ];
+  panels.forEach(panel => {
+    const el = document.createElement('div');
+    el.className = 'motif-tour-panel';
+    el.style.top = `${panel.top}px`;
+    el.style.left = `${panel.left}px`;
+    el.style.width = `${Math.max(0, panel.width)}px`;
+    el.style.height = `${Math.max(0, panel.height)}px`;
+    document.body.appendChild(el);
+  });
+
+  const label = document.createElement('div');
+  label.className = 'motif-tour-label';
+  const message = document.createElement('div');
+  message.textContent = step.text;
+  const nextButton = document.createElement('button');
+  nextButton.type = 'button';
+  nextButton.textContent = step.nextText;
+  nextButton.addEventListener('click', nextMotifBreakdownGuideStep);
+  label.appendChild(message);
+  label.appendChild(nextButton);
+
+  if (step.placement === 'top') {
+    label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+    label.style.top = `${Math.max(24, rect.top - 130)}px`;
+  } else if (step.placement === 'left') {
+    label.style.left = `${Math.max(16, rect.left - 380)}px`;
+    label.style.top = `${Math.max(24, rect.top)}px`;
+  } else if (step.placement === 'bottom') {
+    label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+    label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+  } else {
+    const labelLeft = rect.right + 24;
+    const hasRightSpace = labelLeft + 320 <= window.innerWidth;
+    label.style.left = `${hasRightSpace ? labelLeft : Math.max(16, rect.left - 340)}px`;
+    label.style.top = `${Math.max(24, rect.top)}px`;
+  }
+  document.body.appendChild(label);
+}
+
+function showMotifBreakdownGuideStep() {
+  const step = getMotifGuideStep();
+  if (!step) {
+    localStorage.setItem(motifGuideSeenKey, '1');
+    clearMotifBreakdownGuide();
+    return;
+  }
+  const target = step.elements.find(el => el && el.offsetParent !== null);
+  if (target) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  }
+  setTimeout(() => {
+    applyMotifGuideTarget();
+    renderMotifGuideSpotlight();
+  }, 350);
+}
+
+function nextMotifBreakdownGuideStep() {
+  motifGuideStepIndex += 1;
+  showMotifBreakdownGuideStep();
+}
+
+function startMotifBreakdownGuide() {
+  hideMotifGuideStartModal();
+  localStorage.setItem(motifGuideSeenKey, '1');
+  clearMotifBreakdownGuide();
+  motifGuideActive = true;
+  motifGuideStepIndex = 0;
+  showMotifBreakdownGuideStep();
+}
+
+function saveMotifBreakdown() {
+  const rows = readMotifBreakdownRows();
+  const filledRows = rows.filter(row => row.product_id);
+  if (filledRows.length === 0) {
+    localStorage.removeItem(motifBreakdownKey);
+    document.querySelectorAll('#main-content .motif-sold-badge').forEach(badge => badge.remove());
+    document.querySelectorAll('#main-content .sold-input[data-motif-base-sold]').forEach(input => {
+      input.value = input.dataset.motifBaseSold || '';
+      delete input.dataset.motifBaseSold;
+      if (typeof updateInventoryRow === 'function') updateInventoryRow(input);
+    });
+    notify('Motif breakdown cleared for this store/date.', 'info');
+    closeMotifBreakdownModal();
+    return;
+  }
+  if (filledRows.length === 1) {
+    notify('Please select at least 2 Product Master items for the motif breakdown.', 'warning');
+    return;
+  }
+  const invalidGroups = Array.from(document.querySelectorAll('#motif-groups .motif-group')).filter(group => {
+    const groupRows = filledRows.filter(row => Number(row.motif_index || 1) === Number(group.dataset.motifIndex || 1));
+    return groupRows.length < 2;
+  });
+  if (invalidGroups.length) {
+    notify('Each Motif # must have at least 2 Product Master items, or clear all rows to remove the breakdown.', 'warning');
+    return;
+  }
+  if (filledRows.some(row => !Number(row.quantity || 0))) {
+    notify('Please enter Sold Qty for each motif product.', 'warning');
+    return;
+  }
+  localStorage.setItem(motifBreakdownKey, JSON.stringify({
+    saved_at: new Date().toISOString(),
+    pos_payload: motifChargePayload,
+    rows: rows.map(row => row.product_id ? row : {
+      product: '',
+      product_id: null,
+      product_code: null,
+      motif_index: row.motif_index,
+      row_index: row.row_index,
+      quantity: 0,
+      price: 0,
+      discount: 0
+    })
+  }));
+  applyMotifTagsToSoldColumn();
+  notify('Motif breakdown saved for this store/date.', 'success');
+  closeMotifBreakdownModal();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const modal = getMotifModal();
+  if (!modal || !motifChargePayload?.detected) return;
+  modal.querySelectorAll('.motif-product-input').forEach(input => {
+    input.addEventListener('input', function() {
+      renderMotifProductDropdown(input);
+      syncMotifProductSelection(input);
+    });
+    input.addEventListener('change', function() {
+      syncMotifProductSelection(input, { clearInvalid: true });
+    });
+    input.addEventListener('focus', function() {
+      renderMotifProductDropdown(input);
+    });
+    input.addEventListener('blur', function() {
+      setTimeout(() => hideMotifProductDropdown(input), 150);
+    });
+  });
+  modal.querySelectorAll('.clear-motif-row').forEach(button => {
+    button.addEventListener('click', function() {
+      resetMotifBreakdownRow(button.closest('tr'));
+    });
+  });
+  modal.querySelectorAll('tbody tr').forEach(row => {
+    const productInput = row.querySelector('.motif-product-input');
+    if (!findMotifProductOption(productInput?.value || '')) {
+      resetMotifBreakdownRow(row);
+    }
+  });
+  const hasSavedMotifBreakdown = loadMotifBreakdown();
+  applyMotifTagsToSoldColumn();
+  if (!hasSavedMotifBreakdown) {
+    setTimeout(() => {
+      openMotifBreakdownModal();
+      showMotifGuideStartModal();
+    }, 250);
+  }
+});
+
+window.addEventListener('resize', function() {
+  document.querySelectorAll('.motif-product-input').forEach(input => hideMotifProductDropdown(input));
+  if (motifGuideActive) renderMotifGuideSpotlight();
+});
+
+document.addEventListener('scroll', function(event) {
+  if (event.target && event.target.closest?.('#motif-breakdown-modal')) {
+    document.querySelectorAll('.motif-product-input').forEach(input => hideMotifProductDropdown(input));
+  }
+  if (motifGuideActive) renderMotifGuideSpotlight();
+}, true);
+
 function buildInvenSyncDateUrl(dateValue) {
   const url = new URL({{ url_for('views.invensync', store_id=store.id)|tojson }}, window.location.origin);
   url.searchParams.set('date', dateValue);
@@ -936,7 +1735,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  if (Array.isArray(missingDates) && missingDates.length > 0) {
+  if (!isInvenSyncGuideMode && Array.isArray(missingDates) && missingDates.length > 0) {
     showMissingDatesModal();
   }
 });
@@ -1012,13 +1811,22 @@ function getBeginningGuideInputs() {
 }
 
 function getBeginningGuideElements() {
-  return Array.from(document.querySelectorAll('td[data-field="beginning_qty"], th'))
-    .filter(el => {
-      if (el.offsetParent === null) return false;
-      if (el.matches('th')) return el.textContent.trim() === 'Beg';
-      return true;
-    })
-    .slice(0, 8);
+  return getInventoryColumnGuideElements('Beg', 'beginning_qty');
+}
+
+function getInventoryColumnGuideElements(headerLabel, dataField) {
+  const header = Array.from(document.querySelectorAll('#main-content thead tr:nth-child(2) th'))
+    .find(el => el.offsetParent !== null && el.textContent.trim() === headerLabel);
+  const firstCell = Array.from(document.querySelectorAll(`#main-content tbody tr[data-product-id] td[data-field="${dataField}"]`))
+    .find(el => el.offsetParent !== null);
+  return [firstCell, header].filter(Boolean);
+}
+
+function getProductGuideElements() {
+  const header = document.querySelector('#main-content thead tr:nth-child(2) th:first-child');
+  const firstCell = Array.from(document.querySelectorAll('#main-content tbody tr[data-product-id] td:first-child'))
+    .find(el => el.offsetParent !== null);
+  return [firstCell, header].filter(el => el && el.offsetParent !== null);
 }
 
 function getElementGroupRect(elements) {
@@ -1038,31 +1846,150 @@ function getElementGroupRect(elements) {
 function getBeginningGuideStep() {
   const steps = [
     {
-      elements: getBeginningGuideElements(),
-      text: 'Enter the product beginning quantity here first.',
-      placement: 'right',
-      nextText: 'Next'
-    },
-    {
       elements: [document.getElementById('inventory-search-guide-target')],
-      text: 'Use search to quickly find a product before entering its Beg quantity.',
+      text: 'Search by product name, code, or price to quickly find an inventory row.',
       placement: 'right',
       nextText: 'Next'
     },
     {
       elements: [document.getElementById('inventory-category-guide-target')],
-      text: 'Use these categories to filter products by group for faster Beg entry.',
+      text: 'Filter the table by product category when working through a large inventory list.',
       placement: 'bottom',
       nextText: 'Next'
     },
     {
+      elements: getProductGuideElements(),
+      text: 'Product identifies the item, product code, and selling price used by every quantity and peso calculation in this row.',
+      placement: 'right',
+      nextText: 'Next'
+    },
+    {
+      elements: getBeginningGuideElements(),
+      text: 'Beg is the stock available at the start of the day. On the first setup, enter and save it before other movements; afterward it carries forward from the previous ending inventory.',
+      placement: 'right',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Delivery', 'delivery_qty'),
+      text: 'Delivery adds received stock. It is supplied by the Delivery page after the RSO or bulk delivery is reviewed and saved.',
+      placement: 'right',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Trans-In', 'trans_in_qty'),
+      text: 'Trans-In adds stock received through a Product Transfer created in the TransAct form and confirmed for this store.',
+      placement: 'right',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('BO', 'bo_qty'),
+      text: 'BO adds Bulk Order stock quantities linked from reviewed bulk delivery data.',
+      placement: 'right',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Adv', 'adv_del_qty'),
+      text: 'Adv adds advance-delivery stock when an advance quantity applies to the product.',
+      placement: 'right',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Trans-Out', 'trans_out_qty'),
+      text: 'Trans-Out subtracts stock sent to another location through a TransAct Product Transfer or EGI Plant Transfer.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Waste Qty', 'wastage_qty'),
+      text: 'Waste Qty subtracts damaged or discarded stock recorded through the TransAct Wastage form.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Waste Amt', 'wastage_amount'),
+      text: 'Waste Amt is calculated automatically as Waste Qty multiplied by the product selling price.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('CSI', 'csi_qty'),
+      text: 'CSI subtracts stock issued or consumed internally. Enter or review the CSI quantity linked to the store activity.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Sold', 'quantity_sold'),
+      text: 'Sold subtracts customer sales. POS Sold uploads feed this column after the Excel rows are scanned and reviewed; POS and motif badges show their source.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('D+5', 'ending_d5_qty'),
+      text: 'D+5 is the physical ending count for products with five days of remaining shelf life.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('D+4', 'ending_d4_qty'),
+      text: 'D+4 is the physical ending count for products with four days of remaining shelf life.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('D+3', 'ending_d3_qty'),
+      text: 'D+3 is the physical ending count for products with three days of remaining shelf life.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Total Ending Inventory', 'total_ending_qty'),
+      text: 'Total Ending Inventory is calculated automatically as D+5 + D+4 + D+3. This is the actual physical stock counted.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Total Peso', 'total_peso_srp'),
+      text: 'Total Peso converts the actual ending quantity to value: Total Ending Inventory × selling price.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Theoretical Ending', 'theo_ending_qty'),
+      text: 'Theoretical Ending is the expected stock: Beg + Delivery + Trans-In + BO + Adv − Trans-Out − Waste − CSI − POS Sold.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Variance', 'variance_qty'),
+      text: 'Variance compares actual with expected stock: Total Ending Inventory − Theoretical Ending. Zero means the count balances.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Var Peso', 'variance_peso'),
+      text: 'Var Peso shows the financial value of the difference: Variance × selling price.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
+      elements: getInventoryColumnGuideElements('Remarks', 'remarks'),
+      text: 'Use Remarks to explain shortages, overages, adjustments, or any unusual source transaction for the row.',
+      placement: 'left',
+      nextText: 'Next'
+    },
+    {
       elements: [document.getElementById('save-inventory-btn')],
-      text: 'Click Save Beginning after entering the Beg quantities to finalize your beginning inventory.',
+      text: isDayFinalized
+        ? 'This inventory date is finalized and locked. Review the source badges, ending counts, and variances as a completed record.'
+        : (isSavingBeginningInventory
+          ? 'Save Beginning locks the initial Beg values. Afterward, the daily movement columns become the working inventory flow.'
+          : 'After reviewing Delivery, TransAct movements, Wastage, POS Sold, ending counts, and variances, click End of Day to finalize the date.'),
       placement: 'bottom',
-      nextText: 'Finish, Lets start'
+      nextText: "Finish, let's start"
     }
   ];
-  return steps[beginningGuideStepIndex] || null;
+  const availableSteps = steps.filter(step => step.elements.some(el => el && el.offsetParent !== null));
+  return availableSteps[beginningGuideStepIndex] || null;
 }
 
 function renderBeginningSpotlight() {
@@ -1221,11 +2148,10 @@ function showMissingBeginningPopup(row, options = {}) {
 
 function refreshBeginningSaveMode() {
   if (isDayFinalized) {
-    const button = document.getElementById('save-inventory-btn');
-    if (button) {
-      button.textContent = hasAdminStoreUnlock ? 'Save' : 'Finalized';
-      if (!hasAdminStoreUnlock) button.disabled = true;
-    }
+    setInventorySaveButtons({
+      text: hasAdminStoreUnlock ? 'Save' : 'Finalized',
+      disabled: !hasAdminStoreUnlock
+    });
     return;
   }
 
@@ -1235,10 +2161,7 @@ function refreshBeginningSaveMode() {
 
   isSavingBeginningInventory = !isBeginningFinalized && requiresBeginningStockFirst;
 
-  const button = document.getElementById('save-inventory-btn');
-  if (button) {
-    button.textContent = isSavingBeginningInventory ? 'Save Beginning' : 'End of Day';
-  }
+  setInventorySaveButtons({ text: isSavingBeginningInventory ? 'Save Beginning' : 'End of Day' });
 }
 
 function fillBlankBeginningInputsWithZero() {
@@ -1267,11 +2190,7 @@ function lockDayInputs() {
     input.classList.add('readonly', 'cursor-not-allowed', 'opacity-75');
   });
 
-  const button = document.getElementById('save-inventory-btn');
-  if (button) {
-    button.textContent = 'Finalized';
-    button.disabled = true;
-  }
+  setInventorySaveButtons({ text: 'Finalized', disabled: true });
 }
 
 function updateInventoryRow(input) {
@@ -1371,11 +2290,8 @@ function buildInventorySnapshot() {
 }
 
 function setSaveButtonEnabled(enabled) {
-  const button = document.getElementById('save-inventory-btn');
-  if (button) {
-    button.disabled = (isDayFinalized && !hasAdminStoreUnlock) || !enabled;
-    refreshBeginningSaveMode();
-  }
+  setInventorySaveButtons({ disabled: (isDayFinalized && !hasAdminStoreUnlock) || !enabled });
+  refreshBeginningSaveMode();
 }
 
 function refreshSaveButtonState() {
@@ -1461,11 +2377,7 @@ function clearConsumedAdminStoreUnlock() {
 function finalizeAdminUnlockedViewAfterSave() {
   hasAdminStoreUnlock = false;
   lockDayInputs();
-  const button = document.getElementById('save-inventory-btn');
-  if (button) {
-    button.textContent = 'Finalized';
-    button.disabled = true;
-  }
+  setInventorySaveButtons({ text: 'Finalized', disabled: true });
 }
 
 function saveAll() {
@@ -1508,8 +2420,7 @@ function saveAll() {
 }
 
 function runInventorySave(isBeginningSave = false, finalizeDay = false) {
-  const button = document.getElementById('save-inventory-btn');
-  if (button) button.disabled = true;
+  setInventorySaveButtons({ disabled: true });
 
   if (isBeginningSave) {
     fillBlankBeginningInputsWithZero();
@@ -1784,6 +2695,9 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   setTimeout(refreshBeginningSaveMode, 100);
+  if (isInvenSyncGuideMode) {
+    setTimeout(() => startBeginningStockGuide(true), 550);
+  }
 });
 
 function attachEnterNavigation(scope) {
@@ -1901,7 +2815,6 @@ function syncProducts() {
   });
 }
 
-// Fullscreen functionality
 function toggleFullscreen() {
   const modal = document.getElementById('fullscreen-modal');
   const isHidden = modal.classList.contains('hidden');
@@ -2000,6 +2913,62 @@ document.addEventListener('DOMContentLoaded', function() {
 {% endif %}
 </script>
 
+{% if current_user.role == 'Inventory Staff' %}
+<script>
+function openInvensyncExportModal() {
+  const modal = document.getElementById('invensync-export-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  document.body.classList.add('overflow-hidden');
+}
+
+function closeInvensyncExportModal() {
+  const modal = document.getElementById('invensync-export-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  document.body.classList.remove('overflow-hidden');
+}
+</script>
+
+<div id="invensync-export-modal" class="hidden fixed inset-0 z-[10000] bg-slate-950/60 px-4 py-6">
+  <div class="mx-auto flex min-h-full max-w-lg items-center justify-center">
+    <div class="w-full overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <div class="bg-slate-900 px-6 py-5 text-white">
+        <h2 class="text-2xl font-bold">Export InvenSync Excel</h2>
+        <p class="mt-1 text-sm text-slate-300">Choose what data you want to download for {{ store.name }}.</p>
+      </div>
+      <div class="space-y-4 px-6 py-6">
+        <a
+          href="{{ url_for('views.store_manager_data_export', type='invensync', store_id=store.id, date=selected_date, scope='date') }}"
+          class="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-left transition hover:border-emerald-400 hover:bg-emerald-100"
+        >
+          <span>
+            <span class="block text-lg font-bold text-slate-900">Current Date</span>
+            <span class="mt-1 block text-sm text-slate-600">Export only the selected date: {{ selected_date }}</span>
+          </span>
+          <span class="rounded-lg bg-emerald-600 px-3 py-1 text-sm font-semibold text-white">Excel</span>
+        </a>
+        <a
+          href="{{ url_for('views.store_manager_data_export', type='invensync', store_id=store.id, date=selected_date, scope='month') }}"
+          class="flex items-center justify-between rounded-xl border border-sky-200 bg-sky-50 px-5 py-4 text-left transition hover:border-sky-400 hover:bg-sky-100"
+        >
+          <span>
+            <span class="block text-lg font-bold text-slate-900">Whole Month</span>
+            <span class="mt-1 block text-sm text-slate-600">Export every InvenSync record in the selected month.</span>
+          </span>
+          <span class="rounded-lg bg-sky-600 px-3 py-1 text-sm font-semibold text-white">Excel</span>
+        </a>
+      </div>
+      <div class="flex justify-end border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <button type="button" onclick="closeInvensyncExportModal()" class="rounded-lg bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-100">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- Fullscreen Modal -->
 <div id="fullscreen-modal" class="hidden fixed inset-0 z-50 bg-white">
   <div class="h-full flex flex-col">
@@ -2022,12 +2991,40 @@ document.addEventListener('DOMContentLoaded', function() {
           Save Changes
         </button>
         {% endif %}
-        <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-700 transition-all">
+        {% if not is_view_only %}
+        <button onclick="syncProducts()" class="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-all" title="Sync products from Product Masterlist">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
+          </svg>
+          <span>Sync</span>
+        </button>
+        {% endif %}
+        {% if current_user.role == 'Store Manager' and motif_charge_payload %}
+        <button type="button" onclick="openMotifBreakdownModal()" class="flex items-center gap-2 border border-slate-300 bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-slate-800 transition-all" title="Open Additional Charge for Motif breakdown">
+          <span>Motif Breakdown</span>
+        </button>
+        {% endif %}
+        {% if current_user.role == 'Inventory Staff' %}
+        <button type="button" onclick="openInvensyncExportModal()" class="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-all" title="Export InvenSync data to Excel">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          <span>Export Excel</span>
+        </button>
+        {% endif %}
+        <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-all">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
           </svg>
           <span>Exit Fullscreen</span>
         </button>
+        {% if not is_view_only %}
+        <button data-save-inventory type="button" onclick="saveAll()" disabled class="px-4 py-2 bg-sky-600 text-white text-sm font-semibold rounded-lg hover:bg-sky-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:hover:bg-slate-300">
+          {{ 'Finalized' if is_day_locked else ('Save Beginning' if allow_beginning_stock_entry|default(false) else 'End of Day') }}
+        </button>
+        {% endif %}
       </div>
     </div>
 
@@ -2041,3 +3038,4 @@ document.addEventListener('DOMContentLoaded', function() {
 </div>
 
 {% endblock %}
+

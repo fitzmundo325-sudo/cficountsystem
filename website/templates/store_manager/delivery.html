@@ -28,13 +28,18 @@
 
   .delivery-tour-label {
     position: fixed;
-    z-index: 9999;
+    z-index: 10000;
     max-width: min(360px, calc(100vw - 32px));
+    background: #0f172a;
     color: #ffffff;
+    padding: 18px 20px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
     font-size: 17px;
-    font-weight: 600;
+    font-weight: 700;
     line-height: 1.35;
     text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
     pointer-events: auto;
   }
 
@@ -90,7 +95,19 @@
       {% for item in items %}
       <tr class="odd:bg-white even:bg-slate-50 rso-row" data-rso-qty="{{ item.quantity }}">
         <td class="px-4 py-2 text-sm text-slate-700">{{ item.product_code if item.product_code else '-' }}</td>
-        <td class="px-4 py-2 text-sm text-slate-700">{{ item.product_name }}</td>
+        <td class="px-4 py-2 text-sm text-slate-700">
+          <div class="flex flex-wrap items-center gap-2">
+            <span>{{ item.product_name }}</span>
+            {% if item.is_manual %}
+            <span class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">Manual</span>
+            {% endif %}
+          </div>
+          {% if item.manual_note %}
+          <div class="mt-1 rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-xs text-indigo-800">
+            {{ item.manual_note }}
+          </div>
+          {% endif %}
+        </td>
         <td class="px-4 py-2 text-sm font-medium text-slate-700">{{ item.rso_no if item.rso_no else number }}</td>
         <td class="px-4 py-2 text-sm text-slate-900 text-right font-semibold">{{ item.quantity }}</td>
         <td class="px-4 py-2 text-right">
@@ -137,7 +154,7 @@
       <select name="manual_product_id[]" form="{{ save_form_id }}" class="manual-product-select w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400">
         <option value="">Select from Product Master</option>
         {% for product in manual_products %}
-        <option value="{{ product.id }}" data-code="{{ product.code or '-' }}">{{ product.description }}</option>
+        <option value="{{ product.id }}" data-code="{{ product.code or '-' }}" data-motif-charge="{{ '1' if product.description == 'ADDITIONAL CHARGE FOR MOTIF' else '0' }}">{{ product.description }}</option>
         {% endfor %}
       </select>
     </label>
@@ -146,6 +163,10 @@
       <input type="number" name="manual_quantity[]" form="{{ save_form_id }}" min="1" placeholder="0" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-400">
     </label>
     <button type="button" class="add-manual-product-row inline-flex h-[38px] w-[42px] items-center justify-center rounded-lg bg-slate-900 text-xl font-bold text-white hover:bg-slate-800" title="Add another product" aria-label="Add another product">+</button>
+    <label class="manual-motif-note hidden sm:col-start-2 sm:col-span-2">
+      <span class="mb-1 block text-xs font-medium text-slate-600">Motif details / combo with</span>
+      <textarea name="manual_note[]" form="{{ save_form_id }}" rows="2" placeholder="Example: consists of Fluffy Mamon with custom motif / combo with cake order" class="w-full rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-indigo-400"></textarea>
+    </label>
   </div>
   </div>
 </div>
@@ -484,6 +505,123 @@
       return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
     }
 
+    function escapeDeliveryHtml(value) {
+      return String(value ?? '').replace(/[&<>'"]/g, function(character) {
+        return {
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          "'": '&#39;',
+          '"': '&quot;'
+        }[character];
+      });
+    }
+
+    function buildDeliverySavePreview(saveRsoForm, isBulkSave) {
+      const sourceLabel = isBulkSave ? 'Bulk Order RSO' : 'Delivery RSO';
+      const receivedInputs = Array.from(document.querySelectorAll(`.rso-received-input[form="${saveRsoForm.id}"]`));
+      const reviewRows = receivedInputs.map(function(input) {
+        const row = input.closest('.rso-row');
+        const productCell = row?.children[1];
+        const productName = productCell?.querySelector('.flex span')?.textContent?.trim()
+          || productCell?.textContent?.trim()
+          || 'Unnamed product';
+        const expected = Number(row?.dataset.rsoQty || 0);
+        const receivedValue = String(input.value || '').trim();
+        const received = receivedValue === '' ? null : Number(receivedValue);
+        return {
+          code: row?.children[0]?.textContent?.trim() || '-',
+          product: productName,
+          rsoNo: row?.children[2]?.textContent?.trim() || '-',
+          expected: Number.isFinite(expected) ? expected : 0,
+          received: received !== null && Number.isFinite(received) ? received : null,
+          manual: false
+        };
+      });
+
+      const manualContainer = document.querySelector(`.manual-product-form[data-save-form="${saveRsoForm.id}"]`);
+      const manualRows = manualContainer
+        ? Array.from(manualContainer.querySelectorAll('.manual-product-row')).map(function(row) {
+            const select = row.querySelector('.manual-product-select');
+            const selectedOption = select?.options[select.selectedIndex];
+            const quantity = Number(row.querySelector('input[name="manual_quantity[]"]')?.value || 0);
+            if (!select?.value || !Number.isFinite(quantity) || quantity <= 0) return null;
+            return {
+              code: selectedOption?.dataset.code || '-',
+              product: selectedOption?.textContent?.trim() || 'Manual product',
+              rsoNo: 'Manual',
+              expected: quantity,
+              received: quantity,
+              manual: true
+            };
+          }).filter(Boolean)
+        : [];
+
+      const rows = reviewRows.concat(manualRows);
+      const expectedTotal = rows.reduce((total, row) => total + row.expected, 0);
+      const receivedTotal = rows.reduce((total, row) => total + (row.received ?? 0), 0);
+      const matchedCount = rows.filter(row => row.received !== null && row.received === row.expected).length;
+      const reviewCount = rows.length - matchedCount;
+      const rsoNumbers = Array.from(new Set(reviewRows.map(row => row.rsoNo).filter(value => value && value !== '-')));
+
+      const tableRows = rows.length
+        ? rows.map(function(row) {
+            const difference = row.received === null ? null : row.received - row.expected;
+            let statusLabel = 'Not entered';
+            let statusClass = 'bg-amber-100 text-amber-800';
+            if (row.manual || difference === 0) {
+              statusLabel = row.manual ? 'Manual' : 'Matched';
+              statusClass = row.manual ? 'bg-sky-100 text-sky-800' : 'bg-emerald-100 text-emerald-800';
+            } else if (difference < 0) {
+              statusLabel = `Short ${Math.abs(difference)}`;
+              statusClass = 'bg-rose-100 text-rose-800';
+            } else if (difference > 0) {
+              statusLabel = `Over ${difference}`;
+              statusClass = 'bg-violet-100 text-violet-800';
+            }
+            return `
+              <tr class="border-t border-slate-100">
+                <td class="px-3 py-2.5 text-left">
+                  <p class="font-semibold text-slate-900">${escapeDeliveryHtml(row.product)}</p>
+                  <p class="mt-0.5 text-xs text-slate-500">${escapeDeliveryHtml(row.code)} · ${escapeDeliveryHtml(row.rsoNo)}</p>
+                </td>
+                <td class="px-3 py-2.5 text-right font-semibold text-slate-700">${row.expected}</td>
+                <td class="px-3 py-2.5 text-right font-semibold text-slate-900">${row.received === null ? '—' : row.received}</td>
+                <td class="px-3 py-2.5 text-center"><span class="inline-flex rounded-full px-2 py-1 text-xs font-bold ${statusClass}">${escapeDeliveryHtml(statusLabel)}</span></td>
+              </tr>
+            `;
+          }).join('')
+        : '<tr><td colspan="4" class="px-4 py-8 text-center text-sm text-slate-500">No delivery products are included in this save.</td></tr>';
+
+      return `
+        <div class="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white text-left">
+          <div class="border-b border-slate-200 bg-slate-50 px-5 py-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Delivery Preview Summary</p>
+                <p class="mt-1 text-lg font-extrabold text-slate-900">${sourceLabel}</p>
+              </div>
+              <p class="text-sm font-semibold text-slate-600">RSO: ${escapeDeliveryHtml(rsoNumbers.join(', ') || 'Manual entry')}</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
+            <div class="rounded-xl bg-slate-100 p-3"><p class="text-xs font-bold uppercase text-slate-500">Products</p><p class="mt-1 text-2xl font-black text-slate-900">${rows.length}</p></div>
+            <div class="rounded-xl bg-sky-50 p-3"><p class="text-xs font-bold uppercase text-sky-700">Expected Qty</p><p class="mt-1 text-2xl font-black text-sky-950">${expectedTotal}</p></div>
+            <div class="rounded-xl bg-emerald-50 p-3"><p class="text-xs font-bold uppercase text-emerald-700">Received Qty</p><p class="mt-1 text-2xl font-black text-emerald-950">${receivedTotal}</p></div>
+            <div class="rounded-xl ${reviewCount ? 'bg-amber-50' : 'bg-emerald-50'} p-3"><p class="text-xs font-bold uppercase ${reviewCount ? 'text-amber-700' : 'text-emerald-700'}">Needs Review</p><p class="mt-1 text-2xl font-black ${reviewCount ? 'text-amber-950' : 'text-emerald-950'}">${reviewCount}</p></div>
+          </div>
+          <div class="max-h-72 overflow-auto border-t border-slate-200">
+            <table class="min-w-full text-sm">
+              <thead class="sticky top-0 bg-slate-100 text-xs font-bold uppercase text-slate-500">
+                <tr><th class="px-3 py-2 text-left">Product / RSO</th><th class="px-3 py-2 text-right">Qty</th><th class="px-3 py-2 text-right">Received</th><th class="px-3 py-2 text-center">Status</th></tr>
+              </thead>
+              <tbody>${tableRows}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
     function setDeliveryTab(activeTab) {
       deliveryTabButtons.forEach(function(button) {
         const isActive = button.dataset.deliveryTab === activeTab;
@@ -511,6 +649,18 @@
     setDeliveryTab(initialDeliveryTab);
 
     manualProductForms.forEach(function(container) {
+      function updateMotifNoteVisibility(row) {
+        const select = row ? row.querySelector('.manual-product-select') : null;
+        const noteWrap = row ? row.querySelector('.manual-motif-note') : null;
+        const noteInput = noteWrap ? noteWrap.querySelector('textarea[name="manual_note[]"]') : null;
+        const option = select ? select.options[select.selectedIndex] : null;
+        const isMotifCharge = option && option.dataset.motifCharge === '1';
+        if (noteWrap) noteWrap.classList.toggle('hidden', !isMotifCharge);
+        if (noteInput) {
+          if (!isMotifCharge) noteInput.value = '';
+        }
+      }
+
       function updateManualSaveState() {
         const saveButton = container.querySelector('.manual-product-save-btn');
         if (!saveButton) return;
@@ -534,10 +684,13 @@
         const select = newRow.querySelector('.manual-product-select');
         const quantity = newRow.querySelector('input[name="manual_quantity[]"]');
         const codeField = newRow.querySelector('.manual-product-code');
+        const noteInput = newRow.querySelector('textarea[name="manual_note[]"]');
         if (saveButton) saveButton.remove();
         if (select) select.value = '';
         if (quantity) quantity.value = '';
+        if (noteInput) noteInput.value = '';
         if (codeField) codeField.textContent = '—';
+        updateMotifNoteVisibility(newRow);
         rows.appendChild(newRow);
         updateManualSaveState();
       });
@@ -550,6 +703,7 @@
         const row = select.closest('.manual-product-row');
         const codeField = row ? row.querySelector('.manual-product-code') : null;
         const option = select.options[select.selectedIndex];
+        if (row) updateMotifNoteVisibility(row);
         if (codeField) codeField.textContent = option && option.value ? (option.dataset.code || '-') : '—';
         updateManualSaveState();
       });
@@ -558,6 +712,7 @@
           updateManualSaveState();
         }
       });
+      container.querySelectorAll('.manual-product-row').forEach(updateMotifNoteVisibility);
       updateManualSaveState();
     });
 
@@ -943,17 +1098,22 @@
         if (typeof showConfirmationModal === 'function') {
           const savingDate = reportDateInput ? reportDateInput.value : '';
           const isBulkSave = saveRsoForm.id === 'save-bulk-rso-form';
+          const deliverySavePreview = buildDeliverySavePreview(saveRsoForm, isBulkSave);
           showConfirmationModal({
             title: isBulkSave ? 'Save Bulk RSO Data?' : 'Save RSO Data?',
             size: 'large',
             modalWidth: '980px',
+            compactHeader: true,
             messageHtml: `
-              <div class="rounded-3xl border border-emerald-200 bg-emerald-50 px-8 py-7 text-left">
-                <p class="text-base font-bold uppercase tracking-wide text-emerald-700">Saving Date Indicator</p>
-                <p class="mt-3 text-4xl font-extrabold leading-tight text-slate-900">You are saving for the day of: ${formatReportDateLong(savingDate)}</p>
-                <p class="mt-3 text-lg text-slate-600">This follows the date selected in the calendar.</p>
+              <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+                <div class="rounded-3xl border border-emerald-200 bg-emerald-50 px-8 py-7 text-left">
+                  <p class="text-base font-bold uppercase tracking-wide text-emerald-700">Saving Date Indicator</p>
+                  <p class="mt-3 text-4xl font-extrabold leading-tight text-slate-900">You are saving for the day of: ${formatReportDateLong(savingDate)}</p>
+                  <p class="mt-3 text-lg text-slate-600">This follows the date selected in the calendar.</p>
+                </div>
+                ${deliverySavePreview}
+                <p class="mt-7 text-xl text-slate-700">Are you sure you want to save this delivery data?</p>
               </div>
-              <p class="mt-7 text-xl text-slate-700">Are you sure you want to save this delivery data?</p>
             `,
             confirmText: 'Save Data',
             cancelText: 'Cancel',

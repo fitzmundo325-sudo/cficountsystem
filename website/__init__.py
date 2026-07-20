@@ -144,8 +144,35 @@ def _ensure_rso_delivery_columns():
             conn.execute(text("ALTER TABLE rso_delivery ADD COLUMN delivery_reviewed_date DATE"))
         if 'upload_source' not in existing_columns:
             conn.execute(text("ALTER TABLE rso_delivery ADD COLUMN upload_source VARCHAR(20) DEFAULT 'delivery'"))
+        if 'manual_note' not in existing_columns:
+            conn.execute(text("ALTER TABLE rso_delivery ADD COLUMN manual_note VARCHAR(500)"))
         conn.execute(text("UPDATE rso_delivery SET upload_source = 'delivery' WHERE upload_source IS NULL OR TRIM(upload_source) = ''"))
         conn.commit()
+
+
+def _ensure_motif_charge_product():
+    from .models import ProductMaster
+
+    description = 'ADDITIONAL CHARGE FOR MOTIF'
+    existing_product = ProductMaster.query.filter(
+        func.lower(func.trim(ProductMaster.description)) == description.lower()
+    ).first()
+    if existing_product:
+        return
+
+    max_code = db.session.query(func.max(ProductMaster.code)).scalar() or 900000
+    product = ProductMaster(
+        code=int(max_code) + 1,
+        description=description,
+        category='ADD-ONS',
+        sub_category='MOTIF',
+        tp=0.0,
+        sp_p=0.0,
+        sp_np=0.0,
+        shelf_life=None,
+    )
+    db.session.add(product)
+    db.session.commit()
 
 
 def _backfill_inventory_staff_store_assignments():
@@ -362,6 +389,7 @@ def create_app():
         _backfill_inventory_staff_store_assignments()
         _ensure_product_master_sp_np_column()
         _ensure_rso_delivery_columns()
+        _ensure_motif_charge_product()
         _ensure_maintenance_mode_table()
         _ensure_taf_transfer_columns()
         _ensure_taf_transfer_item_columns()
