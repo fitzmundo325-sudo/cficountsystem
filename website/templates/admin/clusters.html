@@ -21,6 +21,7 @@
     </nav>
   </div>
 
+  {% if can_manage_clusters %}
   <div class="flex items-center gap-4">
     <button id="openModalBtn" class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 active:scale-95">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -30,6 +31,7 @@
       <span>New Cluster</span>
     </button>
   </div>
+  {% endif %}
 </header>
 
 <!-- Content -->
@@ -39,7 +41,9 @@
   <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <div>
       <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Clusters</h1>
-      <p class="mt-1 text-slate-600">Manage store clusters and assign cluster managers.</p>
+      <p class="mt-1 text-slate-600">
+        {% if can_manage_clusters %}Manage store clusters and assign cluster managers.{% else %}View all clusters and their store performance data.{% endif %}
+      </p>
     </div>
 
     <!-- Search -->
@@ -127,7 +131,7 @@
       <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
         <a href="/admin/clusters/{{ cluster.id }}/manage" 
            class="flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition">
-          Manage Stores
+          {% if can_manage_clusters %}Manage Stores{% else %}View Stores{% endif %}
         </a>
       </div>
     </div>
@@ -148,6 +152,7 @@
 
 </div>
 
+{% if can_manage_clusters %}
 <!-- New Cluster Modal -->
 <div id="clusterModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
   <!-- Backdrop -->
@@ -244,18 +249,20 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 <script>
+  {% if can_manage_clusters %}
   // Initialize Modal using the reusable Modal class
   const clusterModal = new Modal('clusterModal');
   
   // Open modal button
-  document.getElementById('openModalBtn').addEventListener('click', () => {
+  document.getElementById('openModalBtn')?.addEventListener('click', () => {
     clusterModal.open();
   });
   
   // Form validation
-  document.getElementById('newClusterForm').addEventListener('submit', (e) => {
+  document.getElementById('newClusterForm')?.addEventListener('submit', (e) => {
     const name = document.getElementById('name');
     
     if (!name.value.trim()) {
@@ -265,6 +272,7 @@
       return false;
     }
   });
+  {% endif %}
 </script>
 
 {% endblock %}
