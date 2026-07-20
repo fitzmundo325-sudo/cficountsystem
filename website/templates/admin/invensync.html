@@ -159,6 +159,7 @@
         {% endif %}
 
         {% set update_status = store_summary.update_status %}
+<<<<<<< HEAD
         {% set inventory_status = update_status.inventory %}
         {% set wastage_status = update_status.wastage %}
         <div class="space-y-2">
@@ -169,6 +170,31 @@
               <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
               Inventory up to date through {{ latest_date }}
             </div>
+=======
+        <div class="invensync-update-status rounded-xl border px-3 py-2 {% if update_status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
+          {% if update_status.is_up_to_date %}
+          <div class="status-title flex items-center gap-2 text-sm font-semibold text-emerald-700">
+            <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+            Up to date
+          </div>
+          <p class="status-copy mt-1 text-xs text-emerald-700/80">Finalized through {{ update_cutoff_date }}.</p>
+          {% else %}
+          <div class="status-title flex items-center gap-2 text-sm font-semibold text-amber-800">
+            <span class="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500"></span>
+            Not updated
+          </div>
+          <p class="status-copy mt-1 text-xs text-amber-800/80">
+            {{ update_status.missing_count }} missing previous date{{ '' if update_status.missing_count == 1 else 's' }} this month.
+          </p>
+          {% if update_status.missing_dates %}
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            {% if update_status.missing_count <= 3 %}
+            {% for missing_date in update_status.missing_dates %}
+            <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+              {{ missing_date.label }}
+            </span>
+            {% endfor %}
+>>>>>>> 797dfc5401a213cc98f3b6365f91eaf996bd96e0
             {% else %}
             <div class="status-title flex items-center gap-2 text-sm font-semibold text-amber-800">
               <span class="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500"></span>

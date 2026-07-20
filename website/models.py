@@ -190,6 +190,7 @@ class RsoDelivery(db.Model):
     uploaded_at = db.Column(db.DateTime(timezone=True), default=func.now())
     delivery_reviewed_date = db.Column(db.Date, nullable=True, index=True)
     upload_source = db.Column(db.String(20), nullable=False, default='delivery', index=True)
+    manual_note = db.Column(db.String(500), nullable=True)
 
     store = db.relationship('Store', backref='rso_deliveries')
     uploader = db.relationship('User', foreign_keys=[uploaded_by])
