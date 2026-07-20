@@ -3452,31 +3452,15 @@ def _get_global_invensync_config():
     return config, config_data
 
 
-def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
-    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
-        return {
-            'is_up_to_date': False,
-            'missing_dates': [],
-            'missing_ranges': [],
-            'missing_count': 0,
-            'latest_finalized_date': None,
-        }
-
-    finalized_dates = {
-        row.inventory_date for row in DailyEndingInventory.query.filter(
-            DailyEndingInventory.store_id == store_id,
-            DailyEndingInventory.inventory_date >= month_start,
-            DailyEndingInventory.inventory_date <= cutoff_date,
-            DailyEndingInventory.is_finalized.is_(True),
-        ).with_entities(DailyEndingInventory.inventory_date).all()
-        if row.inventory_date
-    }
-
+def _build_single_update_status(dates_set, today, month_start, cutoff_date, label):
     missing_date_values = []
     missing_dates = []
     cursor = month_start
     while cursor <= cutoff_date:
-        if cursor not in finalized_dates:
+        if cursor == today:
+            cursor += timedelta(days=1)
+            continue
+        if cursor not in dates_set:
             missing_date_values.append(cursor)
             missing_dates.append({
                 'iso': cursor.strftime('%Y-%m-%d'),
@@ -3514,13 +3498,52 @@ def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
             'label': format_missing_range(range_start, previous),
         })
 
-    latest_finalized_date = max(finalized_dates) if finalized_dates else None
+    latest_date = max(dates_set) if dates_set else None
     return {
         'is_up_to_date': len(missing_dates) == 0,
         'missing_dates': missing_dates,
         'missing_ranges': missing_ranges,
         'missing_count': len(missing_dates),
-        'latest_finalized_date': latest_finalized_date,
+        'latest_date': latest_date,
+    }
+
+
+def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return {
+            'is_up_to_date': False,
+            'missing_dates': [],
+            'missing_ranges': [],
+            'missing_count': 0,
+            'latest_finalized_date': None,
+        }
+
+    today = date.today()
+    finalized_dates = {
+        row.inventory_date for row in DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= month_start,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).with_entities(DailyEndingInventory.inventory_date).all()
+        if row.inventory_date
+    }
+
+    taf_wastage_dates = {
+        row.transaction_date for row in TafTransfer.query.filter(
+            TafTransfer.store_id == store_id,
+            TafTransfer.transaction_date >= month_start,
+            TafTransfer.transaction_date <= cutoff_date,
+            func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer',
+        ).with_entities(TafTransfer.transaction_date).all()
+        if row.transaction_date
+    }
+
+    inventory_status = _build_single_update_status(finalized_dates, today, month_start, cutoff_date, 'inventory')
+    wastage_status = _build_single_update_status(taf_wastage_dates, today, month_start, cutoff_date, 'wastage')
+    return {
+        'inventory': inventory_status,
+        'wastage': wastage_status,
     }
 
 

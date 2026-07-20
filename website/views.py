@@ -581,6 +581,7 @@ def _consolidate_cluster_reports_by_date(reports):
                 setattr(day_row, field_name, 0)
             for field_name in computed_pos_fields:
                 setattr(day_row, field_name, 0)
+            day_row._taf_wastage_amount = 0.0
             day_map[date_key] = day_row
 
         for field_name in numeric_field_names:
@@ -597,6 +598,7 @@ def _consolidate_cluster_reports_by_date(reports):
                 field_name,
                 (int(getattr(day_row, field_name, 0) or 0) + int(getattr(report, field_name, 0) or 0))
             )
+        day_row._taf_wastage_amount = float(getattr(day_row, '_taf_wastage_amount', 0) or 0) + float(getattr(report, '_taf_wastage_amount', 0) or 0)
 
     return sorted(day_map.values(), key=lambda r: (r.report_date, r.id))
 
@@ -1600,6 +1602,110 @@ def _build_missing_invensync_dates(store_id, month_start, cutoff_date):
             })
         cursor += timedelta(days=1)
     return missing_dates
+
+
+def _build_single_update_status(dates_set, today, month_start, cutoff_date, label):
+    missing_date_values = []
+    missing_dates = []
+    cursor = month_start
+    while cursor <= cutoff_date:
+        if cursor == today:
+            cursor += timedelta(days=1)
+            continue
+        if cursor not in dates_set:
+            missing_date_values.append(cursor)
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+
+    def format_missing_range(start, end):
+        if start == end:
+            return f"{start.strftime('%b')} {start.day}, {start.year}"
+        if start.year == end.year and start.month == end.month:
+            return f"{start.strftime('%b')} {start.day}-{end.day}, {start.year}"
+        if start.year == end.year:
+            return f"{start.strftime('%b')} {start.day} - {end.strftime('%b')} {end.day}, {start.year}"
+        return f"{start.strftime('%b')} {start.day}, {start.year} - {end.strftime('%b')} {end.day}, {end.year}"
+
+    missing_ranges = []
+    if missing_date_values:
+        range_start = missing_date_values[0]
+        previous = missing_date_values[0]
+        for missing_date in missing_date_values[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            missing_ranges.append({
+                'start': range_start.strftime('%Y-%m-%d'),
+                'end': previous.strftime('%Y-%m-%d'),
+                'label': format_missing_range(range_start, previous),
+            })
+            range_start = missing_date
+            previous = missing_date
+        missing_ranges.append({
+            'start': range_start.strftime('%Y-%m-%d'),
+            'end': previous.strftime('%Y-%m-%d'),
+            'label': format_missing_range(range_start, previous),
+        })
+
+    latest_date = max(dates_set) if dates_set else None
+    return {
+        'is_up_to_date': len(missing_dates) == 0,
+        'missing_dates': missing_dates,
+        'missing_ranges': missing_ranges,
+        'missing_count': len(missing_dates),
+        'latest_date': latest_date,
+    }
+
+
+def _build_cluster_invensync_update_status(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return {
+            'inventory': {
+                'is_up_to_date': False,
+                'missing_dates': [],
+                'missing_ranges': [],
+                'missing_count': 0,
+                'latest_date': None,
+            },
+            'wastage': {
+                'is_up_to_date': False,
+                'missing_dates': [],
+                'missing_ranges': [],
+                'missing_count': 0,
+                'latest_date': None,
+            },
+        }
+
+    today = date.today()
+    finalized_dates = {
+        row.inventory_date for row in DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= month_start,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).with_entities(DailyEndingInventory.inventory_date).all()
+        if row.inventory_date
+    }
+
+    taf_wastage_dates = {
+        row.transaction_date for row in TafTransfer.query.filter(
+            TafTransfer.store_id == store_id,
+            TafTransfer.transaction_date >= month_start,
+            TafTransfer.transaction_date <= cutoff_date,
+            func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer',
+        ).with_entities(TafTransfer.transaction_date).all()
+        if row.transaction_date
+    }
+
+    inventory_status = _build_single_update_status(finalized_dates, today, month_start, cutoff_date, 'inventory')
+    wastage_status = _build_single_update_status(taf_wastage_dates, today, month_start, cutoff_date, 'wastage')
+    return {
+        'inventory': inventory_status,
+        'wastage': wastage_status,
+    }
 
 
 def _store_has_operational_data(store_id):
@@ -5553,6 +5659,7 @@ def cluster_manager_cluster_data():
     _coalesce_numeric_fields_for_reports(reports)
     _apply_pos_qty_from_pos_categories(reports)
     _apply_ending_inventory_from_invensync(reports)
+    _apply_taf_wastage_amounts(reports)
     consolidated_reports = _consolidate_cluster_reports_by_date(reports)
     
     # Fetch store targets for the selected month
@@ -5747,8 +5854,8 @@ def cluster_manager_invensync():
         cluster = Cluster.query.get_or_404(cluster_id)
 
     selected_date = _date.today()
+    month_start = selected_date.replace(day=1)
 
-    # Get stores in this cluster only
     stores = Store.query.filter_by(cluster_id=cluster.id).order_by(Store.name.asc()).all()
     store_ids = [s.id for s in stores]
 
@@ -5780,10 +5887,12 @@ def cluster_manager_invensync():
     store_summaries = []
     for store in stores:
         inventory = inventory_by_store.get(store.id)
+        update_status = _build_cluster_invensync_update_status(store.id, month_start, selected_date)
         store_summaries.append({
             'store': store,
             'inventory': inventory,
-            'has_data': bool(inventory)
+            'has_data': bool(inventory),
+            'update_status': update_status,
         })
 
     cluster_sidebar_stores = _build_cluster_sidebar_stores(stores)
@@ -5801,6 +5910,96 @@ def cluster_manager_invensync():
         force_cluster_sidebar=(role in ('Admin', 'Superadmin')),
         cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin') else '',
     )
+
+
+@views.route('/cluster-manager/invensync/inventory-correction', methods=['POST'])
+@login_required
+def cluster_manager_save_invensync_inventory_correction():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    editable_fields = {
+        'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
+        'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+        'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
+        'ending_d3_qty', 'remarks',
+    }
+    numeric_fields = editable_fields - {'remarks'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return jsonify({'success': False, 'message': 'Inventory not found.'}), 404
+
+        if role == 'Cluster Manager':
+            store = _cluster_manager_invensync_verify_store_access(inventory.store_id, role)
+            if not store:
+                return jsonify({'success': False, 'message': 'Access denied for this store.'}), 403
+
+        changes = data.get('changes', [])
+        if not isinstance(changes, list) or not changes:
+            return jsonify({'success': False, 'message': 'No changes were submitted.'}), 400
+
+        changed_items = {}
+        audit_changes = []
+        for change in changes:
+            field = str(change.get('field', '')).strip()
+            if field not in editable_fields:
+                return jsonify({'success': False, 'message': f'{field or "Unknown field"} cannot be edited.'}), 400
+
+            item_id = int(change.get('item_id', 0) or 0)
+            item = DailyEndingInventoryItem.query.filter_by(
+                id=item_id,
+                inventory_id=inventory.id,
+            ).first()
+            if not item:
+                return jsonify({'success': False, 'message': 'An inventory item was not found.'}), 404
+
+            old_value = getattr(item, field)
+            if field in numeric_fields:
+                raw_value = change.get('value', 0)
+                new_value = int(float(raw_value)) if str(raw_value).strip() else 0
+            else:
+                new_value = str(change.get('value', '') or '').strip()
+
+            setattr(item, field, new_value)
+            changed_items[item.id] = item
+            audit_changes.append({
+                'item_id': item.id,
+                'product': item.product_description,
+                'field': field,
+                'old': old_value,
+                'new': new_value,
+            })
+
+        from .views import _recalculate_inventory_item
+        for item in changed_items.values():
+            _recalculate_inventory_item(item)
+
+        log_audit_event(
+            action='UPDATE',
+            entity_type='InvenSync Cluster Correction',
+            entity_id=inventory.id,
+            details={
+                'store_id': inventory.store_id,
+                'inventory_date': str(inventory.inventory_date),
+                'changes': audit_changes,
+            },
+        )
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': f'{len(audit_changes)} inventory cell change(s) saved.',
+        })
+    except (TypeError, ValueError):
+        db.session.rollback()
+        return jsonify({'success': False, 'message': 'Enter a valid whole number.'}), 400
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(exc)}), 500
 
 
 @views.route('/cluster-manager/oracle/save-buffers', methods=['POST'])
