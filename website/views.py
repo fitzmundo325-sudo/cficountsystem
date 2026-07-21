@@ -228,6 +228,30 @@ def _build_cluster_sidebar_stores(stores, start_date=None, end_date=None):
     ]
 
 
+def _get_store_scope_from_request(req):
+    """Read the global Official/Starlink store scope set by the sidebar toggle.
+
+    Returns 'starlink' or 'official'.
+    """
+    scope = (req.cookies.get('store_scope') or req.args.get('store_scope') or 'official').lower()
+    if scope not in ('starlink', 'official'):
+        scope = 'official'
+    return scope
+
+
+def _apply_store_scope_filter(stores, req):
+    """Filter a list of Store objects by the active global store scope.
+
+    'official' -> stores whose name does NOT contain 'starlink'
+    'starlink' -> stores whose name contains 'starlink'
+    """
+    scope = _get_store_scope_from_request(req)
+    if not stores:
+        return stores
+    if scope == 'starlink':
+        return [s for s in stores if 'starlink' in (s.name or '').lower()]
+    return [s for s in stores if 'starlink' not in (s.name or '').lower()]
+
 
 
 def _aggregate_targets_by_day(targets):
@@ -2968,13 +2992,13 @@ def cluster_dashboard():
     cluster_stores = Store.query.filter_by(cluster_id=cluster.id).all()
     if not cluster_stores:
         cluster_stores = Store.query.all()
+    cluster_stores = _apply_store_scope_filter(cluster_stores, request)
     starlink_stores = [
         store for store in cluster_stores
         if 'starlink' in str(store.name or '').strip().lower()
     ]
-    stores = cluster_stores
     stores = [
-        store for store in stores
+        store for store in cluster_stores
         if 'starlink' not in str(store.name or '').strip().lower()
     ]
     
@@ -3293,9 +3317,12 @@ def cluster_dashboard():
         ranges.append(_format_tracker_date_range(range_start, previous))
         return ranges
 
+    # Don't flag today's date as missing: reports/uploads for the current day
+    # are not due yet, so exclude today from the expected (required) dates.
+    tracker_end_date = min(end_date, today - timedelta(days=1))
     expected_dates = []
     tracker_cursor = start_date
-    while tracker_cursor <= end_date:
+    while tracker_cursor <= tracker_end_date:
         expected_dates.append(tracker_cursor)
         tracker_cursor += timedelta(days=1)
 
@@ -3383,7 +3410,7 @@ def cluster_dashboard():
         },
     }
     
-    cluster_sidebar_stores = _build_cluster_sidebar_stores(stores, start_date, end_date)
+    cluster_sidebar_stores = _build_cluster_sidebar_stores(cluster_stores, start_date, end_date)
 
     return render_template('cluster_manager/cluster_dashboard.html', 
                            user=current_user,
@@ -5810,6 +5837,7 @@ def cluster_manager_raw_data():
     
     # Get stores in this cluster
     stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    stores = _apply_store_scope_filter(stores, request)
     
     # Get current month and year (or from query params)
     from datetime import datetime as dt
@@ -5969,6 +5997,7 @@ def cluster_manager_cluster_data():
     
     # Get stores in this cluster
     stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    stores = _apply_store_scope_filter(stores, request)
     
     # Get current month and year (or from query params)
     from datetime import datetime as dt
@@ -6160,6 +6189,7 @@ def cluster_manager_oracle():
         selected_date = _date.today()
 
     stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    stores = _apply_store_scope_filter(stores, request)
     cluster_sidebar_stores = _build_cluster_sidebar_stores(stores)
 
     from .models import ProductMaster, StoreProductBuffer
@@ -6215,6 +6245,7 @@ def cluster_manager_invensync():
     month_start = selected_date.replace(day=1)
 
     stores = Store.query.filter_by(cluster_id=cluster.id).order_by(Store.name.asc()).all()
+    stores = _apply_store_scope_filter(stores, request)
     store_ids = [s.id for s in stores]
 
     latest_inventory_dates = (
@@ -6425,6 +6456,7 @@ def cluster_manager_cluster_sbase():
 
     # Get only stores in this cluster that are already one year.
     stores = Store.query.filter_by(cluster_id=cluster.id, is_one_year_already=True).all()
+    stores = _apply_store_scope_filter(stores, request)
 
     # Get current month and year (or from query params)
     today = date.today()
@@ -8217,28 +8249,32 @@ def _recalculate_inventory_item(item, sold_override=None):
     sold_qty = int(sold_override) if sold_override is not None else int(item.quantity_sold or 0)
 
     # Wastage amount
-    item.wastage_amount = item.wastage_qty * item.srp_price
-    
+    item.wastage_amount = (item.wastage_qty or 0) * (item.srp_price or 0)
+
     # Total ending
-    item.total_ending_qty = item.ending_d5_qty + item.ending_d4_qty + item.ending_d3_qty
-    item.total_peso_srp = item.total_ending_qty * item.srp_price
-    
+    item.total_ending_qty = (
+        int(item.ending_d5_qty or 0)
+        + int(item.ending_d4_qty or 0)
+        + int(item.ending_d3_qty or 0)
+    )
+    item.total_peso_srp = item.total_ending_qty * (item.srp_price or 0)
+
     # THEO ending
     item.theo_ending_qty = (
-        item.beginning_qty + 
-        item.delivery_qty + 
-        item.trans_in_qty + 
-        item.bo_qty + 
-        item.adv_del_qty - 
-        item.trans_out_qty - 
-        item.wastage_qty - 
-        item.csi_qty - 
-        sold_qty
+        int(item.beginning_qty or 0)
+        + int(item.delivery_qty or 0)
+        + int(item.trans_in_qty or 0)
+        + int(item.bo_qty or 0)
+        + int(item.adv_del_qty or 0)
+        - int(item.trans_out_qty or 0)
+        - int(item.wastage_qty or 0)
+        - int(item.csi_qty or 0)
+        - sold_qty
     )
-    
+
     # Variance
     item.variance_qty = item.total_ending_qty - item.theo_ending_qty
-    item.variance_peso = item.variance_qty * item.srp_price
+    item.variance_peso = item.variance_qty * (item.srp_price or 0)
     
 
 # ============================================================================

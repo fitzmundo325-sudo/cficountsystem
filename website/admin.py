@@ -1071,6 +1071,8 @@ def dashboard():
     parsed_start_date = _parse_iso_date(start_date_arg)
     parsed_end_date = _parse_iso_date(end_date_arg)
 
+    today = datetime.today().date()
+
     if parsed_start_date or parsed_end_date:
         start_date = parsed_start_date or parsed_end_date
         end_date = parsed_end_date or parsed_start_date
@@ -1186,8 +1188,9 @@ def dashboard():
         return ranges
 
     expected_dates = []
+    tracker_end_date = min(end_date, today - timedelta(days=1))
     tracker_cursor = start_date
-    while tracker_cursor <= end_date:
+    while tracker_cursor <= tracker_end_date:
         expected_dates.append(tracker_cursor)
         tracker_cursor += timedelta(days=1)
 
@@ -3861,8 +3864,11 @@ def invensync():
     update_cutoff_date = selected_date - timedelta(days=1)
     month_start = selected_date.replace(day=1)
 
+    from .views import _apply_store_scope_filter
+
     # Get all stores
     stores = Store.query.order_by(Store.name.asc()).all()
+    stores = _apply_store_scope_filter(stores, request)
 
     # Admin/GM summary should not depend on one selected date. Show each
     # store's latest available InvenSync day so stores with older records do

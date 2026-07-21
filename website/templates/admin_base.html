@@ -703,6 +703,16 @@
     <!-- Navigation -->
     <nav class="min-h-0 flex-1 px-3 space-y-1 custom-scrollbar overflow-y-auto overscroll-contain mt-2 pb-3">
       
+      <!-- Global Store Scope Filter -->
+      <div class="mb-2 rounded-xl border border-slate-700/60 bg-slate-800/40 p-2">
+        <p class="px-1 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Store View</p>
+        <div class="grid grid-cols-2 gap-1">
+          {% set store_scope = (request.cookies.get('store_scope') or 'official')|lower %}
+          <button type="button" class="store-scope-btn rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition-colors {% if store_scope == 'official' %}bg-indigo-500 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}" data-scope="official">Official</button>
+          <button type="button" class="store-scope-btn rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition-colors {% if store_scope == 'starlink' %}bg-indigo-500 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}" data-scope="starlink">Starlink</button>
+        </div>
+      </div>
+
       <!-- Dashboard -->
       <a href="/admin/dashboard" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path == '/admin/dashboard' %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Dashboard">
         <div class="shrink-0 {% if request.path == '/admin/dashboard' %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
@@ -715,7 +725,6 @@
       </a>
 
       {% if not user or user.role != 'General Manager' %}
-      <!-- Section: Administration -->
       <div class="pt-4 pb-2">
         <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider nav-label">Administration</p>
       </div>
@@ -1043,6 +1052,20 @@
           }
         });
         refreshAdminThemeButton();
+      })();
+    </script>
+    <script>
+      (function () {
+        const buttons = Array.from(document.querySelectorAll('.store-scope-btn'));
+        if (!buttons.length) return;
+        buttons.forEach((btn) => {
+          btn.addEventListener('click', function () {
+            const scope = this.getAttribute('data-scope') || 'official';
+            const maxAge = 60 * 60 * 24 * 365;
+            document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${maxAge}; samesite=lax`;
+            window.location.reload();
+          });
+        });
       })();
     </script>
       
