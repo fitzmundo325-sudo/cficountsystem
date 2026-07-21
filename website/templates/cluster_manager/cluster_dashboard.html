@@ -692,122 +692,64 @@
 
     <div class="mt-4 space-y-4">
     {% set tracker = icount_tool_tracker|default(none) %}
-    <div class="rounded-xl border border-slate-200 overflow-hidden">
-      <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+    <div class="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div class="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5">
         <h3 class="text-sm font-bold text-slate-800">Icount Tool Tracker</h3>
         <span class="text-[11px] font-semibold text-slate-500">
           {{ selected_start_date_display }}{% if selected_start_date != selected_end_date %} - {{ selected_end_date_display }}{% endif %}
         </span>
       </div>
-      <div class="hidden overflow-x-auto md:block">
-        <table class="min-w-full divide-y divide-slate-200 text-sm">
-          <thead class="bg-slate-50">
-            <tr>
-              <th class="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Daily Reports</th>
-              <th class="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Invensync</th>
-              <th class="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Oracle</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100 bg-white">
-            <tr>
-              {% for item in [tracker.daily_reports if tracker else none, tracker.invensync if tracker else none, tracker.oracle if tracker else none] %}
-              <td class="w-1/3 px-4 py-4 align-top">
-                {% if item %}
-                <div class="flex min-h-28 flex-col justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2">
-                  <div class="min-w-0">
-                    <div class="break-words text-xs font-bold uppercase tracking-wide text-slate-500">{{ item.subtitle }}</div>
-                    <div class="mt-0.5 text-sm font-semibold text-slate-700">
-                      {% if item.show_missing_details %}
-                        {{ item.missing_rows|length }} store{{ '' if item.missing_rows|length == 1 else 's' }} need update
-                      {% else %}
-                        Setup progress
-                      {% endif %}
-                    </div>
-                  </div>
-                  <div class="text-left text-xl font-extrabold text-slate-900">{{ item.count }}/{{ tracker.total_stores }}</div>
-                </div>
-                {% if item.show_missing_details and item.missing_rows %}
-                <div class="icount-scroll-wrap relative mt-3">
-                <div class="icount-tracker-scroll max-h-72 overflow-y-auto pr-4 text-left">
-                  <table class="min-w-full table-fixed text-xs">
-                    <tbody class="divide-y divide-amber-100">
-                  {% for missing in item.missing_rows %}
-                  <tr>
-                    <td class="w-2/5 break-words py-2 pr-3 align-top font-bold text-slate-900">{{ missing.store_name }}</td>
-                    <td class="w-3/5 break-words py-2 align-top text-right">
-                      <div class="font-semibold text-amber-800">{{ missing.missing_count }} missing</div>
-                      <div class="mt-0.5 whitespace-normal break-words text-[11px] leading-snug text-slate-600">{{ missing.date_ranges|join(', ') }}</div>
-                    </td>
-                  </tr>
-                  {% endfor %}
-                    </tbody>
-                  </table>
-                </div>
-                <div class="icount-scrollbar" aria-hidden="true"><div class="icount-scrollbar-thumb"></div></div>
-                </div>
-                {% elif item.show_missing_details %}
-                <div class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-xs font-bold text-emerald-700">
-                  All stores complete
-                </div>
-                {% endif %}
-                {% else %}
-                <div class="text-center text-sm font-semibold text-slate-500">--</div>
-                {% endif %}
-              </td>
-              {% endfor %}
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="space-y-3 bg-white p-3 md:hidden">
+
+      <div class="grid grid-cols-1 gap-px bg-slate-200 sm:grid-cols-3">
         {% for item in [tracker.daily_reports if tracker else none, tracker.invensync if tracker else none, tracker.oracle if tracker else none] %}
-        <section class="rounded-xl border border-slate-200 bg-white overflow-hidden">
-          <div class="border-b border-slate-200 bg-slate-50 px-3 py-2">
-            <h4 class="text-xs font-bold uppercase tracking-wide text-slate-600">
+        {% set is_complete = item and (not item.show_missing_details or item.missing_rows|length == 0) %}
+        <section class="bg-white px-5 py-4 flex flex-col">
+          <div class="flex items-center justify-between gap-2">
+            <h4 class="text-sm font-bold text-slate-800">
               {% if loop.index == 1 %}Daily Reports{% elif loop.index == 2 %}Invensync{% else %}Oracle{% endif %}
             </h4>
+            <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold {% if is_complete %}bg-emerald-100 text-emerald-700{% else %}bg-amber-100 text-amber-700{% endif %}">
+              <span class="h-2 w-2 rounded-full {% if is_complete %}bg-emerald-500{% else %}bg-amber-500{% endif %}"></span>
+              {{ item.count }}/{{ tracker.total_stores }}
+            </span>
           </div>
-          <div class="p-3">
-            {% if item %}
-            <div class="flex min-h-24 flex-col justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2">
-              <div class="min-w-0">
-                <div class="whitespace-normal break-words text-[11px] font-bold uppercase tracking-wide text-slate-500">{{ item.subtitle }}</div>
-                <div class="mt-0.5 text-xs font-semibold text-slate-700">
-                  {% if item.show_missing_details %}
-                    {{ item.missing_rows|length }} store{{ '' if item.missing_rows|length == 1 else 's' }} need update
-                  {% else %}
-                    Setup progress
+
+          {% if item and item.show_missing_details and item.missing_rows %}
+          <div class="mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{{ item.missing_rows|length }} store{{ '' if item.missing_rows|length == 1 else 's' }} need update</div>
+          <div class="icount-scroll-wrap relative mt-2 flex-1">
+            <div class="icount-tracker-scroll max-h-64 overflow-y-auto overscroll-contain pr-3 text-left">
+              <div class="space-y-1.5">
+              {% for missing in item.missing_rows %}
+                <div class="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="min-w-0 flex-1 truncate font-semibold text-slate-800 text-sm">{{ missing.store_name }}</span>
+                    <span class="shrink-0 text-xs font-bold text-amber-700">{{ missing.missing_count }} missing</span>
+                  </div>
+                  {% if missing.date_ranges %}
+                  <div class="mt-1 flex flex-wrap gap-1">
+                    {% for range_label in missing.date_ranges %}
+                    <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-bold text-amber-800 ring-1 ring-amber-200">{{ range_label }}</span>
+                    {% endfor %}
+                  </div>
                   {% endif %}
                 </div>
-              </div>
-              <div class="text-left text-lg font-extrabold text-slate-900">{{ item.count }}/{{ tracker.total_stores }}</div>
-            </div>
-            {% if item.show_missing_details and item.missing_rows %}
-            <div class="icount-scroll-wrap relative mt-3">
-            <div class="icount-tracker-scroll max-h-72 overflow-y-auto overscroll-contain pr-4">
-              <div class="divide-y divide-amber-100">
-                {% for missing in item.missing_rows %}
-                <div class="py-2">
-                  <div class="flex flex-wrap items-start justify-between gap-2">
-                    <div class="min-w-0 flex-1 break-words font-bold text-slate-900 text-xs">{{ missing.store_name }}</div>
-                    <div class="shrink-0 text-xs font-semibold text-amber-800">{{ missing.missing_count }} missing</div>
-                  </div>
-                  <div class="mt-1 whitespace-normal break-words text-[11px] leading-snug text-slate-600">{{ missing.date_ranges|join(', ') }}</div>
-                </div>
-                {% endfor %}
+              {% endfor %}
               </div>
             </div>
             <div class="icount-scrollbar" aria-hidden="true"><div class="icount-scrollbar-thumb"></div></div>
-            </div>
-            {% elif item.show_missing_details %}
-            <div class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-xs font-bold text-emerald-700">
-              All stores complete
-            </div>
-            {% endif %}
-            {% else %}
-            <div class="text-center text-sm font-semibold text-slate-500">--</div>
-            {% endif %}
           </div>
+          {% elif item and item.show_missing_details %}
+          <div class="mt-3 flex flex-1 items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-600">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span class="status-title text-sm font-bold text-emerald-700">All stores complete</span>
+          </div>
+          {% elif item %}
+          <div class="mt-3 flex flex-1 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">Setup progress</div>
+          {% else %}
+          <div class="mt-3 flex flex-1 items-center text-sm font-semibold text-slate-400">--</div>
+          {% endif %}
         </section>
         {% endfor %}
       </div>

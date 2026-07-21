@@ -122,13 +122,18 @@
     {% set cluster_store_href_base = '/cluster-manager/cluster-data' if force_cluster_sidebar else '/cluster-manager/raw-data' %}
 
     <nav class="min-h-0 flex-1 px-3 space-y-1 custom-scrollbar overflow-y-auto overscroll-contain mt-2 pb-3">
-      <!-- Home (All Users) -->
-      <a href="/" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_home_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Home">
-        <div class="shrink-0 {% if is_home_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      {% set store_scope = (request.cookies.get('store_scope') or 'official')|lower %}
+
+      {% if use_cluster_sidebar %}
+      <!-- Global Store Scope Filter -->
+      <div class="mb-2 rounded-xl border border-slate-700/60 bg-slate-800/40 p-2">
+        <p class="px-1 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Store View</p>
+        <div class="grid grid-cols-2 gap-1">
+          <button type="button" class="store-scope-btn rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition-colors {% if store_scope == 'official' %}bg-indigo-500 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}" data-scope="official">Official</button>
+          <button type="button" class="store-scope-btn rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition-colors {% if store_scope == 'starlink' %}bg-indigo-500 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}" data-scope="starlink">Starlink</button>
         </div>
-        <span class="nav-label whitespace-nowrap truncate">Home</span>
-      </a>
+      </div>
+      {% endif %}
 
       {% if user and user.role == 'Store Manager' %}
       <!-- Store Manager Navigation -->
@@ -284,13 +289,6 @@
         </div>
         <span class="nav-label whitespace-nowrap truncate">Oracle</span>
       </a>
-      <a href="{{ url_for('views.starlink') }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path == url_for('views.starlink') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Starlink">
-        <div class="shrink-0 {% if request.path == url_for('views.starlink') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1"/><path d="M12 4V2"/><path d="m4.9 6.9-1.4-1.4"/><path d="m19.1 6.9 1.4-1.4"/></svg>
-        </div>
-        <span class="nav-label whitespace-nowrap truncate">Starlink</span>
-      </a>
-
       <a href="{{ cluster_sbase_href }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_cluster_sbase_nav_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="CL Sbase">
         <div class="shrink-0 {% if is_cluster_sbase_nav_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
@@ -377,14 +375,17 @@
           </div>
           <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-900 rounded-full"></div>
         </div>
-        <div class="user-info flex-1 min-w-0 pr-1">
+        <div class="user-info flex-1 min-w-0">
           <p class="text-sm font-semibold text-white truncate">{% if user %}{{ user.full_name }}{% else %}Guest{% endif %}</p>
           <p class="text-xs text-slate-500 truncate">{% if user %}{{ user.role }}{% else %}Not Logged In{% endif %}</p>
         </div>
         {% if user %}
-        <a href="/logout" class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-500 transition-colors" title="Logout" aria-label="Logout">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
-
+        <a href="/logout" class="inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-500 transition-colors" title="Logout" aria-label="Logout">
+          <svg class="block h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" x2="9" y1="12" y2="12"/>
+          </svg>
         </a>
         {% endif %}
       </div>
@@ -394,9 +395,24 @@
   <!-- Main Content Area -->
   <main id="main-content" class="sidebar-transition flex-1 min-h-screen lg:ml-64 flex flex-col">
     {% block content %}{% endblock %}
-      
+       
     <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-overlay-scrollbar-1"></script>
     <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-1"></script>
+    <script>
+      // Global Store View (Official / Starlink) scope toggle
+      (function () {
+        const buttons = Array.from(document.querySelectorAll('.store-scope-btn'));
+        if (!buttons.length) return;
+        buttons.forEach((btn) => {
+          btn.addEventListener('click', function () {
+            const scope = this.getAttribute('data-scope') || 'official';
+            const maxAge = 60 * 60 * 24 * 365;
+            document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${maxAge}; samesite=lax`;
+            window.location.reload();
+          });
+        });
+      })();
+    </script>
     {% if user and user.role == 'Inventory Staff' %}
     <script>
       document.getElementById('inventory-staff-store-switcher')?.addEventListener('change', function() {
