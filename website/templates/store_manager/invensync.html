@@ -762,6 +762,7 @@ const motifBreakdownKey = `invensyncMotifBreakdown:{{ store.id }}:{{ selected_da
 const missingDates = {{ missing_dates|default([])|tojson }};
 const nextMissingDate = {{ next_missing_date|default(none)|tojson }};
 const isInvenSyncGuideMode = {{ (request.args.get('guide') == '1')|tojson }};
+const isStoreManagerInventory = {{ (current_user.role == 'Store Manager')|tojson }};
 if (isInvenSyncGuideMode && window.history && window.history.replaceState) {
   const cleanGuideUrl = new URL(window.location.href);
   cleanGuideUrl.searchParams.delete('guide');
@@ -2685,7 +2686,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
-  // Setup Enter key navigation in the main editable table
+  // Setup spreadsheet-style keyboard navigation in the main editable table.
   attachEnterNavigation(document);
 
   // Check for fullscreen state on page load
@@ -2704,9 +2705,80 @@ function attachEnterNavigation(scope) {
   const table = scope.querySelector('table');
   if (!table) return;
 
-  const inputs = table.querySelectorAll('input:not([type="checkbox"]), select');
+  function isNavigableInventoryField(field) {
+    return Boolean(
+      field
+      && field.offsetParent !== null
+      && !field.disabled
+      && !field.readOnly
+      && field.type !== 'hidden'
+      && field.type !== 'checkbox'
+    );
+  }
+
+  function findNavigableField(cell) {
+    if (!cell || cell.offsetParent === null) return null;
+    return Array.from(cell.querySelectorAll('input, select, textarea')).find(isNavigableInventoryField) || null;
+  }
+
+  function focusInventoryField(field) {
+    if (!field) return;
+    field.focus({ preventScroll: true });
+    field.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    if (typeof field.select === 'function') field.select();
+  }
+
+  function getHorizontalTarget(currentCell, direction) {
+    const row = currentCell?.closest('tr[data-product-id]');
+    if (!row) return null;
+    const cells = Array.from(row.querySelectorAll('td'));
+    let cellIndex = cells.indexOf(currentCell) + direction;
+    while (cellIndex >= 0 && cellIndex < cells.length) {
+      const target = findNavigableField(cells[cellIndex]);
+      if (target) return target;
+      cellIndex += direction;
+    }
+    return null;
+  }
+
+  function getVerticalTarget(currentCell, direction) {
+    const currentRow = currentCell?.closest('tr[data-product-id]');
+    const dataField = currentCell?.dataset.field;
+    if (!currentRow || !dataField) return null;
+    const rows = Array.from(table.querySelectorAll('tbody tr[data-product-id]'))
+      .filter(row => row.offsetParent !== null && row.style.display !== 'none');
+    let rowIndex = rows.indexOf(currentRow) + direction;
+    while (rowIndex >= 0 && rowIndex < rows.length) {
+      const targetCell = Array.from(rows[rowIndex].querySelectorAll('td'))
+        .find(cell => cell.dataset.field === dataField);
+      const target = findNavigableField(targetCell);
+      if (target) return target;
+      rowIndex += direction;
+    }
+    return null;
+  }
+
+  const inputs = table.querySelectorAll('input:not([type="checkbox"]), select, textarea');
   inputs.forEach(input => {
     input.addEventListener('keydown', function(e) {
+      if (
+        isStoreManagerInventory
+        && !e.isComposing
+        && !e.ctrlKey
+        && !e.altKey
+        && !e.metaKey
+        && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)
+      ) {
+        const currentCell = this.closest('td');
+        const direction = ['ArrowLeft', 'ArrowUp'].includes(e.key) ? -1 : 1;
+        const target = ['ArrowLeft', 'ArrowRight'].includes(e.key)
+          ? getHorizontalTarget(currentCell, direction)
+          : getVerticalTarget(currentCell, direction);
+        e.preventDefault();
+        if (target) focusInventoryField(target);
+        return;
+      }
+
       if (e.key !== 'Enter') return;
       e.preventDefault();
 
