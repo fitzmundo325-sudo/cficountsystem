@@ -5,16 +5,33 @@
     return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
   }
 
+  function isInstalled() {
+    if (isStandalone()) return true;
+    try {
+      return window.localStorage.getItem('pwa_installed') === 'true';
+    } catch (e) {
+      return false;
+    }
+  }
+
   function getButtons() {
     return Array.from(document.querySelectorAll('.pwa-install-btn'));
   }
 
   function setButtonState() {
-    const installed = isStandalone();
+    const installed = isInstalled();
     getButtons().forEach((button) => {
       button.classList.toggle('hidden', installed);
       button.disabled = installed;
       button.setAttribute('aria-disabled', installed ? 'true' : 'false');
+    });
+  }
+
+  function showInstallButton() {
+    getButtons().forEach((button) => {
+      button.classList.remove('hidden');
+      button.disabled = false;
+      button.setAttribute('aria-disabled', 'false');
     });
   }
 
@@ -48,11 +65,16 @@
   window.addEventListener('beforeinstallprompt', (event) => {
     event.preventDefault();
     deferredInstallPrompt = event;
-    setButtonState();
+    showInstallButton();
   });
 
   window.addEventListener('appinstalled', () => {
     deferredInstallPrompt = null;
+    try {
+      window.localStorage.setItem('pwa_installed', 'true');
+    } catch (e) {
+      /* ignore */
+    }
     setButtonState();
     if (window.toast && typeof window.toast.show === 'function') {
       window.toast.show('iDashboard installed successfully.', 'success');
@@ -60,7 +82,7 @@
   });
 
   document.addEventListener('DOMContentLoaded', () => {
-    setButtonState();
+    getButtons().forEach((button) => button.classList.add('hidden'));
     getButtons().forEach((button) => {
       button.addEventListener('click', installApp);
     });
