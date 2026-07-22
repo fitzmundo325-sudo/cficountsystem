@@ -2,6 +2,7 @@ import os
 import json
 import traceback
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from re import A
 from flask import Flask, redirect, render_template, request, session, url_for
@@ -73,6 +74,22 @@ def _ensure_user_assigned_store_column():
 
         if 'assigned_store_id' not in existing_columns:
             conn.execute(text("ALTER TABLE user ADD COLUMN assigned_store_id INTEGER"))
+        conn.commit()
+
+
+def _ensure_user_presence_column():
+    with db.engine.connect() as conn:
+        existing_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info('user')")).fetchall()
+        }
+
+        if 'last_activity_at' not in existing_columns:
+            conn.execute(text("ALTER TABLE user ADD COLUMN last_activity_at DATETIME"))
+        if 'last_login_at' not in existing_columns:
+            conn.execute(text("ALTER TABLE user ADD COLUMN last_login_at DATETIME"))
+        if 'last_interaction_at' not in existing_columns:
+            conn.execute(text("ALTER TABLE user ADD COLUMN last_interaction_at DATETIME"))
         conn.commit()
 
 
@@ -386,6 +403,7 @@ def create_app():
         _ensure_pos_sold_columns()
         _ensure_store_group_column()
         _ensure_user_assigned_store_column()
+        _ensure_user_presence_column()
         _backfill_inventory_staff_store_assignments()
         _ensure_product_master_sp_np_column()
         _ensure_rso_delivery_columns()
@@ -431,6 +449,23 @@ def create_app():
         mode = MaintenanceMode.query.first()
         if mode and mode.is_enabled:
             return redirect(url_for('maintenance'))
+        return None
+
+    @app.before_request
+    def track_authenticated_user_presence():
+        if request.endpoint in ('static', 'auth.login', 'auth.logout', 'service_worker'):
+            return None
+        if not current_user.is_authenticated:
+            return None
+
+        now = datetime.now(timezone.utc)
+        last_touch = float(session.get('_presence_touch_epoch', 0) or 0)
+        if now.timestamp() - last_touch < 60:
+            return None
+
+        current_user.last_activity_at = now
+        session['_presence_touch_epoch'] = now.timestamp()
+        db.session.commit()
         return None
 
     @app.context_processor

@@ -177,6 +177,8 @@ def pos_sold():
         flash('Access denied. Only Admins, Superadmins, and General Managers can access this page.', category='error')
         return redirect(url_for('views.home'))
 
+    from .views import _apply_store_scope_filter
+
     active_tab = (request.args.get('tab') or 'consolidated').strip()
     if active_tab not in ('consolidated', 'review'):
         active_tab = 'consolidated'
@@ -193,7 +195,7 @@ def pos_sold():
     clusters = Cluster.query.order_by(Cluster.name.asc()).all()
     cluster_lookup = {int(cluster.id): cluster for cluster in clusters}
 
-    stores = Store.query.order_by(Store.name.asc()).all()
+    stores = _apply_store_scope_filter(Store.query.order_by(Store.name.asc()).all(), request)
     stores_for_selected_cluster = [
         store for store in stores if selected_cluster_id and int(store.cluster_id or 0) == int(selected_cluster_id)
     ] if selected_cluster_id else []
@@ -674,6 +676,8 @@ def delivery():
         flash('Access denied. Only Admins, Superadmins, and General Managers can access this page.', category='error')
         return redirect(url_for('views.home'))
 
+    from .views import _apply_store_scope_filter
+
     active_tab = (request.args.get('tab') or 'consolidated').strip()
     if active_tab not in ('consolidated', 'review'):
         active_tab = 'consolidated'
@@ -689,7 +693,7 @@ def delivery():
 
     clusters = Cluster.query.order_by(Cluster.name.asc()).all()
     cluster_lookup = {int(cluster.id): cluster for cluster in clusters}
-    stores = Store.query.order_by(Store.name.asc()).all()
+    stores = _apply_store_scope_filter(Store.query.order_by(Store.name.asc()).all(), request)
     stores_for_selected_cluster = [
         store for store in stores if selected_cluster_id and int(store.cluster_id or 0) == int(selected_cluster_id)
     ] if selected_cluster_id else []
@@ -1094,27 +1098,22 @@ def dashboard():
     from .views import (
         _aggregate_targets_by_day,
         _apply_pos_qty_from_pos_categories,
+        _apply_store_scope_filter,
         _build_cluster_manager_summary,
         _build_discount_performance,
         _build_wastage_performance,
         _build_ytd_overview,
         _classify_store_status,
         _format_header_date,
+        _get_store_scope_from_request,
     )
     from types import SimpleNamespace
 
     clusters = Cluster.query.order_by(Cluster.name.asc()).all()
     all_stores = Store.query.all()
-    starlink_stores = [
-        store for store in all_stores
-        if 'starlink' in str(store.name or '').strip().lower()
-    ]
-    stores = [
-        store for store in all_stores
-        if 'starlink' not in str(store.name or '').strip().lower()
-    ]
+    store_scope = _get_store_scope_from_request(request)
+    stores = _apply_store_scope_filter(all_stores, request)
     dashboard_store_ids = [int(store.id) for store in stores]
-    starlink_store_ids = [int(store.id) for store in starlink_stores]
     stores_by_cluster = {}
     store_to_cluster = {}
     for store in stores:
@@ -1129,37 +1128,6 @@ def dashboard():
         DailyReport.status == 'Approved',
     ).all()
     _apply_pos_qty_from_pos_categories(reports)
-
-    starlink_reports = (
-        DailyReport.query.filter(
-            DailyReport.store_id.in_(starlink_store_ids),
-            DailyReport.report_date >= start_date,
-            DailyReport.report_date <= end_date,
-            DailyReport.status == 'Approved',
-        ).all()
-        if starlink_store_ids else []
-    )
-    starlink_reports_by_store = {}
-    for report in starlink_reports:
-        starlink_reports_by_store.setdefault(report.store_id, []).append(report)
-    starlink_rows = []
-    for store in sorted(starlink_stores, key=lambda item: (item.name or '').lower()):
-        store_reports = starlink_reports_by_store.get(store.id, [])
-        net_sales = sum(
-            float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
-            for report in store_reports
-        )
-        transaction_count = sum(
-            int(report.pos_tc or 0) + int(report.ci_tc or 0)
-            for report in store_reports
-        )
-        starlink_rows.append({
-            'store': store,
-            'net_sales': net_sales,
-            'transaction_count': transaction_count,
-            'ads': net_sales / 31,
-            'adtc': transaction_count / 31,
-        })
 
     def _format_tracker_date_range(range_start, range_end):
         if range_start == range_end:
@@ -1675,7 +1643,7 @@ def dashboard():
         user=current_user,
         layout_template='admin_base.html',
         cluster=SimpleNamespace(name='All Clusters'),
-        team_name='CFI Performance Dashboard',
+        team_name=f'CFI {store_scope.capitalize()} Dashboard',
         dashboard_action_endpoint='admin.dashboard',
         entity_label='Cluster',
         entity_label_plural='Clusters',
@@ -1703,7 +1671,7 @@ def dashboard():
         icu_stores=icu_stores,
         wastage_performance=wastage_performance,
         discount_performance=discount_performance,
-        starlink_rows=starlink_rows,
+        store_scope=store_scope,
         icount_tool_tracker=icount_tool_tracker,
     )
 
@@ -1713,6 +1681,8 @@ def users():
     if not _can_manage_users():
         flash('Access denied. Only Admin or Superadmin can access this page.', category='error')
         return redirect(url_for('views.home'))
+
+    from .views import _apply_store_scope_filter
 
     q = (request.args.get('q') or '').strip()
     user_query = User.query
@@ -1728,7 +1698,7 @@ def users():
         )
 
     users = user_query.order_by(User.date_added.desc(), User.id.desc()).all()
-    stores = Store.query.order_by(Store.name.asc()).all()
+    stores = _apply_store_scope_filter(Store.query.order_by(Store.name.asc()).all(), request)
     return render_template('admin/users.html', user=current_user, users=users, stores=stores, search_query=q)
 
 
@@ -2053,7 +2023,9 @@ def delete_user(user_id):
 
 @admin.route('admin/stores')
 def stores():
-    stores = Store.query.all()
+    from .views import _apply_store_scope_filter
+
+    stores = _apply_store_scope_filter(Store.query.all(), request)
     # Get users with Store Manager role who are not already managing a store
     assigned_manager_ids = [s.manager_id for s in stores if s.manager_id]
     available_managers = User.query.filter(
@@ -2250,7 +2222,11 @@ def clusters():
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
+    from .views import _apply_store_scope_filter
+
     clusters = Cluster.query.all()
+    for cluster in clusters:
+        cluster.stores = _apply_store_scope_filter(cluster.stores, request)
     # Get users with Cluster Manager role who are not already managing a cluster
     assigned_manager_ids = [c.manager_id for c in clusters if c.manager_id]
     managers = User.query.filter(
@@ -2326,9 +2302,12 @@ def manage_cluster(cluster_id):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
+    from .views import _apply_store_scope_filter
+
     cluster = Cluster.query.get_or_404(cluster_id)
+    cluster.stores = _apply_store_scope_filter(cluster.stores, request)
     # Get stores that are not assigned to any cluster
-    available_stores = Store.query.filter_by(cluster_id=None).all()
+    available_stores = _apply_store_scope_filter(Store.query.filter_by(cluster_id=None).all(), request)
     # Get users with Cluster Manager role who are not already managing a cluster
     assigned_manager_ids = [c.manager_id for c in Cluster.query.all() if c.manager_id and c.id != cluster_id]
     available_managers = User.query.filter(
@@ -3864,49 +3843,37 @@ def invensync():
     update_cutoff_date = selected_date - timedelta(days=1)
     month_start = selected_date.replace(day=1)
 
-    from .views import _apply_store_scope_filter
+    from .views import (
+        _apply_store_scope_filter,
+        _get_invensync_data_state,
+        _get_latest_meaningful_invensync_by_store,
+        _get_user_presence_states,
+    )
 
     # Get all stores
     stores = Store.query.order_by(Store.name.asc()).all()
     stores = _apply_store_scope_filter(stores, request)
 
-    # Admin/GM summary should not depend on one selected date. Show each
-    # store's latest available InvenSync day so stores with older records do
-    # not appear as "No Data" just because today's date has no entry.
-    latest_inventory_dates = (
-        db.session.query(
-            DailyEndingInventory.store_id.label('store_id'),
-            func.max(DailyEndingInventory.inventory_date).label('latest_date'),
-        )
-        .group_by(DailyEndingInventory.store_id)
-        .subquery()
+    # Ignore empty records created by simply opening an InvenSync date. Use
+    # each store's latest finalized or meaningfully populated inventory day.
+    inventory_by_store = _get_latest_meaningful_invensync_by_store(
+        [store.id for store in stores]
     )
-    inventory_records = (
-        DailyEndingInventory.query
-        .join(
-            latest_inventory_dates,
-            (DailyEndingInventory.store_id == latest_inventory_dates.c.store_id)
-            & (DailyEndingInventory.inventory_date == latest_inventory_dates.c.latest_date),
-        )
-        .order_by(DailyEndingInventory.store_id.asc(), DailyEndingInventory.id.desc())
-        .all()
-    )
-
-    # Organize by store
-    inventory_by_store = {}
-    for inventory in inventory_records:
-        inventory_by_store.setdefault(inventory.store_id, inventory)
+    manager_presence = _get_user_presence_states(store.manager_id for store in stores)
 
     # Build store summary data
     store_summaries = []
     for store in stores:
         inventory = inventory_by_store.get(store.id)
+        data_state = _get_invensync_data_state(inventory)
         update_status = _build_admin_invensync_update_status(store.id, month_start, update_cutoff_date)
         
         store_summaries.append({
             'store': store,
             'inventory': inventory,
-            'has_data': bool(inventory),
+            'has_data': data_state != 'empty',
+            'data_state': data_state,
+            'presence_state': manager_presence.get(store.manager_id, 'offline'),
             'update_status': update_status,
         })
 
@@ -3960,6 +3927,8 @@ def admin_oracle():
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
+    from .views import _apply_store_scope_filter
+
     clusters = (
         Cluster.query
         .options(
@@ -3969,12 +3938,19 @@ def admin_oracle():
         .order_by(Cluster.name.asc())
         .all()
     )
-    unassigned_stores = (
+
+    for cluster in clusters:
+        cluster.stores = _apply_store_scope_filter(cluster.stores, request)
+
+    clusters = [c for c in clusters if c.stores]
+
+    unassigned_stores = _apply_store_scope_filter(
         Store.query
         .options(selectinload(Store.manager))
         .filter(Store.cluster_id.is_(None))
         .order_by(Store.name.asc())
-        .all()
+        .all(),
+        request,
     )
 
     clustered_store_ids = [

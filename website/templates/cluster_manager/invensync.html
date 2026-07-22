@@ -112,6 +112,21 @@
     transform: translateY(-2px);
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
   }
+
+  .invensync-card-status-scroll {
+    overscroll-behavior: contain;
+    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-width: thin;
+  }
+
+  .invensync-card-status-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .invensync-card-status-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+  }
 </style>
 
 <div class="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
@@ -183,12 +198,12 @@
     <!-- Store Cards Grid -->
     <div id="invensyncStoreGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
     {% for store_summary in store_summaries %}
-    <div class="invensync-store-card invensync-card-enter bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-slate-300 transition-all duration-300" style="animation-delay: {{ loop.index * 50 }}ms">
+    <div class="invensync-store-card flex h-[36rem] flex-col overflow-hidden bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-slate-300 transition-all duration-300">
       <!-- Card Header -->
-      <div class="bg-gradient-to-br from-slate-800 to-slate-900 px-6 py-4 rounded-t-2xl">
+      <div class="shrink-0 bg-gradient-to-br from-slate-800 to-slate-900 px-6 py-4 rounded-t-2xl">
         <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 backdrop-blur-sm ring-1 ring-white/10">
+          <div class="flex min-w-0 flex-1 items-center gap-3">
+            <div class="invensync-presence-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/10 backdrop-blur-sm ring-2 {% if store_summary.presence_state == 'online' %}shadow-[0_0_20px_6px_rgba(52,211,153,0.45)] ring-emerald-400/50{% elif store_summary.presence_state == 'active' %}shadow-[0_0_20px_6px_rgba(56,189,248,0.45)] ring-sky-400/50{% elif store_summary.presence_state == 'idle' %}shadow-[0_0_20px_6px_rgba(148,163,184,0.4)] ring-slate-400/50{% else %}shadow-[0_0_20px_6px_rgba(248,113,113,0.45)] ring-red-400/50{% endif %}" data-store-id="{{ store_summary.store.id }}" title="{{ 'Online / Browsing' if store_summary.presence_state == 'online' else ('Typing / Inputting / Uploading' if store_summary.presence_state == 'active' else ('Idle / AFK' if store_summary.presence_state == 'idle' else 'Offline')) }}">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
                 <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
@@ -196,34 +211,42 @@
                 <path d="M2 7h20"/>
               </svg>
             </div>
-            <div>
-              <h3 class="text-base font-bold text-white leading-tight">{{ store_summary.store.name }}</h3>
+            <div class="min-w-0">
+              {% set store_name_length = (store_summary.store.name or '')|length %}
+              {% set is_starlink_store = 'starlink' in (store_summary.store.name or '')|lower %}
+              <h3 class="font-bold text-white leading-tight break-words {% if is_starlink_store and store_name_length > 32 %}text-xs{% elif is_starlink_store and store_name_length > 22 %}text-sm{% else %}text-base{% endif %}">{{ store_summary.store.name }}</h3>
               <p class="text-xs text-slate-300 font-medium">Store ID: {{ store_summary.store.id }}</p>
             </div>
           </div>
-          <span class="text-white text-xs font-bold px-3 py-1.5 bg-white/10 rounded-lg ring-1 ring-white/10">
-            {% if store_summary.has_data %}
-              <span class="inline-flex items-center gap-1.5">
-                <span class="h-2 w-2 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50"></span>
-                Active
-              </span>
-            {% else %}
-              <span class="inline-flex items-center gap-1.5">
-                <span class="h-2 w-2 rounded-full bg-slate-400"></span>
-                No Data
-              </span>
-            {% endif %}
+          {% if store_summary.has_data %}
+          <a href="{{ url_for('views.invensync', date=store_summary.inventory.inventory_date.strftime('%Y-%m-%d'), store_id=store_summary.store.id) }}"
+             class="group ml-2 inline-flex shrink-0 items-center gap-1.5 text-white text-xs font-bold px-3 py-1.5 bg-white/10 rounded-lg ring-1 ring-white/10 hover:bg-white/20 transition-all">
+            <span>View Details</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:translate-x-0.5">
+              <path d="M5 12h14"/>
+              <path d="m12 5 7 7-7 7"/>
+            </svg>
+          </a>
+          {% else %}
+          <span class="ml-2 shrink-0 text-white text-xs font-semibold px-3 py-1.5 bg-white/10 rounded-lg ring-1 ring-white/10">
+            <span class="inline-flex items-center gap-1.5">
+              <span class="h-2 w-2 rounded-full bg-slate-400"></span>
+              No Data
+            </span>
           </span>
+          {% endif %}
         </div>
       </div>
 
       <!-- Card Body -->
-      <div class="px-6 py-5 space-y-4">
+      <div class="flex min-h-0 flex-1 flex-col px-6 py-5 space-y-4">
         {% if store_summary.has_data %}
           {% if store_summary.inventory %}
-          <div class="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+          <div class="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2">
             <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Latest Inventory</span>
-            <span class="text-xs font-bold text-slate-900">{{ store_summary.inventory.inventory_date.strftime('%b %d, %Y') if store_summary.inventory.inventory_date else 'N/A' }}</span>
+            <div class="flex items-center justify-end">
+              <span class="text-xs font-bold text-slate-900">{{ store_summary.inventory.inventory_date.strftime('%b %d, %Y') if store_summary.inventory.inventory_date else 'N/A' }}</span>
+            </div>
           </div>
           {% endif %}
         {% else %}
@@ -242,7 +265,7 @@
         {% set wastage_status = update_status.wastage %}
         {% set pos_sold_status = update_status.pos_sold %}
         {% set delivery_status = update_status.delivery %}
-        <div class="space-y-2.5">
+        <div class="invensync-card-status-scroll min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1" tabindex="0" aria-label="Update status for {{ store_summary.store.name }}">
           <!-- Inventory Status -->
           <div class="invensync-update-status rounded-xl border px-3.5 py-2.5 {% if inventory_status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
             <div class="flex items-center justify-between">
@@ -375,23 +398,7 @@
         </div>
       </div>
 
-      <!-- Card Footer -->
-      <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-200 rounded-b-2xl">
-        {% if store_summary.has_data %}
-        <a href="{{ url_for('views.invensync', date=store_summary.inventory.inventory_date.strftime('%Y-%m-%d'), store_id=store_summary.store.id) }}"
-           class="group flex items-center justify-center gap-2 w-full px-4 py-2.5 text-xs font-bold rounded-xl bg-slate-900 text-white hover:bg-slate-800 hover:shadow-lg hover:shadow-slate-900/20 transition-all">
-          <span>View Details</span>
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:translate-x-0.5">
-            <path d="M5 12h14"/>
-            <path d="m12 5 7 7-7 7"/>
-          </svg>
-        </a>
-        {% else %}
-        <div class="text-center py-2">
-          <span class="text-xs font-semibold text-slate-400">No data to view</span>
-        </div>
-        {% endif %}
-      </div>
+
     </div>
     {% endfor %}
     </div>
@@ -412,5 +419,47 @@
     {% endif %}
   </div>
 </div>
+
+<script>
+let presenceRefreshInFlight = false;
+function refreshInvensyncPresence() {
+  if (presenceRefreshInFlight) return;
+  presenceRefreshInFlight = true;
+  fetch({{ url_for('views.store_presence')|tojson }}, {
+    credentials: 'same-origin',
+    cache: 'no-store'
+  })
+    .then(response => response.ok ? response.json() : Promise.reject(new Error('Presence unavailable')))
+    .then(data => {
+      const statuses = data.stores || {};
+      document.querySelectorAll('.invensync-presence-icon').forEach(icon => {
+        const state = statuses[String(icon.dataset.storeId)] || 'offline';
+        icon.classList.remove(
+          'shadow-[0_0_20px_6px_rgba(52,211,153,0.45)]', 'ring-emerald-400/50',
+          'shadow-[0_0_20px_6px_rgba(56,189,248,0.45)]', 'ring-sky-400/50',
+          'shadow-[0_0_20px_6px_rgba(148,163,184,0.4)]', 'ring-slate-400/50',
+          'shadow-[0_0_20px_6px_rgba(248,113,113,0.45)]', 'ring-red-400/50'
+        );
+        const classes = state === 'online'
+          ? ['shadow-[0_0_20px_6px_rgba(52,211,153,0.45)]', 'ring-emerald-400/50']
+          : state === 'active'
+            ? ['shadow-[0_0_20px_6px_rgba(56,189,248,0.45)]', 'ring-sky-400/50']
+            : state === 'idle'
+              ? ['shadow-[0_0_20px_6px_rgba(148,163,184,0.4)]', 'ring-slate-400/50']
+              : ['shadow-[0_0_20px_6px_rgba(248,113,113,0.45)]', 'ring-red-400/50'];
+        icon.classList.add(...classes);
+        icon.title = state === 'online' ? 'Online / Browsing' : (state === 'active' ? 'Typing / Inputting / Uploading' : (state === 'idle' ? 'Idle / AFK' : 'Offline'));
+      });
+    })
+    .catch(() => {})
+    .finally(() => { presenceRefreshInFlight = false; });
+}
+
+refreshInvensyncPresence();
+window.setInterval(refreshInvensyncPresence, 5000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshInvensyncPresence();
+});
+</script>
 
 {% endblock %}

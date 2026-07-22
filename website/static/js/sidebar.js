@@ -107,12 +107,14 @@ toggleDesktop.addEventListener('click', () => {
 toggleMobile.addEventListener('click', () => {
   sidebar.classList.remove('-translate-x-full');
   sidebarOverlay.classList.remove('hidden');
+  document.body.classList.add('mobile-sidebar-open');
 });
 
 // Close Mobile Drawer
 sidebarOverlay.addEventListener('click', () => {
   sidebar.classList.add('-translate-x-full');
   sidebarOverlay.classList.add('hidden');
+  document.body.classList.remove('mobile-sidebar-open');
 });
     
 // Auto-adjust margin on resize
@@ -120,6 +122,7 @@ window.addEventListener('resize', () => {
     if (window.innerWidth >= 1024) {
         sidebar.classList.remove('-translate-x-full');
         sidebarOverlay.classList.add('hidden');
+        document.body.classList.remove('mobile-sidebar-open');
         if (sidebar.classList.contains('sidebar-collapsed')) {
             mainContent.style.marginLeft = '80px';
         } else {
@@ -127,6 +130,9 @@ window.addEventListener('resize', () => {
         }
     } else {
         mainContent.style.marginLeft = '0';
+        if (sidebar.classList.contains('-translate-x-full')) {
+            document.body.classList.remove('mobile-sidebar-open');
+        }
     }
     updateSidebarScrollbar(false);
 });
