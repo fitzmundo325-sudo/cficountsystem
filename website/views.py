@@ -4782,10 +4782,8 @@ def _update_inventory_trans_in_on_receive(transfer, transfer_items):
             )
             db.session.add(dest_inventory_item)
         else:
-            # Update existing item's trans_in_qty - only if not already set
-            # This prevents double-counting if receiving is confirmed multiple times
-            if dest_inventory_item.trans_in_qty == 0:
-                dest_inventory_item.trans_in_qty = received_qty
+            # Accumulate trans_in_qty from each received transfer
+            dest_inventory_item.trans_in_qty = (dest_inventory_item.trans_in_qty or 0) + received_qty
 
         # Recalculate theoretical ending quantity
         dest_inventory_item.theo_ending_qty = (
@@ -5977,7 +5975,12 @@ def cluster_manager_raw_data():
     
     # Filter by specific store if selected
     if store_filter:
-        store_ids = [int(store_filter)]
+        # Validate that the requested store is in the current scope-filtered list
+        valid_store_ids = [s.id for s in stores]
+        if int(store_filter) in valid_store_ids:
+            store_ids = [int(store_filter)]
+        else:
+            store_filter = ''
     
     # Build date range for the month
     year_int = int(current_year)
@@ -7553,7 +7556,7 @@ def invensync():
                     if has_bulk_order:
                         inv_item.bo_qty = bulk_order_qty
 
-    taf_trans_out_map = {} if inventory.is_finalized else _build_taf_trans_out_quantity_by_master_id(store, selected_date)
+    taf_trans_out_map = _build_taf_trans_out_quantity_by_master_id(store, selected_date)
     if taf_trans_out_map:
         for inv_item in inventory_items.values():
             if not inv_item.product_master_id:
@@ -7567,7 +7570,7 @@ def invensync():
             if current_trans_out_qty == 0 or current_trans_out_qty < taf_trans_out_qty:
                 inv_item.trans_out_qty = taf_trans_out_qty
 
-    taf_trans_in_map = {} if inventory.is_finalized else _build_taf_trans_in_quantity_by_master_id(store, selected_date)
+    taf_trans_in_map = _build_taf_trans_in_quantity_by_master_id(store, selected_date)
     if taf_trans_in_map:
         for inv_item in inventory_items.values():
             if not inv_item.product_master_id:
@@ -7620,8 +7623,7 @@ def invensync():
     if saved_sales_map:
         for inv_item in inventory_items.values():
             if (
-                not inventory.is_finalized
-                and inv_item.product_master_id
+                inv_item.product_master_id
                 and not inv_item.quantity_sold
                 and inv_item.product_master_id in saved_sales_map
             ):
