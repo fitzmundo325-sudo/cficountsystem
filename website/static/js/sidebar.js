@@ -156,17 +156,7 @@ navItems.forEach(item => {
     });
 });
 
-// Stores submenu toggle
-const storesMenuToggle = document.getElementById('stores-menu-toggle');
-const storesSubmenu = document.getElementById('stores-submenu');
-const storesChevron = document.getElementById('stores-chevron');
-
-if (storesMenuToggle && storesSubmenu) {
-    storesMenuToggle.addEventListener('click', () => {
-        storesSubmenu.classList.toggle('hidden');
-        storesChevron.classList.toggle('rotate-180');
-    });
-}
+// Stores submenu is always visible (no toggle needed)
 
 // TAF submenu toggle
 const tafMenuToggle = document.getElementById('taf-menu-toggle');

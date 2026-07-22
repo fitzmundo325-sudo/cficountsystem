@@ -1063,7 +1063,9 @@
             const scope = this.getAttribute('data-scope') || 'official';
             const maxAge = 60 * 60 * 24 * 365;
             document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${maxAge}; samesite=lax`;
-            window.location.reload();
+            const url = new URL(window.location.href);
+            url.searchParams.delete('store_id');
+            window.location.href = url.toString();
           });
         });
       })();
