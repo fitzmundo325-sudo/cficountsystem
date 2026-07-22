@@ -3791,14 +3791,18 @@ def _build_single_update_status(dates_set, today, month_start, cutoff_date, labe
 def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
     if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
         return {
-            'is_up_to_date': False,
-            'missing_dates': [],
-            'missing_ranges': [],
-            'missing_count': 0,
-            'latest_finalized_date': None,
+            key: {
+                'is_up_to_date': False,
+                'missing_dates': [],
+                'missing_ranges': [],
+                'missing_count': 0,
+                'latest_date': None,
+            }
+            for key in ('inventory', 'wastage', 'pos_sold', 'delivery')
         }
 
     today = date.today()
+    previous_day_cutoff = min(cutoff_date, today - timedelta(days=1))
     finalized_dates = {
         row.inventory_date for row in DailyEndingInventory.query.filter(
             DailyEndingInventory.store_id == store_id,
@@ -3819,11 +3823,46 @@ def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
         if row.transaction_date
     }
 
+    pos_sold_dates = set()
+    delivery_dates = set()
+    if previous_day_cutoff >= month_start:
+        pos_sold_dates = {
+            row.report_date for row in (
+                db.session.query(DailyReport.report_date)
+                .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+                .filter(
+                    DailyReport.store_id == store_id,
+                    DailyReport.report_date >= month_start,
+                    DailyReport.report_date <= previous_day_cutoff,
+                )
+                .distinct()
+                .all()
+            )
+            if row.report_date
+        }
+        delivery_dates = {
+            row.report_date for row in (
+                db.session.query(RsoDelivery.report_date)
+                .filter(
+                    RsoDelivery.store_id == store_id,
+                    RsoDelivery.report_date >= month_start,
+                    RsoDelivery.report_date <= previous_day_cutoff,
+                )
+                .distinct()
+                .all()
+            )
+            if row.report_date
+        }
+
     inventory_status = _build_single_update_status(finalized_dates, today, month_start, cutoff_date, 'inventory')
     wastage_status = _build_single_update_status(taf_wastage_dates, today, month_start, cutoff_date, 'wastage')
+    pos_sold_status = _build_single_update_status(pos_sold_dates, today, month_start, previous_day_cutoff, 'pos_sold')
+    delivery_status = _build_single_update_status(delivery_dates, today, month_start, previous_day_cutoff, 'delivery')
     return {
         'inventory': inventory_status,
         'wastage': wastage_status,
+        'pos_sold': pos_sold_status,
+        'delivery': delivery_status,
     }
 
 

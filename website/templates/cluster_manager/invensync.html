@@ -114,9 +114,13 @@
   }
 
   .invensync-card-status-scroll {
-    overscroll-behavior: contain;
+    overflow-y: hidden !important;
     scrollbar-color: #cbd5e1 transparent;
     scrollbar-width: thin;
+  }
+
+  .invensync-store-card.is-scroll-active .invensync-card-status-scroll {
+    overflow-y: auto !important;
   }
 
   .invensync-card-status-scroll::-webkit-scrollbar {
@@ -198,7 +202,7 @@
     <!-- Store Cards Grid -->
     <div id="invensyncStoreGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
     {% for store_summary in store_summaries %}
-    <div class="invensync-store-card flex h-[36rem] flex-col overflow-hidden bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-slate-300 transition-all duration-300">
+    <div class="invensync-store-card flex h-[36rem] flex-col bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-slate-300 transition-all duration-300">
       <!-- Card Header -->
       <div class="shrink-0 bg-gradient-to-br from-slate-800 to-slate-900 px-6 py-4 rounded-t-2xl">
         <div class="flex items-center justify-between">
@@ -265,7 +269,7 @@
         {% set wastage_status = update_status.wastage %}
         {% set pos_sold_status = update_status.pos_sold %}
         {% set delivery_status = update_status.delivery %}
-        <div class="invensync-card-status-scroll min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1" tabindex="0" aria-label="Update status for {{ store_summary.store.name }}">
+        <div class="invensync-card-status-scroll min-h-0 flex-1 space-y-2.5 pr-1" tabindex="-1" aria-label="Update status for {{ store_summary.store.name }}">
           <!-- Inventory Status -->
           <div class="invensync-update-status rounded-xl border px-3.5 py-2.5 {% if inventory_status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
             <div class="flex items-center justify-between">
@@ -421,6 +425,39 @@
 </div>
 
 <script>
+function initializeInvensyncCardScrolling() {
+  const cards = Array.from(document.querySelectorAll('.invensync-store-card'));
+
+  const deactivateCards = (exceptCard = null) => {
+    cards.forEach((card) => {
+      if (card === exceptCard) return;
+      card.classList.remove('is-scroll-active');
+      card.querySelector('.invensync-card-status-scroll')?.setAttribute('tabindex', '-1');
+    });
+  };
+
+  cards.forEach((card) => {
+    card.addEventListener('click', () => {
+      const statusList = card.querySelector('.invensync-card-status-scroll');
+      if (!statusList) return;
+      deactivateCards(card);
+      card.classList.add('is-scroll-active');
+      statusList.setAttribute('tabindex', '0');
+      statusList.focus({preventScroll: true});
+    });
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.invensync-store-card')) deactivateCards();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') deactivateCards();
+  });
+}
+
+initializeInvensyncCardScrolling();
+
 let presenceRefreshInFlight = false;
 function refreshInvensyncPresence() {
   if (presenceRefreshInFlight) return;

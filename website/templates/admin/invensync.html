@@ -4,6 +4,42 @@
 
 {% block content %}
 
+{% macro upload_status_card(status, label) %}
+<div class="invensync-update-status rounded-xl border px-3 py-2 {% if status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
+  {% if status.is_up_to_date %}
+  {% set latest_date = status.latest_date.strftime('%b %d, %Y') if status.latest_date else 'N/A' %}
+  <div class="status-title flex items-center gap-2 text-sm font-semibold text-emerald-700">
+    <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+    {{ label }} up to date through {{ latest_date }}
+  </div>
+  {% else %}
+  <div class="status-title flex items-center gap-2 text-sm font-semibold text-amber-800">
+    <span class="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500"></span>
+    {{ label }} not uploaded
+  </div>
+  <p class="status-copy mt-1 text-xs text-amber-800/80">
+    {{ status.missing_count }} missing previous date{{ '' if status.missing_count == 1 else 's' }}.
+  </p>
+  {% if status.missing_dates %}
+  <div class="mt-2 flex flex-wrap gap-1.5">
+    {% if status.missing_count <= 3 %}
+      {% for missing_date in status.missing_dates %}
+      <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">{{ missing_date.label }}</span>
+      {% endfor %}
+    {% else %}
+      {% for missing_range in status.missing_ranges[:3] %}
+      <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">{{ missing_range.label }}</span>
+      {% endfor %}
+      {% if status.missing_ranges|length > 3 %}
+      <span class="status-pill rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200">+{{ status.missing_ranges|length - 3 }} more ranges</span>
+      {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+{% endmacro %}
+
 <style>
   html.admin-dark .invensync-update-status.is-current {
     border-color: rgba(52, 211, 153, 0.35) !important;
@@ -38,9 +74,13 @@
   }
 
   .invensync-card-status-scroll {
-    overscroll-behavior: contain;
+    overflow-y: hidden !important;
     scrollbar-color: #cbd5e1 transparent;
     scrollbar-width: thin;
+  }
+
+  .invensync-store-card.is-scroll-active .invensync-card-status-scroll {
+    overflow-y: auto !important;
   }
 
   .invensync-card-status-scroll::-webkit-scrollbar {
@@ -125,7 +165,7 @@
     <!-- Store Cards Grid -->
     <div id="invensyncStoreGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     {% for store_summary in store_summaries %}
-    <div class="invensync-store-card flex h-[36rem] flex-col overflow-hidden bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-300" data-store-search="{{ (store_summary.store.name ~ ' ' ~ store_summary.store.id)|lower }}">
+    <div class="invensync-store-card flex h-[36rem] flex-col bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-300" data-store-search="{{ (store_summary.store.name ~ ' ' ~ store_summary.store.id)|lower }}">
       <!-- Card Header -->
       <div class="shrink-0 bg-gradient-to-br from-slate-800 to-slate-900 px-6 py-4 rounded-t-2xl">
         <div class="flex items-center justify-between">
@@ -183,7 +223,9 @@
         {% set update_status = store_summary.update_status %}
         {% set inventory_status = update_status.inventory %}
         {% set wastage_status = update_status.wastage %}
-        <div class="invensync-card-status-scroll min-h-0 flex-1 space-y-2 overflow-y-auto pr-1" tabindex="0" aria-label="Update status for {{ store_summary.store.name }}">
+        {% set pos_sold_status = update_status.pos_sold %}
+        {% set delivery_status = update_status.delivery %}
+        <div class="invensync-card-status-scroll min-h-0 flex-1 space-y-2 pr-1" tabindex="-1" aria-label="Update status for {{ store_summary.store.name }}">
           <div class="invensync-update-status rounded-xl border px-3 py-2 {% if inventory_status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
             {% if inventory_status.is_up_to_date %}
             {% set latest_date = inventory_status.latest_date.strftime('%b %d, %Y') if inventory_status.latest_date else 'N/A' %}
@@ -263,6 +305,8 @@
             {% endif %}
             {% endif %}
           </div>
+          {{ upload_status_card(pos_sold_status, 'POS Sold') }}
+          {{ upload_status_card(delivery_status, 'Delivery') }}
         </div>
       </div>
 
@@ -523,6 +567,39 @@ function filterInvensyncStores() {
 }
 
 document.getElementById('invensyncStoreSearch')?.addEventListener('input', filterInvensyncStores);
+
+function initializeInvensyncCardScrolling() {
+    const cards = Array.from(document.querySelectorAll('.invensync-store-card'));
+
+    const deactivateCards = (exceptCard = null) => {
+        cards.forEach((card) => {
+            if (card === exceptCard) return;
+            card.classList.remove('is-scroll-active');
+            card.querySelector('.invensync-card-status-scroll')?.setAttribute('tabindex', '-1');
+        });
+    };
+
+    cards.forEach((card) => {
+        card.addEventListener('click', () => {
+            const statusList = card.querySelector('.invensync-card-status-scroll');
+            if (!statusList) return;
+            deactivateCards(card);
+            card.classList.add('is-scroll-active');
+            statusList.setAttribute('tabindex', '0');
+            statusList.focus({preventScroll: true});
+        });
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!event.target.closest('.invensync-store-card')) deactivateCards();
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') deactivateCards();
+    });
+}
+
+initializeInvensyncCardScrolling();
 
 function saveInvensyncConfig() {
     const url = `{{ url_for('admin.update_invensync_config') }}`;
