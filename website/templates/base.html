@@ -296,17 +296,16 @@
         <span class="nav-label whitespace-nowrap truncate">CL Sbase</span>
       </a>
       
-      <!-- Stores Menu with Submenu -->
+      <!-- Stores Menu (always expanded) -->
       <div class="nav-item-group">
-        <button id="stores-menu-toggle" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_stores_menu_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Stores">
+        <div class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_stores_menu_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group">
           <div class="shrink-0 {% if is_stores_menu_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/></svg>
           </div>
           <span class="nav-label whitespace-nowrap truncate flex-1 text-left">My Stores</span>
-          <svg id="stores-chevron" class="nav-label w-4 h-4 transition-transform {% if is_stores_menu_active %}rotate-180 text-white{% else %}text-slate-400{% endif %}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-        </button>
+        </div>
         
-        <div id="stores-submenu" class="{% if not is_stores_menu_active %}hidden {% endif %}ml-4 mt-1 space-y-1">
+        <div id="stores-submenu" class="ml-4 mt-1 space-y-1">
           {% if cluster_stores %}
             {% for store in cluster_stores %}
             <a href="{{ cluster_store_href_base }}?store_id={{ store.id }}{% if cluster_context_id %}&cluster_id={{ cluster_context_id }}{% endif %}" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if current_store_id|string == store.id|string and ((force_cluster_sidebar and is_cluster_data_active) or ((not force_cluster_sidebar) and is_raw_data_active)) %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group">
@@ -408,7 +407,9 @@
             const scope = this.getAttribute('data-scope') || 'official';
             const maxAge = 60 * 60 * 24 * 365;
             document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${maxAge}; samesite=lax`;
-            window.location.reload();
+            const url = new URL(window.location.href);
+            url.searchParams.delete('store_id');
+            window.location.href = url.toString();
           });
         });
       })();
