@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file, current_app
 from flask_login import login_required, current_user
 from .models import (
+    User,
     Store,
     Cluster,
     DailyReport,
@@ -36,9 +37,50 @@ from types import SimpleNamespace
 import pandas as pd
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.sqltypes import Integer as SAInteger, Float as SAFloat, Numeric as SANumeric
 
 views = Blueprint('views', __name__)
+
+
+@views.route('/presence/ping', methods=['POST'])
+@login_required
+def presence_ping():
+    now = datetime.now(ZoneInfo('UTC'))
+    payload = request.get_json(silent=True) or {}
+    activity_type = str(payload.get('activity_type') or 'browsing').strip().lower()
+    current_user.last_activity_at = now
+    current_user.last_interaction_at = now if activity_type in ('typing', 'uploading') else None
+    session['_presence_touch_epoch'] = now.timestamp()
+    db.session.commit()
+    return ('', 204)
+
+
+@views.route('/presence/stores')
+@login_required
+def store_presence():
+    role = str(current_user.role or '').strip()
+    if role in ('Admin', 'Superadmin', 'General Manager'):
+        stores = _apply_store_scope_filter(Store.query.all(), request)
+    elif role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        stores = (
+            _apply_store_scope_filter(
+                Store.query.filter_by(cluster_id=cluster.id).all(),
+                request,
+            )
+            if cluster else []
+        )
+    else:
+        return jsonify({'error': 'Access denied.'}), 403
+
+    manager_presence = _get_user_presence_states(store.manager_id for store in stores)
+    return jsonify({
+        'stores': {
+            str(store.id): manager_presence.get(store.manager_id, 'offline')
+            for store in stores
+        }
+    })
 
 
 @views.route('/starlink')
@@ -251,6 +293,127 @@ def _apply_store_scope_filter(stores, req):
     if scope == 'starlink':
         return [s for s in stores if 'starlink' in (s.name or '').lower()]
     return [s for s in stores if 'starlink' not in (s.name or '').lower()]
+
+
+_INVENSYNC_MEANINGFUL_ITEM_FIELDS = (
+    'beginning_qty',
+    'delivery_qty',
+    'trans_in_qty',
+    'bo_qty',
+    'adv_del_qty',
+    'trans_out_qty',
+    'wastage_qty',
+    'wastage_amount',
+    'csi_qty',
+    'quantity_sold',
+    'ending_d5_qty',
+    'ending_d4_qty',
+    'ending_d3_qty',
+    'total_ending_qty',
+    'total_peso_srp',
+    'theo_ending_qty',
+    'variance_qty',
+    'variance_peso',
+)
+
+
+def _get_latest_meaningful_invensync_by_store(store_ids=None):
+    """Return each store's latest finalized or non-empty InvenSync record."""
+    item_has_value = or_(
+        *(
+            func.coalesce(getattr(DailyEndingInventoryItem, field_name), 0) != 0
+            for field_name in _INVENSYNC_MEANINGFUL_ITEM_FIELDS
+        ),
+        func.length(func.trim(func.coalesce(DailyEndingInventoryItem.remarks, ''))) > 0,
+    )
+    meaningful_item_exists = (
+        db.session.query(DailyEndingInventoryItem.id)
+        .filter(
+            DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id,
+            item_has_value,
+        )
+        .exists()
+    )
+    meaningful_inventory_filter = or_(
+        DailyEndingInventory.is_finalized.is_(True),
+        meaningful_item_exists,
+    )
+
+    latest_dates_query = db.session.query(
+        DailyEndingInventory.store_id.label('store_id'),
+        func.max(DailyEndingInventory.inventory_date).label('latest_date'),
+    ).filter(meaningful_inventory_filter)
+    if store_ids is not None:
+        normalized_store_ids = [int(store_id) for store_id in store_ids]
+        if not normalized_store_ids:
+            return {}
+        latest_dates_query = latest_dates_query.filter(
+            DailyEndingInventory.store_id.in_(normalized_store_ids)
+        )
+
+    latest_inventory_dates = (
+        latest_dates_query
+        .group_by(DailyEndingInventory.store_id)
+        .subquery()
+    )
+    inventory_records = (
+        DailyEndingInventory.query
+        .options(selectinload(DailyEndingInventory.items))
+        .join(
+            latest_inventory_dates,
+            (DailyEndingInventory.store_id == latest_inventory_dates.c.store_id)
+            & (DailyEndingInventory.inventory_date == latest_inventory_dates.c.latest_date),
+        )
+        .filter(meaningful_inventory_filter)
+        .order_by(DailyEndingInventory.store_id.asc(), DailyEndingInventory.id.desc())
+        .all()
+    )
+
+    inventory_by_store = {}
+    for inventory in inventory_records:
+        inventory_by_store.setdefault(int(inventory.store_id), inventory)
+    return inventory_by_store
+
+
+def _get_invensync_data_state(inventory):
+    if not inventory:
+        return 'empty'
+    if inventory.is_finalized:
+        return 'finalized'
+    return 'draft'
+
+
+def _get_user_presence_states(user_ids, idle_minutes=5, working_seconds=60):
+    normalized_ids = {int(user_id) for user_id in user_ids if user_id}
+    if not normalized_ids:
+        return {}
+
+    now = datetime.now(ZoneInfo('UTC'))
+    idle_cutoff = now - timedelta(minutes=idle_minutes)
+    working_cutoff = now - timedelta(seconds=working_seconds)
+    states = {}
+    for user_id, last_activity_at, last_interaction_at in (
+        db.session.query(User.id, User.last_activity_at, User.last_interaction_at)
+        .filter(User.id.in_(normalized_ids))
+        .all()
+    ):
+        if last_activity_at is None:
+            state = 'offline'
+        else:
+            comparable_activity = last_activity_at
+            if comparable_activity.tzinfo is None:
+                comparable_activity = comparable_activity.replace(tzinfo=ZoneInfo('UTC'))
+            comparable_interaction = last_interaction_at
+            if comparable_interaction is not None and comparable_interaction.tzinfo is None:
+                comparable_interaction = comparable_interaction.replace(tzinfo=ZoneInfo('UTC'))
+            if comparable_interaction is not None and comparable_interaction >= working_cutoff:
+                state = 'active'
+            elif comparable_activity >= idle_cutoff:
+                state = 'online'
+            else:
+                state = 'idle'
+        states[int(user_id)] = state
+    return states
 
 
 
@@ -2993,14 +3156,7 @@ def cluster_dashboard():
     if not cluster_stores:
         cluster_stores = Store.query.all()
     cluster_stores = _apply_store_scope_filter(cluster_stores, request)
-    starlink_stores = [
-        store for store in cluster_stores
-        if 'starlink' in str(store.name or '').strip().lower()
-    ]
-    stores = [
-        store for store in cluster_stores
-        if 'starlink' not in str(store.name or '').strip().lower()
-    ]
+    stores = cluster_stores
     
     # Get store IDs
     store_ids = [s.id for s in stores]
@@ -3037,39 +3193,6 @@ def cluster_dashboard():
     _apply_pos_qty_from_pos_categories(reports)
     _apply_taf_wastage_amounts(reports)
 
-    starlink_store_ids = [int(store.id) for store in starlink_stores]
-    starlink_reports = (
-        DailyReport.query.filter(
-            DailyReport.store_id.in_(starlink_store_ids),
-            DailyReport.report_date >= start_date,
-            DailyReport.report_date <= end_date,
-            DailyReport.status == 'Approved',
-        ).all()
-        if starlink_store_ids else []
-    )
-    _coalesce_numeric_fields_for_reports(starlink_reports)
-    starlink_reports_by_store = {}
-    for report in starlink_reports:
-        starlink_reports_by_store.setdefault(report.store_id, []).append(report)
-    starlink_rows = []
-    for store in sorted(starlink_stores, key=lambda item: (item.name or '').lower()):
-        store_reports = starlink_reports_by_store.get(store.id, [])
-        net_sales = sum(
-            float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
-            for report in store_reports
-        )
-        transaction_count = sum(
-            int(report.pos_tc or 0) + int(report.ci_tc or 0)
-            for report in store_reports
-        )
-        starlink_rows.append({
-            'store': store,
-            'net_sales': net_sales,
-            'transaction_count': transaction_count,
-            'ads': net_sales / 31,
-            'adtc': transaction_count / 31,
-        })
-    
     # Fetch store targets for the selected month
     targets = StoreTarget.query.filter(
         StoreTarget.store_id.in_(store_ids),
@@ -3443,7 +3566,6 @@ def cluster_dashboard():
                             icu_stores=icu_stores,
                             wastage_performance=wastage_performance,
                             discount_performance=discount_performance,
-                            starlink_rows=starlink_rows,
                             icount_tool_tracker=icount_tool_tracker)
 
 
@@ -6247,40 +6369,20 @@ def cluster_manager_invensync():
     stores = Store.query.filter_by(cluster_id=cluster.id).order_by(Store.name.asc()).all()
     stores = _apply_store_scope_filter(stores, request)
     store_ids = [s.id for s in stores]
-
-    latest_inventory_dates = (
-        db.session.query(
-            DailyEndingInventory.store_id.label('store_id'),
-            func.max(DailyEndingInventory.inventory_date).label('latest_date'),
-        )
-        .filter(DailyEndingInventory.store_id.in_(store_ids))
-        .group_by(DailyEndingInventory.store_id)
-        .subquery()
-    ) if store_ids else None
-
-    inventory_records = (
-        DailyEndingInventory.query
-        .join(
-            latest_inventory_dates,
-            (DailyEndingInventory.store_id == latest_inventory_dates.c.store_id)
-            & (DailyEndingInventory.inventory_date == latest_inventory_dates.c.latest_date),
-        )
-        .order_by(DailyEndingInventory.store_id.asc(), DailyEndingInventory.id.desc())
-        .all()
-    ) if latest_inventory_dates is not None else []
-
-    inventory_by_store = {}
-    for inventory in inventory_records:
-        inventory_by_store.setdefault(inventory.store_id, inventory)
+    inventory_by_store = _get_latest_meaningful_invensync_by_store(store_ids)
+    manager_presence = _get_user_presence_states(store.manager_id for store in stores)
 
     store_summaries = []
     for store in stores:
         inventory = inventory_by_store.get(store.id)
+        data_state = _get_invensync_data_state(inventory)
         update_status = _build_cluster_invensync_update_status(store.id, month_start, selected_date)
         store_summaries.append({
             'store': store,
             'inventory': inventory,
-            'has_data': bool(inventory),
+            'has_data': data_state != 'empty',
+            'data_state': data_state,
+            'presence_state': manager_presence.get(store.manager_id, 'offline'),
             'update_status': update_status,
         })
 

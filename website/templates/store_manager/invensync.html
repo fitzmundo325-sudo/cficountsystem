@@ -54,6 +54,14 @@
     border-right: none;
   }
 
+  /* Keep sticky inventory cells below the mobile navigation drawer/backdrop. */
+  @media (max-width: 1023px) {
+    body.mobile-sidebar-open .inventory-scroll-container thead th,
+    body.mobile-sidebar-open .inventory-scroll-container td.sticky {
+      z-index: 1 !important;
+    }
+  }
+
   /* Modal pop-in animation */
   @keyframes bounceIn {
     0% { opacity: 0; transform: scale(0.7); }

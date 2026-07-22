@@ -53,6 +53,30 @@
   html.admin-dark .icount-scrollbar-thumb {
     background: #cbd5e1;
   }
+
+  html.admin-dark .icount-tracker-missing-card {
+    background: rgba(120, 53, 15, 0.28) !important;
+    border-color: rgba(251, 191, 36, 0.4) !important;
+  }
+
+  html.admin-dark .icount-tracker-missing-card .status-title {
+    color: #fde68a !important;
+  }
+
+  html.admin-dark .icount-tracker-missing-card .status-copy {
+    color: #fcd34d !important;
+  }
+
+  html.admin-dark .icount-tracker-missing-card .status-pill {
+    background: rgba(15, 23, 42, 0.78) !important;
+    color: #fde68a !important;
+    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.42) !important;
+  }
+
+  html.admin-dark .icount-tracker-complete-card {
+    background-color: #052e2b !important;
+    border-color: #065f46 !important;
+  }
 </style>
 <!-- Top Header -->
 <header class="admin-dashboard-surface sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex items-center justify-between">
@@ -68,7 +92,10 @@
     <nav class="hidden sm:flex text-sm font-medium text-slate-500">
       <span class="hover:text-slate-900 cursor-pointer">Pages</span>
       <span class="mx-2">/</span>
-      <span class="text-slate-900">Cluster Dashboard</span>
+      <span class="text-slate-900">Dashboard</span>
+      {% if store_scope is defined and store_scope %}
+      <span class="ml-2 rounded-md bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{{ store_scope|capitalize }}</span>
+      {% endif %}
     </nav>
   </div>
   <div class="flex items-center gap-4">
@@ -720,13 +747,16 @@
             <div class="icount-tracker-scroll max-h-64 overflow-y-auto overscroll-contain pr-3 text-left">
               <div class="space-y-1.5">
               {% for missing in item.missing_rows %}
-                <div class="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2">
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="min-w-0 flex-1 truncate font-semibold text-slate-800 text-sm">{{ missing.store_name }}</span>
-                    <span class="shrink-0 text-xs font-bold text-amber-700">{{ missing.missing_count }} missing</span>
+                <div class="icount-tracker-missing-card rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                  <div class="status-title flex items-center gap-2 text-sm font-semibold text-amber-800">
+                    <span class="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500"></span>
+                    <span class="min-w-0 flex-1 truncate">{{ missing.store_name }}</span>
                   </div>
+                  <p class="status-copy mt-1 text-xs text-amber-800/80">
+                    {{ missing.missing_count }} missing date{{ '' if missing.missing_count == 1 else 's' }} in the selected period.
+                  </p>
                   {% if missing.date_ranges %}
-                  <div class="mt-1 flex flex-wrap gap-1">
+                  <div class="mt-2 flex flex-wrap gap-1.5">
                     {% for range_label in missing.date_ranges %}
                     <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-bold text-amber-800 ring-1 ring-amber-200">{{ range_label }}</span>
                     {% endfor %}
@@ -739,7 +769,7 @@
             <div class="icount-scrollbar" aria-hidden="true"><div class="icount-scrollbar-thumb"></div></div>
           </div>
           {% elif item and item.show_missing_details %}
-          <div class="mt-3 flex flex-1 items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
+          <div class="icount-tracker-complete-card mt-3 flex flex-1 items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-600">
               <path d="M20 6 9 17l-5-5"/>
             </svg>
@@ -792,44 +822,7 @@
         </table>
       </div>
     </div>
-    {% if starlink_rows is defined %}
-    <div class="rounded-xl border border-slate-200 overflow-hidden">
-      <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5">
-        <h3 class="text-sm font-bold text-slate-800">Starlink Stores</h3>
-        <span class="text-[11px] font-semibold text-slate-500">
-          {{ selected_start_date_display }}{% if selected_start_date != selected_end_date %} - {{ selected_end_date_display }}{% endif %}
-        </span>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-slate-200 text-xs">
-          <thead class="bg-slate-50">
-            <tr>
-              <th class="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">Store</th>
-              <th class="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">Net Sales</th>
-              <th class="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">TC</th>
-              <th class="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">ADS</th>
-              <th class="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">ADTC</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100 bg-white">
-            {% for row in starlink_rows %}
-            <tr>
-              <td class="px-3 py-2 font-semibold text-slate-700">{{ row.store.name }}</td>
-              <td class="px-3 py-2 text-right font-semibold text-slate-900">&#8369;{{ "{:,.0f}".format(row.net_sales) }}</td>
-              <td class="px-3 py-2 text-right text-slate-700">{{ "{:,}".format(row.transaction_count) }}</td>
-              <td class="px-3 py-2 text-right font-semibold text-emerald-700">&#8369;{{ "{:,.0f}".format(row.ads) }}</td>
-              <td class="px-3 py-2 text-right font-semibold text-indigo-700">{{ "{:,.1f}".format(row.adtc) }}</td>
-            </tr>
-            {% else %}
-            <tr>
-              <td colspan="5" class="px-3 py-6 text-center text-sm text-slate-500">No stores with “Starlink” in their name are available.</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    {% endif %}
+
     </div>
     </div>
   </div>

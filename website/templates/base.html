@@ -396,7 +396,7 @@
   <main id="main-content" class="sidebar-transition flex-1 min-h-screen lg:ml-64 flex flex-col">
     {% block content %}{% endblock %}
        
-    <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-overlay-scrollbar-1"></script>
+    <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-overlay-scrollbar-2"></script>
     <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-1"></script>
     <script>
       // Global Store View (Official / Starlink) scope toggle
@@ -686,6 +686,62 @@
         </script>
       {% endif %}
     {% endwith %}
+    {% if current_user.is_authenticated and current_user.role == 'Store Manager' %}
+    <script>
+      (() => {
+        let lastBrowsePresenceSentAt = 0;
+        let lastTypingPresenceSentAt = 0;
+        let lastPresenceType = '';
+        const pingPresence = (activityType) => {
+          const now = Date.now();
+          if (activityType === 'typing' || activityType === 'uploading') {
+            if ((lastPresenceType === 'typing' || lastPresenceType === 'uploading') && now - lastTypingPresenceSentAt < 10000) return;
+            lastTypingPresenceSentAt = now;
+          } else {
+            if (lastPresenceType === 'browsing' && now - lastBrowsePresenceSentAt < 30000) return;
+            lastBrowsePresenceSentAt = now;
+          }
+          lastPresenceType = activityType;
+          fetch({{ url_for('views.presence_ping')|tojson }}, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ activity_type: activityType }),
+            keepalive: true
+          }).catch(() => {});
+        };
+        document.addEventListener('keydown', event => {
+          const target = event.target;
+          if (target && (target.matches('input, textarea, select') || target.isContentEditable)) {
+            pingPresence('typing');
+          }
+        });
+        document.addEventListener('input', () => pingPresence('typing'), { passive: true });
+        document.addEventListener('change', event => {
+          const target = event.target;
+          if (target && target.matches('input[type="file"]') && target.files && target.files.length) {
+            pingPresence('uploading');
+          }
+        });
+        document.addEventListener('submit', event => {
+          const form = event.target;
+          if (!form) return;
+          const hasSelectedFile = Array.from(form.querySelectorAll('input[type="file"]'))
+            .some(input => input.files && input.files.length);
+          if (hasSelectedFile) pingPresence('uploading');
+        });
+        ['pointerdown', 'touchstart', 'scroll'].forEach(eventName => {
+          document.addEventListener(eventName, () => pingPresence('browsing'), { passive: true });
+        });
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) pingPresence('browsing');
+        });
+      })();
+    </script>
+    {% endif %}
   </main>
 </body>
 </html>

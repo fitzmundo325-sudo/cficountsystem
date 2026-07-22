@@ -3,7 +3,7 @@ from .models import User
 from .audit import log_audit_event
 from werkzeug.security import check_password_hash
 from flask_login import login_user, logout_user, login_required, current_user
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 auth = Blueprint('auth', __name__)
 
@@ -27,6 +27,10 @@ def login():
             if check_password_hash(user.password, password):
                 flash('Logged in successfully!', category='success')
                 login_user(user, remember=True) 
+                user.last_activity_at = datetime.now(timezone.utc)
+                user.last_login_at = user.last_activity_at
+                user.last_interaction_at = None
+                session['_presence_touch_epoch'] = user.last_activity_at.timestamp()
                 session['login_selected_date'] = selected_date.strftime('%Y-%m-%d')
                 log_audit_event(
                     action='auth.login.success',
@@ -75,6 +79,9 @@ def login():
 @login_required
 def logout():
     actor = current_user
+    actor.last_activity_at = None
+    actor.last_interaction_at = None
+    session.pop('_presence_touch_epoch', None)
     log_audit_event(
         action='auth.logout',
         entity_type='User',

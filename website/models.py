@@ -17,6 +17,9 @@ class User(db.Model, UserMixin):
     role = db.Column(db.String(100))
     assigned_store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=True, index=True)
     date_added = db.Column(db.DateTime(timezone=True), default=func.now())
+    last_activity_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
+    last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    last_interaction_at = db.Column(db.DateTime(timezone=True), nullable=True)
     password = db.Column(db.String(100))
     assigned_store = db.relationship('Store', foreign_keys=[assigned_store_id], lazy=True)
     assigned_stores = db.relationship(
