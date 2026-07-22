@@ -4913,6 +4913,16 @@ def store_manager_transaction_activity_form():
         remarks_list = request.form.getlist('remarks[]')
         row_count = max(len(item_names), len(unit_costs), len(quantities), len(remarks_list))
 
+        product_master_name_map = {
+            _normalize_product_name(description): str(description or '').strip()
+            for (description,) in (
+                db.session.query(ProductMaster.description)
+                .filter(ProductMaster.description.isnot(None))
+                .all()
+            )
+            if _normalize_product_name(description)
+        }
+
         parsed_items = []
         for idx in range(row_count):
             raw_item_name = item_names[idx] if idx < len(item_names) else ''
@@ -4936,6 +4946,11 @@ def store_manager_transaction_activity_form():
             if not item_name:
                 flash(f'Item Name is required on row {idx + 1}.', category='error')
                 return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+            canonical_item_name = product_master_name_map.get(_normalize_product_name(item_name))
+            if not canonical_item_name:
+                flash(f'Please select a valid Product Master item on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+            item_name = canonical_item_name
             if quantity <= 0:
                 flash(f'Qty must be greater than 0 on row {idx + 1}.', category='error')
                 return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))

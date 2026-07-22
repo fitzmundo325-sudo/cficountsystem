@@ -292,6 +292,11 @@
 
 <script>
   (function() {
+    const productNames = {{ product_names | default([], true) | tojson }};
+    const normalizeProductName = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const productNameLookup = new Map(
+      productNames.map((productName) => [normalizeProductName(productName), productName])
+    );
     const productPriceMapRaw = {{ product_price_map | default({}, true) | tojson }};
     const productPriceMap = {};
     Object.keys(productPriceMapRaw || {}).forEach((key) => {
@@ -340,7 +345,7 @@
       return `
         <tr class="taf-row odd:bg-white even:bg-slate-50">
           <td class="px-3 py-2">
-            <input type="text" name="item_name[]" placeholder="Item name" class="taf-item-name w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+            <input type="text" name="item_name[]" list="taf-product-options" required autocomplete="off" placeholder="Type to search Product Master" class="taf-item-name w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
           </td>
           <td class="px-3 py-2">
             <input type="number" name="unit_cost[]" min="0" step="0.01" placeholder="0.00" class="taf-unit-cost w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
@@ -379,13 +384,8 @@
       const transactionType = transactionTypeEl?.value || '';
       const shouldUseProductMaster = usesProductMasterLookup(transactionType);
       body.querySelectorAll('.taf-item-name').forEach((input) => {
-        if (shouldUseProductMaster) {
-          input.setAttribute('list', 'taf-product-options');
-          input.placeholder = 'Search product name';
-        } else {
-          input.removeAttribute('list');
-          input.placeholder = 'Item name';
-        }
+        input.required = shouldUseProductMaster;
+        input.setAttribute('list', 'taf-product-options');
       });
       if (shouldUseProductMaster) {
         body.querySelectorAll('.taf-row').forEach((row) => {
@@ -505,6 +505,23 @@
       unitCostInput.value = matchedPrice.toFixed(2);
     }
 
+    function validateProductMasterInput(input, canonicalize = false) {
+      const rawValue = String(input?.value || '').trim();
+      if (!input) return false;
+      if (!rawValue) {
+        input.setCustomValidity('Please select a Product Master item.');
+        return false;
+      }
+      const canonicalName = productNameLookup.get(normalizeProductName(rawValue));
+      if (!canonicalName) {
+        input.setCustomValidity('Select a valid item from Product Master.');
+        return false;
+      }
+      input.setCustomValidity('');
+      if (canonicalize) input.value = canonicalName;
+      return true;
+    }
+
     function renderTransactionTypeCards() {
       const selectedType = transactionTypeEl?.value || '';
       transactionTypeCardEls.forEach((card) => {
@@ -578,7 +595,7 @@
         },
         {
           elements: getFirstItemTargets().length ? getFirstItemTargets() : [document.getElementById('taf-items-guide-target')],
-          text: 'Input the item you want to transfer and the quantity.',
+          text: 'Select an item from Product Master, then enter the quantity.',
           placement: 'bottom',
           nextText: 'Next'
         },
@@ -733,9 +750,20 @@
         if (!usesProductMasterLookup(transactionType)) return;
         const row = target.closest('.taf-row');
         if (!row) return;
-        autoFillUnitCostForRow(row, target.value);
+        const isValidProduct = validateProductMasterInput(target);
+        if (isValidProduct) autoFillUnitCostForRow(row, target.value);
         refreshTotals();
       }
+    });
+
+    body?.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!target.classList.contains('taf-item-name')) return;
+      const row = target.closest('.taf-row');
+      if (!row) return;
+      if (!validateProductMasterInput(target, true)) return;
+      autoFillUnitCostForRow(row, target.value);
+      refreshTotals();
     });
 
     body?.addEventListener('click', (event) => {
@@ -745,7 +773,7 @@
       if (rows.length <= 1) {
         const row = rows[0];
         if (row) {
-          row.querySelectorAll('input').forEach((input) => { input.value = ''; });
+          row.querySelectorAll('input, select').forEach((input) => { input.value = ''; });
         }
       } else {
         button.closest('.taf-row')?.remove();
@@ -766,6 +794,14 @@
 
       if (!preparedByEl?.value?.trim()) {
         preparedByEl?.focus();
+        return;
+      }
+
+      const invalidProductInput = Array.from(body.querySelectorAll('.taf-item-name'))
+        .find((input) => !validateProductMasterInput(input, true));
+      if (invalidProductInput) {
+        invalidProductInput.reportValidity();
+        invalidProductInput.focus();
         return;
       }
 
