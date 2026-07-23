@@ -295,6 +295,35 @@
   </section>
   {% endif %}
   {% endif %}
+
+  {% if pagination and pagination.total_pages > 1 %}
+  <div class="mt-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3">
+    <div class="text-sm text-slate-600">
+      Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }}&ndash;{{ [pagination.page * pagination.per_page, pagination.total_rows] | min }}
+      of {{ pagination.total_rows }} results
+    </div>
+    <div class="flex items-center gap-1">
+      {% if pagination.page > 1 %}
+      <a href="?{{ request.query_string.decode().replace('page=' + pagination.page|string, 'page=' + (pagination.page - 1)|string) if 'page=' in request.query_string.decode() else request.query_string.decode() + '&page=' + (pagination.page - 1)|string }}"
+         class="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50">&laquo; Prev</a>
+      {% endif %}
+      {% for p in range(1, pagination.total_pages + 1) %}
+        {% if p == pagination.page %}
+        <span class="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white">{{ p }}</span>
+        {% elif p <= 3 or p > pagination.total_pages - 3 or (p >= pagination.page - 1 and p <= pagination.page + 1) %}
+        <a href="?{{ request.query_string.decode().replace('page=' + pagination.page|string, 'page=' + p|string) if 'page=' in request.query_string.decode() else request.query_string.decode() + '&page=' + p|string }}"
+           class="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50">{{ p }}</a>
+        {% elif p == 4 or p == pagination.total_pages - 3 %}
+        <span class="px-2 text-slate-400">&hellip;</span>
+        {% endif %}
+      {% endfor %}
+      {% if pagination.page < pagination.total_pages %}
+      <a href="?{{ request.query_string.decode().replace('page=' + pagination.page|string, 'page=' + (pagination.page + 1)|string) if 'page=' in request.query_string.decode() else request.query_string.decode() + '&page=' + (pagination.page + 1)|string }}"
+         class="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50">Next &raquo;</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
 </div>
 
 {% if active_tab == 'review' and review_rows %}

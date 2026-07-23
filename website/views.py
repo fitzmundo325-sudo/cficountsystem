@@ -18,7 +18,7 @@ from .models import (
     StoreProductBuffer,
     GlobalInvenSyncConfig,
 )
-from . import db
+from . import db, cache
 from .audit import log_audit_event
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
@@ -41,6 +41,102 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.sqltypes import Integer as SAInteger, Float as SAFloat, Numeric as SANumeric
 
 views = Blueprint('views', __name__)
+
+
+@cache.memoize(timeout=300)
+def _cached_product_masters():
+    return (
+        ProductMaster.query
+        .with_entities(ProductMaster.description, ProductMaster.category)
+        .all()
+    )
+
+
+@cache.memoize(timeout=300)
+def _cached_product_masters_full():
+    return (
+        ProductMaster.query
+        .with_entities(ProductMaster.description, ProductMaster.category, ProductMaster.sub_category)
+        .all()
+    )
+
+
+@cache.memoize(timeout=300)
+def _cached_product_masters_by_id():
+    return {
+        int(product_id): {
+            'description': description or '',
+            'category': category or '',
+            'sub_category': sub_category or '',
+        }
+        for product_id, description, category, sub_category in (
+            ProductMaster.query
+            .with_entities(
+                ProductMaster.id,
+                ProductMaster.description,
+                ProductMaster.category,
+                ProductMaster.sub_category,
+            )
+            .all()
+        )
+    }
+
+
+@cache.memoize(timeout=300)
+def _cached_alias_lookup():
+    return {
+        str(normalized_alias or '').strip(): (description or '').strip()
+        for normalized_alias, description in (
+            db.session.query(ProductAlias.normalized_alias, ProductMaster.description)
+            .join(ProductMaster, ProductMaster.id == ProductAlias.product_master_id)
+            .all()
+        )
+        if str(normalized_alias or '').strip() and (description or '').strip()
+    }
+
+
+@cache.memoize(timeout=300)
+def _cached_category_lookup():
+    lookup = {}
+    for description, category in _cached_product_masters():
+        normalized = re.sub(r'[^a-z0-9]+', '', str(description or '').strip().lower())
+        cat = (category or '').strip() or 'Uncategorized'
+        if not normalized:
+            continue
+        lookup[normalized] = cat
+        # Add common pluralization variants
+        if normalized.endswith('y') and len(normalized) > 3:
+            lookup[normalized[:-1] + 'ies'] = cat
+        if normalized.endswith('s') and len(normalized) > 3:
+            lookup[normalized[:-1]] = cat
+        if not normalized.endswith('s'):
+            lookup[normalized + 's'] = cat
+    return lookup
+
+
+def _resolve_category_fast(product_name, category_cache):
+    normalized = re.sub(r'[^a-z0-9]+', '', str(product_name or '').strip().lower())
+    if not normalized:
+        return 'Uncategorized'
+    if normalized in category_cache:
+        return category_cache[normalized]
+    lookup = _cached_category_lookup()
+    if normalized in lookup:
+        category_cache[normalized] = lookup[normalized]
+        return lookup[normalized]
+    # Fallback: try SequenceMatcher only for cache misses
+    best_score = 0.0
+    best_category = 'Uncategorized'
+    for master_normalized, master_category in lookup.items():
+        if not master_normalized:
+            continue
+        similarity = SequenceMatcher(None, normalized, master_normalized).ratio()
+        if similarity > best_score:
+            best_score = similarity
+            best_category = master_category
+    resolved = best_category if best_score >= 0.90 else 'Uncategorized'
+    category_cache[normalized] = resolved
+    return resolved
 
 
 @views.route('/presence/ping', methods=['POST'])
@@ -684,17 +780,15 @@ def _build_ytd_overview(end_date, store_ids=None):
 
     ytd_start = date(end_date.year, 1, 1)
 
-    report_query = DailyReport.query.filter(
+    sales_filter = [
         DailyReport.report_date >= ytd_start,
         DailyReport.report_date <= end_date,
         DailyReport.status == 'Approved',
-    )
-
-    from .models import StoreTarget
-    target_query = StoreTarget.query.filter(
+    ]
+    target_filter = [
         StoreTarget.target_date >= ytd_start,
         StoreTarget.target_date <= end_date,
-    )
+    ]
 
     if store_ids is not None:
         if not store_ids:
@@ -704,17 +798,32 @@ def _build_ytd_overview(end_date, store_ids=None):
                 'ytd_variance_amount': 0.0,
                 'ytd_variance_percent': 0.0,
             }
-        report_query = report_query.filter(DailyReport.store_id.in_(store_ids))
-        target_query = target_query.filter(StoreTarget.store_id.in_(store_ids))
+        sales_filter.append(DailyReport.store_id.in_(store_ids))
+        target_filter.append(StoreTarget.store_id.in_(store_ids))
 
-    ytd_reports = report_query.all()
-    ytd_targets = target_query.all()
-
-    ytd_sales = sum(
-        float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
-        for report in ytd_reports
+    ytd_sales = float(
+        db.session.query(
+            func.coalesce(
+                func.sum(
+                    func.coalesce(DailyReport.pos_net_sales, 0)
+                    + func.coalesce(DailyReport.ci_regular_net_sales, 0)
+                ),
+                0,
+            )
+        )
+        .filter(*sales_filter)
+        .scalar()
+        or 0
     )
-    ytd_target = sum(float(target.target_net or 0) for target in ytd_targets)
+
+    ytd_target = float(
+        db.session.query(
+            func.coalesce(func.sum(func.coalesce(StoreTarget.target_net, 0)), 0)
+        )
+        .filter(*target_filter)
+        .scalar()
+        or 0
+    )
 
     return {
         'ytd_sales': ytd_sales,
@@ -1104,33 +1213,6 @@ def _build_top_products_from_reports(reports):
 
 
 def _build_store_product_mix_from_reports(reports, stores=None):
-    def _normalize_product_text(value):
-        return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
-
-    def _resolve_product_category(product_name, master_rows, cache, similarity_threshold=0.90):
-        normalized_name = _normalize_product_text(product_name)
-        if not normalized_name:
-            return 'Uncategorized'
-        if normalized_name in cache:
-            return cache[normalized_name]
-
-        best_score = 0.0
-        best_category = 'Uncategorized'
-        for normalized_master, _, master_category in master_rows:
-            if not normalized_master:
-                continue
-            if normalized_name == normalized_master:
-                cache[normalized_name] = master_category
-                return master_category
-            similarity = SequenceMatcher(None, normalized_name, normalized_master).ratio()
-            if similarity > best_score:
-                best_score = similarity
-                best_category = master_category
-
-        resolved_category = best_category if best_score >= similarity_threshold else 'Uncategorized'
-        cache[normalized_name] = resolved_category
-        return resolved_category
-
     palette = [
         '#6366f1', '#10b981', '#f59e0b', '#e11d48', '#0ea5e9',
         '#14b8a6', '#84cc16', '#f97316', '#8b5cf6', '#64748b',
@@ -1152,29 +1234,8 @@ def _build_store_product_mix_from_reports(reports, stores=None):
         for store_id, store_name in store_lookup.items()
     }
 
-    product_masters = (
-        ProductMaster.query
-        .with_entities(ProductMaster.description, ProductMaster.category)
-        .all()
-    )
-    master_rows = [
-        (
-            _normalize_product_text(description),
-            (description or '').strip(),
-            (category or '').strip() or 'Uncategorized',
-        )
-        for description, category in product_masters
-    ]
     category_cache = {}
-    alias_lookup = {
-        str(normalized_alias or '').strip(): (description or '').strip()
-        for normalized_alias, description in (
-            db.session.query(ProductAlias.normalized_alias, ProductMaster.description)
-            .join(ProductMaster, ProductMaster.id == ProductAlias.product_master_id)
-            .all()
-        )
-        if str(normalized_alias or '').strip() and (description or '').strip()
-    }
+    alias_lookup = _cached_alias_lookup()
 
     report_ids = [int(report.id) for report in reports if getattr(report, 'id', None)]
     if report_ids:
@@ -1203,7 +1264,7 @@ def _build_store_product_mix_from_reports(reports, stores=None):
                 continue
 
             canonical_name = alias_lookup.get(_normalize_product_text(clean_name), clean_name)
-            resolved_category = _resolve_product_category(canonical_name, master_rows, category_cache, similarity_threshold=0.90)
+            resolved_category = _resolve_category_fast(canonical_name, category_cache)
             if sid not in category_totals_by_store:
                 category_totals_by_store[sid] = {}
             category_totals_by_store[sid][resolved_category] = int(category_totals_by_store[sid].get(resolved_category, 0) or 0) + qty
@@ -1264,56 +1325,8 @@ def _build_store_product_mix_from_reports(reports, stores=None):
 
 
 def _build_pos_sold_products_by_store(reports, stores=None):
-    def _normalize_product_text(value):
-        return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
-
-    def _resolve_product_category(product_name, master_rows, cache, similarity_threshold=0.90):
-        normalized_name = _normalize_product_text(product_name)
-        if not normalized_name:
-            return 'Uncategorized'
-        if normalized_name in cache:
-            return cache[normalized_name]
-
-        best_score = 0.0
-        best_category = 'Uncategorized'
-        for normalized_master, _, master_category in master_rows:
-            if not normalized_master:
-                continue
-            if normalized_name == normalized_master:
-                cache[normalized_name] = master_category
-                return master_category
-            similarity = SequenceMatcher(None, normalized_name, normalized_master).ratio()
-            if similarity > best_score:
-                best_score = similarity
-                best_category = master_category
-
-        resolved_category = best_category if best_score >= similarity_threshold else 'Uncategorized'
-        cache[normalized_name] = resolved_category
-        return resolved_category
-
-    product_masters = (
-        ProductMaster.query
-        .with_entities(ProductMaster.description, ProductMaster.category)
-        .all()
-    )
-    master_rows = [
-        (
-            _normalize_product_text(description),
-            (description or '').strip(),
-            (category or '').strip() or 'Uncategorized',
-        )
-        for description, category in product_masters
-    ]
     category_cache = {}
-    alias_lookup = {
-        str(normalized_alias or '').strip(): (description or '').strip()
-        for normalized_alias, description in (
-            db.session.query(ProductAlias.normalized_alias, ProductMaster.description)
-            .join(ProductMaster, ProductMaster.id == ProductAlias.product_master_id)
-            .all()
-        )
-        if str(normalized_alias or '').strip() and (description or '').strip()
-    }
+    alias_lookup = _cached_alias_lookup()
 
     store_lookup = {}
     if stores:
@@ -1363,7 +1376,7 @@ def _build_pos_sold_products_by_store(reports, stores=None):
             if _is_grand_total_product_name(clean_name):
                 continue
             canonical_name = alias_lookup.get(_normalize_product_text(clean_name), clean_name)
-            resolved_category = _resolve_product_category(canonical_name, master_rows, category_cache, similarity_threshold=0.90)
+            resolved_category = _resolve_category_fast(canonical_name, category_cache)
             existing_product = next(
                 (product for product in per_store[sid]['products'] if (product.get('name') or '') == canonical_name),
                 None
@@ -1409,20 +1422,8 @@ def _apply_pos_qty_from_pos_categories(reports):
     def _normalize(value):
         return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
 
-    alias_lookup = {
-        str(normalized_alias or '').strip(): (description or '').strip()
-        for normalized_alias, description in (
-            db.session.query(ProductAlias.normalized_alias, ProductMaster.description)
-            .join(ProductMaster, ProductMaster.id == ProductAlias.product_master_id)
-            .all()
-        )
-        if str(normalized_alias or '').strip() and (description or '').strip()
-    }
-    master_rows = (
-        ProductMaster.query
-        .with_entities(ProductMaster.description, ProductMaster.category, ProductMaster.sub_category)
-        .all()
-    )
+    alias_lookup = _cached_alias_lookup()
+    master_rows = _cached_product_masters_full()
     master_meta_by_normalized_name = {
         _normalize(description): {
             'category': (category or '').strip() or 'Uncategorized',
@@ -1531,23 +1532,7 @@ def _apply_ending_inventory_from_invensync(reports):
     if not inventory_ids:
         return
 
-    product_meta_by_id = {
-        int(product_id): {
-            'description': description or '',
-            'category': category or '',
-            'sub_category': sub_category or '',
-        }
-        for product_id, description, category, sub_category in (
-            ProductMaster.query
-            .with_entities(
-                ProductMaster.id,
-                ProductMaster.description,
-                ProductMaster.category,
-                ProductMaster.sub_category,
-            )
-            .all()
-        )
-    }
+    product_meta_by_id = _cached_product_masters_by_id()
 
     def _normalize(value):
         return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
@@ -2452,6 +2437,7 @@ def _normalize_product_text(value):
     return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
 
 
+@cache.memoize(timeout=300)
 def _build_pos_sold_master_lookups():
     alias_lookup = {}
     master_lookup = {}
@@ -3567,6 +3553,388 @@ def cluster_dashboard():
                             wastage_performance=wastage_performance,
                             discount_performance=discount_performance,
                             icount_tool_tracker=icount_tool_tracker)
+
+
+@views.route('/api/cluster-dashboard-data')
+@login_required
+def api_cluster_dashboard_data():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
+        return jsonify({'error': 'Access denied'}), 403
+
+    from .models import Cluster
+    cluster = None
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            return jsonify({'error': 'No cluster assigned'}), 404
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            return jsonify({'error': 'cluster_id required'}), 400
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    today = date.today()
+    start_date_arg = request.args.get('start_date')
+    end_date_arg = request.args.get('end_date')
+
+    cluster_stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    if not cluster_stores:
+        cluster_stores = Store.query.all()
+    cluster_stores = _apply_store_scope_filter(cluster_stores, request)
+    stores = cluster_stores
+    store_ids = [s.id for s in stores]
+
+    parsed_start_date = _parse_iso_date(start_date_arg)
+    parsed_end_date = _parse_iso_date(end_date_arg)
+
+    if parsed_start_date or parsed_end_date:
+        start_date = parsed_start_date or parsed_end_date
+        end_date = parsed_end_date or parsed_start_date
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+        year_int = int(start_date.year)
+        month_int = int(start_date.month)
+    else:
+        start_date = today.replace(day=1)
+        end_date = today
+        year_int = int(start_date.year)
+        month_int = int(start_date.month)
+
+    current_month = f'{month_int:02d}'
+    current_year = str(year_int)
+
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date,
+        DailyReport.status == 'Approved'
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_taf_wastage_amounts(reports)
+
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+
+    daily_targets = _aggregate_targets_by_day(targets)
+    daily_sales_map = {}
+    sbase_store_ids = {int(s.id) for s in stores if bool(getattr(s, 'is_one_year_already', False))}
+    daily_sbase_sales_map = {}
+    for report in reports:
+        date_key = report.report_date.strftime('%Y-%m-%d')
+        report_net_sales = float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+        daily_sales_map[date_key] = float(daily_sales_map.get(date_key, 0.0) or 0.0) + report_net_sales
+        if int(report.store_id) in sbase_store_ids:
+            daily_sbase_sales_map[date_key] = float(daily_sbase_sales_map.get(date_key, 0.0) or 0.0) + report_net_sales
+
+    sales_data = []
+    sbase_sales_data = []
+    target_data = []
+    last_year_data = []
+    labels = []
+    mtd_metrics_by_day = {}
+    running_sales = 0.0
+    running_target = 0.0
+    running_ly = 0.0
+    running_gbi = 0.0
+
+    cursor = start_date
+    while cursor <= end_date:
+        date_key = cursor.strftime('%Y-%m-%d')
+        day_sales = float(daily_sales_map.get(date_key, 0.0) or 0.0)
+        day_sbase_sales = float(daily_sbase_sales_map.get(date_key, 0.0) or 0.0)
+        day_target = float(daily_targets.get(date_key, {}).get('target_net', 0.0) or 0.0)
+        day_ly = float(daily_targets.get(date_key, {}).get('last_year_net', 0.0) or 0.0)
+        day_gbi = float(daily_targets.get(date_key, {}).get('gbi_target', 0.0) or 0.0)
+
+        running_sales += day_sales
+        running_target += day_target
+        running_ly += day_ly
+        running_gbi += day_gbi
+
+        sales_data.append(day_sales)
+        sbase_sales_data.append(day_sbase_sales)
+        target_data.append(day_target)
+        last_year_data.append(day_ly)
+        labels.append(cursor.strftime('%b %d'))
+
+        mtd_metrics_by_day[date_key] = {
+            'mtd_vs_tgt': (((running_sales / running_target) - 1.0) * 100) if running_target > 0 else None,
+            'mtd_vs_ly': (((running_sales / running_ly) - 1.0) * 100) if running_ly > 0 else None,
+        }
+
+        cursor += timedelta(days=1)
+
+    summary = _build_cluster_manager_summary(reports, targets)
+    ytd_overview = _build_ytd_overview(end_date, store_ids=store_ids)
+    summary.setdefault('overview', {}).update(ytd_overview)
+    top_products = _build_top_products_from_reports(reports)
+    top_products_total_units = sum(item['units'] for item in top_products)
+    store_product_mix = _build_store_product_mix_from_reports(reports, stores)
+    pos_sold_products_by_store = _build_pos_sold_products_by_store(reports, stores)
+    wastage_performance = _build_wastage_performance(
+        reports, start_date, end_date,
+        store_lookup={int(store.id): store.name for store in stores},
+    )
+    discount_performance = _build_discount_performance(reports, start_date, end_date)
+
+    store_performance_data = []
+    range_days = max((end_date - start_date).days + 1, 1)
+    for store in stores:
+        store_reports = [r for r in reports if r.store_id == store.id]
+        store_targets = [t for t in targets if t.store_id == store.id]
+        mtd_sales = sum(float(r.pos_net_sales or 0) + float(r.ci_regular_net_sales or 0) for r in store_reports)
+        ads = mtd_sales / range_days if range_days > 0 else 0
+        store_ly_mtd = sum(float(t.last_year_net or 0) for t in store_targets)
+        store_target_mtd = sum(float(t.target_net or 0) for t in store_targets)
+        ar_tgt_percent = (((mtd_sales / store_target_mtd) - 1.0) * 100) if store_target_mtd > 0 else 0.0
+        growth_percent = (mtd_sales / store_ly_mtd - 1.0) if store_ly_mtd > 0 else None
+        status = _classify_store_status(ar_tgt_percent, growth_percent)
+        store_performance_data.append({
+            'store_name': store.name,
+            'act': mtd_sales,
+            'target_mtd': store_target_mtd,
+            'ads': ads,
+            'ly': store_ly_mtd,
+            'ar_tgt_percent': ar_tgt_percent,
+            'growth_percent': growth_percent,
+            'status': status
+        })
+
+    top_stores_ads = []
+    sorted_by_ads = sorted(store_performance_data, key=lambda item: float(item.get('ads', 0) or 0), reverse=True)[:3]
+    max_ads = float(sorted_by_ads[0].get('ads', 0) or 0) if sorted_by_ads else 0.0
+    for rank, store_data in enumerate(sorted_by_ads, start=1):
+        ads_value = float(store_data.get('ads', 0) or 0)
+        top_stores_ads.append({
+            'rank': rank,
+            'store_name': store_data.get('store_name', ''),
+            'ads': ads_value,
+            'ads_percent': ((ads_value / max_ads) * 100) if max_ads > 0 else 0.0,
+        })
+
+    top_attainment_ar = []
+    sorted_by_ar = sorted(store_performance_data, key=lambda item: float(item.get('ar_tgt_percent', 0) or 0), reverse=True)[:3]
+    for rank, store_data in enumerate(sorted_by_ar, start=1):
+        ar_value = float(store_data.get('ar_tgt_percent', 0) or 0)
+        top_attainment_ar.append({
+            'rank': rank,
+            'store_name': store_data.get('store_name', ''),
+            'ar_tgt_percent': ar_value,
+            'target_mtd': float(store_data.get('target_mtd', 0) or 0),
+            'act': float(store_data.get('act', 0) or 0),
+            'delta_percent': ar_value,
+            'progress_percent': min(max(ar_value + 100.0, 0.0), 100.0),
+        })
+
+    severity_order = {'ICU Critical': 0, 'Critical': 1, 'Recovery': 2, 'Good': 3, 'Excellent': 4}
+    status_meta = {
+        'ICU Critical': {
+            'tone_card': 'bg-red-50 border-l-4 border-red-500',
+            'tone_badge': 'text-red-700 bg-red-100',
+            'tone_value': 'text-red-600',
+            'tone_bar_bg': 'bg-red-200',
+            'tone_bar_fill': 'bg-red-500',
+            'note': 'Significantly below target',
+        },
+        'Critical': {
+            'tone_card': 'bg-orange-50 border-l-4 border-orange-500',
+            'tone_badge': 'text-orange-700 bg-orange-100',
+            'tone_value': 'text-orange-600',
+            'tone_bar_bg': 'bg-orange-200',
+            'tone_bar_fill': 'bg-orange-500',
+            'note': 'Below target',
+        },
+        'Recovery': {
+            'tone_card': 'bg-amber-50 border-l-4 border-amber-500',
+            'tone_badge': 'text-amber-700 bg-amber-100',
+            'tone_value': 'text-amber-600',
+            'tone_bar_bg': 'bg-amber-200',
+            'tone_bar_fill': 'bg-amber-500',
+            'note': 'Near target, monitor closely',
+        },
+    }
+    icu_candidates = [
+        item for item in store_performance_data if item.get('status') == 'ICU Critical'
+    ]
+    icu_candidates = sorted(
+        icu_candidates,
+        key=lambda item: (severity_order.get(item.get('status', 'Excellent'), 99), float(item.get('ar_tgt_percent', 0) or 0)),
+    )[:3]
+    icu_stores = []
+    for item in icu_candidates:
+        status = item.get('status', 'Recovery')
+        meta = status_meta.get(status, status_meta['Recovery'])
+        ar_percent = float(item.get('ar_tgt_percent', 0) or 0)
+        attainment_percent = max(0.0, ar_percent + 100.0)
+        icu_stores.append({
+            'store_name': item.get('store_name', ''),
+            'status': status,
+            'note': meta['note'],
+            'act': float(item.get('act', 0) or 0),
+            'target_mtd': float(item.get('target_mtd', 0) or 0),
+            'attainment_percent': attainment_percent,
+            'progress_percent': min(max(attainment_percent, 0.0), 100.0),
+            'tone_card': meta['tone_card'],
+            'tone_badge': meta['tone_badge'],
+            'tone_value': meta['tone_value'],
+            'tone_bar_bg': meta['tone_bar_bg'],
+            'tone_bar_fill': meta['tone_bar_fill'],
+        })
+
+    def _format_tracker_date_range(range_start, range_end):
+        if range_start == range_end:
+            return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year}"
+        if range_start.year == range_end.year and range_start.month == range_end.month:
+            return f"{range_start.strftime('%b')} {range_start.day}-{range_end.day}, {range_start.year}"
+        if range_start.year == range_end.year:
+            return f"{range_start.strftime('%b')} {range_start.day} - {range_end.strftime('%b')} {range_end.day}, {range_start.year}"
+        return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year} - {range_end.strftime('%b')} {range_end.day}, {range_end.year}"
+
+    def _summarize_missing_dates(missing_dates):
+        if not missing_dates:
+            return []
+        missing_dates = sorted(missing_dates)
+        ranges = []
+        range_start = missing_dates[0]
+        previous = missing_dates[0]
+        for missing_date in missing_dates[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            ranges.append(_format_tracker_date_range(range_start, previous))
+            range_start = missing_date
+            previous = missing_date
+        ranges.append(_format_tracker_date_range(range_start, previous))
+        return ranges
+
+    tracker_end_date = min(end_date, today - timedelta(days=1))
+    expected_dates = []
+    tracker_cursor = start_date
+    while tracker_cursor <= tracker_end_date:
+        expected_dates.append(tracker_cursor)
+        tracker_cursor += timedelta(days=1)
+
+    dashboard_store_count = len(store_ids)
+    daily_report_dates_by_store = {}
+    if store_ids:
+        daily_report_date_rows = (
+            db.session.query(DailyReport.store_id, DailyReport.report_date)
+            .filter(
+                DailyReport.store_id.in_(store_ids),
+                DailyReport.report_date >= start_date,
+                DailyReport.report_date <= end_date,
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, report_date in daily_report_date_rows:
+            if store_id and report_date:
+                daily_report_dates_by_store.setdefault(int(store_id), set()).add(report_date)
+
+    invensync_dates_by_store = {}
+    if store_ids:
+        invensync_date_rows = (
+            db.session.query(DailyEndingInventory.store_id, DailyEndingInventory.inventory_date)
+            .filter(
+                DailyEndingInventory.store_id.in_(store_ids),
+                DailyEndingInventory.inventory_date >= start_date,
+                DailyEndingInventory.inventory_date <= end_date,
+                DailyEndingInventory.is_finalized.is_(True),
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, inventory_date in invensync_date_rows:
+            if store_id and inventory_date:
+                invensync_dates_by_store.setdefault(int(store_id), set()).add(inventory_date)
+
+    def _build_missing_tool_rows(date_map):
+        rows = []
+        for store in sorted(stores, key=lambda item: (item.name or '').lower()):
+            available_dates = date_map.get(int(store.id), set())
+            missing_dates_list = [ed for ed in expected_dates if ed not in available_dates]
+            if not missing_dates_list:
+                continue
+            rows.append({
+                'store_name': store.name,
+                'missing_count': len(missing_dates_list),
+                'date_ranges': _summarize_missing_dates(missing_dates_list),
+            })
+        return rows
+
+    daily_report_missing_rows = _build_missing_tool_rows(daily_report_dates_by_store)
+    invensync_missing_rows = _build_missing_tool_rows(invensync_dates_by_store)
+    daily_report_store_count = dashboard_store_count - len(daily_report_missing_rows)
+    invensync_store_count = dashboard_store_count - len(invensync_missing_rows)
+    oracle_store_count = (
+        db.session.query(StoreProductBuffer.store_id)
+        .filter(StoreProductBuffer.store_id.in_(store_ids))
+        .distinct()
+        .count()
+        if store_ids else 0
+    )
+    icount_tool_tracker = {
+        'total_stores': dashboard_store_count,
+        'daily_reports': {
+            'label': 'Daily Reports',
+            'count': daily_report_store_count,
+            'subtitle': 'stores with complete uploads',
+            'missing_rows': daily_report_missing_rows,
+            'show_missing_details': True,
+        },
+        'invensync': {
+            'label': 'Invensync',
+            'count': invensync_store_count,
+            'subtitle': 'stores with complete updates',
+            'missing_rows': invensync_missing_rows,
+            'show_missing_details': True,
+        },
+        'oracle': {
+            'label': 'Oracle',
+            'count': oracle_store_count,
+            'subtitle': 'stores with Oracle buffer setup',
+            'missing_rows': [],
+            'show_missing_details': False,
+        },
+    }
+
+    return jsonify({
+        'summary': summary,
+        'sales_data': sales_data,
+        'sbase_sales_data': sbase_sales_data,
+        'target_data': target_data,
+        'last_year_data': last_year_data,
+        'labels': labels,
+        'current_month': current_month,
+        'current_year': current_year,
+        'current_date': today.isoformat(),
+        'selected_start_date': start_date.strftime('%Y-%m-%d'),
+        'selected_end_date': end_date.strftime('%Y-%m-%d'),
+        'selected_start_date_display': _format_header_date(start_date),
+        'selected_end_date_display': _format_header_date(end_date),
+        'store_performance_data': store_performance_data,
+        'top_stores_ads': top_stores_ads,
+        'top_attainment_ar': top_attainment_ar,
+        'mtd_metrics_by_day': mtd_metrics_by_day,
+        'top_products': top_products,
+        'top_products_total_units': top_products_total_units,
+        'store_product_mix': store_product_mix,
+        'pos_sold_products_by_store': pos_sold_products_by_store,
+        'icu_stores': icu_stores,
+        'wastage_performance': wastage_performance,
+        'discount_performance': discount_performance,
+        'icount_tool_tracker': icount_tool_tracker,
+        'entity_label': 'Store',
+        'entity_label_plural': 'Stores',
+        'cluster_name': cluster.name if cluster else '',
+        'team_name': _get_team_name(cluster),
+        'store_scope': _get_store_scope_from_request(request),
+    })
 
 
 # Store Manager Daily Report Routes
