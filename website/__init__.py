@@ -8,10 +8,12 @@ from re import A
 from flask import Flask, redirect, render_template, request, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, current_user
+from flask_caching import Cache
 from sqlalchemy import text, func
 from werkzeug.exceptions import HTTPException
 
 db = SQLAlchemy()
+cache = Cache()
 
 DB_NAME = "database.db"
 
@@ -361,6 +363,11 @@ def create_app():
     app.config['SECRET_KEY'] = 'thisisasecretkey'
     
     db.init_app(app)
+
+    cache.init_app(app, config={
+        'CACHE_TYPE': 'SimpleCache',
+        'CACHE_DEFAULT_TIMEOUT': 300,
+    })
 
     from .views import views
     from .auth import auth

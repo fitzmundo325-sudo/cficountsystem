@@ -10,13 +10,22 @@
   <meta name="apple-mobile-web-app-title" content="iDashboard">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{% block title %}{% endblock %} - iDashboard</title>
-  
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.tailwindcss.com">
+
+  <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" as="style">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" as="style">
+  <link rel="preload" href="{{ url_for('static', filename='js/sidebar.js') }}" as="script">
+  <link rel="preload" href="{{ url_for('static', filename='js/modal.js') }}" as="script">
+
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
-  <link href="{{ url_for('static', filename='css/styles.css') }}?v=fixed-modal-scroll-lock-1" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" rel="stylesheet">
   <style>
     html,
     body {
