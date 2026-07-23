@@ -14,23 +14,74 @@
 {% set hide_beginning_stock = 'beginning_qty' in global_config_data.get('hidden_columns', []) and not can_enter_beginning_stock %}
 {% set lock_beginning_stock = is_day_locked or is_beginning_locked or (not can_enter_beginning_stock and ('beginning_qty' not in global_config_data.get('editable_columns', []) or 'beginning_qty' in global_config_data.get('locked_columns', []))) %}
 {% set inventory_column_fields = ['beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'wastage_amount', 'csi_qty', 'quantity_sold', 'ending_d5_qty', 'ending_d4_qty', 'ending_d3_qty', 'total_ending_qty', 'total_peso_srp', 'theo_ending_qty', 'variance_qty', 'variance_peso', 'remarks'] %}
+{% set pre_ending_inventory_fields = ['beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'wastage_amount', 'csi_qty', 'quantity_sold'] %}
+{% set ending_inventory_fields = ['ending_d5_qty', 'ending_d4_qty', 'ending_d3_qty'] %}
+{% set post_ending_inventory_fields = ['total_ending_qty', 'total_peso_srp', 'theo_ending_qty', 'variance_qty', 'variance_peso', 'remarks'] %}
 {% set column_count = namespace(visible=0) %}
+{% set header_group_count = namespace(before=0, ending=0, after=0) %}
 {% for field in inventory_column_fields %}
   {% if field not in global_config_data.get('hidden_columns', []) or (field == 'beginning_qty' and can_enter_beginning_stock) %}
     {% set column_count.visible = column_count.visible + 1 %}
   {% endif %}
+{% endfor %}
+{% for field in pre_ending_inventory_fields %}
+  {% if field not in global_config_data.get('hidden_columns', []) or (field == 'beginning_qty' and can_enter_beginning_stock) %}{% set header_group_count.before = header_group_count.before + 1 %}{% endif %}
+{% endfor %}
+{% for field in ending_inventory_fields %}
+  {% if field not in global_config_data.get('hidden_columns', []) %}{% set header_group_count.ending = header_group_count.ending + 1 %}{% endif %}
+{% endfor %}
+{% for field in post_ending_inventory_fields %}
+  {% if field not in global_config_data.get('hidden_columns', []) %}{% set header_group_count.after = header_group_count.after + 1 %}{% endif %}
 {% endfor %}
 
 <style>
   /* Collapse globally hidden columns completely, including every body cell. */
   {% for field in inventory_column_fields %}
     {% if field in global_config_data.get('hidden_columns', []) and not (field == 'beginning_qty' and can_enter_beginning_stock) %}
-      #main-content thead tr:nth-child(2) th:nth-child({{ loop.index + 1 }}),
+      #main-content thead tr:nth-child(3) th:nth-child({{ loop.index + 1 }}),
       #main-content tbody tr[data-product-id] td:nth-child({{ loop.index + 1 }}) {
         display: none !important;
       }
     {% endif %}
   {% endfor %}
+
+  #main-content thead tr:nth-child(3) th,
+  #fullscreen-modal thead tr:nth-child(3) th {
+    top: 76px !important;
+  }
+
+  /* Preserve the InvenSync blue/green header grouping in Admin dark theme. */
+  html.admin-dark #main-content .inventory-scroll-container table thead tr:first-child th:first-child,
+  html.admin-dark #fullscreen-modal table thead tr:first-child th:first-child,
+  html.admin-dark #main-content .inventory-scroll-container table thead tr:nth-child(3) th:first-child,
+  html.admin-dark #fullscreen-modal table thead tr:nth-child(3) th:first-child {
+    background-color: #0c4a6e !important;
+    border-color: #0284c7 !important;
+    color: #f0f9ff !important;
+  }
+
+  html.admin-dark #main-content .inventory-scroll-container table thead tr:first-child th:not(:first-child),
+  html.admin-dark #fullscreen-modal table thead tr:first-child th:not(:first-child) {
+    background-color: #065f46 !important;
+    border-color: #10b981 !important;
+    color: #ecfdf5 !important;
+  }
+
+  html.admin-dark #main-content .inventory-scroll-container table thead tr:nth-child(2) th,
+  html.admin-dark #fullscreen-modal table thead tr:nth-child(2) th,
+  html.admin-dark #main-content .inventory-scroll-container table thead tr:nth-child(3) th:not(:first-child),
+  html.admin-dark #fullscreen-modal table thead tr:nth-child(3) th:not(:first-child) {
+    background-color: #064e3b !important;
+    border-color: #059669 !important;
+    color: #ecfdf5 !important;
+  }
+
+  html.admin-dark #main-content .invensync-category-count,
+  html.admin-dark #fullscreen-modal .invensync-category-count {
+    background-color: #334155 !important;
+    border: 1px solid #475569;
+    color: #f8fafc !important;
+  }
 
   /* Remove number spinner arrows */
   input[type="number"]::-webkit-outer-spin-button,
@@ -83,6 +134,10 @@
     position: relative;
     z-index: 9999;
     box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35), 0 0 24px rgba(14, 165, 233, 0.5);
+  }
+
+  thead th.beginning-spotlight-target {
+    position: sticky;
   }
 
   .beginning-spotlight-label {
@@ -381,21 +436,32 @@
         <thead class="bg-slate-100 text-black">
           <tr>
             <!-- Product Info (Shared) -->
-            <th class="px-2 py-3 text-center font-semibold bg-sky-100 text-black sticky top-0 left-0 z-50 min-w-[200px] shadow-lg">Product</th>
-            
+            <th rowspan="2" class="px-2 py-3 text-center font-semibold bg-sky-100 text-black sticky top-0 left-0 z-50 min-w-[200px] shadow-lg">Product</th>
+
             <!-- Ending Inventory Section -->
-            <th colspan="{{ column_count.visible }}" class="px-2 py-3 text-center font-semibold bg-emerald-100 text-black border-l-2 border-emerald-200 sticky top-0 z-40">ENDING INVENTORY</th>
+            <th colspan="{{ column_count.visible }}" class="px-2 py-3 text-center font-semibold bg-emerald-100 text-black border-l-2 border-emerald-200 sticky top-0 z-40">DAILY ENDING INVENTORY</th>
+          </tr>
+          <tr class="text-xs">
+            {% if header_group_count.before %}
+            <th colspan="{{ header_group_count.before }}" class="h-8 bg-emerald-50 border-l-2 border-emerald-200 sticky top-[44px] z-40" aria-hidden="true"></th>
+            {% endif %}
+            {% if header_group_count.ending %}
+            <th colspan="{{ header_group_count.ending }}" class="h-8 px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-x border-slate-300 sticky top-[44px] z-40">Ending Inventory</th>
+            {% endif %}
+            {% if header_group_count.after %}
+            <th colspan="{{ header_group_count.after }}" class="h-8 bg-emerald-50 border-r border-slate-300 sticky top-[44px] z-40" aria-hidden="true"></th>
+            {% endif %}
           </tr>
           <tr class="text-xs">
             <!-- Product -->
             <th class="px-2 py-2 text-center font-semibold bg-sky-50 text-black sticky top-[42px] left-0 z-50 border-r border-slate-300 shadow-lg">Description | Code - Price</th>
-            
+
             <!-- Ending Inventory Columns -->
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-l-2 border-emerald-400 border-r border-slate-300 sticky top-[42px] z-40"{% if hide_beginning_stock %} style="display:none;"{% endif %}>Beg</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'delivery_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Delivery</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'trans_in_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Trans-In</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'bo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>BO</th>
-            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'adv_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Adv</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'adv_del_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Booth Sales</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'trans_out_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Trans-Out</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'wastage_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Waste Qty</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'wastage_amount' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Waste Amt</th>
@@ -423,7 +489,7 @@
                 <td class="px-4 py-3 bg-slate-100 sticky left-0 z-20 border-r border-slate-200 shadow-lg">
                   <div class="flex items-center gap-3">
                     <span class="font-bold text-slate-700">{{ category_group.display_name }}</span>
-                    <span class="px-2 py-0.5 bg-slate-300 text-slate-600 text-xs rounded-full">{{ cat_products|length }} items</span>
+                    <span class="invensync-category-count px-2 py-0.5 bg-slate-300 text-slate-600 text-xs rounded-full">{{ cat_products|length }} items</span>
                   </div>
                 </td>
                 <td colspan="{{ column_count.visible }}" class="px-4 py-3"></td>
@@ -783,6 +849,8 @@ let isSavingBeginningInventory = requiresBeginningStockFirst;
 let missingBeginningNoticeOpen = false;
 let beginningGuideActive = false;
 let beginningGuideStepIndex = 0;
+let beginningGuideRenderTimer = null;
+let beginningGuideScrollRenderTimer = null;
 let motifGuideActive = false;
 let motifGuideStepIndex = 0;
 const motifGuideSeenKey = 'motifBreakdownGuideSeenV2';
@@ -1025,7 +1093,7 @@ function refreshAdminCorrectionButton() {
 document.addEventListener('click', event => {
   if (!isAdminCorrectionMode) return;
 
-  const header = event.target.closest('#main-content thead tr:nth-child(2) th, #fullscreen-modal thead tr:nth-child(2) th');
+  const header = event.target.closest('#main-content thead tr:nth-child(3) th, #fullscreen-modal thead tr:nth-child(3) th');
   if (header && header.cellIndex > 0) {
     event.preventDefault();
     const table = header.closest('table');
@@ -1824,18 +1892,23 @@ function getBeginningGuideElements() {
 }
 
 function getInventoryColumnGuideElements(headerLabel, dataField) {
-  const header = Array.from(document.querySelectorAll('#main-content thead tr:nth-child(2) th'))
-    .find(el => el.offsetParent !== null && el.textContent.trim() === headerLabel);
   const firstCell = Array.from(document.querySelectorAll(`#main-content tbody tr[data-product-id] td[data-field="${dataField}"]`))
     .find(el => el.offsetParent !== null);
-  return [firstCell, header].filter(Boolean);
+  const columnHeaders = Array.from(document.querySelectorAll('#main-content thead tr:nth-child(3) th'));
+  const headerByColumn = firstCell && Number.isInteger(firstCell.cellIndex)
+    ? columnHeaders[firstCell.cellIndex]
+    : null;
+  const header = headerByColumn && headerByColumn.offsetParent !== null
+    ? headerByColumn
+    : columnHeaders.find(el => el.offsetParent !== null && el.textContent.trim() === headerLabel);
+  return [header, firstCell].filter(Boolean);
 }
 
 function getProductGuideElements() {
-  const header = document.querySelector('#main-content thead tr:nth-child(2) th:first-child');
+  const header = document.querySelector('#main-content thead tr:nth-child(3) th:first-child');
   const firstCell = Array.from(document.querySelectorAll('#main-content tbody tr[data-product-id] td:first-child'))
     .find(el => el.offsetParent !== null);
-  return [firstCell, header].filter(el => el && el.offsetParent !== null);
+  return [header, firstCell].filter(el => el && el.offsetParent !== null);
 }
 
 function getElementGroupRect(elements) {
@@ -1897,8 +1970,8 @@ function getBeginningGuideStep() {
       nextText: 'Next'
     },
     {
-      elements: getInventoryColumnGuideElements('Adv', 'adv_del_qty'),
-      text: 'Adv adds advance-delivery stock when an advance quantity applies to the product.',
+      elements: getInventoryColumnGuideElements('Booth Sales', 'adv_del_qty'),
+      text: 'Booth Sales records the quantity assigned to booth sales for the product.',
       placement: 'right',
       nextText: 'Next'
     },
@@ -1964,7 +2037,7 @@ function getBeginningGuideStep() {
     },
     {
       elements: getInventoryColumnGuideElements('Theoretical Ending', 'theo_ending_qty'),
-      text: 'Theoretical Ending is the expected stock: Beg + Delivery + Trans-In + BO + Adv − Trans-Out − Waste − CSI − POS Sold.',
+      text: 'Theoretical Ending is the expected stock: Beg + Delivery + Trans-In + BO + Booth Sales − Trans-Out − Waste − CSI − POS Sold.',
       placement: 'left',
       nextText: 'Next'
     },
@@ -2063,6 +2136,14 @@ function removeBeginningSpotlightPanels() {
 function clearBeginningStockGuide() {
   beginningGuideActive = false;
   beginningGuideStepIndex = 0;
+  if (beginningGuideRenderTimer) {
+    window.clearTimeout(beginningGuideRenderTimer);
+    beginningGuideRenderTimer = null;
+  }
+  if (beginningGuideScrollRenderTimer) {
+    window.clearTimeout(beginningGuideScrollRenderTimer);
+    beginningGuideScrollRenderTimer = null;
+  }
   removeBeginningSpotlightPanels();
   document.querySelectorAll('.beginning-spotlight-target').forEach(el => {
     el.classList.remove('beginning-spotlight-target');
@@ -2091,16 +2172,26 @@ function showBeginningStockGuideStep() {
 
   const target = step.elements.find(el => el && el.offsetParent !== null);
   if (target) {
-    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    const isColumnHeader = target.matches('thead th');
+    target.scrollIntoView({
+      behavior: 'smooth',
+      block: isColumnHeader ? 'nearest' : 'center',
+      inline: 'center'
+    });
   }
 
-  setTimeout(() => {
+  removeBeginningSpotlightPanels();
+  if (beginningGuideRenderTimer) window.clearTimeout(beginningGuideRenderTimer);
+  beginningGuideRenderTimer = window.setTimeout(() => {
+    beginningGuideRenderTimer = null;
+    if (!beginningGuideActive) return;
     applyBeginningGuideTarget();
     renderBeginningSpotlight();
-  }, 350);
+  }, 450);
 }
 
 function nextBeginningStockGuideStep() {
+  removeBeginningSpotlightPanels();
   beginningGuideStepIndex += 1;
   showBeginningStockGuideStep();
 }
@@ -2850,11 +2941,20 @@ function handleFullscreenKey(e) {
 }
 
 document.addEventListener('keydown', handleFullscreenKey);
+function scheduleBeginningSpotlightRender() {
+  if (!beginningGuideActive) return;
+  if (beginningGuideScrollRenderTimer) window.clearTimeout(beginningGuideScrollRenderTimer);
+  beginningGuideScrollRenderTimer = window.setTimeout(() => {
+    beginningGuideScrollRenderTimer = null;
+    if (beginningGuideActive) renderBeginningSpotlight();
+  }, 100);
+}
+
 window.addEventListener('resize', function() {
-  if (beginningGuideActive) renderBeginningSpotlight();
+  scheduleBeginningSpotlightRender();
 });
 window.addEventListener('scroll', function() {
-  if (beginningGuideActive) renderBeginningSpotlight();
+  scheduleBeginningSpotlightRender();
 }, true);
 
 // Sync products from Product Masterlist
@@ -3118,4 +3218,5 @@ function closeInvensyncExportModal() {
 </div>
 
 {% endblock %}
-
+
+
