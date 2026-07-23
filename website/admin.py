@@ -3925,7 +3925,7 @@ def invensync():
         {'value': 'delivery_qty', 'label': 'Delivery'},
         {'value': 'trans_in_qty', 'label': 'Trans-In'},
         {'value': 'bo_qty', 'label': 'BO'},
-        {'value': 'adv_del_qty', 'label': 'Adv'},
+        {'value': 'adv_del_qty', 'label': 'Booth Sales'},
         {'value': 'trans_out_qty', 'label': 'Trans-Out'},
         {'value': 'wastage_qty', 'label': 'Waste Qty'},
         {'value': 'wastage_amount', 'label': 'Waste Amt'},

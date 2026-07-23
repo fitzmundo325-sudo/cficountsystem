@@ -127,8 +127,8 @@
                 </span>
                 <span class="text-sm font-semibold text-slate-800">Product Transfer</span>
             </button>
-            <button type="button" data-transaction-type="Wastage Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
-                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-amber-100 text-amber-700">
+            <button type="button" data-transaction-type="Wastage Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-emerald-200 hover:bg-emerald-50 transition-colors">
+                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M3 6h18"></path>
                     <path d="M8 6V4h8v2"></path>
@@ -526,10 +526,14 @@
       const selectedType = transactionTypeEl?.value || '';
       transactionTypeCardEls.forEach((card) => {
         const isActive = (card.dataset.transactionType || '') === selectedType;
-        card.classList.toggle('border-cyan-500', isActive);
-        card.classList.toggle('bg-cyan-50', isActive);
+        const isWastage = card.dataset.transactionType === 'Wastage Transfer';
+        card.classList.toggle('border-cyan-500', isActive && !isWastage);
+        card.classList.toggle('bg-cyan-50', isActive && !isWastage);
+        card.classList.toggle('border-emerald-200', isActive && isWastage);
+        card.classList.toggle('bg-emerald-50', isActive && isWastage);
         card.classList.toggle('ring-2', isActive);
-        card.classList.toggle('ring-cyan-200', isActive);
+        card.classList.toggle('ring-cyan-200', isActive && !isWastage);
+        card.classList.toggle('ring-emerald-100', isActive && isWastage);
       });
     }
 

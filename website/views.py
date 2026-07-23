@@ -6968,7 +6968,7 @@ def store_manager_data_export():
                     'Delivery': item.delivery_qty,
                     'Trans-In': item.trans_in_qty,
                     'BO': item.bo_qty,
-                    'Adv': item.adv_del_qty,
+                    'Booth Sales': item.adv_del_qty,
                     'Trans-Out': item.trans_out_qty,
                     'Waste Qty': item.wastage_qty,
                     'Waste Amt': item.wastage_amount,
@@ -7031,7 +7031,7 @@ def store_manager_data_export():
     columns_by_type = {
         'pos-sold': ['Date', 'Product', 'Quantity', 'Gross Sales', 'Discount', 'Net Sales'],
         'delivery': ['Date', 'RSO No', 'Product', 'Quantity', 'Received Quantity', 'Source', 'Reviewed Date'],
-        'invensync': ['Store', 'Date', 'Product Code', 'Product', 'Category', 'Beginning', 'Delivery', 'Trans-In', 'BO', 'Adv', 'Trans-Out', 'Waste Qty', 'Waste Amt', 'CSI', 'Sold', 'Ending D+5', 'Ending D+4', 'Ending D+3', 'Total Ending Inventory', 'Total Peso SRP', 'Theoretical Ending', 'Variance Qty', 'Variance Peso', 'Remarks', 'Finalized', 'Finalized At'],
+        'invensync': ['Store', 'Date', 'Product Code', 'Product', 'Category', 'Beginning', 'Delivery', 'Trans-In', 'BO', 'Booth Sales', 'Trans-Out', 'Waste Qty', 'Waste Amt', 'CSI', 'Sold', 'Ending D+5', 'Ending D+4', 'Ending D+3', 'Total Ending Inventory', 'Total Peso SRP', 'Theoretical Ending', 'Variance Qty', 'Variance Peso', 'Remarks', 'Finalized', 'Finalized At'],
         'trans-in': ['Date', 'Control No', 'Type', 'From', 'To', 'Status', 'Item', 'Quantity', 'Received Quantity', 'Short/Over', 'Unit Cost', 'Line Total', 'Remarks'],
         'trans-out': ['Date', 'Control No', 'Type', 'From', 'To', 'Status', 'Item', 'Quantity', 'Received Quantity', 'Short/Over', 'Unit Cost', 'Line Total', 'Remarks'],
         'wastage': ['Date', 'Control No', 'Type', 'From', 'To', 'Status', 'Item', 'Quantity', 'Received Quantity', 'Short/Over', 'Unit Cost', 'Line Total', 'Remarks'],
