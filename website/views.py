@@ -3334,7 +3334,8 @@ def _rso_source_filter(source='delivery'):
 
 
 def _get_rso_draft_meta(store_id, report_date, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         return {}
     try:
@@ -3347,7 +3348,8 @@ def _get_rso_draft_meta(store_id, report_date, source='delivery'):
 
 
 def _set_rso_draft_meta(store_id, report_date, meta, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         draft = RsoDeliveryDraft(
             store_id=store_id,
@@ -3369,7 +3371,8 @@ def _set_rso_draft_meta(store_id, report_date, meta, source='delivery'):
 
 
 def _pop_rso_draft_meta(store_id, report_date, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         return {}
     try:
@@ -3384,7 +3387,8 @@ def _pop_rso_draft_meta(store_id, report_date, source='delivery'):
 
 
 def _get_rso_draft(store_id, report_date, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         return []
     try:
@@ -3399,7 +3403,8 @@ def _get_rso_draft(store_id, report_date, source='delivery'):
 
 
 def _set_rso_draft(store_id, report_date, items, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         draft = RsoDeliveryDraft(
             store_id=store_id,
@@ -3421,7 +3426,8 @@ def _set_rso_draft(store_id, report_date, items, source='delivery'):
 
 
 def _pop_rso_draft(store_id, report_date, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         return []
     try:
@@ -4573,12 +4579,12 @@ def store_manager_delivery():
     # store has saved or drafted any delivery, keep the guide available only
     # through the Help button.
     force_delivery_guide = str(request.args.get('guide') or '').strip() == '1'
+    with db.session.no_autoflush:
+        has_delivery = RsoDelivery.query.filter_by(store_id=store.id).first()
+        has_draft = RsoDeliveryDraft.query.filter_by(store_id=store.id).first()
     show_delivery_guide = role == 'Store Manager' and (
         force_delivery_guide
-        or not (
-            RsoDelivery.query.filter_by(store_id=store.id).first()
-            or RsoDeliveryDraft.query.filter_by(store_id=store.id).first()
-        )
+        or not (has_delivery or has_draft)
     )
 
     return render_template(
