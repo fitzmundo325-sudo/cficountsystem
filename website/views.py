@@ -7841,20 +7841,20 @@ def invensync():
             if prev_item.product_master_id is not None
         }
 
-    # Get or create inventory items
-    inventory_items = {}
-    for product in products:
-        item = DailyEndingInventoryItem.query.filter_by(
-            inventory_id=inventory.id,
-            product_master_id=product.id
-        ).first()
+    # Get or create inventory items using fast bulk lookup (1 query instead of 300+)
+    existing_items_list = DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
+    existing_items_by_pm_id = {item.product_master_id: item for item in existing_items_list if item.product_master_id}
+    products_by_id = {p.id: p for p in products}
 
+    inventory_items = {}
+    new_items_to_add = []
+
+    for product in products:
+        item = existing_items_by_pm_id.get(product.id)
         beginning_qty = finalized_prev_totals.get(product.id, 0)
 
         if not item:
-
             srp = product.sp_p if store.store_group == 'premium' else product.sp_np
-
             item = DailyEndingInventoryItem(
                 inventory_id=inventory.id,
                 product_master_id=product.id,
@@ -7863,7 +7863,7 @@ def invensync():
                 srp_price=srp or 0,
                 beginning_qty=beginning_qty
             )
-            db.session.add(item)
+            new_items_to_add.append(item)
         elif product.id in finalized_prev_totals:
             # The next day may have been opened before the prior day was
             # finalized. Always repair its beginning quantity from finalized EI.
@@ -7871,6 +7871,8 @@ def invensync():
 
         inventory_items[product.id] = item
 
+    if new_items_to_add:
+        db.session.add_all(new_items_to_add)
     db.session.commit()
 
     # Sync RSO delivery data to inventory items with improved matching
@@ -7894,7 +7896,7 @@ def invensync():
 
         for inv_item in inventory_items.values():
             if inv_item.product_master_id:
-                product = ProductMaster.query.get(inv_item.product_master_id)
+                product = products_by_id.get(inv_item.product_master_id)
                 if product:
                     regular_delivery_qty = 0
                     bulk_order_qty = 0

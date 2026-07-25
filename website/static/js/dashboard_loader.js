@@ -26,20 +26,144 @@
 
   function fmt(v) { return Number(v || 0).toLocaleString(); }
 
-  fetch(API_URL, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
-    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then(function (d) { renderDashboard(d); })
-    .catch(function (err) {
-      var ids = ['dsh-gauges', 'dsh-summary', 'dsh-sales-chart', 'dsh-performance', 'dsh-product-mix', 'dsh-pos-sold', 'dsh-rankings', 'dsh-bottom-sections'];
-      ids.forEach(function (id) {
-        var el = document.getElementById(id);
-        if (el) el.innerHTML = '<div class="dsh-loading-error"><p class="text-sm text-slate-500">Failed to load dashboard data.</p><button onclick="location.reload()">Retry</button></div>';
+  function showDashboardSkeletons() {
+    var g = document.getElementById('dsh-gauges');
+    if (g) {
+      g.innerHTML =
+        '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
+          '<div class="skeleton skeleton-text mb-2" style="width:25%"></div>' +
+          '<div class="relative w-full max-w-[340px] h-[240px] mx-auto"><div class="skeleton skeleton-chart" style="width:100%;height:100%"></div></div>' +
+        '</div>' +
+        '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
+          '<div class="skeleton skeleton-text mb-2" style="width:25%"></div>' +
+          '<div class="relative w-full max-w-[340px] h-[240px] mx-auto"><div class="skeleton skeleton-chart" style="width:100%;height:100%"></div></div>' +
+        '</div>';
+    }
+
+    var s = document.getElementById('dsh-summary');
+    if (s) {
+      s.innerHTML =
+        '<div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text mt-2" style="width:70%"></div><div class="skeleton skeleton-text-sm mt-1"></div></div>' +
+        '<div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text mt-2" style="width:60%"></div><div class="skeleton skeleton-text-sm mt-1"></div></div>' +
+        '<div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text mt-2" style="width:65%"></div><div class="skeleton skeleton-text-sm mt-1"></div></div>' +
+        '<div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text mt-2" style="width:55%"></div><div class="skeleton skeleton-text-sm mt-1"></div></div>' +
+        '<div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text mt-2" style="width:60%"></div><div class="skeleton skeleton-text-sm mt-1"></div></div>';
+    }
+
+    var sc = document.getElementById('dsh-sales-chart');
+    if (sc) {
+      sc.innerHTML =
+        '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
+          '<div class="flex items-center justify-between mb-6">' +
+            '<div><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text-sm" style="width:35%"></div></div>' +
+          '</div>' +
+          '<div class="skeleton skeleton-chart" style="height:320px"></div>' +
+        '</div>';
+    }
+
+    var p = document.getElementById('dsh-performance');
+    if (p) {
+      p.innerHTML =
+        '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
+          '<div class="mb-6"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text-sm" style="width:45%"></div></div>' +
+          '<div class="space-y-3">' +
+            '<div class="skeleton skeleton-table-row"></div><div class="skeleton skeleton-table-row"></div><div class="skeleton skeleton-table-row"></div><div class="skeleton skeleton-table-row"></div><div class="skeleton skeleton-table-row"></div>' +
+          '</div>' +
+        '</div>';
+    }
+
+    var pm = document.getElementById('dsh-product-mix');
+    if (pm) {
+      pm.innerHTML =
+        '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
+          '<div class="mb-5"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text-sm" style="width:50%"></div></div>' +
+          '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' +
+            '<div class="skeleton skeleton-chart" style="height:260px"></div>' +
+            '<div class="skeleton skeleton-chart" style="height:288px"></div>' +
+          '</div>' +
+        '</div>';
+    }
+
+    var ps = document.getElementById('dsh-pos-sold');
+    if (ps) {
+      ps.innerHTML =
+        '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
+          '<div class="mb-5"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text-sm" style="width:40%"></div></div>' +
+          '<div class="skeleton skeleton-chart" style="height:384px"></div>' +
+        '</div>' +
+        '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
+          '<div class="mb-5"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text-sm" style="width:45%"></div></div>' +
+          '<div class="skeleton skeleton-chart" style="height:320px"></div>' +
+        '</div>';
+    }
+
+    var r = document.getElementById('dsh-rankings');
+    if (r) {
+      r.innerHTML =
+        '<div class="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-5 shadow-sm">' +
+          '<div class="mb-4"><div class="skeleton skeleton-heading"></div></div>' +
+          '<div class="space-y-2.5"><div class="skeleton skeleton-card" style="height:80px"></div><div class="skeleton skeleton-card" style="height:80px"></div><div class="skeleton skeleton-card" style="height:80px"></div></div>' +
+        '</div>' +
+        '<div class="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/70 to-white p-5 shadow-sm">' +
+          '<div class="mb-4"><div class="skeleton skeleton-heading"></div></div>' +
+          '<div class="space-y-2.5"><div class="skeleton skeleton-card" style="height:80px"></div><div class="skeleton skeleton-card" style="height:80px"></div><div class="skeleton skeleton-card" style="height:80px"></div></div>' +
+        '</div>' +
+        '<div class="rounded-2xl border border-rose-200 bg-gradient-to-b from-rose-50/70 to-white p-5 shadow-sm">' +
+          '<div class="mb-4"><div class="skeleton skeleton-heading"></div></div>' +
+          '<div class="space-y-2.5"><div class="skeleton skeleton-card" style="height:80px"></div></div>' +
+        '</div>';
+    }
+
+    var bs = document.getElementById('dsh-bottom-sections');
+    if (bs) {
+      bs.innerHTML =
+        '<div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">' +
+          '<div class="mb-4"><div class="skeleton skeleton-heading"></div></div>' +
+          '<div class="grid grid-cols-1 gap-4 xl:grid-cols-2">' +
+            '<div class="skeleton skeleton-card" style="height:200px"></div>' +
+            '<div class="skeleton skeleton-card" style="height:200px"></div>' +
+          '</div>' +
+          '<div class="mt-4 skeleton skeleton-card" style="height:120px"></div>' +
+          '<div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">' +
+            '<div class="skeleton skeleton-card" style="height:180px"></div>' +
+            '<div class="skeleton skeleton-card" style="height:180px"></div>' +
+          '</div>' +
+        '</div>';
+    }
+  }
+
+  function loadDashboardData(showLoading) {
+    if (showLoading) {
+      showDashboardSkeletons();
+    }
+
+    fetch(API_URL, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) { renderDashboard(d); })
+      .catch(function (err) {
+        var ids = ['dsh-gauges', 'dsh-summary', 'dsh-sales-chart', 'dsh-performance', 'dsh-product-mix', 'dsh-pos-sold', 'dsh-rankings', 'dsh-bottom-sections'];
+        ids.forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.innerHTML = '<div class="dsh-loading-error"><p class="text-sm text-slate-500">Failed to load dashboard data.</p><button onclick="window.reloadDashboard(true)">Retry</button></div>';
+        });
       });
-    });
+  }
+
+  window.reloadDashboard = loadDashboardData;
+  loadDashboardData(false);
 
   function renderDashboard(d) {
     var EL = root.getAttribute('data-entity-label') || d.entity_label || 'Store';
     var ELP = root.getAttribute('data-entity-label-plural') || d.entity_label_plural || 'Stores';
+
+    if (d.team_name) {
+      var teamEl = document.getElementById('dashboard-team-name') || document.querySelector('h1.text-2xl.font-bold');
+      if (teamEl) teamEl.textContent = d.team_name;
+    }
+    if (d.store_scope) {
+      var scopeBadge = document.getElementById('dashboard-store-scope-badge') || document.querySelector('.bg-indigo-100.text-indigo-700');
+      if (scopeBadge) scopeBadge.textContent = d.store_scope.charAt(0).toUpperCase() + d.store_scope.slice(1);
+    }
 
     renderGauges(d);
     renderSummary(d);
