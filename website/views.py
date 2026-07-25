@@ -3274,7 +3274,8 @@ def _rso_source_filter(source='delivery'):
 
 
 def _get_rso_draft_meta(store_id, report_date, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         return {}
     try:
@@ -3287,7 +3288,8 @@ def _get_rso_draft_meta(store_id, report_date, source='delivery'):
 
 
 def _set_rso_draft_meta(store_id, report_date, meta, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         draft = RsoDeliveryDraft(
             store_id=store_id,
@@ -3309,7 +3311,8 @@ def _set_rso_draft_meta(store_id, report_date, meta, source='delivery'):
 
 
 def _pop_rso_draft_meta(store_id, report_date, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         return {}
     try:
@@ -3324,7 +3327,8 @@ def _pop_rso_draft_meta(store_id, report_date, source='delivery'):
 
 
 def _get_rso_draft(store_id, report_date, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         return []
     try:
@@ -3339,7 +3343,8 @@ def _get_rso_draft(store_id, report_date, source='delivery'):
 
 
 def _set_rso_draft(store_id, report_date, items, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         draft = RsoDeliveryDraft(
             store_id=store_id,
@@ -3361,7 +3366,8 @@ def _set_rso_draft(store_id, report_date, items, source='delivery'):
 
 
 def _pop_rso_draft(store_id, report_date, source='delivery'):
-    draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
     if not draft:
         return []
     try:
@@ -4131,12 +4137,12 @@ def store_manager_delivery():
     # store has saved or drafted any delivery, keep the guide available only
     # through the Help button.
     force_delivery_guide = str(request.args.get('guide') or '').strip() == '1'
+    with db.session.no_autoflush:
+        has_delivery = RsoDelivery.query.filter_by(store_id=store.id).first()
+        has_draft = RsoDeliveryDraft.query.filter_by(store_id=store.id).first()
     show_delivery_guide = role == 'Store Manager' and (
         force_delivery_guide
-        or not (
-            RsoDelivery.query.filter_by(store_id=store.id).first()
-            or RsoDeliveryDraft.query.filter_by(store_id=store.id).first()
-        )
+        or not (has_delivery or has_draft)
     )
 
     return render_template(
@@ -7856,6 +7862,18 @@ def invensync():
             if prev_item.product_master_id is not None
         }
 
+<<<<<<< HEAD
+    # Get or create inventory items using fast bulk lookup (1 query instead of 300+)
+    existing_items_list = DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
+    existing_items_by_pm_id = {item.product_master_id: item for item in existing_items_list if item.product_master_id}
+    products_by_id = {p.id: p for p in products}
+
+    inventory_items = {}
+    new_items_to_add = []
+
+    for product in products:
+        item = existing_items_by_pm_id.get(product.id)
+=======
     # Get or create inventory items (bulk load to avoid N+1)
     existing_items = {
         int(item.product_master_id): item
@@ -7865,6 +7883,7 @@ def invensync():
     inventory_items = {}
     for product in products:
         item = existing_items.get(product.id)
+>>>>>>> 18fb3bb75b046aa6371e9b980885db7b3baa8efb
         beginning_qty = finalized_prev_totals.get(product.id, 0)
         if not item:
             srp = product.sp_p if store.store_group == 'premium' else product.sp_np
@@ -7876,11 +7895,13 @@ def invensync():
                 srp_price=srp or 0,
                 beginning_qty=beginning_qty,
             )
-            db.session.add(item)
+            new_items_to_add.append(item)
         elif product.id in finalized_prev_totals:
             item.beginning_qty = beginning_qty
         inventory_items[product.id] = item
 
+    if new_items_to_add:
+        db.session.add_all(new_items_to_add)
     db.session.commit()
 
     # Sync RSO delivery data to inventory items with improved matching
@@ -7904,7 +7925,7 @@ def invensync():
 
         for inv_item in inventory_items.values():
             if inv_item.product_master_id:
-                product = ProductMaster.query.get(inv_item.product_master_id)
+                product = products_by_id.get(inv_item.product_master_id)
                 if product:
                     regular_delivery_qty = 0
                     bulk_order_qty = 0

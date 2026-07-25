@@ -60,6 +60,52 @@
       }
     }
 
+    /* SPA Centered Page Loading Overlay */
+    #spa-loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 9998;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(248, 250, 252, 0.75);
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+    }
+    @media (min-width: 1024px) {
+      #spa-loading-overlay {
+        left: 256px; /* lg:ml-64 — only covers main content, not sidebar */
+      }
+    }
+    #spa-loading-overlay.spa-visible {
+      opacity: 1;
+      pointer-events: all;
+    }
+    .spa-spinner {
+      width: 44px;
+      height: 44px;
+      border: 3.5px solid #e2e8f0;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spa-spin 0.7s linear infinite;
+    }
+    @keyframes spa-spin {
+      to { transform: rotate(360deg); }
+    }
+    /* Smooth slide-up fade-in for swapped page content */
+    @keyframes spa-content-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .spa-content-enter {
+      animation: spa-content-in 0.2s ease both;
+    }
   </style>
   <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-escape-lock-1"></script>
   <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
@@ -401,25 +447,84 @@
     </div>
   </aside>
 
+  <!-- SPA Centered Loading Overlay (outside #main-content so it survives swaps) -->
+  <div id="spa-loading-overlay" aria-hidden="true">
+    <div class="spa-spinner"></div>
+  </div>
+
   <!-- Main Content Area -->
   <main id="main-content" class="sidebar-transition flex-1 min-h-screen lg:ml-64 flex flex-col">
     {% block content %}{% endblock %}
        
     <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-overlay-scrollbar-2"></script>
     <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-1"></script>
+    <script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=spa-v1"></script>
     <script>
       // Global Store View (Official / Starlink) scope toggle
       (function () {
         const buttons = Array.from(document.querySelectorAll('.store-scope-btn'));
         if (!buttons.length) return;
+
+        function updateButtonStyles(activeScope) {
+          buttons.forEach((btn) => {
+            const isSelected = (btn.getAttribute('data-scope') || 'official').toLowerCase() === activeScope.toLowerCase();
+            if (isSelected) {
+              btn.classList.add('bg-indigo-500', 'text-white');
+              btn.classList.remove('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+            } else {
+              btn.classList.remove('bg-indigo-500', 'text-white');
+              btn.classList.add('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+            }
+          });
+        }
+
         buttons.forEach((btn) => {
-          btn.addEventListener('click', function () {
-            const scope = this.getAttribute('data-scope') || 'official';
+          btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            const scope = (this.getAttribute('data-scope') || 'official').toLowerCase();
             const maxAge = 60 * 60 * 24 * 365;
             document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${maxAge}; samesite=lax`;
+
+            updateButtonStyles(scope);
+
             const url = new URL(window.location.href);
-            url.searchParams.delete('store_id');
-            window.location.href = url.toString();
+            if (url.searchParams.has('store_id')) {
+              url.searchParams.delete('store_id');
+              window.history.replaceState({}, '', url.toString());
+            }
+
+            if (typeof window.reloadDashboard === 'function') {
+              window.reloadDashboard(true);
+            } else {
+              const mainContent = document.getElementById('main-content');
+              if (mainContent) {
+                mainContent.style.opacity = '0.5';
+                fetch(window.location.href)
+                  .then((res) => res.text())
+                  .then((html) => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const newMain = doc.getElementById('main-content');
+                    if (newMain) {
+                      mainContent.innerHTML = newMain.innerHTML;
+                      Array.from(mainContent.querySelectorAll('script')).forEach((oldScript) => {
+                        const newScript = document.createElement('script');
+                        Array.from(oldScript.attributes).forEach((attr) => newScript.setAttribute(attr.name, attr.value));
+                        newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                        oldScript.parentNode.replaceChild(newScript, oldScript);
+                      });
+                    }
+                  })
+                  .catch(() => {
+                    window.location.reload();
+                  })
+                  .finally(() => {
+                    mainContent.style.opacity = '1';
+                  });
+              } else {
+                window.location.reload();
+              }
+            }
           });
         });
       })();
