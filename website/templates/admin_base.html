@@ -1024,6 +1024,7 @@
       
     <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-overlay-scrollbar-2"></script>
     <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-1"></script>
+    <script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=spa-v1"></script>
     <script>
       (function () {
         const button = document.getElementById('admin-theme-toggle');
@@ -1058,14 +1059,67 @@
       (function () {
         const buttons = Array.from(document.querySelectorAll('.store-scope-btn'));
         if (!buttons.length) return;
+
+        function updateButtonStyles(activeScope) {
+          buttons.forEach((btn) => {
+            const isSelected = (btn.getAttribute('data-scope') || 'official').toLowerCase() === activeScope.toLowerCase();
+            if (isSelected) {
+              btn.classList.add('bg-indigo-500', 'text-white');
+              btn.classList.remove('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+            } else {
+              btn.classList.remove('bg-indigo-500', 'text-white');
+              btn.classList.add('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+            }
+          });
+        }
+
         buttons.forEach((btn) => {
-          btn.addEventListener('click', function () {
-            const scope = this.getAttribute('data-scope') || 'official';
+          btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            const scope = (this.getAttribute('data-scope') || 'official').toLowerCase();
             const maxAge = 60 * 60 * 24 * 365;
             document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${maxAge}; samesite=lax`;
+
+            updateButtonStyles(scope);
+
             const url = new URL(window.location.href);
-            url.searchParams.delete('store_id');
-            window.location.href = url.toString();
+            if (url.searchParams.has('store_id')) {
+              url.searchParams.delete('store_id');
+              window.history.replaceState({}, '', url.toString());
+            }
+
+            if (typeof window.reloadDashboard === 'function') {
+              window.reloadDashboard(true);
+            } else {
+              const mainContent = document.getElementById('main-content');
+              if (mainContent) {
+                mainContent.style.opacity = '0.5';
+                fetch(window.location.href)
+                  .then((res) => res.text())
+                  .then((html) => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const newMain = doc.getElementById('main-content');
+                    if (newMain) {
+                      mainContent.innerHTML = newMain.innerHTML;
+                      Array.from(mainContent.querySelectorAll('script')).forEach((oldScript) => {
+                        const newScript = document.createElement('script');
+                        Array.from(oldScript.attributes).forEach((attr) => newScript.setAttribute(attr.name, attr.value));
+                        newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                        oldScript.parentNode.replaceChild(newScript, oldScript);
+                      });
+                    }
+                  })
+                  .catch(() => {
+                    window.location.reload();
+                  })
+                  .finally(() => {
+                    mainContent.style.opacity = '1';
+                  });
+              } else {
+                window.location.reload();
+              }
+            }
           });
         });
       })();
