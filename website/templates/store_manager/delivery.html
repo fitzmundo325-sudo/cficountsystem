@@ -135,8 +135,8 @@
 </div>
 {% endmacro %}
 
-{% macro manual_product_form(source, save_form_id) %}
-<div class="manual-product-form rounded-lg border border-dashed border-slate-300 bg-white p-3" data-save-form="{{ save_form_id }}">
+{% macro manual_product_form(source, save_form_id, elem_id='') %}
+<div id="{{ elem_id }}" class="manual-product-form rounded-lg border border-dashed border-slate-300 bg-white p-3" data-save-form="{{ save_form_id }}">
   <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-600">Add product not included in the RSO file</p>
     <button type="submit" form="{{ save_form_id }}" disabled class="manual-product-save-btn inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow-md shadow-indigo-600/25 transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-white disabled:shadow-none md:w-auto">
@@ -144,12 +144,12 @@
     </button>
   </div>
   <div class="manual-product-rows space-y-2">
-  <div class="manual-product-row grid grid-cols-1 gap-2 sm:grid-cols-[130px_minmax(0,1fr)_130px_42px] sm:items-end">
-    <div>
+  <div id="{{ elem_id }}-row" class="manual-product-row grid grid-cols-1 gap-2 sm:grid-cols-[130px_minmax(0,1fr)_130px_42px] sm:items-end">
+    <div id="{{ elem_id }}-code">
       <span class="mb-1 block text-xs font-medium text-slate-600">Product Code</span>
       <div class="manual-product-code min-h-[38px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">—</div>
     </div>
-    <label class="block min-w-0">
+    <label id="{{ elem_id }}-select" class="block min-w-0">
       <span class="mb-1 block text-xs font-medium text-slate-600">Product Name</span>
       <select name="manual_product_id[]" form="{{ save_form_id }}" class="manual-product-select w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400">
         <option value="">Select from Product Master</option>
@@ -158,11 +158,11 @@
         {% endfor %}
       </select>
     </label>
-    <label class="block">
+    <label id="{{ elem_id }}-qty" class="block">
       <span class="mb-1 block text-xs font-medium text-slate-600">Qty / Received</span>
       <input type="number" name="manual_quantity[]" form="{{ save_form_id }}" min="1" placeholder="0" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-400">
     </label>
-    <button type="button" class="add-manual-product-row inline-flex h-[38px] w-[42px] items-center justify-center rounded-lg bg-slate-900 text-xl font-bold text-white hover:bg-slate-800" title="Add another product" aria-label="Add another product">+</button>
+    <button id="{{ elem_id }}-add" type="button" class="add-manual-product-row inline-flex h-[38px] w-[42px] items-center justify-center rounded-lg bg-slate-900 text-xl font-bold text-white hover:bg-slate-800" title="Add another product" aria-label="Add another product">+</button>
     <label class="manual-motif-note hidden sm:col-start-2 sm:col-span-2">
       <span class="mb-1 block text-xs font-medium text-slate-600">Motif details / combo with</span>
       <textarea name="manual_note[]" form="{{ save_form_id }}" rows="2" placeholder="Example: consists of Fluffy Mamon with custom motif / combo with cake order" class="w-full rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-indigo-400"></textarea>
@@ -296,7 +296,7 @@
           {{ rso_review_table(delivery_data['items'], delivery_data.rso_no, delivery_data.status, 'save-delivery-rso-form') }}
           {% endif %}
         </form>
-        {{ manual_product_form('delivery', 'save-delivery-rso-form') }}
+        {{ manual_product_form('delivery', 'save-delivery-rso-form', 'delivery-tour-manual-form') }}
 
         {% if delivery_data.status == 'none' %}
         <div id="delivery-tour-sample-card" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
@@ -837,6 +837,34 @@
         {
           elements: [document.getElementById('bulk-rso-scan-guide-target')],
           text: 'Click Scan BO RSO to extract the bulk order RSO rows for review.',
+          placement: 'left',
+          nextText: 'Next',
+          showSample: false
+        },
+        {
+          elements: [document.getElementById('delivery-tour-manual-form')],
+          text: 'Use this section to add products not included in the RSO file.',
+          placement: 'bottom',
+          nextText: 'Next',
+          showSample: false
+        },
+        {
+          elements: [document.getElementById('delivery-tour-manual-select')],
+          text: 'Select a product from the Product Master list.',
+          placement: 'bottom',
+          nextText: 'Next',
+          showSample: false
+        },
+        {
+          elements: [document.getElementById('delivery-tour-manual-qty')],
+          text: 'Enter the quantity or received amount for this product.',
+          placement: 'bottom',
+          nextText: 'Next',
+          showSample: false
+        },
+        {
+          elements: [document.getElementById('delivery-tour-manual-add')],
+          text: 'Click + to add another product row.',
           placement: 'left',
           nextText: 'Next',
           showSample: false

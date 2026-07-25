@@ -1,6 +1,11 @@
 from flask import Blueprint, redirect, render_template, request, url_for, flash, jsonify
+<<<<<<< HEAD
+from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, MaintenanceMode, PosSold, PosSoldStaging, PosSoldDraft, RsoDelivery, RsoDeliveryDraft, MenuInventoryItem, DailyEndingInventory, DailyEndingInventoryItem, TafTransfer, TafTransferItem, StoreProductBuffer
+from . import db
+=======
 from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, MaintenanceMode, PosSold, RsoDelivery, RsoDeliveryDraft, MenuInventoryItem, DailyEndingInventory, DailyEndingInventoryItem, TafTransfer, TafTransferItem, StoreProductBuffer
 from . import db, cache
+>>>>>>> 96f15b36dda8dc7a8ec90a4177cc3d44e055d1d2
 from .audit import log_audit_event, verify_audit_chain
 from .views import _cached_product_masters, _resolve_category_fast
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -211,6 +216,8 @@ def pos_sold():
     distinct_store_ids = set()
     review_rows = []
     review_report = None
+    review_staging = None
+    review_is_staged = False
     review_summary = {
         'rows_count': 0,
         'total_qty': 0,
@@ -253,13 +260,38 @@ def pos_sold():
                     .order_by(PosSold.product_name.asc(), PosSold.id.asc())
                     .all()
                 )
-                review_summary = {
-                    'rows_count': len(review_rows),
-                    'total_qty': sum(int(row.quantity or 0) for row in review_rows),
-                    'total_gross_sales': sum(float(row.gross_sales or 0.0) for row in review_rows),
-                    'total_discount': sum(float(row.discount or 0.0) for row in review_rows),
-                    'total_net_sales': sum(float(row.net_sales or 0.0) for row in review_rows),
-                }
+            if not review_rows:
+                review_staging = PosSoldStaging.query.filter_by(
+                    store_id=review_store_id,
+                    report_date=review_date,
+                ).first()
+                if review_staging:
+                    try:
+                        staged_items = json.loads(review_staging.items_json or '[]')
+                    except (TypeError, ValueError):
+                        staged_items = []
+                    if isinstance(staged_items, list):
+                        review_rows = [
+                            {
+                                'staged_index': item_index,
+                                'product_name': str(item.get('product_name') or '').strip(),
+                                'quantity': int(item.get('quantity') or 0),
+                                'gross_sales': float(item.get('gross_sales') or 0.0),
+                                'discount': float(item.get('discount') or 0.0),
+                                'net_sales': float(item.get('net_sales') or 0.0),
+                            }
+                            for item_index, item in enumerate(staged_items)
+                            if isinstance(item, dict) and str(item.get('product_name') or '').strip()
+                        ]
+                        review_rows.sort(key=lambda row: row['product_name'].lower())
+                        review_is_staged = True
+            review_summary = {
+                'rows_count': len(review_rows),
+                'total_qty': sum(int(row.quantity or 0) if not isinstance(row, dict) else int(row.get('quantity') or 0) for row in review_rows),
+                'total_gross_sales': sum(float(row.gross_sales or 0.0) if not isinstance(row, dict) else float(row.get('gross_sales') or 0.0) for row in review_rows),
+                'total_discount': sum(float(row.discount or 0.0) if not isinstance(row, dict) else float(row.get('discount') or 0.0) for row in review_rows),
+                'total_net_sales': sum(float(row.net_sales or 0.0) if not isinstance(row, dict) else float(row.get('net_sales') or 0.0) for row in review_rows),
+            }
 
     if apply_filter:
         if not selected_cluster_id:
@@ -439,6 +471,8 @@ def pos_sold():
         review_store_id=review_store_id,
         review_date=review_date_value,
         review_report=review_report,
+        review_staging=review_staging,
+        review_is_staged=review_is_staged,
         review_rows=review_rows,
         review_summary=review_summary,
         start_date=start_date_value,
@@ -455,6 +489,191 @@ def pos_sold():
             'total_net_sales': total_net_sales,
         },
     )
+
+
+def _load_pos_staging_items(staging):
+    try:
+        items = json.loads(staging.items_json or '[]')
+    except (TypeError, ValueError):
+        items = []
+    return [dict(item) for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+
+def _save_pos_staging_items_and_sync(staging, items):
+    from .views import (
+        _build_complete_pos_quantities,
+        _reconcile_pos_sold_quantities_to_inventory,
+        _validate_saved_motif_rows,
+    )
+
+    motif_rows = _validate_saved_motif_rows(items, staging.motif_breakdown_json)
+    staging.items_json = json.dumps(items)
+    staging.motif_breakdown_json = json.dumps(motif_rows)
+    quantities = _build_complete_pos_quantities(items, motif_rows)
+    _reconcile_pos_sold_quantities_to_inventory(staging.store_id, staging.report_date, quantities)
+
+
+def _pos_staging_review_redirect_params():
+    params = {'tab': 'review'}
+    review_store_id = request.form.get('review_store_id', type=int)
+    review_date = (request.form.get('review_date') or '').strip()
+    if review_store_id:
+        params['review_store_id'] = review_store_id
+    if review_date:
+        params['review_date'] = review_date
+    return params
+
+
+@admin.route('/admin/pos-sold/staging/<int:staging_id>/row/<int:row_index>/edit', methods=['POST'])
+@login_required
+def edit_staged_pos_sold_entry(staging_id, row_index):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    staging = PosSoldStaging.query.get_or_404(staging_id)
+    redirect_params = _pos_staging_review_redirect_params()
+    items = _load_pos_staging_items(staging)
+    if row_index < 0 or row_index >= len(items):
+        flash('The staged POS Sold row no longer exists.', category='error')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+    try:
+        new_quantity = max(0, int(request.form.get('quantity', 0)))
+    except (TypeError, ValueError):
+        flash('Please enter a valid POS Sold quantity.', category='error')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+
+    try:
+        item = items[row_index]
+        old_values = {
+            'quantity': int(item.get('quantity') or 0),
+            'gross_sales': float(item.get('gross_sales') or 0.0),
+            'discount': float(item.get('discount') or 0.0),
+            'net_sales': float(item.get('net_sales') or 0.0),
+        }
+        item['quantity'] = new_quantity
+        if old_values['quantity'] > 0:
+            factor = new_quantity / old_values['quantity']
+            item['gross_sales'] = round(old_values['gross_sales'] * factor, 2)
+            item['discount'] = round(old_values['discount'] * factor, 2)
+            item['net_sales'] = round(old_values['net_sales'] * factor, 2)
+        elif new_quantity == 0:
+            item['gross_sales'] = 0.0
+            item['discount'] = 0.0
+            item['net_sales'] = 0.0
+
+        _save_pos_staging_items_and_sync(staging, items)
+        log_audit_event(
+            action='admin.pos_sold_staging.edit',
+            entity_type='PosSoldStaging',
+            entity_id=staging.id,
+            reason='Admin edited a saved POS Sold staging quantity.',
+            details={
+                'store_id': staging.store_id,
+                'report_date': staging.report_date.strftime('%Y-%m-%d'),
+                'row_index': row_index,
+                'product_name': item.get('product_name'),
+                'old': old_values,
+                'new': {
+                    'quantity': item.get('quantity'),
+                    'gross_sales': item.get('gross_sales'),
+                    'discount': item.get('discount'),
+                    'net_sales': item.get('net_sales'),
+                },
+            },
+        )
+        db.session.commit()
+        flash('Saved POS Sold quantity updated and synchronized to InvenSync.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error updating saved POS Sold entry: {exc}', category='error')
+    return redirect(url_for('admin.pos_sold', **redirect_params))
+
+
+@admin.route('/admin/pos-sold/staging/<int:staging_id>/row/<int:row_index>/delete', methods=['POST'])
+@login_required
+def delete_staged_pos_sold_entry(staging_id, row_index):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    staging = PosSoldStaging.query.get_or_404(staging_id)
+    redirect_params = _pos_staging_review_redirect_params()
+    admin_password = request.form.get('admin_password') or ''
+    if not admin_password or not check_password_hash(current_user.password or '', admin_password):
+        flash('Admin password is incorrect. Delete was cancelled.', category='error')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+    items = _load_pos_staging_items(staging)
+    if row_index < 0 or row_index >= len(items):
+        flash('The staged POS Sold row no longer exists.', category='error')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+
+    try:
+        removed_item = items.pop(row_index)
+        if items:
+            _save_pos_staging_items_and_sync(staging, items)
+        else:
+            from .views import _reconcile_pos_sold_quantities_to_inventory
+            _reconcile_pos_sold_quantities_to_inventory(staging.store_id, staging.report_date, {})
+            db.session.delete(staging)
+        log_audit_event(
+            action='admin.pos_sold_staging.delete',
+            entity_type='PosSoldStaging',
+            entity_id=staging_id,
+            reason='Admin deleted an entry from saved POS Sold staging.',
+            details={
+                'store_id': staging.store_id,
+                'report_date': staging.report_date.strftime('%Y-%m-%d'),
+                'row_index': row_index,
+                'deleted_item': removed_item,
+            },
+        )
+        db.session.commit()
+        flash('Saved POS Sold entry deleted and InvenSync reconciled.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error deleting saved POS Sold entry: {exc}', category='error')
+    return redirect(url_for('admin.pos_sold', **redirect_params))
+
+
+@admin.route('/admin/pos-sold/staging/<int:staging_id>/delete-all', methods=['POST'])
+@login_required
+def delete_all_staged_pos_sold_entries(staging_id):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    staging = PosSoldStaging.query.get_or_404(staging_id)
+    redirect_params = _pos_staging_review_redirect_params()
+    admin_password = request.form.get('admin_password') or ''
+    if not admin_password or not check_password_hash(current_user.password or '', admin_password):
+        flash('Admin password is incorrect. Delete All was cancelled.', category='error')
+        return redirect(url_for('admin.pos_sold', **redirect_params))
+
+    try:
+        items = _load_pos_staging_items(staging)
+        from .views import _reconcile_pos_sold_quantities_to_inventory
+        _reconcile_pos_sold_quantities_to_inventory(staging.store_id, staging.report_date, {})
+        details = {
+            'store_id': staging.store_id,
+            'report_date': staging.report_date.strftime('%Y-%m-%d'),
+            'deleted_count': len(items),
+            'total_qty': sum(int(item.get('quantity') or 0) for item in items),
+        }
+        db.session.delete(staging)
+        log_audit_event(
+            action='admin.pos_sold_staging.delete_all',
+            entity_type='PosSoldStaging',
+            entity_id=staging_id,
+            reason='Admin deleted all saved POS Sold staging entries.',
+            details=details,
+        )
+        db.session.commit()
+        flash(f'Deleted {len(items)} saved POS Sold entries and cleared InvenSync Sold quantities.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error deleting saved POS Sold entries: {exc}', category='error')
+    return redirect(url_for('admin.pos_sold', **redirect_params))
 
 
 @admin.route('/admin/pos-sold/<int:pos_sold_id>/delete', methods=['POST'])
@@ -656,7 +875,7 @@ def _clear_delivery_from_inventory_for_rso_records(store_id, report_date, rso_re
     if not inventory or not rso_records:
         return 0
 
-    from .views import _match_rso_to_inventory
+    from .views import _match_rso_to_inventory, _recalculate_inventory_item
 
     alias_lookup = {
         str(normalized_alias or '').strip(): int(product_master_id)
@@ -677,6 +896,7 @@ def _clear_delivery_from_inventory_for_rso_records(store_id, report_date, rso_re
         if any(_match_rso_to_inventory(rso_record, product, alias_lookup) for rso_record in rso_records):
             item.delivery_qty = 0
             item.delivery_reviewed_date = None
+            _recalculate_inventory_item(item)
             cleared_count += 1
     return cleared_count
 
@@ -2283,7 +2503,7 @@ def settings():
         flash('Access denied.', category='error')
         return redirect(url_for('admin.dashboard'))
 
-    pos_sold_count = PosSold.query.count()
+    pos_sold_count = PosSold.query.count() + PosSoldStaging.query.count() + PosSoldDraft.query.count()
     counts = {
         'rso': RsoDelivery.query.count() + RsoDeliveryDraft.query.count(),
         'pos_sold': pos_sold_count,
@@ -2332,6 +2552,8 @@ def clear_data():
 
     try:
         if dataset in ('pos_sold', 'daily_sales', 'all_operational'):
+            delete_rows(PosSoldDraft, 'pos_sold_drafts')
+            delete_rows(PosSoldStaging, 'pos_sold_staging')
             delete_rows(PosSold, 'pos_sold')
         if dataset in ('daily_sales', 'all_operational'):
             delete_rows(DailyReport, 'daily_reports')
@@ -4840,6 +5062,24 @@ def update_invensync_unlock_scope():
             else:
                 admin_unlocks.pop(store_key, None)
 
+        # Purge unlock entries older than 30 days to prevent config bloat
+        cutoff_date = (datetime.now() - timedelta(days=30)).date()
+        for s_key in list(admin_unlocks.keys()):
+            s_unlocks = admin_unlocks.get(s_key, {})
+            if not isinstance(s_unlocks, dict):
+                continue
+            for d_key in list(s_unlocks.keys()):
+                try:
+                    d = datetime.strptime(d_key, '%Y-%m-%d').date()
+                    if d < cutoff_date:
+                        del s_unlocks[d_key]
+                except (ValueError, TypeError):
+                    del s_unlocks[d_key]
+            if s_unlocks:
+                admin_unlocks[s_key] = s_unlocks
+            else:
+                admin_unlocks.pop(s_key, None)
+
         config_data['admin_unlocks'] = admin_unlocks
         config.config_data = json.dumps(config_data)
         db.session.commit()
@@ -5135,109 +5375,62 @@ def _sync_taf_wastage_inventory_for_store_date(store, transaction_date):
 
 
 def _reverse_inventory_trans_quantities(transfer_record):
-    """
-    Reverse Trans-In/Trans-Out quantities in DailyEndingInventoryItem when a TAF is deleted.
-    This undoes the inventory changes made when the transfer was originally submitted.
-    """
     from .models import DailyEndingInventory, DailyEndingInventoryItem
-    
+    from .views import _resolve_product_master_id, _find_or_create_inventory_item, _recalculate_inventory_item
+
     transaction_type = str(transfer_record.transaction_type or '').strip()
     transaction_date = transfer_record.transaction_date
     transfer_from = transfer_record.transfer_from
     transfer_to = transfer_record.transfer_to
-    
-    # Get the transfer items
+
     transfer_items = TafTransferItem.query.filter_by(transfer_id=transfer_record.id).all()
-    
-    # Find the source store
+
     source_store = Store.query.filter_by(name=transfer_from).first()
     if source_store:
-        # Find inventory record for source store
         source_inventory = DailyEndingInventory.query.filter_by(
             store_id=source_store.id,
             inventory_date=transaction_date
         ).first()
-        
         if source_inventory:
-            # Reverse source-side quantities for the transfer type.
             for item in transfer_items:
                 item_name = item.item_name
                 quantity = item.quantity
-                
-                # Find inventory item for source store
-                source_inventory_item = DailyEndingInventoryItem.query.filter_by(
-                    inventory_id=source_inventory.id,
-                    product_description=item_name
-                ).first()
-                
-                if source_inventory_item:
-                    if transaction_type == 'Wastage Transfer':
-                        source_inventory_item.wastage_qty = max(0, (source_inventory_item.wastage_qty or 0) - quantity)
-                        source_inventory_item.trans_out_qty = _clamp_taf_trans_out_without_wastage(
-                            source_store,
-                            transaction_date,
-                            item_name,
-                            source_inventory_item.trans_out_qty,
-                            quantity,
-                        )
-                    else:
-                        source_inventory_item.trans_out_qty = max(0, (source_inventory_item.trans_out_qty or 0) - quantity)
-                    
-                    # Recalculate theoretical ending quantity
-                    source_inventory_item.theo_ending_qty = (
-                        (source_inventory_item.beginning_qty or 0) +
-                        (source_inventory_item.delivery_qty or 0) +
-                        (source_inventory_item.trans_in_qty or 0) +
-                        (source_inventory_item.bo_qty or 0) +
-                        (source_inventory_item.adv_del_qty or 0) -
-                        (source_inventory_item.trans_out_qty or 0) -
-                        (source_inventory_item.wastage_qty or 0) -
-                        (source_inventory_item.csi_qty or 0) -
-                        (source_inventory_item.quantity_sold or 0)
+                product_master_id = _resolve_product_master_id(item_name)
+                source_inv_item = _find_or_create_inventory_item(
+                    source_inventory, product_master_id, item_name
+                )
+                if transaction_type == 'Wastage Transfer':
+                    source_inv_item.wastage_qty = max(0, (source_inv_item.wastage_qty or 0) - quantity)
+                    source_inv_item.trans_out_qty = _clamp_taf_trans_out_without_wastage(
+                        source_store, transaction_date, item_name,
+                        source_inv_item.trans_out_qty, quantity,
                     )
-    
-    # For Product Transfer, also reverse Trans-In for destination store
+                else:
+                    source_inv_item.trans_out_qty = max(0, (source_inv_item.trans_out_qty or 0) - quantity)
+                _recalculate_inventory_item(source_inv_item)
+
     if transaction_type == 'Product Transfer':
         dest_store = Store.query.filter_by(name=transfer_to).first()
         if dest_store:
-            # Find inventory record for destination store
             dest_inventory = DailyEndingInventory.query.filter_by(
                 store_id=dest_store.id,
                 inventory_date=transaction_date
             ).first()
-            
             if dest_inventory:
-                # Reverse Trans-In quantities for destination store
                 for item in transfer_items:
                     item_name = item.item_name
                     quantity = item.received_quantity if item.received_quantity is not None else item.quantity
-                    
-                    # Find inventory item for destination store
-                    dest_inventory_item = DailyEndingInventoryItem.query.filter_by(
-                        inventory_id=dest_inventory.id,
-                        product_description=item_name
-                    ).first()
-                    
-                    if dest_inventory_item:
-                        # Subtract from trans_in_qty
-                        dest_inventory_item.trans_in_qty = max(0, (dest_inventory_item.trans_in_qty or 0) - quantity)
-                        
-                        # Recalculate theoretical ending quantity
-                        dest_inventory_item.theo_ending_qty = (
-                            (dest_inventory_item.beginning_qty or 0) +
-                            (dest_inventory_item.delivery_qty or 0) +
-                            (dest_inventory_item.trans_in_qty or 0) +
-                            (dest_inventory_item.bo_qty or 0) +
-                            (dest_inventory_item.adv_del_qty or 0) -
-                            (dest_inventory_item.trans_out_qty or 0) -
-                            (dest_inventory_item.wastage_qty or 0) -
-                            (dest_inventory_item.csi_qty or 0) -
-                            (dest_inventory_item.quantity_sold or 0)
-                        )
+                    product_master_id = _resolve_product_master_id(item_name)
+                    dest_inv_item = _find_or_create_inventory_item(
+                        dest_inventory, product_master_id, item_name
+                    )
+                    dest_inv_item.trans_in_qty = max(0, (dest_inv_item.trans_in_qty or 0) - quantity)
+                    _recalculate_inventory_item(dest_inv_item)
 
 
 def _apply_inventory_trans_quantities(transfer_record):
-    """Apply the inventory effect represented by a TAF after an admin edit."""
+    from .views import _resolve_product_master_id, _find_or_create_inventory_item, _recalculate_inventory_item
+
     transaction_type = str(transfer_record.transaction_type or '').strip()
     source_store = Store.query.filter_by(name=transfer_record.transfer_from).first()
     source_inventory = DailyEndingInventory.query.filter_by(
@@ -5257,36 +5450,22 @@ def _apply_inventory_trans_quantities(transfer_record):
 
     for transfer_item in transfer_record.items:
         if source_inventory:
-            source_item = DailyEndingInventoryItem.query.filter_by(
-                inventory_id=source_inventory.id,
-                product_description=transfer_item.item_name,
-            ).first()
-            if source_item:
-                source_item.trans_out_qty = (source_item.trans_out_qty or 0) + int(transfer_item.quantity or 0)
-                source_item.theo_ending_qty = (
-                    (source_item.beginning_qty or 0) + (source_item.delivery_qty or 0)
-                    + (source_item.trans_in_qty or 0) + (source_item.bo_qty or 0)
-                    + (source_item.adv_del_qty or 0) - (source_item.trans_out_qty or 0)
-                    - (source_item.wastage_qty or 0) - (source_item.csi_qty or 0)
-                    - (source_item.quantity_sold or 0)
-                )
+            product_master_id = _resolve_product_master_id(transfer_item.item_name)
+            source_item = _find_or_create_inventory_item(
+                source_inventory, product_master_id, transfer_item.item_name
+            )
+            source_item.trans_out_qty = (source_item.trans_out_qty or 0) + int(transfer_item.quantity or 0)
+            _recalculate_inventory_item(source_item)
 
         if destination_inventory:
-            destination_item = DailyEndingInventoryItem.query.filter_by(
-                inventory_id=destination_inventory.id,
-                product_description=transfer_item.item_name,
-            ).first()
-            if destination_item:
-                received_qty = transfer_item.received_quantity
-                quantity = int(received_qty if received_qty is not None else transfer_item.quantity or 0)
-                destination_item.trans_in_qty = (destination_item.trans_in_qty or 0) + quantity
-                destination_item.theo_ending_qty = (
-                    (destination_item.beginning_qty or 0) + (destination_item.delivery_qty or 0)
-                    + (destination_item.trans_in_qty or 0) + (destination_item.bo_qty or 0)
-                    + (destination_item.adv_del_qty or 0) - (destination_item.trans_out_qty or 0)
-                    - (destination_item.wastage_qty or 0) - (destination_item.csi_qty or 0)
-                    - (destination_item.quantity_sold or 0)
-                )
+            product_master_id = _resolve_product_master_id(transfer_item.item_name)
+            destination_item = _find_or_create_inventory_item(
+                destination_inventory, product_master_id, transfer_item.item_name
+            )
+            received_qty = transfer_item.received_quantity
+            quantity = int(received_qty if received_qty is not None else transfer_item.quantity or 0)
+            destination_item.trans_in_qty = (destination_item.trans_in_qty or 0) + quantity
+            _recalculate_inventory_item(destination_item)
 
 
 @admin.route('/admin/taf/edit/<int:transfer_id>', methods=['GET', 'POST'])

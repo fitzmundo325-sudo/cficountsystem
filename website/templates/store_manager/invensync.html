@@ -367,10 +367,34 @@
     </div>
   </section>
 
-  {% if is_day_locked %}
+  {% if current_user.role in ['Admin', 'Superadmin'] and has_no_wastage and not is_day_locked %}
   <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
-    This inventory day is finalized and locked. Users can view it, but they can no longer edit or save changes for this date.
+    No wastage was recorded for this store on the selected inventory date.
   </div>
+  {% endif %}
+
+  {% if is_day_locked %}
+    {% set _admin_scope = admin_unlock_scope|default({}) %}
+    {% set has_admin_unlock = (_admin_scope.get('all') if _admin_scope.get('all') is not none else False) or (_admin_scope.get('cells') and (_admin_scope.get('cells')|length > 0)) %}
+    {% if current_user.role in ['Admin', 'Superadmin'] %}
+      {% if has_no_wastage %}
+      <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+        This inventory day is finalized and locked. No wastage was recorded for this store on the selected date.
+      </div>
+      {% else %}
+      <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+        This inventory day is finalized and locked. Admin users can edit unlocked cells, rows, or columns directly.
+      </div>
+      {% endif %}
+    {% elif has_admin_unlock %}
+    <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+      This inventory day is finalized and locked. Certain cells, rows, or columns have been unlocked by an Admin and may be editable. If you want other changes, please ask IT through our ticketing system.
+    </div>
+    {% else %}
+    <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+      This inventory day is finalized and locked. Users can view it, but they can no longer edit or save changes for this date. If you want changes, please ask IT through our ticketing system.
+    </div>
+    {% endif %}
   {% endif %}
 
   {% if is_first_time and current_user.role == 'Store Manager' %}
@@ -610,6 +634,13 @@
                           BIBIT {{ bitbit_slices }}
                         </span>
                       {% endif %}
+                      {% if inv_item and inv_item.motif_sold_tags is defined and inv_item.motif_sold_tags %}
+                        {% set motif_used_qty = inv_item.motif_sold_tags|sum(attribute='quantity') %}
+                        <span class="motif-sold-badge border border-emerald-200 bg-emerald-100 text-emerald-700 text-[8px] px-1 py-0.5 rounded whitespace-nowrap font-semibold leading-none cursor-default select-none transition-transform duration-150 ease-out hover:scale-110 hover:shadow-sm"
+                          title="Used for Additional Charge for Motif | {% for tag in inv_item.motif_sold_tags %}Motif #{{ tag.motif_index }}: {{ tag.quantity }} unit(s), Unit Price: ₱{{ '%.2f'|format(tag.unit_price or 0) }}, Discount: ₱{{ '%.2f'|format(tag.discount or 0) }}, Net Price: ₱{{ '%.2f'|format(tag.price or 0) }}{% if not loop.last %} | {% endif %}{% endfor %}">
+                          MOTIF {{ motif_used_qty }}
+                        </span>
+                      {% endif %}
                       </span>
                     </div>
                   {% endif %}
@@ -757,7 +788,7 @@
                   <tr>
                     <th class="px-3 py-2 text-left text-xs font-bold uppercase text-slate-500">Product Included / Combo With</th>
                     <th class="w-28 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Sold Qty</th>
-                    <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Price</th>
+                    <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Net Price</th>
                     <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Discount</th>
                     <th class="w-12 px-3 py-2 text-center text-xs font-bold uppercase text-slate-500">Clear</th>
                   </tr>
@@ -775,7 +806,7 @@
                       <input type="number" min="0" step="1" class="motif-qty-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0">
                     </td>
                     <td class="px-3 py-2">
-                      <input type="number" min="0" step="0.01" class="motif-price-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0.00">
+                      <input type="number" min="0" step="0.01" class="motif-price-input w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-right text-sm font-semibold text-slate-600 outline-none" placeholder="0.00" readonly title="Calculated as Unit Price × Sold Qty − Discount">
                     </td>
                     <td class="px-3 py-2">
                       <input type="number" min="0" step="0.01" class="motif-discount-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0.00">
@@ -1235,6 +1266,7 @@ function readMotifBreakdownRows() {
       motif_index: Number(row.dataset.motifIndex || row.closest('.motif-group')?.dataset.motifIndex || 1),
       row_index: Number(row.dataset.rowIndex || 1),
       quantity,
+      unit_price: Number(selectedProduct?.price || 0),
       price,
       discount
     };
@@ -1283,6 +1315,24 @@ function enableMotifBreakdownRow(row) {
     input.disabled = false;
     input.classList.remove('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
   });
+  if (priceInput) {
+    priceInput.readOnly = true;
+    priceInput.classList.add('bg-slate-100', 'text-slate-600', 'cursor-not-allowed');
+  }
+}
+
+function recalculateMotifPrice(row) {
+  if (!row) return;
+  const selectedProduct = findMotifProductOption(row.querySelector('.motif-product-input')?.value || '');
+  const priceInput = row.querySelector('.motif-price-input');
+  if (!priceInput) return;
+  if (!selectedProduct) {
+    priceInput.value = '';
+    return;
+  }
+  const quantity = Math.max(0, Number(row.querySelector('.motif-qty-input')?.value || 0));
+  const discount = Math.max(0, Number(row.querySelector('.motif-discount-input')?.value || 0));
+  priceInput.value = Math.max(0, (Number(selectedProduct.price || 0) * quantity) - discount).toFixed(2);
 }
 
 function findMotifProductOption(productName) {
@@ -1370,10 +1420,7 @@ function syncMotifProductSelection(input, options = {}) {
   if (quantityInput && !quantityInput.value) {
     quantityInput.value = '1';
   }
-  const priceInput = row.querySelector('.motif-price-input');
-  if (priceInput && !priceInput.value && Number(selectedProduct.price || 0) > 0) {
-    priceInput.value = Number(selectedProduct.price || 0).toFixed(2);
-  }
+  recalculateMotifPrice(row);
 }
 
 function normalizeMotifProductName(value) {
@@ -1392,9 +1439,9 @@ function getSavedMotifBreakdown() {
 function buildMotifTagTitle(row, allRows = []) {
   const product = row.product || 'Motif product';
   const quantity = Number(row.quantity || 0);
+  const unitPrice = Number(row.unit_price || 0);
   const price = Number(row.price || 0);
   const discount = Number(row.discount || 0);
-  const net = Math.max(0, price - discount);
   const motifSet = row.motif_index ? `Motif #${row.motif_index} | ` : '';
   const motifProducts = (allRows || [])
     .filter(item =>
@@ -1410,7 +1457,7 @@ function buildMotifTagTitle(row, allRows = []) {
   const comboText = motifProducts.length
     ? ` | Combo with: ${motifProducts.join(' + ')}`
     : '';
-  return `${motifSet}${product} used in Additional Charge for Motif${comboText} | Sold Qty: ${quantity} | Price: ${formatPeso(price)} | Discount: ${formatPeso(discount)} | Net: ${formatPeso(net)}`;
+  return `${motifSet}${product} used in Additional Charge for Motif${comboText} | Sold Qty: ${quantity} | Unit Price: ${formatPeso(unitPrice)} | Discount: ${formatPeso(discount)} | Net Price: ${formatPeso(price)}`;
 }
 
 function applyMotifTagsToSoldColumn() {
@@ -1724,6 +1771,7 @@ function saveMotifBreakdown() {
       motif_index: row.motif_index,
       row_index: row.row_index,
       quantity: 0,
+      unit_price: 0,
       price: 0,
       discount: 0
     })
@@ -1749,6 +1797,14 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     input.addEventListener('blur', function() {
       setTimeout(() => hideMotifProductDropdown(input), 150);
+    });
+  });
+  modal.querySelectorAll('.motif-qty-input, .motif-discount-input').forEach(input => {
+    input.addEventListener('input', function() {
+      recalculateMotifPrice(input.closest('tr'));
+    });
+    input.addEventListener('change', function() {
+      recalculateMotifPrice(input.closest('tr'));
     });
   });
   modal.querySelectorAll('.clear-motif-row').forEach(button => {

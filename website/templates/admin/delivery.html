@@ -2,6 +2,54 @@
 {% block title %}Delivery{% endblock %}
 
 {% block content %}
+<style>
+  .delivery-admin-tour-panel {
+    position: fixed;
+    z-index: 9998;
+    background: rgba(15, 23, 42, 0.72);
+    pointer-events: auto;
+  }
+  .delivery-admin-tour-target {
+    position: relative;
+    z-index: 9999;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.35), 0 0 24px rgba(99, 102, 241, 0.55);
+  }
+  .delivery-admin-tour-label {
+    position: fixed;
+    z-index: 10000;
+    max-width: min(360px, calc(100vw - 32px));
+    background: #0f172a;
+    color: #ffffff;
+    padding: 18px 20px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.35;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
+    pointer-events: auto;
+  }
+  .delivery-admin-tour-label button {
+    margin-top: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 800;
+    text-shadow: none;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+  }
+  .delivery-admin-tour-label button:hover {
+    background: #f8fafc;
+    transform: translateY(-1px);
+  }
+</style>
 <header class="sticky top-0 z-20 bg-white/85 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
   <div class="flex items-center gap-4">
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
@@ -17,14 +65,22 @@
       <span class="text-slate-900">Delivery</span>
     </nav>
   </div>
+  <button id="delivery-admin-help-btn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50" title="Restart help guide">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"></circle>
+      <path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4"></path>
+      <path d="M12 17h.01"></path>
+    </svg>
+    <span>Help</span>
+  </button>
 </header>
 
 <div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
-  <div class="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
-    <a href="{{ url_for('admin.delivery', tab='consolidated') }}" class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold transition-colors {% if active_tab == 'consolidated' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
+  <div id="delivery-admin-tab-bar" class="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+    <a id="delivery-admin-tab-consolidated" href="{{ url_for('admin.delivery', tab='consolidated') }}" class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold transition-colors {% if active_tab == 'consolidated' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
       Consolidated View
     </a>
-    <a href="{{ url_for('admin.delivery', tab='review', review_store_id=review_store_id, review_date=review_date) }}" class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold transition-colors {% if active_tab == 'review' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
+    <a id="delivery-admin-tab-review" href="{{ url_for('admin.delivery', tab='review', review_store_id=review_store_id, review_date=review_date) }}" class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold transition-colors {% if active_tab == 'review' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
       Store Date Review
     </a>
   </div>
@@ -35,11 +91,11 @@
       <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Delivery</h1>
       <p class="text-slate-600 mt-1">Select cluster and date range first, then apply filter to load saved RSO delivery data.</p>
     </div>
-    <div class="flex justify-center">
+    <div id="delivery-admin-consolidated-filters" class="flex justify-center">
       <form method="GET" class="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-2 items-end">
         <input type="hidden" name="tab" value="consolidated">
         <input type="hidden" name="apply" value="1">
-        <div>
+        <div id="delivery-admin-cluster-field">
           <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Cluster</label>
           <select id="cluster_id" name="cluster_id" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
             <option value="">Select Cluster</option>
@@ -48,7 +104,7 @@
             {% endfor %}
           </select>
         </div>
-        <div>
+        <div id="delivery-admin-store-field">
           <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Store</label>
           <select id="store_id" name="store_id" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none" {% if not selected_cluster_id %}disabled{% endif %}>
             <option value="">{% if selected_cluster_id %}Select Store (Optional){% else %}Select Cluster First{% endif %}</option>
@@ -57,22 +113,22 @@
             {% endfor %}
           </select>
         </div>
-        <div>
+        <div id="delivery-admin-start-date-field">
           <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Start Date</label>
-          <input type="date" name="start_date" value="{{ start_date }}" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+          <input id="delivery-admin-start-date" type="date" name="start_date" value="{{ start_date }}" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
         </div>
-        <div>
+        <div id="delivery-admin-end-date-field">
           <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">End Date</label>
-          <input type="date" name="end_date" value="{{ end_date }}" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+          <input id="delivery-admin-end-date" type="date" name="end_date" value="{{ end_date }}" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
         </div>
-        <button type="submit" class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors">Apply</button>
-        <a href="{{ url_for('admin.delivery') }}" class="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-sm rounded-lg font-medium hover:bg-slate-50 transition-colors text-center">Reset</a>
+        <button id="delivery-admin-apply-btn" type="submit" class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors">Apply</button>
+        <a id="delivery-admin-reset-btn" href="{{ url_for('admin.delivery') }}" class="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-sm rounded-lg font-medium hover:bg-slate-50 transition-colors text-center">Reset</a>
       </form>
     </div>
   </section>
 
   {% if can_show_results %}
-  <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+  <section id="delivery-admin-summary-cards" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
     <div class="rounded-2xl border border-slate-200 bg-white p-4">
       <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Rows</p>
       <p class="text-2xl font-bold text-slate-900 mt-2">{{ summary.rows_count }}</p>
@@ -91,7 +147,7 @@
     </div>
   </section>
 
-  <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+  <section id="delivery-admin-data-table" class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
     <div class="px-5 py-4 border-b border-slate-200 bg-slate-50">
       <h2 class="text-lg font-bold text-slate-900">Delivery Entries (Consolidated)</h2>
       <p class="text-xs text-slate-500">Same store + date + product + source are merged across the selected date range.</p>
@@ -153,30 +209,30 @@
       <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Delivery Review</h1>
       <p class="text-slate-600 mt-1">Select a store and date to review saved delivery entries. Deleted rows are removed from that store/date data.</p>
     </div>
-    <form method="GET" class="grid w-full grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-3 lg:max-w-4xl">
+    <form id="delivery-admin-review-form" method="GET" class="grid w-full grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-3 lg:max-w-4xl">
       <input type="hidden" name="tab" value="review">
-      <div>
+      <div id="delivery-admin-review-store-field">
         <label class="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">Store</label>
-        <select name="review_store_id" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
+        <select id="delivery-admin-review-store" name="review_store_id" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
           <option value="">Select Store</option>
           {% for store in stores %}
           <option value="{{ store.id }}" {% if review_store_id and review_store_id == store.id %}selected{% endif %}>{{ store.name }}</option>
           {% endfor %}
         </select>
       </div>
-      <div>
+      <div id="delivery-admin-review-date-field">
         <label class="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">Date</label>
-        <input type="date" name="review_date" value="{{ review_date }}" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
+        <input id="delivery-admin-review-date" type="date" name="review_date" value="{{ review_date }}" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
       </div>
-      <div class="flex items-end gap-2">
-        <button type="submit" class="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700">Load Review</button>
-        <a href="{{ url_for('admin.delivery', tab='review') }}" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-center text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50">Reset</a>
+      <div id="delivery-admin-review-actions" class="flex items-end gap-2">
+        <button id="delivery-admin-load-review-btn" type="submit" class="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700">Load Review</button>
+        <a id="delivery-admin-review-reset-btn" href="{{ url_for('admin.delivery', tab='review') }}" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-center text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50">Reset</a>
       </div>
     </form>
   </section>
 
   {% if review_store_id %}
-  <section class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+  <section id="delivery-admin-review-summary" class="grid grid-cols-1 gap-4 sm:grid-cols-3">
     <div class="rounded-2xl border border-slate-200 bg-white p-4">
       <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Rows</p>
       <p class="mt-2 text-2xl font-bold text-slate-900">{{ review_summary.rows_count }}</p>
@@ -191,7 +247,7 @@
     </div>
   </section>
 
-  <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+  <section id="delivery-admin-review-table" class="overflow-hidden rounded-2xl border border-slate-200 bg-white">
     <div class="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h2 class="text-lg font-bold text-slate-900">Store Date Delivery Entries</h2>
@@ -499,6 +555,228 @@
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
     });
+  })();
+
+  (function() {
+    const helpBtn = document.getElementById('delivery-admin-help-btn');
+    if (!helpBtn) return;
+    let tourActive = false;
+    let tourStepIndex = 0;
+
+    const steps = [
+      {
+        elements: [document.getElementById('delivery-admin-tab-consolidated'), document.getElementById('delivery-admin-tab-review')],
+        text: 'Switch between Consolidated View (all stores) and Store Date Review (per-store detail).',
+        placement: 'bottom',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-cluster-field')],
+        text: 'Select a Cluster to filter stores by group.',
+        placement: 'bottom',
+        tab: 'consolidated',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-store-field')],
+        text: 'Optionally pick a specific Store after selecting a Cluster.',
+        placement: 'bottom',
+        tab: 'consolidated',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-start-date-field')],
+        text: 'Choose the Start Date for the delivery date range.',
+        placement: 'bottom',
+        tab: 'consolidated',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-end-date-field')],
+        text: 'Choose the End Date for the delivery date range.',
+        placement: 'bottom',
+        tab: 'consolidated',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-apply-btn'), document.getElementById('delivery-admin-reset-btn')],
+        text: 'Click Apply to load data or Reset to clear filters.',
+        placement: 'bottom',
+        tab: 'consolidated',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-summary-cards')],
+        text: 'Summary cards show Rows, Stores, Total Qty, and Total Received Qty.',
+        placement: 'bottom',
+        tab: 'consolidated',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-data-table')],
+        text: 'The table lists all delivery entries grouped by store, date, and product.',
+        placement: 'top',
+        tab: 'consolidated',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-review-store-field')],
+        text: 'Select a Store to review its delivery entries.',
+        placement: 'bottom',
+        tab: 'review',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-review-date-field')],
+        text: 'Pick the report date for the store delivery review.',
+        placement: 'bottom',
+        tab: 'review',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-load-review-btn'), document.getElementById('delivery-admin-review-reset-btn')],
+        text: 'Click Load Review to load entries or Reset to start over.',
+        placement: 'bottom',
+        tab: 'review',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-review-summary')],
+        text: 'Summary cards show Rows, Total Qty, and Total Received Qty for this store/date.',
+        placement: 'bottom',
+        tab: 'review',
+      },
+      {
+        elements: [document.getElementById('delivery-admin-review-table')],
+        text: 'Review individual entries. Use Edit to change quantities or Delete to remove a row.',
+        placement: 'top',
+        tab: 'review',
+      },
+    ];
+
+    const activeTab = {{ (active_tab or 'consolidated')|tojson }};
+
+    function getFilteredSteps() {
+      return steps.filter(function(s) {
+        if (!s.tab) return true;
+        if (s.tab === 'consolidated' && activeTab !== 'consolidated') {
+          return document.getElementById(s.elements[0]?.id || '') !== null;
+        }
+        if (s.tab === 'review' && activeTab !== 'review') {
+          return document.getElementById(s.elements[0]?.id || '') !== null;
+        }
+        return true;
+      }).filter(function(s) {
+        return s.elements.some(function(el) { return Boolean(el); });
+      });
+    }
+
+    function getStep() {
+      const filtered = getFilteredSteps();
+      return filtered[tourStepIndex] || null;
+    }
+
+    function removePanels() {
+      document.querySelectorAll('.delivery-admin-tour-panel').forEach(function(p) { p.remove(); });
+      document.querySelectorAll('.delivery-admin-tour-label').forEach(function(l) { l.remove(); });
+    }
+
+    function clearTour() {
+      tourActive = false;
+      tourStepIndex = 0;
+      removePanels();
+      document.querySelectorAll('.delivery-admin-tour-target').forEach(function(el) {
+        el.classList.remove('delivery-admin-tour-target');
+      });
+    }
+
+    function applyTarget() {
+      document.querySelectorAll('.delivery-admin-tour-target').forEach(function(el) {
+        el.classList.remove('delivery-admin-tour-target');
+      });
+      const step = getStep();
+      if (!step) return;
+      step.elements.forEach(function(el) {
+        if (el) el.classList.add('delivery-admin-tour-target');
+      });
+    }
+
+    function getGroupRect(elements) {
+      const visible = elements.filter(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (!visible.length) return null;
+      const rects = visible.map(function(el) { return el.getBoundingClientRect(); });
+      const pad = 10;
+      return {
+        top: Math.max(0, Math.min.apply(null, rects.map(function(r) { return r.top; })) - pad),
+        left: Math.max(0, Math.min.apply(null, rects.map(function(r) { return r.left; })) - pad),
+        right: Math.min(window.innerWidth, Math.max.apply(null, rects.map(function(r) { return r.right; })) + pad),
+        bottom: Math.min(window.innerHeight, Math.max.apply(null, rects.map(function(r) { return r.bottom; })) + pad),
+      };
+    }
+
+    function renderSpotlight() {
+      removePanels();
+      const step = getStep();
+      if (!step) { clearTour(); return; }
+      const rect = getGroupRect(step.elements);
+      if (!rect) return;
+
+      var panels = [
+        { top: 0, left: 0, width: window.innerWidth, height: rect.top },
+        { top: rect.bottom, left: 0, width: window.innerWidth, height: window.innerHeight - rect.bottom },
+        { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
+        { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top },
+      ];
+      panels.forEach(function(p) {
+        var el = document.createElement('div');
+        el.className = 'delivery-admin-tour-panel';
+        el.style.top = p.top + 'px';
+        el.style.left = p.left + 'px';
+        el.style.width = Math.max(0, p.width) + 'px';
+        el.style.height = Math.max(0, p.height) + 'px';
+        document.body.appendChild(el);
+      });
+
+      var filtered = getFilteredSteps();
+      var label = document.createElement('div');
+      label.className = 'delivery-admin-tour-label';
+      var msg = document.createElement('div');
+      msg.textContent = step.text;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = tourStepIndex >= filtered.length - 1 ? 'Finish' : 'Next';
+      btn.addEventListener('click', function() {
+        tourStepIndex += 1;
+        showStep();
+      });
+      label.appendChild(msg);
+      label.appendChild(btn);
+
+      if (step.placement === 'bottom') {
+        label.style.left = Math.max(16, Math.min(rect.left, window.innerWidth - 376)) + 'px';
+        label.style.top = Math.min(window.innerHeight - 120, rect.bottom + 18) + 'px';
+      } else {
+        label.style.left = Math.max(16, Math.min(rect.left, window.innerWidth - 376)) + 'px';
+        label.style.top = Math.max(24, rect.top - 140) + 'px';
+      }
+      document.body.appendChild(label);
+    }
+
+    function showStep() {
+      var step = getStep();
+      if (!step) { clearTour(); return; }
+      var target = step.elements.find(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+      setTimeout(function() {
+        applyTarget();
+        renderSpotlight();
+      }, 350);
+    }
+
+    function startTour(force) {
+      if (!force) return;
+      clearTour();
+      tourActive = true;
+      tourStepIndex = 0;
+      showStep();
+    }
+
+    helpBtn.addEventListener('click', function() { startTour(true); });
   })();
 </script>
 {% endblock %}

@@ -231,7 +231,10 @@
       <div>
       <h2 class="text-lg font-bold text-slate-900">Store Date POS Sold Entries</h2>
       <p class="text-xs text-slate-500">
-        {% if review_report %}
+        {% if review_is_staged %}
+        {{ review_date }}
+        <span class="ml-2 inline-flex rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800">Saved — awaiting Daily Report</span>
+        {% elif review_report %}
         Report #{{ review_report.id }} · {{ review_date }}
         {% else %}
         No daily report found for the selected store/date.
@@ -268,7 +271,7 @@
               <button
                 type="button"
                 class="openEditPosSoldModal rounded-lg bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
-                data-edit-url="{{ url_for('admin.edit_pos_sold_entry', pos_sold_id=row.id) }}"
+                data-edit-url="{% if review_is_staged %}{{ url_for('admin.edit_staged_pos_sold_entry', staging_id=review_staging.id, row_index=row.staged_index) }}{% else %}{{ url_for('admin.edit_pos_sold_entry', pos_sold_id=row.id) }}{% endif %}"
                 data-product-name="{{ row.product_name }}"
                 data-quantity="{{ row.quantity }}">
                 Edit
@@ -276,7 +279,7 @@
               <button
                 type="button"
                 class="openDeletePosSoldModal ml-2 rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100"
-                data-delete-url="{{ url_for('admin.delete_pos_sold_entry', pos_sold_id=row.id) }}"
+                data-delete-url="{% if review_is_staged %}{{ url_for('admin.delete_staged_pos_sold_entry', staging_id=review_staging.id, row_index=row.staged_index) }}{% else %}{{ url_for('admin.delete_pos_sold_entry', pos_sold_id=row.id) }}{% endif %}"
                 data-product-name="{{ row.product_name }}"
                 data-quantity="{{ row.quantity }}"
                 data-net-sales="{{ '{:,.2f}'.format(row.net_sales or 0) }}">
@@ -391,7 +394,7 @@
         <h3 class="text-xl font-bold text-slate-900">Delete all POS Sold entries?</h3>
         <p class="mt-1 text-sm text-slate-500">This will delete all POS Sold rows for this selected store and date.</p>
       </div>
-      <form method="POST" action="{{ url_for('admin.delete_all_pos_sold_entries') }}" class="space-y-4 px-6 py-5">
+      <form method="POST" action="{% if review_is_staged %}{{ url_for('admin.delete_all_staged_pos_sold_entries', staging_id=review_staging.id) }}{% else %}{{ url_for('admin.delete_all_pos_sold_entries') }}{% endif %}" class="space-y-4 px-6 py-5">
         <input type="hidden" name="review_store_id" value="{{ review_store_id or '' }}">
         <input type="hidden" name="review_date" value="{{ review_date }}">
         <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
