@@ -1,10 +1,11 @@
-const CACHE_NAME = 'idashboard-pwa-v1';
+const CACHE_NAME = 'idashboard-pwa-v3';
 const STATIC_ASSETS = [
   '/static/css/styles.css',
   '/static/js/modal.js',
   '/static/js/toast.js',
   '/static/js/sidebar.js',
   '/static/js/pwa.js',
+  '/static/js/dashboard_loader.js',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',
   '/static/icons/maskable-512.png',
@@ -34,16 +35,47 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  // Navigation requests: network-first with offline cache fallback
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => new Response('iDashboard is offline. Please reconnect and reload.', {
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-        status: 503
-      }))
+      fetch(request).then((response) => {
+        return response;
+      }).catch(() => {
+        return caches.match(request).then((cached) => {
+          return cached || new Response('iDashboard is offline. Please reconnect and reload.', {
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            status: 503
+          });
+        });
+      })
     );
     return;
   }
 
+  // API requests: network-first with 60s cache fallback
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(
+      fetch(request).then((response) => {
+        if (response && response.status === 200) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(request, copy);
+          });
+        }
+        return response;
+      }).catch(() => {
+        return caches.match(request).then((cached) => {
+          return cached || new Response('{"error": "offline"}', {
+            headers: { 'Content-Type': 'application/json' },
+            status: 503
+          });
+        });
+      })
+    );
+    return;
+  }
+
+  // Static assets: cache-first
   if (url.pathname.startsWith('/static/')) {
     event.respondWith(
       caches.match(request).then((cached) => cached || fetch(request).then((response) => {
