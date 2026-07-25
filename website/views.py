@@ -2334,29 +2334,37 @@ def _extract_pos_sold_items_from_excel(uploaded_file, store=None, expected_repor
         is_starlink = False
 
     if is_starlink:
-        # Expect A3 to contain a single-date string like 'Date: July 24, 2026'
         if df.shape[0] < 6:
             raise ValueError('Starlink POS file must have at least 6 rows; data should start on row 6.')
         if df.shape[1] < 7:
             raise ValueError('Starlink POS file must include columns A (product) through G (net sales).')
 
         # Parse single date from A3 (row index 2)
-        date_cell = '' if pd.isna(df.iat[2, 0]) else str(df.iat[2, 0]).strip()
-        match = re.search(r'([A-Za-z]+\s+\d{1,2},\s*\d{4})', date_cell)
+        raw_date = df.iat[2, 0]
+        date_cell = '' if pd.isna(raw_date) else str(raw_date).strip()
         parsed_date = None
+
+        # Try "Date: July 24, 2026" format (or similar "Month Day, Year")
+        match = re.search(r'([A-Za-z]+\s+\d{1,2},\s*\d{4})', date_cell)
         if match:
             try:
                 parsed_date = datetime.strptime(match.group(1), '%B %d, %Y').date()
             except ValueError:
-                parsed_date = None
-        else:
-            # fallback: look for mm/dd/yyyy
-            match2 = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', date_cell)
-            if match2:
+                pass
+
+        if parsed_date is None:
+            match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', date_cell)
+            if match:
                 try:
-                    parsed_date = datetime.strptime(match2.group(1), '%m/%d/%Y').date()
+                    parsed_date = datetime.strptime(match.group(1), '%m/%d/%Y').date()
                 except ValueError:
-                    parsed_date = None
+                    pass
+
+        if parsed_date is None:
+            try:
+                parsed_date = pd.to_datetime(raw_date).date()
+            except Exception:
+                pass
 
         if expected_report_date is not None and parsed_date is not None:
             if parsed_date != expected_report_date:
@@ -2364,7 +2372,7 @@ def _extract_pos_sold_items_from_excel(uploaded_file, store=None, expected_repor
                     f'Starlink POS file date {parsed_date.strftime("%B %d, %Y")} does not match the selected report date {expected_report_date.strftime("%B %d, %Y")}.'
                 )
 
-        # Data rows start at row 6 -> index 5. Columns: A=0 product, B=1 qty, C=2 price, D=3 gross, E=4 discount, G=6 net
+        # Column layout: A=product, B=qty, C=price, D=gross, E=discount, G=net
         product_qty_rows = df.iloc[5:, [0, 1, 2, 3, 4, 6]]
     else:
         if df.shape[0] < 8:
@@ -2468,6 +2476,8 @@ def _extract_pos_sold_items_from_excel(uploaded_file, store=None, expected_repor
         for product_name, item_values in aggregated_items.items()
     ])
     if not items:
+        if is_starlink:
+            raise ValueError('No POS sold rows found in columns A (product), B (qty), C (price), D (gross), E (discount), G (net) starting row 6.')
         raise ValueError('No POS sold rows found in columns A, B, C, D, and F starting row 8.')
 
     return items
@@ -7862,7 +7872,7 @@ def invensync():
             if prev_item.product_master_id is not None
         }
 
-<<<<<<< HEAD
+
     # Get or create inventory items using fast bulk lookup (1 query instead of 300+)
     existing_items_list = DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
     existing_items_by_pm_id = {item.product_master_id: item for item in existing_items_list if item.product_master_id}
@@ -7873,7 +7883,7 @@ def invensync():
 
     for product in products:
         item = existing_items_by_pm_id.get(product.id)
-=======
+
     # Get or create inventory items (bulk load to avoid N+1)
     existing_items = {
         int(item.product_master_id): item
@@ -7883,7 +7893,7 @@ def invensync():
     inventory_items = {}
     for product in products:
         item = existing_items.get(product.id)
->>>>>>> 18fb3bb75b046aa6371e9b980885db7b3baa8efb
+
         beginning_qty = finalized_prev_totals.get(product.id, 0)
         if not item:
             srp = product.sp_p if store.store_group == 'premium' else product.sp_np
