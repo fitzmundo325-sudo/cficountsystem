@@ -2,6 +2,7 @@ import os
 import json
 import traceback
 import uuid
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from re import A
@@ -48,6 +49,17 @@ def _ensure_pos_sold_columns():
             conn.execute(text("ALTER TABLE pos_sold ADD COLUMN discount FLOAT NOT NULL DEFAULT 0"))
         if 'z_reading_image_path' not in existing_columns:
             conn.execute(text("ALTER TABLE pos_sold ADD COLUMN z_reading_image_path VARCHAR(500)"))
+        conn.commit()
+
+
+def _ensure_daily_report_pos_columns():
+    with db.engine.connect() as conn:
+        existing_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info('daily_report')")).fetchall()
+        }
+        if 'pos_motif_breakdown_json' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_report ADD COLUMN pos_motif_breakdown_json TEXT"))
         conn.commit()
 
 
@@ -358,7 +370,11 @@ def create_app():
     db_name = os.environ.get('CM_APP_DB_NAME', DB_NAME)
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_name}'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['SECRET_KEY'] = 'thisisasecretkey'
+    configured_secret_key = os.environ.get('CM_SECRET_KEY')
+    secret_key = configured_secret_key
+    if not secret_key:
+        secret_key = secrets.token_hex(32)
+    app.config['SECRET_KEY'] = secret_key
     
     db.init_app(app)
 
@@ -384,6 +400,8 @@ def create_app():
         Cluster,
         DailyReport,
         PosSold,
+        PosSoldStaging,
+        PosSoldDraft,
         RsoDelivery,
         TafTransfer,
         TafTransferItem,
@@ -393,6 +411,7 @@ def create_app():
         StoreTarget,
         AuditLog,
         GlobalInvenSyncConfig,
+        SystemSecret,
         MaintenanceMode,
         DailyEndingInventory,
         DailyEndingInventoryItem,
@@ -400,7 +419,15 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        if not configured_secret_key:
+            stored_secret = SystemSecret.query.order_by(SystemSecret.id.asc()).first()
+            if not stored_secret:
+                stored_secret = SystemSecret(secret_value=secrets.token_hex(32))
+                db.session.add(stored_secret)
+                db.session.commit()
+            app.config['SECRET_KEY'] = stored_secret.secret_value
         _ensure_pos_sold_columns()
+        _ensure_daily_report_pos_columns()
         _ensure_store_group_column()
         _ensure_user_assigned_store_column()
         _ensure_user_presence_column()

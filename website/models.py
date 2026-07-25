@@ -98,6 +98,7 @@ class DailyReport(db.Model):
     pos_gross_sales = db.Column(db.Float, default=0.0)
     pos_net_sales = db.Column(db.Float, default=0.0)
     pos_tc = db.Column(db.Integer, default=0)
+    pos_motif_breakdown_json = db.Column(db.Text, nullable=True)
     
     # CI Regular Sales
     ci_regular_gross_sales = db.Column(db.Float, default=0.0)
@@ -179,6 +180,40 @@ class PosSold(db.Model):
     net_sales = db.Column(db.Float, nullable=False, default=0.0)
     z_reading_image_path = db.Column(db.String(500), nullable=True)
     uploaded_at = db.Column(db.DateTime(timezone=True), default=func.now())
+
+
+class PosSoldStaging(db.Model):
+    __tablename__ = 'pos_sold_staging'
+
+    id = db.Column(db.Integer, primary_key=True)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
+    report_date = db.Column(db.Date, nullable=False, index=True)
+    items_json = db.Column(db.Text, nullable=False, default='[]')
+    motif_breakdown_json = db.Column(db.Text, nullable=False, default='[]')
+    z_reading_image_path = db.Column(db.String(500), nullable=True)
+    saved_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    saved_at = db.Column(db.DateTime(timezone=True), default=func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        db.UniqueConstraint('store_id', 'report_date', name='uq_pos_sold_staging_store_date'),
+    )
+
+
+class PosSoldDraft(db.Model):
+    __tablename__ = 'pos_sold_draft'
+
+    id = db.Column(db.Integer, primary_key=True)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
+    report_date = db.Column(db.Date, nullable=False, index=True)
+    items_json = db.Column(db.Text, nullable=False, default='[]')
+    scanned_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        db.UniqueConstraint('store_id', 'report_date', name='uq_pos_sold_draft_store_date'),
+    )
 
 
 class RsoDelivery(db.Model):
@@ -341,6 +376,14 @@ class GlobalInvenSyncConfig(db.Model):
     config_data = db.Column(db.Text, nullable=False, default='{}')
     created_at = db.Column(db.DateTime(timezone=True), default=func.now())
     updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+
+class SystemSecret(db.Model):
+    __tablename__ = 'system_secret'
+
+    id = db.Column(db.Integer, primary_key=True)
+    secret_value = db.Column(db.String(128), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=func.now())
 
 
 class DailyEndingInventory(db.Model):
