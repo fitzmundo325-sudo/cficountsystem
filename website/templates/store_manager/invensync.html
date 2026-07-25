@@ -285,15 +285,23 @@
     <label for="selected_date" class="text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
       Date
     </label>
-    <input
-      type="date"
-      id="selected_date"
-      name="selected_date"
-      required
-      value="{{ selected_date }}"
-      class="w-40 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none shadow-sm"
-      onchange="changeDate(this.value)"
-    >
+    <div class="inline-flex items-center gap-1">
+      <button type="button" onclick="navigateInvenSyncDateOffset(-1)" class="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-colors" title="Previous Day">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      <input
+        type="date"
+        id="selected_date"
+        name="selected_date"
+        required
+        value="{{ selected_date }}"
+        class="w-40 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none shadow-sm"
+        onchange="changeDate(this.value)"
+      >
+      <button type="button" onclick="navigateInvenSyncDateOffset(1)" class="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-colors" title="Next Day">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+    </div>
     <div class="text-sm font-medium text-slate-600">
       <span class="text-slate-900">{{ store.name }}</span>
     </div>
@@ -301,7 +309,7 @@
 </header>
 
 <!-- Content -->
-<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-[2400px] w-full mx-auto space-y-6">
+<div id="invensync-page-shell" class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-[2400px] w-full mx-auto space-y-6">
 
   <!-- Page Header -->
   <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -1832,15 +1840,151 @@ document.addEventListener('scroll', function(event) {
   if (motifGuideActive) renderMotifGuideSpotlight();
 }, true);
 
+function showInvenSyncFullSkeleton() {
+  const shell = document.getElementById('invensync-page-shell');
+  if (!shell) return;
+
+  let skeletonRows = '';
+  for (let i = 0; i < 10; i++) {
+    skeletonRows += `
+      <tr class="animate-pulse border-b border-slate-100">
+        <td class="px-3 py-3 sticky left-0 z-10" style="background:#f0f9ff;">
+          <div class="skeleton" style="height:14px;width:70%;border-radius:6px;margin-bottom:6px;"></div>
+          <div class="skeleton" style="height:10px;width:45%;border-radius:4px;"></div>
+        </td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+        <td class="px-2 py-3"><div class="skeleton" style="height:12px;width:75%;border-radius:4px;margin:auto;"></div></td>
+      </tr>
+    `;
+  }
+
+  shell.innerHTML = `
+    <!-- Skeleton: Page Header -->
+    <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 animate-pulse">
+      <div>
+        <div class="skeleton" style="height:32px;width:340px;border-radius:8px;"></div>
+        <div class="skeleton" style="height:14px;width:420px;border-radius:6px;margin-top:10px;"></div>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="skeleton" style="height:36px;width:100px;border-radius:8px;"></div>
+        <div class="skeleton" style="height:36px;width:110px;border-radius:8px;"></div>
+        <div class="skeleton" style="height:36px;width:120px;border-radius:8px;"></div>
+        <div class="skeleton" style="height:36px;width:100px;border-radius:8px;"></div>
+      </div>
+    </section>
+
+    <!-- Skeleton: Search & Category Filter Row -->
+    <div class="space-y-3 animate-pulse">
+      <div class="skeleton" style="height:38px;max-width:448px;width:100%;border-radius:8px;"></div>
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="skeleton" style="height:36px;width:56px;border-radius:8px;"></div>
+        <div class="skeleton" style="height:36px;width:90px;border-radius:8px;"></div>
+        <div class="skeleton" style="height:36px;width:110px;border-radius:8px;"></div>
+        <div class="skeleton" style="height:36px;width:80px;border-radius:8px;"></div>
+        <div class="skeleton" style="height:36px;width:100px;border-radius:8px;"></div>
+        <div class="skeleton" style="height:36px;width:70px;border-radius:8px;"></div>
+      </div>
+    </div>
+
+    <!-- Skeleton: Table -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden animate-pulse">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-slate-200 bg-slate-50">
+              <th class="px-4 py-3 text-left"><div class="skeleton" style="height:18px;width:160px;border-radius:5px;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:18px;width:70px;border-radius:5px;margin:auto;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:18px;width:70px;border-radius:5px;margin:auto;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:18px;width:70px;border-radius:5px;margin:auto;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:18px;width:70px;border-radius:5px;margin:auto;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:18px;width:70px;border-radius:5px;margin:auto;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:18px;width:70px;border-radius:5px;margin:auto;"></div></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${skeletonRows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+window.showInvenSyncFullSkeleton = showInvenSyncFullSkeleton;
+
 function buildInvenSyncDateUrl(dateValue) {
-  const url = new URL({{ url_for('views.invensync', store_id=store.id)|tojson }}, window.location.origin);
+  const url = new URL(window.location.href);
   url.searchParams.set('date', dateValue);
   return url.toString();
 }
 
 function changeDate(newDate) {
-  window.location.href = buildInvenSyncDateUrl(newDate);
+  if (!newDate) return;
+  showInvenSyncFullSkeleton();
+  const targetUrl = buildInvenSyncDateUrl(newDate);
+  if (typeof window.navigateSpa === 'function') {
+    window.navigateSpa(targetUrl, false);
+  } else {
+    window.location.href = targetUrl;
+  }
 }
+
+function navigateInvenSyncDateOffset(days) {
+  const dateInput = document.getElementById('selected_date');
+  if (!dateInput || !dateInput.value) return;
+  const parts = dateInput.value.split('-');
+  if (parts.length !== 3) return;
+  const current = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+  if (isNaN(current.getTime())) return;
+  current.setDate(current.getDate() + days);
+  const year = current.getFullYear();
+  const month = String(current.getMonth() + 1).padStart(2, '0');
+  const day = String(current.getDate()).padStart(2, '0');
+  const formatted = `${year}-${month}-${day}`;
+  dateInput.value = formatted;
+  changeDate(formatted);
+}
+
+function preloadAdjacentDates(currentUrl) {
+  try {
+    const url = new URL(currentUrl, window.location.origin);
+    const dateStr = url.searchParams.get('date');
+    if (!dateStr) return;
+    
+    const parts = dateStr.split('-');
+    if (parts.length !== 3) return;
+    const currDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    if (isNaN(currDate.getTime())) return;
+    
+    const prevDate = new Date(currDate);
+    prevDate.setDate(prevDate.getDate() - 1);
+    const nextDate = new Date(currDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+
+    const prevStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-${String(prevDate.getDate()).padStart(2, '0')}`;
+    const nextStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`;
+
+    const prevUrl = buildInvenSyncDateUrl(prevStr);
+    const nextUrl = buildInvenSyncDateUrl(nextStr);
+
+    fetch(prevUrl).catch(() => {});
+    fetch(nextUrl).catch(() => {});
+  } catch(e) {}
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  preloadAdjacentDates(window.location.href);
+});
 
 function showMissingDatesModal() {
   const modal = document.getElementById('missing-dates-modal');
