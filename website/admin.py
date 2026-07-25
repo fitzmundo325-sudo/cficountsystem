@@ -1,13 +1,29 @@
 from flask import Blueprint, redirect, render_template, request, url_for, flash, jsonify
-<<<<<<< HEAD
-from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, MaintenanceMode, PosSold, PosSoldStaging, PosSoldDraft, RsoDelivery, RsoDeliveryDraft, MenuInventoryItem, DailyEndingInventory, DailyEndingInventoryItem, TafTransfer, TafTransferItem, StoreProductBuffer
-from . import db
-=======
-from .models import User, Store, Cluster, DailyReport, StoreTarget, ProductMaster, ProductAlias, AuditLog, GlobalInvenSyncConfig, MaintenanceMode, PosSold, RsoDelivery, RsoDeliveryDraft, MenuInventoryItem, DailyEndingInventory, DailyEndingInventoryItem, TafTransfer, TafTransferItem, StoreProductBuffer
+from .models import (
+    User,
+    Store,
+    Cluster,
+    DailyReport,
+    StoreTarget,
+    ProductMaster,
+    ProductAlias,
+    AuditLog,
+    GlobalInvenSyncConfig,
+    MaintenanceMode,
+    PosSold,
+    PosSoldStaging,
+    PosSoldDraft,
+    RsoDelivery,
+    RsoDeliveryDraft,
+    MenuInventoryItem,
+    DailyEndingInventory,
+    DailyEndingInventoryItem,
+    TafTransfer,
+    TafTransferItem,
+    StoreProductBuffer,
+)
 from . import db, cache
->>>>>>> 96f15b36dda8dc7a8ec90a4177cc3d44e055d1d2
 from .audit import log_audit_event, verify_audit_chain
-from .views import _cached_product_masters, _resolve_category_fast
 from werkzeug.security import check_password_hash, generate_password_hash
 from flask_login import login_required, current_user
 from sqlalchemy import or_, cast, String, func, case
@@ -92,6 +108,53 @@ def _get_product_alias_lookup():
         for normalized_alias, description in rows
         if str(normalized_alias or '').strip() and (description or '').strip()
     }
+
+
+# Lightweight cached access to product master rows for fast category resolution
+_cached_master_rows = None
+def _cached_product_masters():
+    global _cached_master_rows
+    if _cached_master_rows is None:
+        product_masters = (
+            ProductMaster.query
+            .with_entities(ProductMaster.description, ProductMaster.category)
+            .all()
+        )
+        _cached_master_rows = [
+            (
+                _normalize_product_text(description),
+                (description or '').strip(),
+                (category or '').strip() or 'Uncategorized',
+            )
+            for description, category in product_masters
+        ]
+    return _cached_master_rows
+
+
+def _resolve_category_fast(product_name, cache, similarity_threshold=0.90):
+    normalized_name = _normalize_product_text(product_name)
+    if not normalized_name:
+        return 'Uncategorized'
+    if normalized_name in cache:
+        return cache[normalized_name]
+
+    master_rows = _cached_product_masters()
+    best_score = 0.0
+    best_category = 'Uncategorized'
+    for normalized_master, _, master_category in master_rows:
+        if not normalized_master:
+            continue
+        if normalized_name == normalized_master:
+            cache[normalized_name] = master_category
+            return master_category
+        similarity = SequenceMatcher(None, normalized_name, normalized_master).ratio()
+        if similarity > best_score:
+            best_score = similarity
+            best_category = master_category
+
+    resolved_category = best_category if best_score >= similarity_threshold else 'Uncategorized'
+    cache[normalized_name] = resolved_category
+    return resolved_category
 
 
 def _build_top_products_from_reports(reports):
