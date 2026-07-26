@@ -569,6 +569,7 @@
     const posScanRows = {{ (pos_scan_rows | default(0)) | tojson }};
     const selectedReportDate = {{ selected_report_date|tojson }};
     const motifChargePayload = {{ motif_charge_payload|default(none)|tojson }};
+    if (motifChargePayload) motifChargePayload.detected = false;
     const motifProductOptions = {{ motif_product_options|default([])|tojson }};
     const motifBreakdownKey = `invensyncMotifBreakdown:{{ store.id }}:${selectedReportDate}`;
     const missingDates = {{ missing_dates|tojson }};

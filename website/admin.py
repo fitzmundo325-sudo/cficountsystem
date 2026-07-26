@@ -4637,7 +4637,7 @@ def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
                 'missing_count': 0,
                 'latest_date': None,
             }
-            for key in ('inventory', 'wastage', 'pos_sold', 'delivery')
+            for key in ('inventory', 'pos_sold', 'delivery')
         }
 
     today = date.today()
@@ -4650,16 +4650,6 @@ def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
             DailyEndingInventory.is_finalized.is_(True),
         ).with_entities(DailyEndingInventory.inventory_date).all()
         if row.inventory_date
-    }
-
-    taf_wastage_dates = {
-        row.transaction_date for row in TafTransfer.query.filter(
-            TafTransfer.store_id == store_id,
-            TafTransfer.transaction_date >= month_start,
-            TafTransfer.transaction_date <= cutoff_date,
-            func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer',
-        ).with_entities(TafTransfer.transaction_date).all()
-        if row.transaction_date
     }
 
     pos_sold_dates = set()
@@ -4679,6 +4669,31 @@ def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
             )
             if row.report_date
         }
+        staged_pos_dates = {
+            row.report_date for row in PosSoldStaging.query.filter(
+                PosSoldStaging.store_id == store_id,
+                PosSoldStaging.report_date >= month_start,
+                PosSoldStaging.report_date <= previous_day_cutoff,
+            ).with_entities(PosSoldStaging.report_date).distinct().all()
+            if row.report_date
+        }
+        pos_sold_dates |= staged_pos_dates
+        inv_item_pos_dates = {
+            row.inventory_date for row in (
+                db.session.query(DailyEndingInventory.inventory_date)
+                .join(DailyEndingInventoryItem, DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id)
+                .filter(
+                    DailyEndingInventory.store_id == store_id,
+                    DailyEndingInventory.inventory_date >= month_start,
+                    DailyEndingInventory.inventory_date <= previous_day_cutoff,
+                    func.coalesce(DailyEndingInventoryItem.quantity_sold, 0) > 0,
+                )
+                .distinct()
+                .all()
+            )
+            if row.inventory_date
+        }
+        pos_sold_dates |= inv_item_pos_dates
         delivery_dates = {
             row.report_date for row in (
                 db.session.query(RsoDelivery.report_date)
@@ -4694,12 +4709,10 @@ def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
         }
 
     inventory_status = _build_single_update_status(finalized_dates, today, month_start, cutoff_date, 'inventory')
-    wastage_status = _build_single_update_status(taf_wastage_dates, today, month_start, cutoff_date, 'wastage')
     pos_sold_status = _build_single_update_status(pos_sold_dates, today, month_start, previous_day_cutoff, 'pos_sold')
     delivery_status = _build_single_update_status(delivery_dates, today, month_start, previous_day_cutoff, 'delivery')
     return {
         'inventory': inventory_status,
-        'wastage': wastage_status,
         'pos_sold': pos_sold_status,
         'delivery': delivery_status,
     }
@@ -5203,6 +5216,71 @@ def force_invensync_beginning():
         })
     except (TypeError, ValueError):
         return jsonify({'success': False, 'message': 'Select a valid store.'}), 400
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+@admin.route('/admin/invensync/backfill-pos-sold', methods=['POST'])
+@login_required
+def backfill_pos_sold():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    try:
+        from .views import backfill_pos_sold_from_staging
+        result = backfill_pos_sold_from_staging(user_id=current_user.id)
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': (
+                f'Backfill complete. {result["created"]} date(s) had PosSold created from staging. '
+                f'{result["skipped"]} already had PosSold or had no data. '
+                f'{result["total_staging"]} total staging record(s) checked.'
+            ),
+        })
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+@admin.route('/admin/invensync/unfinalize', methods=['POST'])
+@login_required
+def unfinalize_inventory():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        if not inventory_id:
+            return jsonify({'success': False, 'message': 'Missing inventory_id.'}), 400
+
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return jsonify({'success': False, 'message': 'Inventory record not found.'}), 404
+        if not inventory.is_finalized:
+            return jsonify({'success': False, 'message': 'This inventory is not finalized.'}), 400
+
+        inventory.is_finalized = False
+        inventory.finalized_at = None
+        inventory.finalized_by = None
+
+        config, config_data = _get_global_invensync_config()
+        admin_unlocks = config_data.get('admin_unlocks', {})
+        store_key = str(inventory.store_id)
+        date_key = inventory.inventory_date.isoformat() if hasattr(inventory.inventory_date, 'isoformat') else str(inventory.inventory_date)
+        if store_key in admin_unlocks and isinstance(admin_unlocks[store_key], dict):
+            admin_unlocks[store_key].pop(date_key, None)
+            if not admin_unlocks[store_key]:
+                del admin_unlocks[store_key]
+        config.config_data = json.dumps(config_data)
+
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': f'Inventory for {inventory.inventory_date.strftime("%b %d, %Y")} has been unfinalized. Store can now edit and save.',
+        })
     except Exception as exc:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(exc)}), 500

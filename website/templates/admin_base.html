@@ -667,10 +667,59 @@
     html.admin-dark #main-content .admin-dashboard-surface .text-slate-300 {
       color: #e2e8f0 !important;
     }
+
+    /* SPA Centered Page Loading Overlay */
+    #spa-loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 9998;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(248, 250, 252, 0.75);
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+      transition-delay: 0s;
+    }
+    html.admin-dark #spa-loading-overlay {
+      background: rgba(15, 23, 42, 0.75) !important;
+    }
+    @media (min-width: 1024px) {
+      #spa-loading-overlay {
+        left: 256px; /* lg:ml-64 — only covers main content, not sidebar */
+      }
+    }
+    #spa-loading-overlay.spa-visible {
+      opacity: 1;
+      pointer-events: all;
+      transition-delay: 300ms; /* Delay showing spinner to avoid flicker on fast loads */
+    }
+    .spa-spinner {
+      width: 44px;
+      height: 44px;
+      border: 3.5px solid #e2e8f0;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spa-spin 0.7s linear infinite;
+    }
+    html.admin-dark .spa-spinner {
+      border-color: #334155 !important;
+      border-top-color: #6366f1 !important;
+    }
+    @keyframes spa-spin {
+      to { transform: rotate(360deg); }
+    }
   </style>
   <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-escape-lock-1"></script>
   <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
   <script src="{{ url_for('static', filename='js/auto_scrollbar.js') }}?v=scrollbar-fade-1"></script>
+
   
   {% block extra_head %}{% endblock %}
 </head>
@@ -1018,13 +1067,19 @@
     </div>
   </aside>
 
+  <!-- SPA Centered Loading Overlay (outside #main-content so it survives swaps) -->
+  <div id="spa-loading-overlay" class="htmx-indicator" aria-hidden="true">
+    <div class="spa-spinner"></div>
+  </div>
+
   <!-- Main Content Area -->
   <main id="main-content" class="sidebar-transition flex-1 min-h-screen lg:ml-64 flex flex-col">
     {% block content %}{% endblock %}
+  </main>
       
-    <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-overlay-scrollbar-2"></script>
-    <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-1"></script>
-    <script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=spa-v1"></script>
+    <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
+    <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
+    <script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=spa-click-1"></script>
     <script>
       (function () {
         const button = document.getElementById('admin-theme-toggle');
@@ -1139,6 +1194,5 @@
         </script>
       {% endif %}
     {% endwith %}
-  </main>
 </body>
 </html>

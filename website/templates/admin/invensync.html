@@ -222,7 +222,6 @@
 
         {% set update_status = store_summary.update_status %}
         {% set inventory_status = update_status.inventory %}
-        {% set wastage_status = update_status.wastage %}
         {% set pos_sold_status = update_status.pos_sold %}
         {% set delivery_status = update_status.delivery %}
         <div class="invensync-card-status-scroll min-h-0 flex-1 space-y-2 pr-1" tabindex="-1" aria-label="Update status for {{ store_summary.store.name }}">
@@ -258,46 +257,6 @@
               {% if inventory_status.missing_ranges|length > 3 %}
               <span class="status-pill rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200">
                 +{{ inventory_status.missing_ranges|length - 3 }} more range{{ '' if inventory_status.missing_ranges|length - 3 == 1 else 's' }}
-              </span>
-              {% endif %}
-              {% endif %}
-            </div>
-            {% endif %}
-            {% endif %}
-          </div>
-
-          <div class="invensync-update-status rounded-xl border px-3 py-2 {% if wastage_status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
-            {% if wastage_status.is_up_to_date %}
-            {% set latest_date = wastage_status.latest_date.strftime('%b %d, %Y') if wastage_status.latest_date else 'N/A' %}
-            <div class="status-title flex items-center gap-2 text-sm font-semibold text-emerald-700">
-              <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
-              Wastage up to date through {{ latest_date }}
-            </div>
-            {% else %}
-            <div class="status-title flex items-center gap-2 text-sm font-semibold text-amber-800">
-              <span class="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500"></span>
-              Wastage not updated
-            </div>
-            <p class="status-copy mt-1 text-xs text-amber-800/80">
-              {{ wastage_status.missing_count }} missing date{{ '' if wastage_status.missing_count == 1 else 's' }} this month.
-            </p>
-            {% if wastage_status.missing_dates %}
-            <div class="mt-2 flex flex-wrap gap-1.5">
-              {% if wastage_status.missing_count <= 3 %}
-              {% for missing_date in wastage_status.missing_dates %}
-              <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
-                {{ missing_date.label }}
-              </span>
-              {% endfor %}
-              {% else %}
-              {% for missing_range in wastage_status.missing_ranges[:3] %}
-              <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
-                {{ missing_range.label }}
-              </span>
-              {% endfor %}
-              {% if wastage_status.missing_ranges|length > 3 %}
-              <span class="status-pill rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200">
-                +{{ wastage_status.missing_ranges|length - 3 }} more range{{ '' if wastage_status.missing_ranges|length - 3 == 1 else 's' }}
               </span>
               {% endif %}
               {% endif %}
@@ -387,6 +346,17 @@
               {% endfor %}
             </div>
           {% endif %}
+        </div>
+
+        <div class="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+          <h3 class="text-sm font-semibold text-blue-900 uppercase tracking-wide">Backfill POS Sold</h3>
+          <p class="mt-1 text-xs text-blue-800">Create missing <code>pos_sold</code> records from saved staging data. Use once after deployment to fix historical gaps where POS data was saved but never committed.</p>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <button type="button" id="backfillPosSoldBtn" onclick="backfillPosSold()" class="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition">
+              Run Backfill
+            </button>
+            <span id="backfillPosSoldMessage" class="text-sm text-blue-900"></span>
+          </div>
         </div>
 
         <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
@@ -792,6 +762,29 @@ function forceBeginningEntry() {
     })
     .catch(error => {
         message.textContent = error.message;
+        button.disabled = false;
+        button.classList.remove('opacity-50', 'cursor-not-allowed');
+    });
+}
+
+function backfillPosSold() {
+    const button = document.getElementById('backfillPosSoldBtn');
+    const message = document.getElementById('backfillPosSoldMessage');
+    button.disabled = true;
+    button.classList.add('opacity-50', 'cursor-not-allowed');
+    message.textContent = 'Running backfill...';
+    fetch(`{{ url_for('admin.backfill_pos_sold') }}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+    })
+    .then(response => response.json().then(data => ({ok: response.ok, data})))
+    .then(({ok, data}) => {
+        message.textContent = data.message || (data.success ? 'Backfill complete.' : 'Backfill failed.');
+        button.disabled = false;
+        button.classList.remove('opacity-50', 'cursor-not-allowed');
+    })
+    .catch(error => {
+        message.textContent = error.message || 'Request failed.';
         button.disabled = false;
         button.classList.remove('opacity-50', 'cursor-not-allowed');
     });

@@ -77,6 +77,7 @@
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.15s ease;
+      transition-delay: 0s;
     }
     @media (min-width: 1024px) {
       #spa-loading-overlay {
@@ -86,6 +87,7 @@
     #spa-loading-overlay.spa-visible {
       opacity: 1;
       pointer-events: all;
+      transition-delay: 300ms; /* Delay showing spinner to avoid flicker on fast loads */
     }
     .spa-spinner {
       width: 44px;
@@ -110,6 +112,7 @@
   <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-escape-lock-1"></script>
   <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
   <script src="{{ url_for('static', filename='js/auto_scrollbar.js') }}?v=scrollbar-fade-1"></script>
+
 </head>
 <body class="m-0 overflow-x-hidden">
 
@@ -448,17 +451,18 @@
   </aside>
 
   <!-- SPA Centered Loading Overlay (outside #main-content so it survives swaps) -->
-  <div id="spa-loading-overlay" aria-hidden="true">
+  <div id="spa-loading-overlay" class="htmx-indicator" aria-hidden="true">
     <div class="spa-spinner"></div>
   </div>
 
   <!-- Main Content Area -->
   <main id="main-content" class="sidebar-transition flex-1 min-h-screen lg:ml-64 flex flex-col">
     {% block content %}{% endblock %}
-       
-    <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-overlay-scrollbar-2"></script>
-    <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-1"></script>
-    <script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=spa-v1"></script>
+  </main>
+
+    <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
+    <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
+    <script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=spa-click-1"></script>
     <script>
       // Global Store View (Official / Starlink) scope toggle
       (function () {
@@ -858,6 +862,5 @@
       })();
     </script>
     {% endif %}
-  </main>
 </body>
 </html>
