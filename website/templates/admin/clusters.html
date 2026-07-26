@@ -252,6 +252,7 @@
 {% endif %}
 
 <script>
+(function () {
   {% if can_manage_clusters %}
   // Initialize Modal using the reusable Modal class
   const clusterModal = new Modal('clusterModal');
@@ -273,6 +274,7 @@
     }
   });
   {% endif %}
+})();
 </script>
 
 {% endblock %}

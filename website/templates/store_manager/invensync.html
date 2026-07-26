@@ -320,6 +320,12 @@
     </div>
     <div class="flex items-center gap-2">
       {% if current_user.role in ['Admin', 'Superadmin'] %}
+      {% if is_day_locked %}
+      <button id="admin-unfinalize-btn" type="button" onclick="unfinalizeInventory()" class="flex items-center gap-2 border border-red-300 bg-red-50 text-red-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-red-100 transition-all" title="Revert this day to editable so the store can re-enter data and attach files">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        <span>Unfinalize</span>
+      </button>
+      {% endif %}
       <button id="admin-unlock-selected-btn" data-admin-selected-toggle type="button" onclick="toggleAdminSelectedCell()" class="flex items-center gap-2 border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-amber-100 transition-all" title="Unlock the selected cells, row, or column">
         <span>Unlock Selected</span>
       </button>
@@ -619,7 +625,7 @@
                     <div class="flex items-center justify-center gap-0.5 min-w-[86px]">
                       <input type="number" class="sold-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                         value="{{ inv_item.draft_quantity_sold if inv_item and inv_item.draft_quantity_sold is defined else (inv_item.quantity_sold if inv_item and inv_item.quantity_sold else '') }}" onchange="updateInventoryRow(this)"{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
-                      <span class="inline-flex min-w-[42px] flex-col items-start gap-0.5">
+                      <span class="inline-flex flex-row items-center gap-0.5 flex-wrap">
                       {% set sold_source_qty = inv_item.draft_quantity_sold if inv_item and inv_item.draft_quantity_sold is defined else (inv_item.quantity_sold if inv_item and inv_item.quantity_sold else 0) %}
                       {% set bitbit_slices = inv_item.bitbit_sold_tags|sum(attribute='slices') if inv_item and inv_item.bitbit_sold_tags is defined and inv_item.bitbit_sold_tags else 0 %}
                       {% set pos_only_qty = sold_source_qty - bitbit_slices %}
@@ -870,6 +876,7 @@ const inventoryId = {{ inventory.id }};
 let inventoryInitialSnapshot = '';
 const inventoryDraftKey = `invensyncInventoryDraft:${inventoryId}`;
 const motifChargePayload = {{ motif_charge_payload|default(none)|tojson }};
+if (motifChargePayload) motifChargePayload.detected = false;
 const motifProductOptions = {{ motif_product_options|default([])|tojson }};
 const motifBreakdownKey = `invensyncMotifBreakdown:{{ store.id }}:{{ selected_date }}`;
 const missingDates = {{ missing_dates|default([])|tojson }};
@@ -1205,6 +1212,27 @@ function saveAdminCorrections() {
   .catch(error => {
     notify(error.message, 'error');
     refreshAdminCorrectionButton();
+  });
+}
+
+function unfinalizeInventory() {
+  if (!confirm('Unfinalize this day? The store will be able to edit and re-save data for this date.')) return;
+  const btn = document.getElementById('admin-unfinalize-btn');
+  if (btn) { btn.disabled = true; btn.classList.add('opacity-50', 'cursor-not-allowed'); }
+  fetch('/admin/invensync/unfinalize', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({inventory_id: inventoryId})
+  })
+  .then(async response => {
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.message || 'Unable to unfinalize.');
+    notify(data.message, 'success');
+    window.location.reload();
+  })
+  .catch(error => {
+    notify(error.message, 'error');
+    if (btn) { btn.disabled = false; btn.classList.remove('opacity-50', 'cursor-not-allowed'); }
   });
 }
 
@@ -3361,6 +3389,11 @@ function closeInvensyncExportModal() {
       </div>
       <div class="flex items-center gap-3">
         {% if current_user.role in ['Admin', 'Superadmin'] %}
+        {% if is_day_locked %}
+        <button type="button" onclick="unfinalizeInventory()" class="flex items-center gap-2 border border-red-300 bg-red-50 text-red-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-red-100 transition-all" title="Revert this day to editable so the store can re-enter data and attach files">
+          <span>Unfinalize</span>
+        </button>
+        {% endif %}
         <button data-admin-selected-toggle type="button" onclick="toggleAdminSelectedCell()" class="flex items-center gap-2 border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-amber-100 transition-all" title="Unlock the selected cells, row, or column">
           <span>Unlock Selected</span>
         </button>

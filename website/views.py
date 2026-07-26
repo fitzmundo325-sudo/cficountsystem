@@ -1863,13 +1863,6 @@ def _build_cluster_invensync_update_status(store_id, month_start, cutoff_date):
                 'missing_count': 0,
                 'latest_date': None,
             },
-            'wastage': {
-                'is_up_to_date': False,
-                'missing_dates': [],
-                'missing_ranges': [],
-                'missing_count': 0,
-                'latest_date': None,
-            },
             'pos_sold': {
                 'is_up_to_date': False,
                 'missing_dates': [],
@@ -1898,16 +1891,6 @@ def _build_cluster_invensync_update_status(store_id, month_start, cutoff_date):
         if row.inventory_date
     }
 
-    taf_wastage_dates = {
-        row.transaction_date for row in TafTransfer.query.filter(
-            TafTransfer.store_id == store_id,
-            TafTransfer.transaction_date >= month_start,
-            TafTransfer.transaction_date <= cutoff_date,
-            func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer',
-        ).with_entities(TafTransfer.transaction_date).all()
-        if row.transaction_date
-    }
-
     pos_sold_dates = set()
     delivery_dates = set()
     if previous_day_cutoff >= month_start:
@@ -1925,6 +1908,31 @@ def _build_cluster_invensync_update_status(store_id, month_start, cutoff_date):
             )
             if row.report_date
         }
+        staged_pos_dates = {
+            row.report_date for row in PosSoldStaging.query.filter(
+                PosSoldStaging.store_id == store_id,
+                PosSoldStaging.report_date >= month_start,
+                PosSoldStaging.report_date <= previous_day_cutoff,
+            ).with_entities(PosSoldStaging.report_date).distinct().all()
+            if row.report_date
+        }
+        pos_sold_dates |= staged_pos_dates
+        inv_item_pos_dates = {
+            row.inventory_date for row in (
+                db.session.query(DailyEndingInventory.inventory_date)
+                .join(DailyEndingInventoryItem, DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id)
+                .filter(
+                    DailyEndingInventory.store_id == store_id,
+                    DailyEndingInventory.inventory_date >= month_start,
+                    DailyEndingInventory.inventory_date <= previous_day_cutoff,
+                    func.coalesce(DailyEndingInventoryItem.quantity_sold, 0) > 0,
+                )
+                .distinct()
+                .all()
+            )
+            if row.inventory_date
+        }
+        pos_sold_dates |= inv_item_pos_dates
         delivery_dates = {
             row.report_date for row in (
                 db.session.query(RsoDelivery.report_date)
@@ -1940,12 +1948,10 @@ def _build_cluster_invensync_update_status(store_id, month_start, cutoff_date):
         }
 
     inventory_status = _build_single_update_status(finalized_dates, today, month_start, cutoff_date, 'inventory')
-    wastage_status = _build_single_update_status(taf_wastage_dates, today, month_start, cutoff_date, 'wastage')
     pos_sold_status = _build_single_update_status(pos_sold_dates, today, month_start, previous_day_cutoff, 'pos_sold')
     delivery_status = _build_single_update_status(delivery_dates, today, month_start, previous_day_cutoff, 'delivery')
     return {
         'inventory': inventory_status,
-        'wastage': wastage_status,
         'pos_sold': pos_sold_status,
         'delivery': delivery_status,
     }
@@ -2562,6 +2568,8 @@ def _validate_saved_motif_rows(pos_items, raw_value):
     if not motif_payload:
         return []
     raw_rows = _get_saved_motif_rows(raw_value)
+    if not raw_rows:
+        return []
     expected_groups = max(1, int(motif_payload.get('quantity', 0) or 0))
     product_ids = {
         int(row.get('product_id'))
@@ -3010,6 +3018,83 @@ def _reconcile_pos_sold_quantities_to_inventory(store_id, report_date, master_qu
         _recalculate_inventory_item(item)
     db.session.flush()
     return True
+
+
+def _ensure_daily_report_exists(store_id, report_date, user_id):
+    existing = DailyReport.query.filter_by(
+        store_id=store_id,
+        report_date=report_date,
+    ).first()
+    if existing:
+        return existing
+    report = DailyReport(
+        store_id=store_id,
+        report_date=report_date,
+        submitted_by=user_id,
+        status='Pending',
+    )
+    db.session.add(report)
+    db.session.flush()
+    return report
+
+
+def _commit_pos_sold_from_staging_items(daily_report, staging_items, z_reading_path=None, motif_json='[]'):
+    for item in staging_items:
+        db.session.add(PosSold(
+            daily_report_id=daily_report.id,
+            product_name=str(item.get('product_name', '')).strip(),
+            quantity=int(item.get('quantity', 0) or 0),
+            gross_sales=float(item.get('gross_sales', 0.0) or 0.0),
+            discount=float(item.get('discount', 0.0) or 0.0),
+            net_sales=float(item.get('net_sales', 0.0) or 0.0),
+            z_reading_image_path=z_reading_path,
+        ))
+    daily_report.pos_motif_breakdown_json = motif_json or '[]'
+    db.session.flush()
+
+
+def backfill_pos_sold_from_staging(user_id=None):
+    if not user_id:
+        admin_user = User.query.filter(
+            User.role.in_(['Superadmin', 'Admin'])
+        ).order_by(User.id.asc()).first()
+        user_id = admin_user.id if admin_user else 1
+
+    staging_records = PosSoldStaging.query.all()
+    created_count = 0
+    skipped_count = 0
+
+    for staging in staging_records:
+        has_pos_sold = PosSold.query.join(
+            DailyReport, DailyReport.id == PosSold.daily_report_id
+        ).filter(
+            DailyReport.store_id == staging.store_id,
+            DailyReport.report_date == staging.report_date,
+        ).first() is not None
+
+        if has_pos_sold:
+            skipped_count += 1
+            continue
+
+        try:
+            raw_items = json.loads(staging.items_json or '[]')
+        except (TypeError, ValueError):
+            raw_items = []
+
+        if not raw_items:
+            skipped_count += 1
+            continue
+
+        report = _ensure_daily_report_exists(staging.store_id, staging.report_date, user_id)
+        _commit_pos_sold_from_staging_items(
+            report,
+            raw_items,
+            z_reading_path=staging.z_reading_image_path,
+            motif_json=staging.motif_breakdown_json or '[]',
+        )
+        created_count += 1
+
+    return {'created': created_count, 'skipped': skipped_count, 'total_staging': len(staging_records)}
 
 
 def _ensure_invensync_inventory_for_pos_save(store, report_date, created_by):
@@ -4044,10 +4129,9 @@ def store_manager_pos_sold():
                 current_z_reading_image_preview_url = _build_drive_image_preview_url(candidate_link)
                 break
 
-        if not draft_pos_sold_items and not staged_pos_sold_items:
+        if saved_pos_sold_items:
             pos_sold_items = saved_pos_sold_items
-            if pos_sold_items:
-                pos_sold_source = 'saved'
+            pos_sold_source = 'saved'
 
     force_pos_flow_guide = str(request.args.get('guide') or '').strip() == '1'
     # POS Sold walkthroughs are opt-in: start them only from the Help page's
@@ -5924,7 +6008,15 @@ def submit_pos_sold_report():
         if not reflected_in_inventory:
             raise RuntimeError('InvenSync could not be initialized for this report date.')
         _pop_pos_sold_draft(store.id, report_date)
-        db.session.flush()
+        report = _ensure_daily_report_exists(store.id, report_date, current_user.id)
+        has_existing_pos = PosSold.query.filter_by(daily_report_id=report.id).first() is not None
+        if not has_existing_pos:
+            _commit_pos_sold_from_staging_items(
+                report,
+                draft_pos_sold_items,
+                z_reading_path=drive_link or None,
+                motif_json=json.dumps(motif_rows),
+            )
 
         log_audit_event(
             action='report.pos_sold.save',
@@ -5939,6 +6031,8 @@ def submit_pos_sold_report():
                 'z_reading_drive_link': drive_link,
             },
         )
+        db.session.delete(staging)
+        db.session.flush()
         db.session.commit()
 
         flash(
@@ -6190,6 +6284,10 @@ def submit_daily_report():
             db.session.delete(pos_staging)
             _pop_pos_sold_draft(store.id, report_date)
             auto_saved_pos_rows = len(staged_pos_sold_items)
+        elif has_existing_saved_pos and pos_staging:
+            new_report.pos_motif_breakdown_json = pos_staging.motif_breakdown_json or new_report.pos_motif_breakdown_json or '[]'
+            db.session.delete(pos_staging)
+            _pop_pos_sold_draft(store.id, report_date)
 
         log_audit_event(
             action='report.submit',

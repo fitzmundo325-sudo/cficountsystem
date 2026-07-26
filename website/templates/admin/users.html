@@ -112,7 +112,7 @@
             </span>
             </td>
 
-            <td class="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">
+            <td class="px-4 py-3 text-sm text-slate-600 max-w-[200px] truncate" title="{% if user.role == 'Store Manager' %}{{ user.managed_stores[0].name if user.managed_stores and user.managed_stores|length > 0 else '' }}{% elif user.role == 'Cluster Manager' %}{{ user.managed_clusters[0].name if user.managed_clusters and user.managed_clusters|length > 0 else '' }}{% else %}{% if user.assigned_stores %}{{ user.assigned_stores|map(attribute='name')|join(', ') }}{% elif user.assigned_store %}{{ user.assigned_store.name }}{% endif %}{% endif %}">
             {% if user.role == 'Store Manager' %}
               {{ user.managed_stores[0].name if user.managed_stores and user.managed_stores|length > 0 else '--' }}
             {% elif user.role == 'Cluster Manager' %}
@@ -397,6 +397,7 @@
 </div>
 
 <script>
+(function () {
   const userModal = new Modal('userModal');
   const editUserModal = new Modal('editUserModal');
   const createRoleEl = document.getElementById('role');
@@ -516,6 +517,7 @@
       return false;
     }
   });
+})();
 </script>
 
 {% endblock %}

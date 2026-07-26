@@ -1,4 +1,7 @@
 (function () {
+  if (window.__pwa_initialized) return;
+  window.__pwa_initialized = true;
+
   let deferredInstallPrompt = null;
 
   function isStandalone() {
@@ -81,9 +84,12 @@
     }
   });
 
-  document.addEventListener('DOMContentLoaded', () => {
+  // Since DOMContentLoaded might have already fired, let's run setup immediately
+  function initPwaButtons() {
     getButtons().forEach((button) => button.classList.add('hidden'));
     getButtons().forEach((button) => {
+      // Avoid duplicate click listeners
+      button.removeEventListener('click', installApp);
       button.addEventListener('click', installApp);
     });
 
@@ -94,5 +100,11 @@
         }
       });
     }
-  });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initPwaButtons);
+  } else {
+    initPwaButtons();
+  }
 })();
