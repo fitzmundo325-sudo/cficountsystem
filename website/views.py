@@ -2617,9 +2617,69 @@ def _normalize_product_text(value):
     return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
 
 
+DEFAULT_POS_SOLD_ALIASES = {
+    # Bag & Packaging Aliases
+    'bag kraft large': 144,
+    'bag kraft medium': 144,
+    'bag kraft small': 144,
+    'bag kraft': 144,
+    'kraft bag large': 144,
+    'kraft bag medium': 144,
+    'kraft bag small': 144,
+    'kraft bag': 144,
+    'cake tote bag': 143,
+    'cake bag 9rd/8rd': 149,
+    'cake bag': 149,
+    'non woven bag': 144,
+    'non woven bag 023': 144,
+    # Candle Aliases
+    'candle sml- blue': 131,
+    'candle sml blue': 131,
+    'candle sml- pink': 131,
+    'candle sml pink': 131,
+    'candle sml- red': 131,
+    'candle sml red': 131,
+    'candle sml- white': 131,
+    'candle sml white': 131,
+    'candle sml- yellow': 131,
+    'candle sml yellow': 131,
+    'candle sml': 131,
+    'candle big - blue': 131,
+    'stick candles - blue': 131,
+    'stick candles - pink': 131,
+}
+
+
+def _ensure_default_pos_sold_aliases():
+    try:
+        alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+        added = False
+        for raw_alias, master_id in DEFAULT_POS_SOLD_ALIASES.items():
+            norm = _normalize_product_text(raw_alias)
+            if not norm or norm in alias_lookup:
+                continue
+            db.session.add(
+                ProductAlias(
+                    alias_name=raw_alias.upper(),
+                    normalized_alias=norm,
+                    product_master_id=int(master_id),
+                )
+            )
+            added = True
+        if added:
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
 def _build_pos_sold_master_lookups():
     alias_lookup = {}
     master_lookup = {}
+
+    for alias_text, product_master_id in DEFAULT_POS_SOLD_ALIASES.items():
+        norm = _normalize_product_text(alias_text)
+        if norm:
+            alias_lookup[norm] = int(product_master_id)
 
     for normalized_alias, product_master_id in (
         db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
@@ -2720,6 +2780,7 @@ def _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
 
 
 def _validate_pos_sold_product_mappings(items):
+    _ensure_default_pos_sold_aliases()
     alias_lookup, master_lookup = _build_pos_sold_master_lookups()
     motif_name = _normalize_product_text('ADDITIONAL CHARGE FOR MOTIF')
     unmapped_names = []
@@ -2731,6 +2792,8 @@ def _validate_pos_sold_product_mappings(items):
         if normalized_name in alias_lookup or normalized_name in master_lookup:
             continue
         if _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
+            continue
+        if _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup) is not None:
             continue
         unmapped_names.append(product_name)
     if unmapped_names:
