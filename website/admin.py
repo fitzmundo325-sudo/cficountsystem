@@ -44,6 +44,64 @@ def _can_manage_users():
     return current_user.role in ('Superadmin', 'Admin', 'General Manager')
 
 
+def _daily_report_has_meaningful_data(report):
+    if not report:
+        return False
+
+    if (report.ci_number or '').strip():
+        return True
+
+    numeric_fields = [
+        'pos_gross_sales', 'pos_net_sales', 'pos_tc',
+        'ci_regular_gross_sales', 'ci_regular_net_sales', 'ci_tc',
+        'ci_sales_discount',
+        'boothselling_sales', 'boothselling_tc',
+        'bulk_order_sales', 'bulk_order_tc',
+        'reseller_sales', 'reseller_tc',
+        'tieup_sales', 'tieup_tc',
+        'gow_sales', 'gow_tc',
+        'ambulant_sales', 'ambulant_tc',
+        'extended_hours_sales', 'extended_hours_tc',
+        'gds_sales', 'gds_tc',
+        'grab_sales', 'grab_tc',
+        'foodpanda_sales', 'foodpanda_tc',
+        'paymaya_sales', 'paymaya_tc',
+        'gcash_sales', 'gcash_tc',
+        'ldts_gc', 'ldts_rolls', 'ldts_premium',
+        'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium',
+        'ending_inv_slices', 'ending_inv_mamon',
+        'spoilage_gc', 'spoilage_rolls', 'spoilage_premium', 'spoilage_others',
+        'senior_pwd_discount', 'promo_ldts_discount', 'bulk_orders_discount',
+        'total_net_spoilage', 'spoilage_percentage', 'mtd_percentage',
+    ]
+
+    for field_name in numeric_fields:
+        value = getattr(report, field_name, None)
+        if value is None:
+            continue
+        try:
+            if float(value) != 0.0:
+                return True
+        except (TypeError, ValueError):
+            continue
+
+    return False
+
+
+def _delete_empty_pending_report(report):
+    if not report or report.status != 'Pending':
+        return False
+
+    if PosSold.query.filter_by(daily_report_id=report.id).first():
+        return False
+
+    if _daily_report_has_meaningful_data(report):
+        return False
+
+    db.session.delete(report)
+    return True
+
+
 _CLEAR_DATA_OPTIONS = {
     'rso': {
         'label': 'RSO delivery data',
@@ -781,6 +839,7 @@ def delete_pos_sold_entry(pos_sold_id):
             report.pos_net_sales = 0.0
             report.pos_tc = 0
             report.pos_motif_breakdown_json = '[]'
+            _delete_empty_pending_report(report)
         log_audit_event(
             action='admin.pos_sold.delete',
             entity_type='PosSold',
@@ -925,6 +984,7 @@ def delete_all_pos_sold_entries():
         report.pos_net_sales = 0.0
         report.pos_tc = 0
         report.pos_motif_breakdown_json = '[]'
+        _delete_empty_pending_report(report)
         log_audit_event(
             action='admin.pos_sold.delete_all',
             entity_type='DailyReport',
