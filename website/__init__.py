@@ -6,9 +6,9 @@ import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from re import A
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import Flask, redirect, render_template, request, session, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager, current_user
+from flask_login import LoginManager, current_user, logout_user
 from flask_caching import Cache
 from sqlalchemy import text, func
 from werkzeug.exceptions import HTTPException
@@ -472,6 +472,8 @@ def create_app():
             return redirect(url_for('admin.dashboard'))
         return render_template('maintenance.html', maintenance_mode=mode)
 
+    app.config['SESSION_IDLE_TIMEOUT_SECONDS'] = int(os.environ.get('SESSION_IDLE_TIMEOUT_SECONDS', str(15 * 60)))
+
     @app.before_request
     def enforce_maintenance_mode():
         if request.endpoint in ('static', 'auth.login', 'auth.logout', 'maintenance', 'service_worker'):
@@ -484,6 +486,34 @@ def create_app():
         if mode and mode.is_enabled:
             return redirect(url_for('maintenance'))
         return None
+
+    @app.before_request
+    def enforce_idle_logout():
+        if request.endpoint in ('static', 'auth.login', 'auth.logout', 'maintenance', 'service_worker'):
+            return None
+        if not current_user.is_authenticated:
+            return None
+
+        timeout_seconds = app.config.get('SESSION_IDLE_TIMEOUT_SECONDS', 60 * 60)
+        last_touch = float(session.get('_presence_touch_epoch', 0) or 0)
+        if not last_touch:
+            session['_presence_touch_epoch'] = datetime.now(timezone.utc).timestamp()
+            return None
+
+        if (datetime.now(timezone.utc).timestamp() - last_touch) <= timeout_seconds:
+            return None
+
+        session.clear()
+        try:
+            current_user.last_activity_at = None
+            current_user.last_interaction_at = None
+            db.session.add(current_user)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        logout_user()
+        flash('You were logged out because the session was idle for too long. Please log in again.', category='info')
+        return redirect(url_for('auth.login'))
 
     @app.before_request
     def track_authenticated_user_presence():
