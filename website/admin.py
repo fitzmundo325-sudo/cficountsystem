@@ -774,6 +774,13 @@ def delete_pos_sold_entry(pos_sold_id):
             'net_sales': pos_item.net_sales,
         }
         db.session.delete(pos_item)
+        db.session.flush()
+        remaining_pos_items = PosSold.query.filter_by(daily_report_id=report.id).count()
+        if remaining_pos_items == 0:
+            report.pos_gross_sales = 0.0
+            report.pos_net_sales = 0.0
+            report.pos_tc = 0
+            report.pos_motif_breakdown_json = '[]'
         log_audit_event(
             action='admin.pos_sold.delete',
             entity_type='PosSold',
@@ -914,6 +921,10 @@ def delete_all_pos_sold_entries():
         }
         for item in pos_items:
             db.session.delete(item)
+        report.pos_gross_sales = 0.0
+        report.pos_net_sales = 0.0
+        report.pos_tc = 0
+        report.pos_motif_breakdown_json = '[]'
         log_audit_event(
             action='admin.pos_sold.delete_all',
             entity_type='DailyReport',

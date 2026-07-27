@@ -21,6 +21,32 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <script>
+    (function () {
+      const isAuthenticated = {{ 'true' if current_user.is_authenticated else 'false' }};
+      if (!isAuthenticated) {
+        return;
+      }
+
+      const timeoutSeconds = Number('{{ config.get("SESSION_IDLE_TIMEOUT_SECONDS", 3600) }}') || 3600;
+      let idleTimer;
+
+      const resetTimer = () => {
+        if (idleTimer) {
+          clearTimeout(idleTimer);
+        }
+        idleTimer = setTimeout(() => {
+          window.location.replace('{{ url_for("auth.logout") }}');
+        }, timeoutSeconds * 1000);
+      };
+
+      ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll', 'click'].forEach((eventName) => {
+        document.addEventListener(eventName, resetTimer, { passive: true });
+      });
+
+      resetTimer();
+    })();
+  </script>
   <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
   <link href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" rel="stylesheet">
