@@ -3368,9 +3368,36 @@ def _rso_source_filter(source='delivery'):
     return RsoDelivery.upload_source == source
 
 
-def _get_rso_draft_meta(store_id, report_date, source='delivery'):
+def _get_rso_draft_object(store_id, report_date, create_if_missing=False):
+    for obj in db.session.new:
+        if isinstance(obj, RsoDeliveryDraft) and obj.store_id == store_id and obj.report_date == report_date:
+            if obj not in db.session.deleted:
+                return obj
+    for obj in db.session.dirty:
+        if isinstance(obj, RsoDeliveryDraft) and obj.store_id == store_id and obj.report_date == report_date:
+            if obj not in db.session.deleted:
+                return obj
+
     with db.session.no_autoflush:
         draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+
+    if draft and draft in db.session.deleted:
+        draft = None
+
+    if not draft and create_if_missing:
+        draft = RsoDeliveryDraft(
+            store_id=store_id,
+            report_date=report_date,
+            items_json='[]',
+            upload_filename='{}',
+            updated_by=current_user.id,
+        )
+        db.session.add(draft)
+    return draft
+
+
+def _get_rso_draft_meta(store_id, report_date, source='delivery'):
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=False)
     if not draft:
         return {}
     try:
@@ -3383,16 +3410,7 @@ def _get_rso_draft_meta(store_id, report_date, source='delivery'):
 
 
 def _set_rso_draft_meta(store_id, report_date, meta, source='delivery'):
-    with db.session.no_autoflush:
-        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
-    if not draft:
-        draft = RsoDeliveryDraft(
-            store_id=store_id,
-            report_date=report_date,
-            items_json='[]',
-            updated_by=current_user.id,
-        )
-        db.session.add(draft)
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=True)
     try:
         filenames = json.loads(draft.upload_filename or '{}')
     except (TypeError, ValueError):
@@ -3406,8 +3424,7 @@ def _set_rso_draft_meta(store_id, report_date, meta, source='delivery'):
 
 
 def _pop_rso_draft_meta(store_id, report_date, source='delivery'):
-    with db.session.no_autoflush:
-        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=False)
     if not draft:
         return {}
     try:
@@ -3422,8 +3439,7 @@ def _pop_rso_draft_meta(store_id, report_date, source='delivery'):
 
 
 def _get_rso_draft(store_id, report_date, source='delivery'):
-    with db.session.no_autoflush:
-        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=False)
     if not draft:
         return []
     try:
@@ -3438,15 +3454,7 @@ def _get_rso_draft(store_id, report_date, source='delivery'):
 
 
 def _set_rso_draft(store_id, report_date, items, source='delivery'):
-    with db.session.no_autoflush:
-        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
-    if not draft:
-        draft = RsoDeliveryDraft(
-            store_id=store_id,
-            report_date=report_date,
-            updated_by=current_user.id,
-        )
-        db.session.add(draft)
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=True)
     try:
         payload = json.loads(draft.items_json or '{}')
     except (TypeError, ValueError):
@@ -3461,8 +3469,7 @@ def _set_rso_draft(store_id, report_date, items, source='delivery'):
 
 
 def _pop_rso_draft(store_id, report_date, source='delivery'):
-    with db.session.no_autoflush:
-        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=False)
     if not draft:
         return []
     try:
