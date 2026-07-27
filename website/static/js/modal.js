@@ -7,6 +7,9 @@ let modalScrollLockCount = 0;
 let modalScrollTop = 0;
 
 function lockPageScroll() {
+  if (typeof window.hideSpaLoading === 'function') {
+    window.hideSpaLoading();
+  }
   modalScrollLockCount += 1;
   if (modalScrollLockCount > 1) return;
 
@@ -82,6 +85,9 @@ class Modal {
   }
   
   open() {
+    if (typeof window.hideSpaLoading === 'function') {
+      window.hideSpaLoading();
+    }
     this.modal.classList.remove('hidden');
     lockPageScroll();
     
@@ -344,6 +350,9 @@ function showConfirmationModal(options) {
   }
 
   // Open modal with animation
+  if (typeof window.hideSpaLoading === 'function') {
+    window.hideSpaLoading();
+  }
   modal.classList.remove('hidden');
   lockPageScroll();
   
@@ -357,6 +366,9 @@ function showConfirmationModal(options) {
   // Event listeners
   confirmBtn.addEventListener('click', () => {
     closeModal();
+    if (typeof window.showSpaLoading === 'function') {
+      window.showSpaLoading();
+    }
     if (onConfirm) onConfirm();
   });
 
