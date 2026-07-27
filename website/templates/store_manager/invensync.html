@@ -185,6 +185,47 @@
     pointer-events: auto;
   }
 
+  .motif-button-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    transform: translate(50%, -50%);
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    padding: 0;
+    border-radius: 9999px;
+    background: #ef4444;
+    border: 2px solid #0f172a;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1;
+    color: #ffffff;
+    font-weight: 700;
+    animation: motifBadgePulse 1.8s ease-in-out infinite;
+  }
+
+  .motif-button-badge.motif-button-badge--count {
+    width: auto;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+  }
+
+  @keyframes motifBadgePulse {
+    0%, 100% {
+      transform: translate(50%, -50%) scale(1);
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    }
+    50% {
+      transform: translate(50%, -50%) scale(1.15);
+      box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+    }
+  }
+
   .motif-tour-target {
     position: relative;
     z-index: 10031 !important;
@@ -345,8 +386,9 @@
       </button>
       {% endif %}
       {% if current_user.role == 'Store Manager' and motif_charge_payload %}
-      <button type="button" onclick="openMotifBreakdownModal()" class="flex items-center gap-2 border border-slate-300 bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-slate-800 transition-all" title="Open Additional Charge for Motif breakdown">
+      <button id="motif-breakdown-button" type="button" onclick="openMotifBreakdownModal()" class="relative flex items-center gap-2 border border-slate-300 bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-slate-800 transition-all" title="Open Additional Charge for Motif breakdown">
         <span>Motif Breakdown</span>
+        <span id="motif-breakdown-badge" class="motif-button-badge hidden"></span>
       </button>
       {% endif %}
       {% if current_user.role == 'Inventory Staff' %}
@@ -876,7 +918,6 @@ const inventoryId = {{ inventory.id }};
 let inventoryInitialSnapshot = '';
 const inventoryDraftKey = `invensyncInventoryDraft:${inventoryId}`;
 const motifChargePayload = {{ motif_charge_payload|default(none)|tojson }};
-if (motifChargePayload) motifChargePayload.detected = false;
 const motifProductOptions = {{ motif_product_options|default([])|tojson }};
 const motifBreakdownKey = `invensyncMotifBreakdown:{{ store.id }}:{{ selected_date }}`;
 const missingDates = {{ missing_dates|default([])|tojson }};
@@ -1758,6 +1799,32 @@ function startMotifBreakdownGuide() {
   showMotifBreakdownGuideStep();
 }
 
+function updateMotifBreakdownBadge() {
+  const badge = document.getElementById('motif-breakdown-badge');
+  const button = document.getElementById('motif-breakdown-button');
+  const saved = getSavedMotifBreakdown();
+  const showButton = Boolean(motifChargePayload?.detected && !saved);
+  if (button) {
+    button.classList.toggle('hidden', !showButton);
+  }
+  if (!badge) return;
+  const showNotification = showButton;
+  badge.classList.toggle('hidden', !showNotification);
+  if (!showNotification) {
+    badge.textContent = '';
+    badge.classList.remove('motif-button-badge--count');
+    return;
+  }
+  const count = Number(motifChargePayload?.items?.length || 0);
+  if (count > 1) {
+    badge.textContent = count;
+    badge.classList.add('motif-button-badge--count');
+  } else {
+    badge.textContent = '';
+    badge.classList.remove('motif-button-badge--count');
+  }
+}
+
 function saveMotifBreakdown() {
   const rows = readMotifBreakdownRows();
   const filledRows = rows.filter(row => row.product_id);
@@ -1770,6 +1837,7 @@ function saveMotifBreakdown() {
       if (typeof updateInventoryRow === 'function') updateInventoryRow(input);
     });
     notify('Motif breakdown cleared for this store/date.', 'info');
+    updateMotifBreakdownBadge();
     closeMotifBreakdownModal();
     return;
   }
@@ -1805,13 +1873,23 @@ function saveMotifBreakdown() {
     })
   }));
   applyMotifTagsToSoldColumn();
+  updateMotifBreakdownBadge();
   notify('Motif breakdown saved for this store/date.', 'success');
   closeMotifBreakdownModal();
 }
 
 document.addEventListener('DOMContentLoaded', function() {
   const modal = getMotifModal();
-  if (!modal || !motifChargePayload?.detected) return;
+  if (!modal) return;
+  const hasMotifPayload = Boolean(motifChargePayload?.detected);
+  const hasSavedMotifBreakdown = loadMotifBreakdown();
+  applyMotifTagsToSoldColumn();
+  updateMotifBreakdownBadge();
+
+  if (!hasMotifPayload) {
+    return;
+  }
+
   modal.querySelectorAll('.motif-product-input').forEach(input => {
     input.addEventListener('input', function() {
       renderMotifProductDropdown(input);
@@ -1846,8 +1924,6 @@ document.addEventListener('DOMContentLoaded', function() {
       resetMotifBreakdownRow(row);
     }
   });
-  const hasSavedMotifBreakdown = loadMotifBreakdown();
-  applyMotifTagsToSoldColumn();
   if (!hasSavedMotifBreakdown) {
     setTimeout(() => {
       openMotifBreakdownModal();

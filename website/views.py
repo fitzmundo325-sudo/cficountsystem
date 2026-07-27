@@ -4140,6 +4140,11 @@ def store_manager_pos_sold():
             pos_sold_items = saved_pos_sold_items
             pos_sold_source = 'saved'
 
+    if selected_report and not saved_pos_sold_items and not pos_staging and not draft_pos_sold_items:
+        selected_report = None
+    if selected_report and pos_sold_source == 'draft' and not pos_staging:
+        selected_report = None
+
     force_pos_flow_guide = str(request.args.get('guide') or '').strip() == '1'
     # POS Sold walkthroughs are opt-in: start them only from the Help page's
     # guide link. The page-level Help button starts the same tour in JavaScript.
@@ -5955,7 +5960,10 @@ def submit_pos_sold_report():
             motif_breakdown = json.loads(motif_breakdown_raw) if motif_breakdown_raw else {}
         except (TypeError, ValueError):
             motif_breakdown = {}
-        motif_rows = _validate_saved_motif_rows(draft_pos_sold_items, motif_breakdown)
+        try:
+            motif_rows = _validate_saved_motif_rows(draft_pos_sold_items, motif_breakdown)
+        except ValueError:
+            motif_rows = []
 
         z_reading_image_file = request.files.get('z_reading_image')
         z_reading_base64 = (request.form.get('z_reading_image_base64') or '').strip()
@@ -6042,10 +6050,17 @@ def submit_pos_sold_report():
         db.session.flush()
         db.session.commit()
 
-        flash(
-            f'POS Sold for {report_date.strftime("%B %d, %Y")} saved and reflected in InvenSync.',
-            category='success'
-        )
+        if motif_rows:
+            flash(
+                f'POS Sold for {report_date.strftime("%B %d, %Y")} saved and reflected in InvenSync.',
+                category='success'
+            )
+        else:
+            flash(
+                f'POS Sold for {report_date.strftime("%B %d, %Y")} saved and reflected in InvenSync. '
+                'If Additional Charge for Motif was detected, you can complete the breakdown later from InvenSync.',
+                category='info'
+            )
 
     except Exception as exc:
         db.session.rollback()
@@ -8163,6 +8178,33 @@ def invensync():
             include_bitbit_details=True,
         )
         saved_motif_sold_details = _build_motif_sold_details(saved_motif_rows)
+    motif_source_items = []
+    if final_pos_items:
+        motif_source_items = final_pos_items
+    elif staged_pos_items:
+        motif_source_items = staged_pos_items
+
+    if motif_source_items:
+        motif_payload_items = []
+        for item in motif_source_items:
+            if isinstance(item, dict):
+                motif_payload_items.append({
+                    'product_name': item.get('product_name'),
+                    'quantity': item.get('quantity'),
+                    'gross_sales': item.get('gross_sales'),
+                    'discount': item.get('discount'),
+                    'net_sales': item.get('net_sales'),
+                })
+            else:
+                motif_payload_items.append({
+                    'product_name': getattr(item, 'product_name', None),
+                    'quantity': getattr(item, 'quantity', None),
+                    'gross_sales': getattr(item, 'gross_sales', None),
+                    'discount': getattr(item, 'discount', None),
+                    'net_sales': getattr(item, 'net_sales', None),
+                })
+        motif_charge_payload = _build_motif_charge_payload_from_pos_items(motif_payload_items)
+
     if final_pos_items or staged_pos_items:
         for inv_item in inventory_items.values():
             if inv_item.product_master_id:

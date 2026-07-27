@@ -112,6 +112,32 @@
   <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-escape-lock-1"></script>
   <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
   <script src="{{ url_for('static', filename='js/auto_scrollbar.js') }}?v=scrollbar-fade-1"></script>
+  <script>
+    (function () {
+      const isAuthenticated = {{ 'true' if current_user.is_authenticated else 'false' }};
+      if (!isAuthenticated) {
+        return;
+      }
+
+      const timeoutSeconds = Number('{{ config.get("SESSION_IDLE_TIMEOUT_SECONDS", 3600) }}') || 3600;
+      let idleTimer;
+
+      const resetTimer = () => {
+        if (idleTimer) {
+          clearTimeout(idleTimer);
+        }
+        idleTimer = setTimeout(() => {
+          window.location.replace('{{ url_for("auth.logout") }}');
+        }, timeoutSeconds * 1000);
+      };
+
+      ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll', 'click'].forEach((eventName) => {
+        document.addEventListener(eventName, resetTimer, { passive: true });
+      });
+
+      resetTimer();
+    })();
+  </script>
 
 </head>
 <body class="m-0 overflow-x-hidden">
