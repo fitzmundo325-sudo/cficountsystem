@@ -181,9 +181,13 @@
         <h3 class="text-sm md:text-base font-bold text-slate-900">POS Sold Extract / File</h3>
         <p class="text-xs text-slate-500 mt-0.5">Extracted rows are preview-only and do not affect InvenSync until you click Save.</p>
       </div>
-      {% if selected_report %}
+      {% if selected_report and pos_sold_source != 'draft' %}
       <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium {{ 'bg-amber-100 text-amber-700' if selected_report.status == 'Pending' else ('bg-emerald-100 text-emerald-700' if selected_report.status == 'Approved' else 'bg-rose-100 text-rose-700') }}">
         {{ selected_report.status }}
+      </span>
+      {% elif pos_sold_source == 'draft' and pos_scan_success %}
+      <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-sky-100 text-sky-700">
+        Draft scanned — Save to submit
       </span>
       {% endif %}
     </div>
@@ -569,7 +573,6 @@
     const posScanRows = {{ (pos_scan_rows | default(0)) | tojson }};
     const selectedReportDate = {{ selected_report_date|tojson }};
     const motifChargePayload = {{ motif_charge_payload|default(none)|tojson }};
-    if (motifChargePayload) motifChargePayload.detected = false;
     const motifProductOptions = {{ motif_product_options|default([])|tojson }};
     const motifBreakdownKey = `invensyncMotifBreakdown:{{ store.id }}:${selectedReportDate}`;
     const missingDates = {{ missing_dates|tojson }};
@@ -1083,6 +1086,10 @@
       if (posClearDateInput) posClearDateInput.value = dateValue;
     }
 
+    function shouldPromptForMotifBreakdown() {
+      return Boolean(motifChargePayload?.detected && !hasCompleteMotifBreakdown());
+    }
+
     if (reportDateInput) {
       reportDateInput.addEventListener('change', function() {
         syncPosDateFields();
@@ -1135,11 +1142,8 @@
       goDailySummaryBtn.addEventListener('click', function(event) {
         event.preventDefault();
         const savingDate = reportDateInput ? reportDateInput.value : selectedReportDate;
-        if (motifChargePayload?.detected && !hasCompleteMotifBreakdown()) {
-          notifyPos('Additional Charge for Motif was detected. Complete and save every motif breakdown before proceeding.', 'warning');
-          openMotifModal();
-          showMotifGuideStartModal();
-          return;
+        if (shouldPromptForMotifBreakdown()) {
+          notifyPos('Additional Charge for Motif was detected. You can save the file now and finish the breakdown later in InvenSync.', 'warning');
         }
         if (posSaveMotifJson) {
           posSaveMotifJson.value = localStorage.getItem(motifBreakdownKey) || '';
@@ -1225,7 +1229,7 @@
         });
       });
       const hasSavedMotifRows = loadMotifRows();
-      if (posScanSuccess || !hasSavedMotifRows) {
+      if (posScanSuccess && !hasSavedMotifRows) {
         setTimeout(function() {
           openMotifModal();
           showMotifGuideStartModal();
