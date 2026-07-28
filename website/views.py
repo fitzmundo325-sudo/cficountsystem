@@ -6338,8 +6338,10 @@ def submit_daily_report():
         }
         authoritative_pos_items = staged_pos_sold_items or existing_final_pos_items
         authoritative_pos_totals = _build_pos_sales_autofill_totals(authoritative_pos_items)
-        report_values['pos_gross_sales'] = authoritative_pos_totals['pos_gross_sales']
-        report_values['pos_net_sales'] = authoritative_pos_totals['pos_net_sales']
+        if report_values.get('pos_gross_sales', 0.0) == 0.0:
+            report_values['pos_gross_sales'] = authoritative_pos_totals['pos_gross_sales']
+        if report_values.get('pos_net_sales', 0.0) == 0.0:
+            report_values['pos_net_sales'] = authoritative_pos_totals['pos_net_sales']
 
         if existing_report:
             new_report = existing_report
