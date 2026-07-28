@@ -192,32 +192,38 @@
       {% endif %}
     </div>
     <div class="p-4 space-y-3">
-      {% if user and user.role == 'Store Manager' and not pos_sold_locked %}
+      {% if user and user.role == 'Store Manager' %}
       <form action="{{ url_for('views.review_pos_sold_excel') }}" method="POST" enctype="multipart/form-data" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 lg:items-end">
         <input type="hidden" name="report_date" id="pos-upload-report-date" value="{{ selected_report_date if selected_report_date else today }}">
         <div>
           <label for="pos_file" class="block text-sm font-semibold text-slate-800 mb-1">POS Excel File</label>
           <p class="text-xs text-slate-500 mb-1">Upload the POS sold extract file.</p>
           <div class="flex flex-wrap items-center gap-2">
+            {% if not pos_sold_locked %}
             <input id="pos_file" name="pos_file" type="file" accept=".xls,.xlsx" required class="sr-only pos-file-input" data-file-label="pos-file-label">
             <label id="pos-file-guide-target" for="pos_file" class="flex flex-1 min-h-[44px] cursor-pointer items-center overflow-hidden rounded-none border border-slate-200 bg-white text-sm transition-colors hover:border-amber-300">
               <span class="shrink-0 border-r border-slate-200 bg-slate-50 px-3 py-2 font-medium text-slate-800">Choose File</span>
               <span id="pos-file-label" class="truncate px-3 py-2 text-slate-500">No file chosen</span>
             </label>
-            <!-- Download Template button removed to restore previous page design -->
+            {% else %}
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-600 shrink-0"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span class="text-xs font-semibold text-emerald-800">POS Sold saved for {{ selected_report_date }}</span>
+            </div>
+            {% endif %}
           </div>
         </div>
         <div class="flex items-center gap-2">
-          {% if pos_sold_source == 'draft' and pos_sold_items %}
-          <button
-            id="go-daily-summary-btn"
-            type="button"
+          {% if pos_sold_source in ('staged', 'saved') %}
+          <a
+            href="{{ url_for('views.store_manager_report', date=selected_report_date) }}"
             class="h-10 w-full sm:w-auto px-5 inline-flex items-center justify-center text-xs font-semibold text-white bg-amber-600 rounded-md hover:bg-amber-700 transition-all shadow-sm shadow-amber-600/20 text-center"
           >
             Next
-          </button>
+          </a>
+          {% elif pos_sold_source == 'draft' and pos_sold_items %}
           <button
-            id="save-only-btn"
+            id="go-daily-summary-btn"
             type="button"
             class="h-10 w-full sm:w-auto px-5 inline-flex items-center justify-center text-xs font-semibold text-white bg-emerald-600 rounded-md hover:bg-emerald-700 transition-all shadow-sm shadow-emerald-600/20 text-center"
           >
@@ -243,6 +249,8 @@
         <input type="hidden" id="pos-save-redirect-to" name="redirect_to" value="daily_report">
       </form>
       {% endif %}
+
+
       <div id="pos-tour-sample-card" class="hidden rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p class="text-[11px] font-semibold text-amber-700">Showing extracted preview data (not yet saved).</p>
@@ -572,7 +580,7 @@
     const posUploadDateInput = document.getElementById('pos-upload-report-date');
     const posClearDateInput = document.getElementById('pos-clear-report-date');
     const goDailySummaryBtn = document.getElementById('go-daily-summary-btn');
-    const saveOnlyBtn = document.getElementById('save-only-btn');
+
     const posSaveForm = document.getElementById('pos-save-form');
     const posSaveRedirectTo = document.getElementById('pos-save-redirect-to');
     const posSaveMotifJson = document.getElementById('pos-save-motif-json');
@@ -1160,56 +1168,13 @@
           posSaveMotifJson.value = localStorage.getItem(motifBreakdownKey) || '';
         }
         if (posSaveRedirectTo) {
-          posSaveRedirectTo.value = 'daily_report';
+          posSaveRedirectTo.value = 'pos_sold';
         }
         const savePosSold = function() {
           if (!posSaveForm || goDailySummaryBtn.disabled) return;
           goDailySummaryBtn.disabled = true;
           goDailySummaryBtn.textContent = 'Saving...';
           goDailySummaryBtn.classList.add('cursor-not-allowed', 'opacity-70');
-          posSaveForm.submit();
-        };
-        if (typeof showConfirmationModal === 'function') {
-          showConfirmationModal({
-            title: 'Save POS Sold & Proceed?',
-            size: 'large',
-            modalWidth: '980px',
-            messageHtml: `
-              <div class="rounded-3xl border border-amber-200 bg-amber-50 px-8 py-7 text-left">
-                <p class="text-base font-bold uppercase tracking-wide text-amber-700">Saving Date Indicator</p>
-                <p class="mt-3 text-4xl font-extrabold leading-tight text-slate-900">You are saving for the day of: ${formatReportDateLong(savingDate)}</p>
-                <p class="mt-3 text-lg text-slate-600">This follows the date selected in the calendar.</p>
-              </div>
-              <p class="mt-7 text-xl text-slate-700">Saving will permanently store the scanned POS Sold data and redirect you to the Daily Report page.</p>
-            `,
-            confirmText: 'Yes, Save & Proceed',
-            cancelText: 'Cancel',
-            onConfirm: savePosSold
-          });
-          return;
-        }
-        savePosSold();
-      });
-    }
-
-    if (saveOnlyBtn) {
-      saveOnlyBtn.addEventListener('click', function(event) {
-        event.preventDefault();
-        const savingDate = reportDateInput ? reportDateInput.value : selectedReportDate;
-        if (shouldPromptForMotifBreakdown()) {
-          notifyPos('Additional Charge for Motif was detected. You can save the file now and finish the breakdown later in InvenSync.', 'warning');
-        }
-        if (posSaveMotifJson) {
-          posSaveMotifJson.value = localStorage.getItem(motifBreakdownKey) || '';
-        }
-        if (posSaveRedirectTo) {
-          posSaveRedirectTo.value = 'pos_sold';
-        }
-        const savePosSold = function() {
-          if (!posSaveForm || saveOnlyBtn.disabled) return;
-          saveOnlyBtn.disabled = true;
-          saveOnlyBtn.textContent = 'Saving...';
-          saveOnlyBtn.classList.add('cursor-not-allowed', 'opacity-70');
           posSaveForm.submit();
         };
         if (typeof showConfirmationModal === 'function') {
@@ -1223,7 +1188,7 @@
                 <p class="mt-3 text-4xl font-extrabold leading-tight text-slate-900">You are saving for the day of: ${formatReportDateLong(savingDate)}</p>
                 <p class="mt-3 text-lg text-slate-600">This follows the date selected in the calendar.</p>
               </div>
-              <p class="mt-7 text-xl text-slate-700">Saving will permanently store the scanned POS Sold data and immediately reflect it in the InvenSync Sold column.</p>
+              <p class="mt-7 text-xl text-slate-700">Saving will permanently store the scanned POS Sold data and reflect it in InvenSync. A <strong>Next</strong> button will appear to proceed to the Daily Report.</p>
             `,
             confirmText: 'Yes, Save',
             cancelText: 'Cancel',
