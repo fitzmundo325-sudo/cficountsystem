@@ -4056,6 +4056,10 @@ def store_manager_report():
     if selected_date > today_date:
         selected_date = today_date
 
+    # Remember the last-used date so sidebar nav returns to it
+    if explicit_date_in_query:
+        session['login_selected_date'] = selected_date.strftime('%Y-%m-%d')
+
     # When user is already on an explicit date URL, skip missing-date modal prompts.
     missing_dates = []
     if not explicit_date_in_query:
@@ -6126,7 +6130,9 @@ def submit_pos_sold_report():
                 category='info'
             )
         if redirect_to == 'pos_sold':
+            session['login_selected_date'] = report_date.strftime('%Y-%m-%d')
             return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+        session['login_selected_date'] = report_date.strftime('%Y-%m-%d')
         return redirect(url_for('views.store_manager_report', date=report_date.strftime('%Y-%m-%d')))
 
     except Exception as exc:
