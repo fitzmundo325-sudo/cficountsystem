@@ -208,12 +208,16 @@
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <button id="pos-scan-guide-target" type="submit" class="h-10 w-full sm:w-auto px-5 text-xs font-semibold bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-all shadow-sm shadow-amber-600/20">
-            Scan Data
-          </button>
           {% if pos_sold_source == 'draft' and pos_sold_items %}
           <button
             id="go-daily-summary-btn"
+            type="button"
+            class="h-10 w-full sm:w-auto px-5 inline-flex items-center justify-center text-xs font-semibold text-white bg-amber-600 rounded-md hover:bg-amber-700 transition-all shadow-sm shadow-amber-600/20 text-center"
+          >
+            Next
+          </button>
+          <button
+            id="save-only-btn"
             type="button"
             class="h-10 w-full sm:w-auto px-5 inline-flex items-center justify-center text-xs font-semibold text-white bg-emerald-600 rounded-md hover:bg-emerald-700 transition-all shadow-sm shadow-emerald-600/20 text-center"
           >
@@ -225,6 +229,10 @@
               <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
           </button>
+          {% else %}
+          <button id="pos-scan-guide-target" type="submit" class="h-10 w-full sm:w-auto px-5 text-xs font-semibold bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-all shadow-sm shadow-amber-600/20">
+            Scan Data
+          </button>
           {% endif %}
         </div>
       </form>
@@ -232,6 +240,7 @@
       <form id="pos-save-form" action="{{ url_for('views.submit_pos_sold_report') }}" method="POST" enctype="multipart/form-data" class="hidden">
         <input type="hidden" name="report_date" value="{{ selected_report_date if selected_report_date else today }}">
         <input type="hidden" id="pos-save-motif-json" name="motif_breakdown_json" value="">
+        <input type="hidden" id="pos-save-redirect-to" name="redirect_to" value="daily_report">
       </form>
       {% endif %}
       <div id="pos-tour-sample-card" class="hidden rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
@@ -239,7 +248,7 @@
           <p class="text-[11px] font-semibold text-amber-700">Showing extracted preview data (not yet saved).</p>
           <div class="flex items-center gap-2">
             <a id="pos-tour-next-target" href="{{ url_for('views.store_manager_report', date=selected_report_date, lock_date=1) }}" class="h-10 px-5 inline-flex items-center justify-center text-xs font-semibold text-white bg-indigo-600 rounded-md shadow-sm shadow-indigo-600/20">
-              Save
+              Next
             </a>
             <button id="pos-tour-clear-target" type="button" class="h-10 w-10 shrink-0 inline-flex items-center justify-center text-rose-700 bg-rose-50 border border-rose-200 rounded-md" title="Clear Extracted Data" aria-label="Clear Extracted Data">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -563,7 +572,9 @@
     const posUploadDateInput = document.getElementById('pos-upload-report-date');
     const posClearDateInput = document.getElementById('pos-clear-report-date');
     const goDailySummaryBtn = document.getElementById('go-daily-summary-btn');
+    const saveOnlyBtn = document.getElementById('save-only-btn');
     const posSaveForm = document.getElementById('pos-save-form');
+    const posSaveRedirectTo = document.getElementById('pos-save-redirect-to');
     const posSaveMotifJson = document.getElementById('pos-save-motif-json');
     const clearPosInlineBtn = document.getElementById('clear-pos-inline-btn');
     const clearPosInlineForm = document.getElementById('clear-pos-inline-form');
@@ -1148,11 +1159,57 @@
         if (posSaveMotifJson) {
           posSaveMotifJson.value = localStorage.getItem(motifBreakdownKey) || '';
         }
+        if (posSaveRedirectTo) {
+          posSaveRedirectTo.value = 'daily_report';
+        }
         const savePosSold = function() {
           if (!posSaveForm || goDailySummaryBtn.disabled) return;
           goDailySummaryBtn.disabled = true;
           goDailySummaryBtn.textContent = 'Saving...';
           goDailySummaryBtn.classList.add('cursor-not-allowed', 'opacity-70');
+          posSaveForm.submit();
+        };
+        if (typeof showConfirmationModal === 'function') {
+          showConfirmationModal({
+            title: 'Save POS Sold & Proceed?',
+            size: 'large',
+            modalWidth: '980px',
+            messageHtml: `
+              <div class="rounded-3xl border border-amber-200 bg-amber-50 px-8 py-7 text-left">
+                <p class="text-base font-bold uppercase tracking-wide text-amber-700">Saving Date Indicator</p>
+                <p class="mt-3 text-4xl font-extrabold leading-tight text-slate-900">You are saving for the day of: ${formatReportDateLong(savingDate)}</p>
+                <p class="mt-3 text-lg text-slate-600">This follows the date selected in the calendar.</p>
+              </div>
+              <p class="mt-7 text-xl text-slate-700">Saving will permanently store the scanned POS Sold data and redirect you to the Daily Report page.</p>
+            `,
+            confirmText: 'Yes, Save & Proceed',
+            cancelText: 'Cancel',
+            onConfirm: savePosSold
+          });
+          return;
+        }
+        savePosSold();
+      });
+    }
+
+    if (saveOnlyBtn) {
+      saveOnlyBtn.addEventListener('click', function(event) {
+        event.preventDefault();
+        const savingDate = reportDateInput ? reportDateInput.value : selectedReportDate;
+        if (shouldPromptForMotifBreakdown()) {
+          notifyPos('Additional Charge for Motif was detected. You can save the file now and finish the breakdown later in InvenSync.', 'warning');
+        }
+        if (posSaveMotifJson) {
+          posSaveMotifJson.value = localStorage.getItem(motifBreakdownKey) || '';
+        }
+        if (posSaveRedirectTo) {
+          posSaveRedirectTo.value = 'pos_sold';
+        }
+        const savePosSold = function() {
+          if (!posSaveForm || saveOnlyBtn.disabled) return;
+          saveOnlyBtn.disabled = true;
+          saveOnlyBtn.textContent = 'Saving...';
+          saveOnlyBtn.classList.add('cursor-not-allowed', 'opacity-70');
           posSaveForm.submit();
         };
         if (typeof showConfirmationModal === 'function') {
@@ -1320,7 +1377,7 @@
         },
         {
           elements: [nextTarget],
-          text: 'Click Save to permanently store the scanned POS Sold rows and reflect them in InvenSync.',
+          text: 'Click Next to permanently store the scanned POS Sold rows and proceed to the Daily Report.',
           placement: 'bottom',
           nextText: 'Next',
           showSample: true

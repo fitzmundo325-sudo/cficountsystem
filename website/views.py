@@ -4116,7 +4116,7 @@ def store_manager_report():
             pos_sales_autofill['source'] = 'saved'
             pos_sales_autofill['label'] = 'Submitted POS sold data'
 
-    if (not selected_report) and pos_sales_autofill['source']:
+    if pos_sales_autofill['source']:
         initial_form_values['pos_gross_sales'] = pos_sales_autofill['pos_gross_sales']
         initial_form_values['pos_net_sales'] = pos_sales_autofill['pos_net_sales']
 
@@ -5996,6 +5996,7 @@ def submit_pos_sold_report():
 
         report_date_str = (request.form.get('report_date') or '').strip()
         report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        redirect_to = (request.form.get('redirect_to') or '').strip().lower()
         if report_date > date.today():
             flash('Report date cannot be in the future.', category='error')
             return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
@@ -6124,12 +6125,14 @@ def submit_pos_sold_report():
                 'If Additional Charge for Motif was detected, you can complete the breakdown later from InvenSync.',
                 category='info'
             )
+        if redirect_to == 'pos_sold':
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+        return redirect(url_for('views.store_manager_report', date=report_date.strftime('%Y-%m-%d')))
 
     except Exception as exc:
         db.session.rollback()
         flash(f'Error saving POS Sold: {str(exc)}', category='error')
-
-    return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+        return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
 
 
 @views.route('/store-manager/daily-report/pos-sold/upload-z-reading', methods=['POST'])
