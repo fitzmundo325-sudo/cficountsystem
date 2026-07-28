@@ -4025,6 +4025,403 @@ def cluster_dashboard():
                             icount_tool_tracker=icount_tool_tracker)
 
 
+@views.route('/api/cluster-dashboard-data')
+@login_required
+def api_cluster_dashboard_data():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
+        return jsonify({'error': 'Access denied'}), 403
+
+    from .models import Cluster, Store, DailyReport, StoreTarget, DailyEndingInventory, StoreProductBuffer
+    from datetime import date, timedelta
+    from calendar import monthrange
+    from sqlalchemy import func
+
+    cluster = None
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            return jsonify({'error': 'No cluster assigned'}), 404
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            return jsonify({'error': 'cluster_id required'}), 400
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    today = date.today()
+    month_arg = request.args.get('month')
+    year_arg = request.args.get('year')
+    start_date_arg = request.args.get('start_date')
+    end_date_arg = request.args.get('end_date')
+
+    cluster_stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    if not cluster_stores:
+        cluster_stores = Store.query.all()
+    cluster_stores = _apply_store_scope_filter(cluster_stores, request)
+    stores = cluster_stores
+    store_ids = [s.id for s in stores]
+
+    parsed_start_date = _parse_iso_date(start_date_arg)
+    parsed_end_date = _parse_iso_date(end_date_arg)
+
+    if parsed_start_date or parsed_end_date:
+        start_date = parsed_start_date or parsed_end_date
+        end_date = parsed_end_date or parsed_start_date
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+        year_int = int(start_date.year)
+        month_int = int(start_date.month)
+    else:
+        start_date = today.replace(day=1)
+        end_date = today
+        year_int = int(start_date.year)
+        month_int = int(start_date.month)
+
+    current_month = f'{month_int:02d}'
+    current_year = str(year_int)
+
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date,
+        DailyReport.status == 'Approved'
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_taf_wastage_amounts(reports)
+
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+
+    daily_targets = _aggregate_targets_by_day(targets)
+    daily_sales_map = {}
+    sbase_store_ids = {int(s.id) for s in stores if bool(getattr(s, 'is_one_year_already', False))}
+    daily_sbase_sales_map = {}
+    for report in reports:
+        date_key = report.report_date.strftime('%Y-%m-%d')
+        report_net_sales = float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+        daily_sales_map[date_key] = float(daily_sales_map.get(date_key, 0.0) or 0.0) + report_net_sales
+        if int(report.store_id) in sbase_store_ids:
+            daily_sbase_sales_map[date_key] = float(daily_sbase_sales_map.get(date_key, 0.0) or 0.0) + report_net_sales
+
+    sales_data = []
+    sbase_sales_data = []
+    target_data = []
+    last_year_data = []
+    labels = []
+    mtd_metrics_by_day = {}
+    running_sales = 0.0
+    running_target = 0.0
+    running_ly = 0.0
+    running_gbi = 0.0
+    cursor = start_date
+    while cursor <= end_date:
+        date_key = cursor.strftime('%Y-%m-%d')
+        day_sales = float(daily_sales_map.get(date_key, 0.0) or 0.0)
+        day_sbase_sales = float(daily_sbase_sales_map.get(date_key, 0.0) or 0.0)
+        day_target = float(daily_targets.get(date_key, {}).get('target_net', 0.0) or 0.0)
+        day_ly = float(daily_targets.get(date_key, {}).get('last_year_net', 0.0) or 0.0)
+        day_gbi = float(daily_targets.get(date_key, {}).get('gbi_target', 0.0) or 0.0)
+
+        running_sales += day_sales
+        running_target += day_target
+        running_ly += day_ly
+        running_gbi += day_gbi
+
+        sales_data.append(day_sales)
+        sbase_sales_data.append(day_sbase_sales)
+        target_data.append(day_target)
+        last_year_data.append(day_ly)
+        labels.append(cursor.strftime('%b %d'))
+
+        mtd_metrics_by_day[date_key] = {
+            'mtd_vs_tgt': (((running_sales / running_target) - 1.0) * 100) if running_target > 0 else None,
+            'mtd_vs_ly': (((running_sales / running_ly) - 1.0) * 100) if running_ly > 0 else None,
+        }
+        cursor += timedelta(days=1)
+
+    summary = _build_cluster_manager_summary(reports, targets)
+    ytd_overview = _build_ytd_overview(end_date, store_ids=store_ids)
+    summary.setdefault('overview', {}).update(ytd_overview)
+    top_products = _build_top_products_from_reports(reports)
+    top_products_total_units = sum(item['units'] for item in top_products)
+    store_product_mix = _build_store_product_mix_from_reports(reports, stores)
+    pos_sold_products_by_store = _build_pos_sold_products_by_store(reports, stores)
+    wastage_performance = _build_wastage_performance(
+        reports, start_date, end_date,
+        store_lookup={int(store.id): store.name for store in stores},
+    )
+    discount_performance = _build_discount_performance(reports, start_date, end_date)
+
+    store_performance_data = []
+    range_days = max((end_date - start_date).days + 1, 1)
+    for store in stores:
+        store_reports = [r for r in reports if r.store_id == store.id]
+        store_targets = [t for t in targets if t.store_id == store.id]
+
+        mtd_sales = sum(
+            float(r.pos_net_sales or 0) + float(r.ci_regular_net_sales or 0)
+            for r in store_reports
+        )
+        ads = mtd_sales / range_days if range_days > 0 else 0
+        store_ly_mtd = sum(float(t.last_year_net or 0) for t in store_targets)
+        store_target_mtd = sum(float(t.target_net or 0) for t in store_targets)
+        ar_tgt_percent = (((mtd_sales / store_target_mtd) - 1.0) * 100) if store_target_mtd > 0 else 0.0
+
+        if store_ly_mtd > 0:
+            growth_percent = (mtd_sales / store_ly_mtd) - 1.0
+        else:
+            growth_percent = None
+
+        status = _classify_store_status(ar_tgt_percent, growth_percent)
+
+        store_performance_data.append({
+            'store_name': store.name,
+            'act': mtd_sales,
+            'target_mtd': store_target_mtd,
+            'ads': ads,
+            'ly': store_ly_mtd,
+            'ar_tgt_percent': ar_tgt_percent,
+            'growth_percent': growth_percent,
+            'status': status
+        })
+
+    top_stores_ads = []
+    sorted_by_ads = sorted(store_performance_data, key=lambda item: float(item.get('ads', 0) or 0), reverse=True)[:3]
+    max_ads = float(sorted_by_ads[0].get('ads', 0) or 0) if sorted_by_ads else 0.0
+    for rank, store_data in enumerate(sorted_by_ads, start=1):
+        ads_value = float(store_data.get('ads', 0) or 0)
+        top_stores_ads.append({
+            'rank': rank,
+            'store_name': store_data.get('store_name', ''),
+            'ads': ads_value,
+            'ads_percent': ((ads_value / max_ads) * 100) if max_ads > 0 else 0.0,
+        })
+
+    top_attainment_ar = []
+    sorted_by_ar = sorted(store_performance_data, key=lambda item: float(item.get('ar_tgt_percent', 0) or 0), reverse=True)[:3]
+    for rank, store_data in enumerate(sorted_by_ar, start=1):
+        ar_value = float(store_data.get('ar_tgt_percent', 0) or 0)
+        top_attainment_ar.append({
+            'rank': rank,
+            'store_name': store_data.get('store_name', ''),
+            'ar_tgt_percent': ar_value,
+            'target_mtd': float(store_data.get('target_mtd', 0) or 0),
+            'act': float(store_data.get('act', 0) or 0),
+            'delta_percent': ar_value,
+            'progress_percent': min(max(ar_value + 100.0, 0.0), 100.0),
+        })
+
+    severity_order = {'ICU Critical': 0, 'Critical': 1, 'Recovery': 2, 'Good': 3, 'Excellent': 4}
+    status_meta = {
+        'ICU Critical': {
+            'tone_card': 'bg-red-50 border-l-4 border-red-500',
+            'tone_badge': 'text-red-700 bg-red-100',
+            'tone_value': 'text-red-600',
+            'tone_bar_bg': 'bg-red-200',
+            'tone_bar_fill': 'bg-red-500',
+            'note': 'Significantly below target',
+        },
+        'Critical': {
+            'tone_card': 'bg-orange-50 border-l-4 border-orange-500',
+            'tone_badge': 'text-orange-700 bg-orange-100',
+            'tone_value': 'text-orange-600',
+            'tone_bar_bg': 'bg-orange-200',
+            'tone_bar_fill': 'bg-orange-500',
+            'note': 'Below target',
+        },
+        'Recovery': {
+            'tone_card': 'bg-amber-50 border-l-4 border-amber-500',
+            'tone_badge': 'text-amber-700 bg-amber-100',
+            'tone_value': 'text-amber-600',
+            'tone_bar_bg': 'bg-amber-200',
+            'tone_bar_fill': 'bg-amber-500',
+            'note': 'Near target, monitor closely',
+        },
+    }
+
+    icu_candidates = [item for item in store_performance_data if item.get('status') == 'ICU Critical']
+    icu_candidates = sorted(
+        icu_candidates,
+        key=lambda item: (
+            severity_order.get(item.get('status', 'Excellent'), 99),
+            float(item.get('ar_tgt_percent', 0) or 0),
+        )
+    )[:3]
+
+    icu_stores = []
+    for item in icu_candidates:
+        status = item.get('status', 'Recovery')
+        meta = status_meta.get(status, status_meta['Recovery'])
+        ar_percent = float(item.get('ar_tgt_percent', 0) or 0)
+        attainment_percent = max(0.0, ar_percent + 100.0)
+        icu_stores.append({
+            'store_name': item.get('store_name', ''),
+            'status': status,
+            'note': meta['note'],
+            'act': float(item.get('act', 0) or 0),
+            'target_mtd': float(item.get('target_mtd', 0) or 0),
+            'attainment_percent': attainment_percent,
+            'progress_percent': min(max(attainment_percent, 0.0), 100.0),
+            'tone_card': meta['tone_card'],
+            'tone_badge': meta['tone_badge'],
+            'tone_value': meta['tone_value'],
+            'tone_bar_bg': meta['tone_bar_bg'],
+            'tone_bar_fill': meta['tone_bar_fill'],
+        })
+
+    def _format_tracker_date_range(range_start, range_end):
+        if range_start == range_end:
+            return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year}"
+        if range_start.year == range_end.year and range_start.month == range_end.month:
+            return f"{range_start.strftime('%b')} {range_start.day}-{range_end.day}, {range_start.year}"
+        if range_start.year == range_end.year:
+            return f"{range_start.strftime('%b')} {range_start.day} - {range_end.strftime('%b')} {range_end.day}, {range_start.year}"
+        return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year} - {range_end.strftime('%b')} {range_end.day}, {range_end.year}"
+
+    def _summarize_missing_dates(missing_dates):
+        if not missing_dates:
+            return []
+        missing_dates = sorted(missing_dates)
+        ranges = []
+        range_start = missing_dates[0]
+        previous = missing_dates[0]
+        for missing_date in missing_dates[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            ranges.append(_format_tracker_date_range(range_start, previous))
+            range_start = missing_date
+            previous = missing_date
+        ranges.append(_format_tracker_date_range(range_start, previous))
+        return ranges
+
+    tracker_end_date = min(end_date, today - timedelta(days=1))
+    expected_dates = []
+    tracker_cursor = start_date
+    while tracker_cursor <= tracker_end_date:
+        expected_dates.append(tracker_cursor)
+        tracker_cursor += timedelta(days=1)
+
+    dashboard_store_count = len(store_ids)
+    daily_report_dates_by_store = {}
+    if store_ids:
+        daily_report_date_rows = (
+            db.session.query(DailyReport.store_id, DailyReport.report_date)
+            .filter(
+                DailyReport.store_id.in_(store_ids),
+                DailyReport.report_date >= start_date,
+                DailyReport.report_date <= end_date,
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, report_date in daily_report_date_rows:
+            if store_id and report_date:
+                daily_report_dates_by_store.setdefault(int(store_id), set()).add(report_date)
+
+    invensync_dates_by_store = {}
+    if store_ids:
+        invensync_date_rows = (
+            db.session.query(DailyEndingInventory.store_id, DailyEndingInventory.inventory_date)
+            .filter(
+                DailyEndingInventory.store_id.in_(store_ids),
+                DailyEndingInventory.inventory_date >= start_date,
+                DailyEndingInventory.inventory_date <= end_date,
+                DailyEndingInventory.is_finalized.is_(True),
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, inventory_date in invensync_date_rows:
+            if store_id and inventory_date:
+                invensync_dates_by_store.setdefault(int(store_id), set()).add(inventory_date)
+
+    def _build_missing_tool_rows(date_map):
+        rows = []
+        for store in sorted(stores, key=lambda item: (item.name or '').lower()):
+            available_dates = date_map.get(int(store.id), set())
+            missing_dates = [expected_date for expected_date in expected_dates if expected_date not in available_dates]
+            if not missing_dates:
+                continue
+            rows.append({
+                'store_name': store.name,
+                'missing_count': len(missing_dates),
+                'date_ranges': _summarize_missing_dates(missing_dates),
+            })
+        return rows
+
+    daily_report_missing_rows = _build_missing_tool_rows(daily_report_dates_by_store)
+    invensync_missing_rows = _build_missing_tool_rows(invensync_dates_by_store)
+    daily_report_store_count = dashboard_store_count - len(daily_report_missing_rows)
+    invensync_store_count = dashboard_store_count - len(invensync_missing_rows)
+    oracle_store_count = (
+        db.session.query(StoreProductBuffer.store_id)
+        .filter(StoreProductBuffer.store_id.in_(store_ids))
+        .distinct()
+        .count()
+        if store_ids else 0
+    )
+    icount_tool_tracker = {
+        'total_stores': dashboard_store_count,
+        'daily_reports': {
+            'label': 'Daily Reports',
+            'count': daily_report_store_count,
+            'subtitle': 'stores with complete uploads',
+            'missing_rows': daily_report_missing_rows,
+            'show_missing_details': True,
+        },
+        'invensync': {
+            'label': 'Invensync',
+            'count': invensync_store_count,
+            'subtitle': 'stores with complete updates',
+            'missing_rows': invensync_missing_rows,
+            'show_missing_details': True,
+        },
+        'oracle': {
+            'label': 'Oracle',
+            'count': oracle_store_count,
+            'subtitle': 'stores with Oracle buffer setup',
+            'missing_rows': [],
+            'show_missing_details': False,
+        },
+    }
+
+    return jsonify({
+        'summary': summary,
+        'sales_data': sales_data,
+        'sbase_sales_data': sbase_sales_data,
+        'target_data': target_data,
+        'last_year_data': last_year_data,
+        'labels': labels,
+        'current_month': current_month,
+        'current_year': current_year,
+        'current_date': today.isoformat(),
+        'selected_start_date': start_date.strftime('%Y-%m-%d'),
+        'selected_end_date': end_date.strftime('%Y-%m-%d'),
+        'selected_start_date_display': _format_header_date(start_date),
+        'selected_end_date_display': _format_header_date(end_date),
+        'store_performance_data': store_performance_data,
+        'top_stores_ads': top_stores_ads,
+        'top_attainment_ar': top_attainment_ar,
+        'mtd_metrics_by_day': mtd_metrics_by_day,
+        'top_products': top_products,
+        'top_products_total_units': top_products_total_units,
+        'store_product_mix': store_product_mix,
+        'pos_sold_products_by_store': pos_sold_products_by_store,
+        'icu_stores': icu_stores,
+        'wastage_performance': wastage_performance,
+        'discount_performance': discount_performance,
+        'icount_tool_tracker': icount_tool_tracker,
+        'entity_label': 'Store',
+        'entity_label_plural': 'Stores',
+        'team_name': _get_team_name(cluster),
+    })
+
+
 # Store Manager Daily Report Routes
 @views.route('/store-manager/daily-report')
 @login_required
@@ -4120,7 +4517,7 @@ def store_manager_report():
             pos_sales_autofill['source'] = 'saved'
             pos_sales_autofill['label'] = 'Submitted POS sold data'
 
-    if pos_sales_autofill['source']:
+    if pos_sales_autofill['source'] and not selected_report:
         initial_form_values['pos_gross_sales'] = pos_sales_autofill['pos_gross_sales']
         initial_form_values['pos_net_sales'] = pos_sales_autofill['pos_net_sales']
 
@@ -6338,9 +6735,8 @@ def submit_daily_report():
         }
         authoritative_pos_items = staged_pos_sold_items or existing_final_pos_items
         authoritative_pos_totals = _build_pos_sales_autofill_totals(authoritative_pos_items)
-        if report_values.get('pos_gross_sales', 0.0) == 0.0:
+        if report_values.get('pos_gross_sales', 0.0) == 0.0 and report_values.get('pos_net_sales', 0.0) == 0.0 and not existing_report:
             report_values['pos_gross_sales'] = authoritative_pos_totals['pos_gross_sales']
-        if report_values.get('pos_net_sales', 0.0) == 0.0:
             report_values['pos_net_sales'] = authoritative_pos_totals['pos_net_sales']
 
         if existing_report:
