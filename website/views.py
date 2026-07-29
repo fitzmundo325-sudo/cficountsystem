@@ -2328,89 +2328,133 @@ def _read_uploaded_excel(uploaded_file, upload_label):
         ) from exc
 
 
-def _extract_pos_sold_items_from_excel(uploaded_file, store=None, expected_report_date=None):
-    df = _read_uploaded_excel(uploaded_file, 'POS')
+_POS_HEADER_KEYWORDS = {
+    'product_name': ['product name', 'product', 'item', 'description', 'particulars', 'item name', 'product description', 'menu item'],
+    'quantity': ['qty', 'quantity', 'qty sold', 'no. of items', 'items sold', 'sold qty', 'total qty', 'pieces'],
+    'price': ['price', 'unit price', 'srp', 'unit price (p)', 'unit cost'],
+    'gross_sales': ['gross sales', 'gross', 'gross amount', 'amount', 'subtotal'],
+    'discount': ['discount', 'disc amount', 'disc', 'discount amount', 'less discount', 'discounted amount'],
+    'net_sales': ['net sales', 'net amount', 'net total', 'net'],
+}
 
-    # Starlink stores use a different layout: date in A3, data starts at row 6
-    is_starlink = False
-    try:
-        store_name = (store.name or '') if store is not None else ''
-        is_starlink = 'starlink' in str(store_name).lower()
-    except Exception:
-        is_starlink = False
+def _auto_detect_pos_column_headers(df):
+    for row_index in range(min(20, df.shape[0])):
+        row_vals = {}
+        for c in range(df.shape[1]):
+            v = df.iat[row_index, c]
+            row_vals[c] = str(v).strip().lower() if not pd.isna(v) and str(v).strip() != '' else None
+        detected = {}
+        for field, keywords in _POS_HEADER_KEYWORDS.items():
+            for ci in sorted(row_vals.keys()):
+                val = row_vals[ci]
+                if val is None:
+                    continue
+                for kw in keywords:
+                    if val == kw or (len(kw) >= 3 and val.startswith(kw)):
+                        if field not in detected:
+                            detected[field] = ci
+                            break
+                if field in detected:
+                    break
+        if 'product_name' in detected and 'quantity' in detected and ('gross_sales' in detected or 'net_sales' in detected):
+            return detected, row_index
+    return None, None
 
-    if is_starlink:
-        if df.shape[0] < 6:
-            raise ValueError('Starlink POS file must have at least 6 rows; data should start on row 6.')
-        if df.shape[1] < 7:
-            raise ValueError('Starlink POS file must include columns A (product) through G (net sales).')
 
-        # Parse single date from A3 (row index 2)
-        raw_date = df.iat[2, 0]
-        date_cell = '' if pd.isna(raw_date) else str(raw_date).strip()
-        parsed_date = None
+def _auto_detect_pos_date(df, header_row_index):
+    for row_index in range(min(header_row_index, df.shape[0])):
+        for col_index in range(min(5, df.shape[1])):
+            cell = df.iat[row_index, col_index]
+            if pd.isna(cell):
+                continue
+            cell_str = str(cell).strip()
 
-        # Try "Date: July 24, 2026" format (or similar "Month Day, Year")
-        match = re.search(r'([A-Za-z]+\s+\d{1,2},\s*\d{4})', date_cell)
-        if match:
-            try:
-                parsed_date = datetime.strptime(match.group(1), '%B %d, %Y').date()
-            except ValueError:
-                pass
-
-        if parsed_date is None:
-            match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', date_cell)
+            match = re.search(r'([A-Za-z]+\s+\d{1,2},\s*\d{4})', cell_str)
             if match:
                 try:
-                    parsed_date = datetime.strptime(match.group(1), '%m/%d/%Y').date()
+                    return datetime.strptime(match.group(1), '%B %d, %Y').date()
                 except ValueError:
                     pass
 
-        if parsed_date is None:
-            try:
-                parsed_date = pd.to_datetime(raw_date).date()
-            except Exception:
-                pass
+            match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', cell_str)
+            if match:
+                try:
+                    return datetime.strptime(match.group(1), '%m/%d/%Y').date()
+                except ValueError:
+                    pass
 
-        if expected_report_date is not None and parsed_date is not None:
-            if parsed_date != expected_report_date:
-                raise ValueError(
-                    f'Starlink POS file date {parsed_date.strftime("%B %d, %Y")} does not match the selected report date {expected_report_date.strftime("%B %d, %Y")}.'
-                )
+            match = re.search(r'(\d{4}-\d{2}-\d{2})', cell_str)
+            if match:
+                try:
+                    return datetime.strptime(match.group(1), '%Y-%m-%d').date()
+                except ValueError:
+                    pass
+    return None
 
-        # Column layout: A=product, B=qty, C=price, D=gross, E=discount, G=net
-        product_qty_rows = df.iloc[5:, [0, 1, 2, 3, 4, 6]]
-    else:
+
+def _is_pos_total_row(product_name):
+    normalized = re.sub(r'[^a-z0-9]+', '', str(product_name or '').strip().lower())
+    return normalized in ('total', 'grandtotal', 'grandtotal:', 'totalamount', 'totalsales')
+
+
+def _extract_pos_sold_items_from_excel(uploaded_file, store=None, expected_report_date=None):
+    df = _read_uploaded_excel(uploaded_file, 'POS')
+
+    if df.shape[0] < 3:
+        raise ValueError('POS file must have at least 3 rows.')
+    if df.shape[1] < 3:
+        raise ValueError('POS file must have at least 3 columns.')
+
+    column_map, header_row_index = _auto_detect_pos_column_headers(df)
+
+    if column_map is None:
         if df.shape[0] < 8:
             raise ValueError('Excel file must have at least 8 rows; data should start on row 8.')
         if df.shape[1] < 6:
             raise ValueError('Excel file must include product (A), quantity (B), gross (C), discount (D), and net sales (F).')
+        column_map = {'product_name': 0, 'quantity': 1, 'gross_sales': 2, 'discount': 3, 'net_sales': 4}
+        header_row_index = 6
 
-        if expected_report_date is not None:
-            if df.shape[0] < 4:
-                raise ValueError('Excel file must include "For the Period of ..." in row 4, column A.')
-            period_cell = '' if pd.isna(df.iat[3, 0]) else str(df.iat[3, 0]).strip()
-            period_dates = re.findall(r'(\d{1,2}/\d{1,2}/\d{4})', period_cell)
-            if len(period_dates) < 2:
-                raise ValueError(
-                    'Invalid POS file header. Row 4 column A must contain: "For the Period of mm/dd/yyyy to mm/dd/yyyy".'
-                )
-            try:
-                period_start = datetime.strptime(period_dates[0], '%m/%d/%Y').date()
-                period_end = datetime.strptime(period_dates[1], '%m/%d/%Y').date()
-            except ValueError:
-                raise ValueError('Invalid period date format in row 4 column A. Expected mm/dd/yyyy.')
-            if period_start > period_end:
-                period_start, period_end = period_end, period_start
-            if period_start != expected_report_date or period_end != expected_report_date:
+    parsed_date = _auto_detect_pos_date(df, header_row_index)
+
+    period_dates = None
+    if parsed_date is None:
+        for row_index in range(min(header_row_index, df.shape[0])):
+            cell = df.iat[row_index, 0] if df.shape[1] > 0 else None
+            if pd.isna(cell):
+                continue
+            cell_str = str(cell).strip()
+            dates = re.findall(r'(\d{1,2}/\d{1,2}/\d{4})', cell_str)
+            if len(dates) >= 2:
+                try:
+                    period_dates = (datetime.strptime(dates[0], '%m/%d/%Y').date(), datetime.strptime(dates[1], '%m/%d/%Y').date())
+                except ValueError:
+                    pass
+                break
+
+    if expected_report_date is not None:
+        if parsed_date is not None and parsed_date != expected_report_date:
+            raise ValueError(
+                f'POS file date ({parsed_date.strftime("%B %d, %Y")}) does not match the selected report date ({expected_report_date.strftime("%B %d, %Y")}).'
+            )
+        if period_dates is not None:
+            ps, pe = period_dates
+            if ps > pe:
+                ps, pe = pe, ps
+            if ps != expected_report_date or pe != expected_report_date:
                 raise ValueError(
                     'POS file must contain exactly one day matching the selected report date. '
-                    f'File period: {period_start.strftime("%B %d, %Y")} to {period_end.strftime("%B %d, %Y")}; '
+                    f'File period: {ps.strftime("%B %d, %Y")} to {pe.strftime("%B %d, %Y")}; '
                     f'Report date: {expected_report_date.strftime("%B %d, %Y")}. Please double-check and upload again.'
                 )
 
-        # Row 7 contains headers; actual data starts at row 8.
-        product_qty_rows = df.iloc[7:, [0, 1, 2, 3, 5]]
+    data_start = header_row_index + 1
+    data_cols = [column_map.get('product_name', 0), column_map.get('quantity', 1), column_map.get('gross_sales', 2), column_map.get('discount', 3), column_map.get('net_sales', 4)]
+    if column_map.get('price') is not None:
+        data_cols.append(column_map['price'])
+
+    product_qty_rows = df.iloc[data_start:, data_cols]
+
     aggregated_items = OrderedDict()
     row_errors = []
 
@@ -2418,10 +2462,9 @@ def _extract_pos_sold_items_from_excel(uploaded_file, store=None, expected_repor
         row_number = int(row_index) + 1
         product_cell = row.iloc[0]
         quantity_cell = row.iloc[1]
-        price_cell = row.iloc[2] if (is_starlink and len(row) > 2) else None
-        gross_sales_cell = row.iloc[2] if not is_starlink else row.iloc[3]
-        discount_cell = row.iloc[3] if not is_starlink else row.iloc[4]
-        net_sales_cell = row.iloc[4] if not is_starlink else row.iloc[5]
+        gross_sales_cell = row.iloc[2]
+        discount_cell = row.iloc[3]
+        net_sales_cell = row.iloc[4]
 
         product_name = '' if pd.isna(product_cell) else str(product_cell).strip()
         has_quantity_content = not pd.isna(quantity_cell) and str(quantity_cell).strip() != ''
@@ -2433,11 +2476,9 @@ def _extract_pos_sold_items_from_excel(uploaded_file, store=None, expected_repor
         discount = _normalize_pos_amount(discount_cell)
         net_sales = _normalize_pos_net_sales(net_sales_cell)
 
-        # Skip entirely empty rows
         if not product_name and not has_quantity_content and not has_gross_sales_content and not has_discount_content and not has_net_sales_content:
             continue
 
-        # Validate numeric fields when source cell contains something
         if has_quantity_content and quantity is None:
             row_errors.append(f'Invalid quantity at row {row_number}.')
             continue
@@ -2449,6 +2490,9 @@ def _extract_pos_sold_items_from_excel(uploaded_file, store=None, expected_repor
             continue
         if has_net_sales_content and net_sales is None:
             row_errors.append(f'Invalid net sales at row {row_number}.')
+            continue
+
+        if _is_pos_total_row(product_name):
             continue
 
         product_key = product_name if product_name else 'Unnamed Product'
@@ -2482,9 +2526,7 @@ def _extract_pos_sold_items_from_excel(uploaded_file, store=None, expected_repor
         for product_name, item_values in aggregated_items.items()
     ])
     if not items:
-        if is_starlink:
-            raise ValueError('No POS sold rows found in columns A (product), B (qty), C (price), D (gross), E (discount), G (net) starting row 6.')
-        raise ValueError('No POS sold rows found in columns A, B, C, D, and F starting row 8.')
+        raise ValueError('No POS sold rows found. Ensure the file has data rows with product names and quantities.')
 
     return items
 
