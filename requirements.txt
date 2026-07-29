@@ -8,5 +8,10 @@ xlrd>=2.0.1
 werkzeug>=3.0
 sqlalchemy>=2.0
 pandas
+pytz
 python-dotenv
+PyMySQL
+bleach
+tinycss2
 requests
+psutil
