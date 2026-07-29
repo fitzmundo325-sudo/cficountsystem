@@ -1,7 +1,7 @@
 
 
-REM python main.py
-start.bat
+python main.py
+
 
 REM python run.py
 REM start "Cron Service" python cron_service.py
