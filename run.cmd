@@ -1,6 +1,6 @@
 
 
-python main.py
+python app.py
 
 
 REM python run.py
