@@ -388,10 +388,12 @@ def create_app():
     from .views import views
     from .auth import auth
     from .admin import admin
+    from .api_handles import api_handles
 
     app.register_blueprint(auth, url_prefix='/')
     app.register_blueprint(admin, url_prefix='/')
     app.register_blueprint(views, url_prefix='/')
+    app.register_blueprint(api_handles, url_prefix='/apis')
 
     @app.route('/sw.js')
     def service_worker():
