@@ -20,14 +20,14 @@ IF ERRORLEVEL 1 (
 FOR /F "tokens=*" %%i IN ('python --version') DO echo  [OK] Found: %%i
 
 REM ── Step 2: Create virtual environment ───────────────────────
-SET ENV_NAME=venv
+SET ENV_NAME=env
 
 IF EXIST %ENV_NAME%\ (
     echo  [SKIP] Virtual environment '%ENV_NAME%' already exists.
 ) ELSE (
     echo.
     echo  [INFO] Creating virtual environment: %ENV_NAME%
-    python -m venv %ENV_NAME%
+    python -m env %ENV_NAME%
     echo  [OK] Virtual environment created.
 )
 
@@ -63,7 +63,7 @@ echo ============================================================
 echo   Setup complete!
 echo.
 echo   To activate the environment later, run:
-echo     venv\Scripts\activate
+echo     env\Scripts\activate
 echo
 echo.
 echo   To deactivate the environment:
