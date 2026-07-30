@@ -5625,18 +5625,16 @@ def _update_inventory_trans_in_on_receive(transfer, transfer_items):
     if not dest_store:
         return
 
-    transaction_date = getattr(transfer, 'transaction_date', None)
-    if not transaction_date:
-        return
+    received_date = date_type.today()
 
     dest_inventory = DailyEndingInventory.query.filter_by(
         store_id=dest_store.id,
-        inventory_date=transaction_date
+        inventory_date=received_date
     ).first()
     if not dest_inventory:
         dest_inventory = DailyEndingInventory(
             store_id=dest_store.id,
-            inventory_date=transaction_date,
+            inventory_date=received_date,
             created_by=getattr(transfer, 'submitted_by', None) or getattr(current_user, 'id', None)
         )
         db.session.add(dest_inventory)
