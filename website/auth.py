@@ -46,6 +46,8 @@ def login():
                 )
                 
                 # Redirect based on role
+                if user.role == 'Area Manager':
+                    return redirect(url_for('admin.area_manager_dashboard'))
                 if user.role in ('Superadmin', 'General Manager', 'Admin', 'Auditor'):
                     return redirect(url_for('admin.dashboard'))
                 else:

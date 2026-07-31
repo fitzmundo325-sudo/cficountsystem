@@ -241,7 +241,7 @@
         {% endif %}
       </p>
       </div>
-      {% if review_rows %}
+      {% if review_rows and user.role not in ('Auditor', 'Area Manager') %}
       <button type="button" id="openDeleteAllPosSoldModal" class="inline-flex items-center justify-center rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-rose-700">
         Delete All
       </button>
@@ -256,7 +256,9 @@
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Gross</th>
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Discount</th>
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Net</th>
+            {% if user.role not in ('Auditor', 'Area Manager') %}
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Action</th>
+            {% endif %}
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
@@ -267,6 +269,7 @@
             <td class="px-4 py-3 text-right text-sm text-slate-700">{{ "{:,.2f}".format(row.gross_sales or 0) }}</td>
             <td class="px-4 py-3 text-right text-sm text-slate-700">{{ "{:,.2f}".format(row.discount or 0) }}</td>
             <td class="px-4 py-3 text-right text-sm font-semibold text-slate-900">{{ "{:,.2f}".format(row.net_sales or 0) }}</td>
+            {% if user.role not in ('Auditor', 'Area Manager') %}
             <td class="px-4 py-3 text-right">
               <button
                 type="button"
@@ -286,6 +289,7 @@
                 Delete
               </button>
             </td>
+            {% endif %}
           </tr>
           {% else %}
           <tr>

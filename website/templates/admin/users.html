@@ -112,11 +112,13 @@
             </span>
             </td>
 
-            <td class="px-4 py-3 text-sm text-slate-600 max-w-[200px] truncate" title="{% if user.role == 'Store Manager' %}{{ user.managed_stores[0].name if user.managed_stores and user.managed_stores|length > 0 else '' }}{% elif user.role == 'Cluster Manager' %}{{ user.managed_clusters[0].name if user.managed_clusters and user.managed_clusters|length > 0 else '' }}{% else %}{% if user.assigned_stores %}{{ user.assigned_stores|map(attribute='name')|join(', ') }}{% elif user.assigned_store %}{{ user.assigned_store.name }}{% endif %}{% endif %}">
+            <td class="px-4 py-3 text-sm text-slate-600 max-w-[200px] truncate" title="{% if user.role == 'Store Manager' %}{{ user.managed_stores[0].name if user.managed_stores and user.managed_stores|length > 0 else '' }}{% elif user.role == 'Cluster Manager' %}{{ user.managed_clusters[0].name if user.managed_clusters and user.managed_clusters|length > 0 else '' }}{% elif user.role == 'Area Manager' %}{{ user.assigned_clusters|map(attribute='name')|join(', ') }}{% else %}{% if user.assigned_stores %}{{ user.assigned_stores|map(attribute='name')|join(', ') }}{% elif user.assigned_store %}{{ user.assigned_store.name }}{% endif %}{% endif %}">
             {% if user.role == 'Store Manager' %}
               {{ user.managed_stores[0].name if user.managed_stores and user.managed_stores|length > 0 else '--' }}
             {% elif user.role == 'Cluster Manager' %}
               {{ user.managed_clusters[0].name if user.managed_clusters and user.managed_clusters|length > 0 else '--' }}
+            {% elif user.role == 'Area Manager' %}
+              {{ user.assigned_clusters|map(attribute='name')|join(', ') if user.assigned_clusters else '--' }}
             {% else %}
               {% if user.assigned_stores %}{{ user.assigned_stores|map(attribute='name')|join(', ') }}{% elif user.assigned_store %}{{ user.assigned_store.name }}{% else %}--{% endif %}
             {% endif %}
@@ -131,7 +133,7 @@
                 <button
                 type="button"
                 class="editUserBtn px-2 py-1 text-xs font-medium rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 transition"
-                data-user="{{ {'id': user.id, 'full_name': user.full_name or '', 'username': user.username or '', 'email': user.email or '', 'role': user.role or '', 'assigned_store_ids': (user.assigned_stores|map(attribute='id')|list) or ([user.assigned_store_id] if user.assigned_store_id else [])} | tojson | forceescape }}">
+                data-user="{{ {'id': user.id, 'full_name': user.full_name or '', 'username': user.username or '', 'email': user.email or '', 'role': user.role or '', 'assigned_store_ids': (user.assigned_stores|map(attribute='id')|list) or ([user.assigned_store_id] if user.assigned_store_id else []), 'assigned_cluster_ids': (user.assigned_clusters|map(attribute='id')|list)} | tojson | forceescape }}">
                 Edit
                 </button>
                 <form action="/admin/users/{{ user.id }}/delete" method="POST" class="inline" onsubmit="return confirm('Delete this user?')">
@@ -244,6 +246,7 @@
               <option value="Cluster Manager">Cluster Manager</option>
               <option value="Store Manager">Store Manager</option>
               <option value="Auditor">Auditor</option>
+              <option value="Area Manager">Area Manager</option>
               <option value="Inventory Staff">Inventory Staff</option>
               <option value="Guest">Guest</option>
             </select>
@@ -257,6 +260,16 @@
             <label class="flex cursor-pointer items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50"><input type="checkbox" name="assigned_store_ids" value="{{ store.id }}" class="h-4 w-4 rounded border-slate-300 text-indigo-600"> <span>{{ store.name }}</span></label>
             {% endfor %}
           </div>
+        </div>
+
+        <div id="assigned_cluster_group" class="hidden">
+          <label for="assigned_cluster_id" class="block text-sm font-semibold text-slate-700 mb-2">Assigned Clusters (Area Manager only, max 6)</label>
+          <div id="assigned_cluster_id" class="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2">
+            {% for cluster in clusters %}
+            <label class="flex cursor-pointer items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50"><input type="checkbox" name="assigned_cluster_ids" value="{{ cluster.id }}" class="h-4 w-4 rounded border-slate-300 text-indigo-600"> <span>{{ cluster.name }}</span></label>
+            {% endfor %}
+          </div>
+          <p id="assigned_cluster_hint" class="mt-1 text-xs text-slate-500">Select at least 1 and up to 6 clusters.</p>
         </div>
 
         <div class="grid grid-cols-2 gap-4">
@@ -359,6 +372,7 @@
               <option value="Cluster Manager">Cluster Manager</option>
               <option value="Store Manager">Store Manager</option>
               <option value="Auditor">Auditor</option>
+              <option value="Area Manager">Area Manager</option>
               <option value="Inventory Staff">Inventory Staff</option>
               <option value="Guest">Guest</option>
             </select>
@@ -372,6 +386,16 @@
             <label class="flex cursor-pointer items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50"><input type="checkbox" name="assigned_store_ids" value="{{ store.id }}" class="h-4 w-4 rounded border-slate-300 text-indigo-600"> <span>{{ store.name }}</span></label>
             {% endfor %}
           </div>
+        </div>
+
+        <div id="edit_assigned_cluster_group" class="hidden">
+          <label for="edit_assigned_cluster_id" class="block text-sm font-semibold text-slate-700 mb-2">Assigned Clusters (Area Manager only, max 6)</label>
+          <div id="edit_assigned_cluster_id" class="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2">
+            {% for cluster in clusters %}
+            <label class="flex cursor-pointer items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50"><input type="checkbox" name="assigned_cluster_ids" value="{{ cluster.id }}" class="h-4 w-4 rounded border-slate-300 text-indigo-600"> <span>{{ cluster.name }}</span></label>
+            {% endfor %}
+          </div>
+          <p id="edit_assigned_cluster_hint" class="mt-1 text-xs text-slate-500">Select at least 1 and up to 6 clusters.</p>
         </div>
 
         <div class="grid grid-cols-2 gap-4">
@@ -405,9 +429,13 @@
   const createRoleEl = document.getElementById('role');
   const createStoreEl = document.getElementById('assigned_store_id');
   const createStoreGroupEl = document.getElementById('assigned_store_group');
+  const createClusterEl = document.getElementById('assigned_cluster_id');
+  const createClusterGroupEl = document.getElementById('assigned_cluster_group');
   const editRoleEl = document.getElementById('edit_role');
   const editStoreEl = document.getElementById('edit_assigned_store_id');
   const editStoreGroupEl = document.getElementById('edit_assigned_store_group');
+  const editClusterEl = document.getElementById('edit_assigned_cluster_id');
+  const editClusterGroupEl = document.getElementById('edit_assigned_cluster_group');
   const usersSearchInput = document.getElementById('users-live-search');
   const usersSearchRows = Array.from(document.querySelectorAll('[data-user-row]'));
   const usersSearchEmptyRow = document.getElementById('users-live-search-empty');
@@ -440,6 +468,21 @@
     }
   }
 
+  function syncAssignedClusterRequirement(roleEl, clusterEl, groupEl) {
+    if (!roleEl || !clusterEl || !groupEl) return;
+    const isAreaManager = (roleEl.value || '') === 'Area Manager';
+    groupEl.classList.toggle('hidden', !isAreaManager);
+    clusterEl.classList.toggle('border-amber-300', isAreaManager);
+    if (!isAreaManager) {
+      clusterEl.querySelectorAll('input[type="checkbox"]').forEach(input => input.checked = false);
+    }
+  }
+
+  function syncAssignmentGroups(roleEl, storeEl, storeGroupEl, clusterEl, clusterGroupEl) {
+    syncAssignedStoreRequirement(roleEl, storeEl, storeGroupEl);
+    syncAssignedClusterRequirement(roleEl, clusterEl, clusterGroupEl);
+  }
+
   document.getElementById('openModalBtn').addEventListener('click', () => {
     userModal.open();
   });
@@ -457,17 +500,21 @@
       document.querySelectorAll('#edit_assigned_store_id input[type="checkbox"]').forEach(input => {
         input.checked = selectedStoreIds.includes(String(input.value));
       });
+      const selectedClusterIds = (user.assigned_cluster_ids || []).map(String);
+      document.querySelectorAll('#edit_assigned_cluster_id input[type="checkbox"]').forEach(input => {
+        input.checked = selectedClusterIds.includes(String(input.value));
+      });
       document.getElementById('edit_new_password').value = '';
       document.getElementById('edit_confirm_new_password').value = '';
-      syncAssignedStoreRequirement(editRoleEl, editStoreEl, editStoreGroupEl);
+      syncAssignmentGroups(editRoleEl, editStoreEl, editStoreGroupEl, editClusterEl, editClusterGroupEl);
       editUserModal.open();
     });
   });
 
-  createRoleEl?.addEventListener('change', () => syncAssignedStoreRequirement(createRoleEl, createStoreEl, createStoreGroupEl));
-  editRoleEl?.addEventListener('change', () => syncAssignedStoreRequirement(editRoleEl, editStoreEl, editStoreGroupEl));
-  syncAssignedStoreRequirement(createRoleEl, createStoreEl, createStoreGroupEl);
-  syncAssignedStoreRequirement(editRoleEl, editStoreEl, editStoreGroupEl);
+  createRoleEl?.addEventListener('change', () => syncAssignmentGroups(createRoleEl, createStoreEl, createStoreGroupEl, createClusterEl, createClusterGroupEl));
+  editRoleEl?.addEventListener('change', () => syncAssignmentGroups(editRoleEl, editStoreEl, editStoreGroupEl, editClusterEl, editClusterGroupEl));
+  syncAssignmentGroups(createRoleEl, createStoreEl, createStoreGroupEl, createClusterEl, createClusterGroupEl);
+  syncAssignmentGroups(editRoleEl, editStoreEl, editStoreGroupEl, editClusterEl, editClusterGroupEl);
   usersSearchInput?.addEventListener('input', filterUsersTable);
   filterUsersTable();
 
@@ -476,6 +523,7 @@
     const confirmPassword = document.getElementById('confirm_password');
     const role = createRoleEl;
     const assignedStore = createStoreEl;
+    const assignedCluster = createClusterEl;
 
     if (password.value !== confirmPassword.value) {
       e.preventDefault();
@@ -490,6 +538,21 @@
       toast.error('Select at least one Assigned Store for Inventory Staff.');
       return false;
     }
+    if ((role?.value || '') === 'Area Manager') {
+      const checkedClusters = assignedCluster?.querySelectorAll('input[type="checkbox"]:checked') || [];
+      if (checkedClusters.length === 0) {
+        e.preventDefault();
+        userModal.shakeElement(assignedCluster);
+        toast.error('Select at least one Cluster for the Area Manager.');
+        return false;
+      }
+      if (checkedClusters.length > 6) {
+        e.preventDefault();
+        userModal.shakeElement(assignedCluster);
+        toast.error('An Area Manager can be assigned a maximum of 6 clusters.');
+        return false;
+      }
+    }
   });
 
   document.getElementById('editUserForm').addEventListener('submit', (e) => {
@@ -497,6 +560,7 @@
     const confirmPassword = document.getElementById('edit_confirm_new_password');
     const role = editRoleEl;
     const assignedStore = editStoreEl;
+    const assignedCluster = editClusterEl;
     if (password.value || confirmPassword.value) {
       if (password.value !== confirmPassword.value) {
         e.preventDefault();
@@ -517,6 +581,21 @@
       editUserModal.shakeElement(assignedStore);
       toast.error('Select at least one Assigned Store for Inventory Staff.');
       return false;
+    }
+    if ((role?.value || '') === 'Area Manager') {
+      const checkedClusters = assignedCluster?.querySelectorAll('input[type="checkbox"]:checked') || [];
+      if (checkedClusters.length === 0) {
+        e.preventDefault();
+        editUserModal.shakeElement(assignedCluster);
+        toast.error('Select at least one Cluster for the Area Manager.');
+        return false;
+      }
+      if (checkedClusters.length > 6) {
+        e.preventDefault();
+        editUserModal.shakeElement(assignedCluster);
+        toast.error('An Area Manager can be assigned a maximum of 6 clusters.');
+        return false;
+      }
     }
   });
 })();

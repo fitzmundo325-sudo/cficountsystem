@@ -302,11 +302,11 @@ def _resolve_dashboard_month_year(month_arg, year_arg):
 @admin.route('/admin/pos-sold')
 @login_required
 def pos_sold():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
         flash('Access denied. Only Admins, Superadmins, General Managers, and Auditors can access this page.', category='error')
         return redirect(url_for('views.home'))
 
-    from .views import _apply_store_scope_filter
+    from .views import _apply_store_scope_filter, _get_area_manager_cluster_ids
 
     active_tab = (request.args.get('tab') or 'consolidated').strip()
     if active_tab not in ('consolidated', 'review'):
@@ -321,10 +321,21 @@ def pos_sold():
     end_date_raw = (request.args.get('end_date') or '').strip()
     review_date_raw = (request.args.get('review_date') or today.strftime('%Y-%m-%d')).strip()
 
+    allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+
     clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    if allowed_cluster_ids is not None:
+        clusters = [cluster for cluster in clusters if int(cluster.id) in allowed_cluster_ids]
     cluster_lookup = {int(cluster.id): cluster for cluster in clusters}
 
     stores = _apply_store_scope_filter(Store.query.order_by(Store.name.asc()).all(), request)
+    if allowed_cluster_ids is not None:
+        stores = [store for store in stores if int(store.cluster_id or 0) in allowed_cluster_ids]
+        if not stores:
+            flash(
+                'No stores are assigned to your clusters yet. Please contact your administrator.',
+                category='warning',
+            )
     stores_for_selected_cluster = [
         store for store in stores if selected_cluster_id and int(store.cluster_id or 0) == int(selected_cluster_id)
     ] if selected_cluster_id else []
@@ -368,6 +379,9 @@ def pos_sold():
         review_store = Store.query.get(review_store_id)
         if not review_store:
             flash('Selected review store does not exist.', category='error')
+            review_store_id = None
+        elif allowed_cluster_ids is not None and int(review_store.cluster_id or 0) not in allowed_cluster_ids:
+            flash('Selected review store is not assigned to you.', category='error')
             review_store_id = None
         else:
             review_report = DailyReport.query.filter_by(
@@ -417,6 +431,9 @@ def pos_sold():
     if apply_filter:
         if not selected_cluster_id:
             flash('Please select a cluster first.', category='error')
+        elif allowed_cluster_ids is not None and selected_cluster_id not in allowed_cluster_ids:
+            flash('Selected cluster is not assigned to you.', category='error')
+            selected_cluster_id = None
         elif selected_cluster_id not in cluster_lookup:
             flash('Selected cluster does not exist.', category='error')
             selected_cluster_id = None
@@ -475,7 +492,6 @@ def pos_sold():
                     .order_by(Store.name.asc(), DailyReport.report_date.asc(), PosSold.product_name.asc())
                     .all()
                 )
-
                 consolidated_map = {}
                 for row in pos_rows:
                     raw_product_name = (row.product_name or '').strip() or 'Unnamed Product'
@@ -1038,11 +1054,11 @@ def _clear_delivery_from_inventory_for_rso_records(store_id, report_date, rso_re
 @admin.route('/admin/delivery')
 @login_required
 def delivery():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
         flash('Access denied. Only Admins, Superadmins, General Managers, and Auditors can access this page.', category='error')
         return redirect(url_for('views.home'))
 
-    from .views import _apply_store_scope_filter
+    from .views import _apply_store_scope_filter, _get_area_manager_cluster_ids
 
     active_tab = (request.args.get('tab') or 'consolidated').strip()
     if active_tab not in ('consolidated', 'review'):
@@ -1057,9 +1073,21 @@ def delivery():
     end_date_raw = (request.args.get('end_date') or '').strip()
     review_date_raw = (request.args.get('review_date') or today.strftime('%Y-%m-%d')).strip()
 
+    allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+
     clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    if allowed_cluster_ids is not None:
+        clusters = [cluster for cluster in clusters if int(cluster.id) in allowed_cluster_ids]
     cluster_lookup = {int(cluster.id): cluster for cluster in clusters}
+
     stores = _apply_store_scope_filter(Store.query.order_by(Store.name.asc()).all(), request)
+    if allowed_cluster_ids is not None:
+        stores = [store for store in stores if int(store.cluster_id or 0) in allowed_cluster_ids]
+        if not stores:
+            flash(
+                'No stores are assigned to your clusters yet. Please contact your administrator.',
+                category='warning',
+            )
     stores_for_selected_cluster = [
         store for store in stores if selected_cluster_id and int(store.cluster_id or 0) == int(selected_cluster_id)
     ] if selected_cluster_id else []
@@ -1095,6 +1123,9 @@ def delivery():
         if not review_store:
             flash('Selected review store does not exist.', category='error')
             review_store_id = None
+        elif allowed_cluster_ids is not None and int(review_store.cluster_id or 0) not in allowed_cluster_ids:
+            flash('Selected review store is not assigned to you.', category='error')
+            review_store_id = None
         else:
             review_rows = (
                 RsoDelivery.query
@@ -1111,6 +1142,9 @@ def delivery():
     if apply_filter:
         if not selected_cluster_id:
             flash('Please select a cluster first.', category='error')
+        elif allowed_cluster_ids is not None and selected_cluster_id not in allowed_cluster_ids:
+            flash('Selected cluster is not assigned to you.', category='error')
+            selected_cluster_id = None
         elif selected_cluster_id not in cluster_lookup:
             flash('Selected cluster does not exist.', category='error')
             selected_cluster_id = None
@@ -1429,7 +1463,7 @@ def toggle_maintenance_mode():
 @admin.route('/admin/dashboard')
 @login_required
 def dashboard():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
         flash('Access denied. Only Admins, Superadmins, General Managers, and Auditors can access this page.', category='error')
         return redirect(url_for('views.home'))
 
@@ -2016,8 +2050,8 @@ def dashboard():
 
 @admin.route('/api/admin-dashboard-data')
 @login_required
-def api_admin_dashboard_data():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
+def api_admin_dashboard_data(scope_cluster_ids=None, cluster_name_label='All Clusters', team_name_label=None):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
         return jsonify({'error': 'Access denied'}), 403
 
     from .views import (
@@ -2067,8 +2101,12 @@ def api_admin_dashboard_data():
     current_month = f'{month_int:02d}'
     current_year = str(year_int)
 
-    clusters = Cluster.query.order_by(Cluster.name.asc()).all()
-    all_stores = Store.query.all()
+    if scope_cluster_ids:
+        clusters = Cluster.query.filter(Cluster.id.in_(scope_cluster_ids)).order_by(Cluster.name.asc()).all()
+        all_stores = Store.query.filter(Store.cluster_id.in_(scope_cluster_ids)).all()
+    else:
+        clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+        all_stores = Store.query.all()
     store_scope = _get_store_scope_from_request(request)
     stores = _apply_store_scope_filter(all_stores, request)
     dashboard_store_ids = [int(store.id) for store in stores]
@@ -2562,10 +2600,89 @@ def api_admin_dashboard_data():
         'icount_tool_tracker': icount_tool_tracker,
         'entity_label': 'Cluster',
         'entity_label_plural': 'Clusters',
-        'cluster_name': 'All Clusters',
-        'team_name': f'CFI {store_scope.capitalize()} Dashboard',
+        'cluster_name': cluster_name_label,
+        'team_name': team_name_label or f'CFI {store_scope.capitalize()} Dashboard',
         'store_scope': store_scope,
     })
+
+
+@admin.route('/admin/area-manager-dashboard')
+@login_required
+def area_manager_dashboard():
+    if current_user.role != 'Area Manager':
+        flash('Access denied. Only Area Managers can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .views import _format_header_date, _get_store_scope_from_request
+    from types import SimpleNamespace
+
+    month_arg = request.args.get('month')
+    year_arg = request.args.get('year')
+    start_date_arg = request.args.get('start_date')
+    end_date_arg = request.args.get('end_date')
+
+    def _parse_iso_date(value):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            return None
+
+    parsed_start_date = _parse_iso_date(start_date_arg)
+    parsed_end_date = _parse_iso_date(end_date_arg)
+    today = datetime.today().date()
+
+    if parsed_start_date or parsed_end_date:
+        start_date = parsed_start_date or parsed_end_date
+        end_date = parsed_end_date or parsed_start_date
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+    else:
+        start_date = today.replace(day=1)
+        end_date = today
+
+    assigned_clusters = current_user.assigned_clusters or []
+    if not assigned_clusters:
+        flash(
+            'No clusters are assigned to your account yet. Please contact your administrator.',
+            category='warning',
+        )
+
+    return render_template(
+        'cluster_manager/cluster_dashboard.html',
+        user=current_user,
+        layout_template='admin_base.html',
+        cluster=SimpleNamespace(name='Assigned Clusters'),
+        entity_label='Cluster',
+        entity_label_plural='Clusters',
+        dashboard_action_endpoint='admin.area_manager_dashboard',
+        dashboard_api_endpoint='admin.api_area_manager_dashboard_data',
+        selected_start_date=start_date.strftime('%Y-%m-%d'),
+        selected_end_date=end_date.strftime('%Y-%m-%d'),
+        selected_start_date_display=_format_header_date(start_date),
+        selected_end_date_display=_format_header_date(end_date),
+        store_scope=_get_store_scope_from_request(request),
+        team_name=f'{(current_user.full_name or current_user.username or "Area Manager").split()[0]} Area Dashboard',
+    )
+
+
+@admin.route('/api/area-manager-dashboard-data')
+@login_required
+def api_area_manager_dashboard_data():
+    if current_user.role != 'Area Manager':
+        return jsonify({'error': 'Access denied'}), 403
+
+    assigned_clusters = current_user.assigned_clusters or []
+    cluster_ids = [int(cluster.id) for cluster in assigned_clusters]
+    if not cluster_ids:
+        return jsonify({'error': 'No clusters are assigned to your account.'}), 403
+
+    return api_admin_dashboard_data(
+        scope_cluster_ids=cluster_ids,
+        cluster_name_label='Assigned Clusters',
+        team_name_label=f'{(current_user.full_name or current_user.username or "Area Manager").split()[0]} Area Dashboard',
+    )
 
 
 @admin.route('admin/users')
@@ -2592,7 +2709,8 @@ def users():
 
     users = user_query.order_by(User.date_added.desc(), User.id.desc()).all()
     stores = _apply_store_scope_filter(Store.query.order_by(Store.name.asc()).all(), request)
-    return render_template('admin/users.html', user=current_user, users=users, stores=stores, search_query=q)
+    clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    return render_template('admin/users.html', user=current_user, users=users, stores=stores, clusters=clusters, search_query=q)
 
 
 @admin.route('/admin/audit-logs')
@@ -2757,6 +2875,17 @@ def create_user():
                 flash('At least one Assigned Store is required for Inventory Staff.', category='error')
                 return redirect(url_for('admin.users'))
             assigned_store_id = assigned_stores[0].id
+
+        assigned_clusters = []
+        if role == 'Area Manager':
+            assigned_cluster_ids = [int(value) for value in request.form.getlist('assigned_cluster_ids') if str(value).isdigit()]
+            assigned_clusters = Cluster.query.filter(Cluster.id.in_(assigned_cluster_ids)).order_by(Cluster.name.asc()).all() if assigned_cluster_ids else []
+            if not assigned_clusters:
+                flash('At least one Cluster must be assigned to an Area Manager.', category='error')
+                return redirect(url_for('admin.users'))
+            if len(assigned_clusters) > 6:
+                flash('An Area Manager can be assigned a maximum of 6 clusters.', category='error')
+                return redirect(url_for('admin.users'))
         
         # Check if user already exists
         if User.query.filter_by(email=email).first():
@@ -2780,6 +2909,7 @@ def create_user():
         db.session.add(new_user)
         db.session.flush()
         new_user.assigned_stores = assigned_stores
+        new_user.assigned_clusters = assigned_clusters
         log_audit_event(
             action='admin.user.create',
             entity_type='User',
@@ -2791,6 +2921,7 @@ def create_user():
                 'role': new_user.role,
                 'assigned_store_id': new_user.assigned_store_id,
                 'assigned_store_ids': [store.id for store in new_user.assigned_stores],
+                'assigned_cluster_ids': [cluster.id for cluster in new_user.assigned_clusters],
             },
         )
         db.session.commit()
@@ -2819,6 +2950,7 @@ def update_user(user_id):
             'role': user.role,
             'assigned_store_id': user.assigned_store_id,
             'assigned_store_ids': [store.id for store in user.assigned_stores],
+            'assigned_cluster_ids': [cluster.id for cluster in user.assigned_clusters],
         }
         full_name = (request.form.get('full_name') or '').strip()
         username = (request.form.get('username') or '').strip()
@@ -2859,6 +2991,19 @@ def update_user(user_id):
             user.assigned_stores = []
             user.assigned_store_id = None
 
+        if role == 'Area Manager':
+            assigned_cluster_ids = [int(value) for value in request.form.getlist('assigned_cluster_ids') if str(value).isdigit()]
+            assigned_clusters = Cluster.query.filter(Cluster.id.in_(assigned_cluster_ids)).order_by(Cluster.name.asc()).all() if assigned_cluster_ids else []
+            if not assigned_clusters:
+                flash('At least one Cluster must be assigned to an Area Manager.', category='error')
+                return redirect(url_for('admin.users'))
+            if len(assigned_clusters) > 6:
+                flash('An Area Manager can be assigned a maximum of 6 clusters.', category='error')
+                return redirect(url_for('admin.users'))
+            user.assigned_clusters = assigned_clusters
+        else:
+            user.assigned_clusters = []
+
         if new_password or confirm_new_password:
             if new_password != confirm_new_password:
                 flash('New password and confirm password do not match.', category='error')
@@ -2882,6 +3027,7 @@ def update_user(user_id):
                     'role': user.role,
                     'assigned_store_id': user.assigned_store_id,
                     'assigned_store_ids': [store.id for store in user.assigned_stores],
+                    'assigned_cluster_ids': [cluster.id for cluster in user.assigned_clusters],
                     'password_changed': bool(new_password),
                 },
             },
@@ -4793,12 +4939,12 @@ def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
 @login_required
 def invensync():
     """Admin view for Invensync ending inventory from all stores"""
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
     selected_tab = request.args.get('tab', 'summary')
-    if current_user.role in ('General Manager', 'Auditor') and selected_tab in ('config', 'store_config'):
+    if current_user.role in ('General Manager', 'Auditor', 'Area Manager') and selected_tab in ('config', 'store_config'):
         selected_tab = 'summary'
 
     selected_date = date.today()
@@ -4885,7 +5031,7 @@ def invensync():
 @admin.route('/admin/oracle')
 @login_required
 def admin_oracle():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
@@ -5408,7 +5554,7 @@ def update_store_pricing():
 @login_required
 def admin_taf():
     """Admin view for Transaction Activity Forms from all stores"""
-    if current_user.role not in ('Superadmin', 'Admin', 'Auditor'):
+    if current_user.role not in ('Superadmin', 'Admin', 'Auditor', 'Area Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('admin.dashboard'))
 

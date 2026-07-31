@@ -78,7 +78,9 @@
             <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Grand Total</th>
             <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Status</th>
             <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Store</th>
+            {% if user.role in ('Superadmin', 'Admin') %}
             <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+            {% endif %}
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
@@ -112,6 +114,7 @@
               </span>
             </td>
             <td class="px-4 py-3 text-sm text-slate-700 text-center">{{ transfer.store.name if transfer.store else '-' }}</td>
+            {% if user.role in ('Superadmin', 'Admin') %}
             <td class="px-4 py-3 text-center">
               <a href="{{ url_for('admin.admin_edit_taf', transfer_id=transfer.id) }}" class="mr-1 inline-flex h-8 w-8 items-center justify-center rounded-md border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100" title="Edit Transfer" aria-label="Edit Transfer">✎</a>
               <button onclick="deleteTransfer({{ transfer.id }}, '{{ transfer.control_no }}')" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 transition-colors" title="Delete Transfer" aria-label="Delete Transfer">
@@ -122,6 +125,7 @@
                 </svg>
               </button>
             </td>
+            {% endif %}
           </tr>
           {% endfor %}
         </tbody>
