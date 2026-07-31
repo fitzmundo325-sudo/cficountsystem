@@ -2824,12 +2824,13 @@ def _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
 def _validate_pos_sold_product_mappings(items):
     _ensure_default_pos_sold_aliases()
     alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    skip_exact = {_normalize_product_text('Delivery Charge')}
     motif_name = _normalize_product_text('ADDITIONAL CHARGE FOR MOTIF')
     unmapped_names = []
     for item in items or []:
         product_name = str(item.get('product_name') or '').strip()
         normalized_name = _normalize_product_text(product_name)
-        if not normalized_name or motif_name in normalized_name:
+        if not normalized_name or normalized_name in skip_exact or motif_name in normalized_name:
             continue
         if normalized_name in alias_lookup or normalized_name in master_lookup:
             continue
