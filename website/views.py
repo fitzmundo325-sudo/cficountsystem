@@ -64,7 +64,7 @@ def presence_ping():
 @login_required
 def store_presence():
     role = str(current_user.role or '').strip()
-    if role in ('Admin', 'Superadmin', 'General Manager', 'Auditor'):
+    if role in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
         stores = _apply_store_scope_filter(Store.query.all(), request)
     elif role == 'Cluster Manager':
         cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
@@ -297,6 +297,13 @@ def _apply_store_scope_filter(stores, req):
     if scope == 'starlink':
         return [s for s in stores if 'starlink' in (s.name or '').lower()]
     return [s for s in stores if 'starlink' not in (s.name or '').lower()]
+
+
+def _get_area_manager_cluster_ids(user):
+    """Return the set of cluster ids an Area Manager is assigned to, or None for other roles."""
+    if getattr(user, 'role', None) != 'Area Manager':
+        return None
+    return {int(cluster.id) for cluster in (user.assigned_clusters or [])}
 
 
 _INVENSYNC_MEANINGFUL_ITEM_FIELDS = (
@@ -3604,6 +3611,8 @@ def home():
         return redirect(url_for('admin.users'))
     if role == 'Auditor':
         return redirect(url_for('admin.dashboard'))
+    if role == 'Area Manager':
+        return redirect(url_for('admin.area_manager_dashboard'))
     if role == 'Cluster Manager':
         return redirect(url_for('views.cluster_dashboard'))
     if role == 'Store Manager':
@@ -7227,7 +7236,7 @@ def cluster_manager_cluster_data():
 def cluster_manager_oracle():
     from datetime import date as _date
     role = (current_user.role or '').strip()
-    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor'):
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
         flash('Access denied. Only Cluster Managers and Admins can access this page.', category='error')
         return redirect(url_for('views.home'))
 
@@ -7267,7 +7276,7 @@ def cluster_manager_oracle():
     for b in saved_buffers:
         buffers_map.setdefault(b.store_id, {})[b.product_id] = b.buffer_pct
 
-    admin_shell = (role in ('Admin', 'Superadmin', 'General Manager', 'Auditor'))
+    admin_shell = (role in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'))
     return render_template('cluster_manager/oracle.html',
                            user=current_user,
                            cluster=cluster,
@@ -8362,7 +8371,7 @@ def _match_rso_to_inventory(rso_item, product, alias_master_lookup=None):
 @login_required
 def invensync():
     """Daily ending inventory view"""
-    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor']:
+    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor', 'Area Manager']:
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
@@ -9198,7 +9207,7 @@ def cluster_store_order_form_legacy(store_id):
 def cluster_store_order_form(store_id):
     """Render a cluster-scoped buffer editor for a store."""
     role = (current_user.role or '').strip()
-    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor'):
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
@@ -9244,7 +9253,7 @@ def cluster_store_order_form(store_id):
         store=store,
         products=products,
         cluster_view=True,
-        admin_shell=(role in ('Admin', 'Superadmin', 'General Manager', 'Auditor')),
+        admin_shell=(role in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager')),
         cluster_id=store.cluster_id,
         store_buffers=store_buffers,
         invensync_data=invensync_data,
