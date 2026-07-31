@@ -4561,7 +4561,14 @@ def store_manager_report():
             pos_sales_autofill['source'] = 'saved'
             pos_sales_autofill['label'] = 'Submitted POS sold data'
 
-    if pos_sales_autofill['source'] and not selected_report:
+    pos_fields_blank = (
+        not selected_report
+        or (
+            not float(getattr(selected_report, 'pos_gross_sales', 0) or 0)
+            and not float(getattr(selected_report, 'pos_net_sales', 0) or 0)
+        )
+    )
+    if pos_sales_autofill['source'] and pos_fields_blank:
         initial_form_values['pos_gross_sales'] = pos_sales_autofill['pos_gross_sales']
         initial_form_values['pos_net_sales'] = pos_sales_autofill['pos_net_sales']
 
@@ -6772,7 +6779,18 @@ def submit_daily_report():
         }
         authoritative_pos_items = staged_pos_sold_items or existing_final_pos_items
         authoritative_pos_totals = _build_pos_sales_autofill_totals(authoritative_pos_items)
-        if report_values.get('pos_gross_sales', 0.0) == 0.0 and report_values.get('pos_net_sales', 0.0) == 0.0 and not existing_report:
+        existing_pos_fields_blank = (
+            not existing_report
+            or (
+                not float(getattr(existing_report, 'pos_gross_sales', 0) or 0)
+                and not float(getattr(existing_report, 'pos_net_sales', 0) or 0)
+            )
+        )
+        if (
+            report_values.get('pos_gross_sales', 0.0) == 0.0
+            and report_values.get('pos_net_sales', 0.0) == 0.0
+            and existing_pos_fields_blank
+        ):
             report_values['pos_gross_sales'] = authoritative_pos_totals['pos_gross_sales']
             report_values['pos_net_sales'] = authoritative_pos_totals['pos_net_sales']
 
