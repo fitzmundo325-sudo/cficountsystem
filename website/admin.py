@@ -302,8 +302,8 @@ def _resolve_dashboard_month_year(month_arg, year_arg):
 @admin.route('/admin/pos-sold')
 @login_required
 def pos_sold():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
-        flash('Access denied. Only Admins, Superadmins, and General Managers can access this page.', category='error')
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
+        flash('Access denied. Only Admins, Superadmins, General Managers, and Auditors can access this page.', category='error')
         return redirect(url_for('views.home'))
 
     from .views import _apply_store_scope_filter
@@ -1038,8 +1038,8 @@ def _clear_delivery_from_inventory_for_rso_records(store_id, report_date, rso_re
 @admin.route('/admin/delivery')
 @login_required
 def delivery():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
-        flash('Access denied. Only Admins, Superadmins, and General Managers can access this page.', category='error')
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
+        flash('Access denied. Only Admins, Superadmins, General Managers, and Auditors can access this page.', category='error')
         return redirect(url_for('views.home'))
 
     from .views import _apply_store_scope_filter
@@ -1429,8 +1429,8 @@ def toggle_maintenance_mode():
 @admin.route('/admin/dashboard')
 @login_required
 def dashboard():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
-        flash('Access denied. Only Admins, Superadmins, and General Managers can access this page.', category='error')
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
+        flash('Access denied. Only Admins, Superadmins, General Managers, and Auditors can access this page.', category='error')
         return redirect(url_for('views.home'))
 
     month_arg = request.args.get('month')
@@ -2017,7 +2017,7 @@ def dashboard():
 @admin.route('/api/admin-dashboard-data')
 @login_required
 def api_admin_dashboard_data():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
         return jsonify({'error': 'Access denied'}), 403
 
     from .views import (
@@ -4793,12 +4793,12 @@ def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
 @login_required
 def invensync():
     """Admin view for Invensync ending inventory from all stores"""
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
     selected_tab = request.args.get('tab', 'summary')
-    if current_user.role == 'General Manager' and selected_tab in ('config', 'store_config'):
+    if current_user.role in ('General Manager', 'Auditor') and selected_tab in ('config', 'store_config'):
         selected_tab = 'summary'
 
     selected_date = date.today()
@@ -4885,7 +4885,7 @@ def invensync():
 @admin.route('/admin/oracle')
 @login_required
 def admin_oracle():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
@@ -5408,7 +5408,7 @@ def update_store_pricing():
 @login_required
 def admin_taf():
     """Admin view for Transaction Activity Forms from all stores"""
-    if current_user.role not in ('Superadmin', 'Admin'):
+    if current_user.role not in ('Superadmin', 'Admin', 'Auditor'):
         flash('Access denied.', category='error')
         return redirect(url_for('admin.dashboard'))
 
