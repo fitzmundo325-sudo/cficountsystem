@@ -70,6 +70,11 @@
     {% set dashboard_action_endpoint = dashboard_action_endpoint|default('views.cluster_dashboard') %}
     {% set entity_label = entity_label|default('Store') %}
     {% set entity_label_plural = entity_label_plural|default('Stores') %}
+    {% set dashboard_api_endpoint = dashboard_api_endpoint|default(
+        'views.api_cluster_dashboard_data'
+        if dashboard_action_endpoint == 'views.cluster_dashboard'
+        else 'admin.api_admin_dashboard_data'
+    ) %}
     <form method="GET" action="{{ url_for(dashboard_action_endpoint) }}" class="hidden lg:flex items-end gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
       {% if force_cluster_sidebar|default(false) %}
       <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
@@ -130,7 +135,7 @@
 
   <!-- Hidden metadata root for dashboard_loader.js -->
   <div id="dashboard-data-root"
-       data-api-endpoint="{{ url_for('views.api_cluster_dashboard_data') if dashboard_action_endpoint == 'views.cluster_dashboard' else url_for('admin.api_admin_dashboard_data') }}"
+       data-api-endpoint="{{ url_for(dashboard_api_endpoint) }}"
        data-force-cluster="{{ 'true' if force_cluster_sidebar|default(false) else 'false' }}"
        data-cluster-id="{{ cluster.id|default('', true) }}"
        data-entity-label="{{ entity_label }}"

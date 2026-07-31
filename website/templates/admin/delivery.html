@@ -253,7 +253,7 @@
         <h2 class="text-lg font-bold text-slate-900">Store Date Delivery Entries</h2>
         <p class="text-xs text-slate-500">{{ review_date }}</p>
       </div>
-      {% if review_rows %}
+      {% if review_rows and user.role not in ('Auditor', 'Area Manager') %}
       <button type="button" id="openDeleteAllDeliveryModal" class="inline-flex items-center justify-center rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-rose-700">
         Delete All
       </button>
@@ -269,7 +269,9 @@
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Received</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Source</th>
             <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Reviewed</th>
+            {% if user.role not in ('Auditor', 'Area Manager') %}
             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Action</th>
+            {% endif %}
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
@@ -293,6 +295,7 @@
             <td class="px-4 py-3 text-right text-sm font-semibold text-slate-900">{{ row.received_quantity if row.received_quantity is not none else row.quantity }}</td>
             <td class="px-4 py-3 text-sm text-slate-700">{{ row.upload_source or 'delivery' }}</td>
             <td class="px-4 py-3 text-sm text-slate-700">{{ row.delivery_reviewed_date.strftime('%Y-%m-%d') if row.delivery_reviewed_date else '--' }}</td>
+            {% if user.role not in ('Auditor', 'Area Manager') %}
             <td class="px-4 py-3 text-right">
               <button
                 type="button"
@@ -307,6 +310,7 @@
                 Delete
               </button>
             </td>
+            {% endif %}
           </tr>
           {% else %}
           <tr>

@@ -1,4 +1,4 @@
-{% if current_user.role in ['Admin', 'Superadmin', 'Auditor'] %}
+{% if current_user.role in ['Admin', 'Superadmin', 'Auditor', 'Area Manager'] %}
   {% extends "admin_base.html" %}
 {% else %}
   {% extends "base.html" %}
@@ -7,7 +7,7 @@
 
 {% block content %}
 
-{% set is_view_only = current_user.role in ['Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor'] %}
+{% set is_view_only = current_user.role in ['Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor', 'Area Manager'] %}
 {% set is_day_locked = inventory.is_finalized|default(false) %}
 {% set can_enter_beginning_stock = allow_beginning_stock_entry|default(false) %}
 {% set is_beginning_locked = (inventory.is_beginning_finalized|default(false) or store_beginning_baseline_finalized|default(false)) and not can_enter_beginning_stock %}

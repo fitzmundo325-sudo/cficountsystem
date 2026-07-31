@@ -9,6 +9,12 @@ inventory_staff_store = db.Table(
     db.Column('store_id', db.Integer, db.ForeignKey('store.id'), primary_key=True),
 )
 
+area_manager_cluster = db.Table(
+    'area_manager_cluster',
+    db.Column('user_id', db.Integer, db.ForeignKey('user.id'), primary_key=True),
+    db.Column('cluster_id', db.Integer, db.ForeignKey('cluster.id'), primary_key=True),
+)
+
 class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(100), unique=True)
@@ -30,6 +36,13 @@ class User(db.Model, UserMixin):
     )
     # Relationship for clusters managed by this user
     managed_clusters = db.relationship('Cluster', backref='manager', lazy=True)
+    # Relationship for clusters assigned to this Area Manager
+    assigned_clusters = db.relationship(
+        'Cluster',
+        secondary=area_manager_cluster,
+        lazy=True,
+        backref=db.backref('area_managers', lazy=True),
+    )
     # Relationship for stores managed by this user
     managed_stores = db.relationship('Store', backref='manager', foreign_keys='Store.manager_id', lazy=True)
 

@@ -470,7 +470,9 @@ def create_app():
         mode = MaintenanceMode.query.first()
         if not mode or not mode.is_enabled:
             return redirect(url_for('views.home') if current_user.is_authenticated else url_for('auth.login'))
-        if current_user.is_authenticated and getattr(current_user, 'role', None) in ('Admin', 'Superadmin', 'General Manager', 'Auditor'):
+        if current_user.is_authenticated and getattr(current_user, 'role', None) in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
+            if getattr(current_user, 'role', None) == 'Area Manager':
+                return redirect(url_for('admin.area_manager_dashboard'))
             return redirect(url_for('admin.dashboard'))
         return render_template('maintenance.html', maintenance_mode=mode)
 
@@ -482,7 +484,7 @@ def create_app():
             return None
         if not current_user.is_authenticated:
             return None
-        if getattr(current_user, 'role', None) in ('Admin', 'Superadmin', 'General Manager', 'Auditor'):
+        if getattr(current_user, 'role', None) in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
             return None
         mode = MaintenanceMode.query.first()
         if mode and mode.is_enabled:
