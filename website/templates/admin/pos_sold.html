@@ -99,12 +99,12 @@
     </div>
     <div class="p-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
       {% for metric in category_metrics %}
-      <article class="rounded-lg border border-slate-200 bg-slate-50/60 p-2.5">
+      <article class="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
         <p class="text-[11px] font-semibold text-slate-800 truncate" title="{{ metric.short }} {{ metric.category }}">
           <span class="inline-flex items-center rounded bg-indigo-50 text-indigo-700 px-1.5 py-0.5 text-[10px] font-semibold mr-1">{{ metric.short }}</span>{{ metric.category }}
         </p>
         <p class="text-[11px] text-slate-700 mt-0.5">
-          <span class="inline-flex items-center rounded bg-slate-200 text-slate-700 px-1.5 py-0.5 text-[10px] font-semibold mr-1">Qty</span>
+          <span class="inline-flex items-center rounded bg-slate-100 text-slate-700 px-1.5 py-0.5 text-[10px] font-semibold mr-1">Qty</span>
           <span class="inline-flex items-center rounded bg-emerald-100 text-emerald-800 px-1.5 py-0.5 text-[10px] font-bold">{{ metric.quantity }}</span>
         </p>
       </article>

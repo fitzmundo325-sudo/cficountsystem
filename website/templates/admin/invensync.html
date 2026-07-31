@@ -139,7 +139,7 @@
       <button id="summaryTabBtn" onclick="switchAdminInvenSyncTab('summary')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'summary' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'summary' else 'false' }}">
         Summary
       </button>
-      {% if user.role != 'General Manager' %}
+      {% if user.role not in ('General Manager', 'Auditor') %}
       <button id="configTabBtn" onclick="switchAdminInvenSyncTab('config')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'config' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'config' else 'false' }}">
         Global Config
       </button>
@@ -313,7 +313,7 @@
     {% endif %}
   </div>
 
-  {% if user.role != 'General Manager' %}
+  {% if user.role not in ('General Manager', 'Auditor') %}
   <div id="configTab" style="display: {{ 'block' if selected_tab == 'config' else 'none' }};">
     <div class="grid gap-4">
       <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">
@@ -422,7 +422,7 @@
   </div>
   {% endif %}
 
-  {% if user.role != 'General Manager' %}
+  {% if user.role not in ('General Manager', 'Auditor') %}
   <div id="storeConfigTab" style="display: {{ 'block' if selected_tab == 'store_config' else 'none' }};">
     <div class="grid gap-4">
       <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">

@@ -64,7 +64,7 @@ def presence_ping():
 @login_required
 def store_presence():
     role = str(current_user.role or '').strip()
-    if role in ('Admin', 'Superadmin', 'General Manager'):
+    if role in ('Admin', 'Superadmin', 'General Manager', 'Auditor'):
         stores = _apply_store_scope_filter(Store.query.all(), request)
     elif role == 'Cluster Manager':
         cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
@@ -3602,6 +3602,8 @@ def home():
         return redirect(url_for('admin.dashboard'))
     if role == 'Admin':
         return redirect(url_for('admin.users'))
+    if role == 'Auditor':
+        return redirect(url_for('admin.dashboard'))
     if role == 'Cluster Manager':
         return redirect(url_for('views.cluster_dashboard'))
     if role == 'Store Manager':
@@ -6460,7 +6462,6 @@ def submit_pos_sold_report():
             )
             return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
 
-        _validate_pos_sold_product_mappings(draft_pos_sold_items)
         motif_breakdown_raw = (request.form.get('motif_breakdown_json') or '').strip()
         try:
             motif_breakdown = json.loads(motif_breakdown_raw) if motif_breakdown_raw else {}
@@ -6699,10 +6700,6 @@ def submit_daily_report():
             PosSold.query.filter_by(daily_report_id=existing_report.id).all()
             if existing_report else []
         )
-        has_existing_saved_pos = bool(existing_final_pos_items)
-        if not staged_pos_sold_items and not has_existing_saved_pos:
-            flash('Scan and Save POS Sold before submitting the Daily Report.', category='error')
-            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
         
         # Helper function to get float value
         def get_float(key, default=0.0):
@@ -7212,7 +7209,7 @@ def cluster_manager_cluster_data():
 def cluster_manager_oracle():
     from datetime import date as _date
     role = (current_user.role or '').strip()
-    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor'):
         flash('Access denied. Only Cluster Managers and Admins can access this page.', category='error')
         return redirect(url_for('views.home'))
 
@@ -7252,7 +7249,7 @@ def cluster_manager_oracle():
     for b in saved_buffers:
         buffers_map.setdefault(b.store_id, {})[b.product_id] = b.buffer_pct
 
-    admin_shell = (role in ('Admin', 'Superadmin', 'General Manager'))
+    admin_shell = (role in ('Admin', 'Superadmin', 'General Manager', 'Auditor'))
     return render_template('cluster_manager/oracle.html',
                            user=current_user,
                            cluster=cluster,
@@ -8353,7 +8350,7 @@ def _match_rso_to_inventory(rso_item, product, alias_master_lookup=None):
 @login_required
 def invensync():
     """Daily ending inventory view"""
-    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin']:
+    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor']:
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
@@ -9189,7 +9186,7 @@ def cluster_store_order_form_legacy(store_id):
 def cluster_store_order_form(store_id):
     """Render a cluster-scoped buffer editor for a store."""
     role = (current_user.role or '').strip()
-    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
@@ -9235,7 +9232,7 @@ def cluster_store_order_form(store_id):
         store=store,
         products=products,
         cluster_view=True,
-        admin_shell=(role in ('Admin', 'Superadmin', 'General Manager')),
+        admin_shell=(role in ('Admin', 'Superadmin', 'General Manager', 'Auditor')),
         cluster_id=store.cluster_id,
         store_buffers=store_buffers,
         invensync_data=invensync_data,
