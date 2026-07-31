@@ -7744,12 +7744,6 @@ def approve_report():
             return jsonify({'success': False, 'error': 'Report is outside your assigned cluster'}), 403
         if report.status != 'Pending':
             return jsonify({'success': False, 'error': 'Only pending reports can be approved'}), 400
-        if not PosSold.query.filter_by(daily_report_id=report.id).first():
-            return jsonify({
-                'success': False,
-                'error': 'Final POS Sold records are required before approval',
-            }), 400
-        
         # Update status to Approved
         previous_status = report.status
         report.status = 'Approved'
