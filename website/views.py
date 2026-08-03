@@ -5696,6 +5696,87 @@ def _inventory_staff_assigned_store_ids(user=None):
     return assigned_ids
 
 
+def _inventory_staff_assigned_stores(user=None):
+    user = user or current_user
+    assigned_ids = _inventory_staff_assigned_store_ids(user)
+    if not assigned_ids:
+        return []
+    return Store.query.filter(Store.id.in_(assigned_ids)).all()
+
+
+def _normalize_store_name_for_match(name):
+    """Normalize a store/location name for lenient matching.
+
+    Drops parenthetical suffixes (e.g. '(Starlink)', '(StarLink)', '(GOW)'),
+    punctuation, and spaces so 'Kananga' still matches 'Kananga (StarLink)'.
+    """
+    text = str(name or '').lower()
+    text = re.sub(r'\([^)]*\)', '', text)
+    text = re.sub(r'[^a-z0-9]+', '', text)
+    return text.strip()
+
+
+def _resolve_transfer_destination_store(transfer, candidate_stores):
+    """Return the Store a transfer is destined for among candidate stores.
+
+    Tries an exact (case/space-insensitive) name match first, then falls back
+    to lenient normalized matching to tolerate short names and renamed stores.
+    """
+    transfer_to_raw = str(getattr(transfer, 'transfer_to', '') or '').strip()
+    if not transfer_to_raw:
+        return None
+    exact = transfer_to_raw.lower()
+    for store in candidate_stores:
+        if str(store.name or '').strip().lower() == exact:
+            return store
+    normalized = _normalize_store_name_for_match(transfer_to_raw)
+    if not normalized:
+        return None
+    for store in candidate_stores:
+        if _normalize_store_name_for_match(store.name) == normalized:
+            return store
+    return None
+
+
+def _collect_incoming_transfers_for_stores(candidate_stores):
+    """Transfers destined for any candidate store (lenient name match), excluding
+    transfers whose source store is the destination store itself."""
+    transfers = TafTransfer.query.all()
+    result = []
+    for transfer in transfers:
+        dest_store = _resolve_transfer_destination_store(transfer, candidate_stores)
+        if not dest_store:
+            continue
+        if int(getattr(transfer, 'store_id', 0) or 0) == int(dest_store.id):
+            continue
+        result.append(transfer)
+    result.sort(key=lambda t: (getattr(t, 'transaction_date') or date.min, int(getattr(t, 'id', 0) or 0)), reverse=True)
+    return result
+
+
+def _collect_wastage_transfers_for_stores(candidate_stores):
+    """Wastage transfers destined for any candidate store, plus wastage transfers
+    sent by any candidate store to Main Office."""
+    candidate_ids = {int(store.id) for store in candidate_stores}
+    transfers = TafTransfer.query.all()
+    result = []
+    for transfer in transfers:
+        if str(getattr(transfer, 'transaction_type', '') or '').strip().lower() != 'wastage transfer':
+            continue
+        dest_store = _resolve_transfer_destination_store(transfer, candidate_stores)
+        if dest_store and int(getattr(transfer, 'store_id', 0) or 0) != int(dest_store.id):
+            result.append(transfer)
+            continue
+        if (
+            int(getattr(transfer, 'store_id', 0) or 0) in candidate_ids
+            and _normalize_store_name_for_match(getattr(transfer, 'transfer_to', '')) == 'mainoffice'
+        ):
+            result.append(transfer)
+            continue
+    result.sort(key=lambda t: (getattr(t, 'transaction_date') or date.min, int(getattr(t, 'id', 0) or 0)), reverse=True)
+    return result
+
+
 def _resolve_store_for_store_scope_user():
     role = str(getattr(current_user, 'role', '') or '').strip()
     if role == 'Store Manager':
@@ -5711,6 +5792,8 @@ def _resolve_store_for_store_scope_user():
             else session_store_id if session_store_id in assigned_store_ids
             else min(assigned_store_ids) if assigned_store_ids else None
         )
+        if assigned_store_id:
+            session['inventory_staff_store_id'] = assigned_store_id
         if not assigned_store_id:
             return None
         return Store.query.get(assigned_store_id)
@@ -5988,14 +6071,11 @@ def store_manager_incoming_transfers():
         flash('You are not assigned to any store yet.', category='error')
         return redirect(url_for('views.home'))
 
-    normalized_store_name = str(store.name or '').strip().lower()
-    incoming_transfers = (
-        TafTransfer.query
-        .filter(func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name)
-        .filter(TafTransfer.store_id != store.id)
-        .order_by(TafTransfer.transaction_date.desc(), TafTransfer.id.desc())
-        .all()
-    )
+    if role == 'Inventory Staff':
+        candidate_stores = _inventory_staff_assigned_stores() or [store]
+    else:
+        candidate_stores = [store]
+    incoming_transfers = _collect_incoming_transfers_for_stores(candidate_stores)
 
     transfer_ids = [transfer.id for transfer in incoming_transfers]
     item_count_by_transfer = {}
@@ -6040,21 +6120,32 @@ def store_manager_incoming_transfer_view(transfer_id):
         flash('Transfer record not found.', category='error')
         return redirect(url_for('views.store_manager_incoming_transfers'))
 
-    normalized_store_name = str(store.name or '').strip().lower()
-    transfer_to_name = str(getattr(transfer, 'transfer_to', '') or '').strip().lower()
+    if role == 'Inventory Staff':
+        candidate_stores = _inventory_staff_assigned_stores() or [store]
+    else:
+        candidate_stores = [store]
+
     transfer_type_normalized = str(getattr(transfer, 'transaction_type', '') or '').strip().lower()
-    is_incoming_for_current_store = (
-        transfer_to_name == normalized_store_name
-        and int(getattr(transfer, 'store_id', 0) or 0) != int(store.id)
-    )
+    transfer_to_norm = _normalize_store_name_for_match(getattr(transfer, 'transfer_to', ''))
+    transfer_store_id = int(getattr(transfer, 'store_id', 0) or 0)
+
+    dest_store = _resolve_transfer_destination_store(transfer, candidate_stores)
+    is_incoming_for_current_store = bool(dest_store and transfer_store_id != int(dest_store.id))
     is_self_main_office_wastage = (
         transfer_type_normalized == 'wastage transfer'
-        and int(getattr(transfer, 'store_id', 0) or 0) == int(store.id)
-        and transfer_to_name == 'main office'
+        and transfer_to_norm == 'mainoffice'
+        and any(int(s.id) == transfer_store_id for s in candidate_stores)
     )
     if not (is_incoming_for_current_store or is_self_main_office_wastage):
         flash('You can only view allowed incoming transfers for your store.', category='error')
         return redirect(url_for('views.store_manager_incoming_transfers'))
+
+    if dest_store:
+        store = dest_store
+    elif is_self_main_office_wastage:
+        source_store = Store.query.get(transfer_store_id)
+        if source_store:
+            store = source_store
 
     transfer_items = (
         TafTransferItem.query
@@ -6170,9 +6261,14 @@ def store_manager_outgoing_transfers():
         flash('You are not assigned to any store yet.', category='error')
         return redirect(url_for('views.home'))
 
+    if role == 'Inventory Staff':
+        candidate_store_ids = [s.id for s in (_inventory_staff_assigned_stores() or [store])]
+    else:
+        candidate_store_ids = [store.id]
+
     outgoing_transfers = (
         TafTransfer.query
-        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.store_id.in_(candidate_store_ids))
         .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer', 'supplies transfer']))
         .order_by(TafTransfer.transaction_date.desc(), TafTransfer.id.desc())
         .all()
@@ -6221,9 +6317,19 @@ def store_manager_outgoing_transfer_view(transfer_id):
         flash('Transfer record not found.', category='error')
         return redirect(url_for('views.store_manager_outgoing_transfers'))
 
-    if int(getattr(transfer, 'store_id', 0) or 0) != int(store.id):
+    if role == 'Inventory Staff':
+        candidate_store_ids = {int(s.id) for s in (_inventory_staff_assigned_stores() or [store])}
+    else:
+        candidate_store_ids = {int(store.id)}
+
+    transfer_store_id = int(getattr(transfer, 'store_id', 0) or 0)
+    if transfer_store_id not in candidate_store_ids:
         flash('You can only view outgoing transfers from your store.', category='error')
         return redirect(url_for('views.store_manager_outgoing_transfers'))
+
+    source_store = Store.query.get(transfer_store_id)
+    if source_store:
+        store = source_store
 
     transfer_items = (
         TafTransferItem.query
@@ -6261,12 +6367,13 @@ def store_manager_wastage_transfer_view(transfer_id):
         flash('Transfer record not found.', category='error')
         return redirect(url_for('views.store_manager_wastage'))
 
-    normalized_store_name = str(store.name or '').strip().lower()
-    transfer_to_name = str(getattr(transfer, 'transfer_to', '') or '').strip().lower()
-    is_incoming_for_current_store = (
-        transfer_to_name == normalized_store_name
-        and int(getattr(transfer, 'store_id', 0) or 0) != int(store.id)
-    )
+    if role == 'Inventory Staff':
+        candidate_stores = _inventory_staff_assigned_stores() or [store]
+    else:
+        candidate_stores = [store]
+
+    dest_store = _resolve_transfer_destination_store(transfer, candidate_stores)
+    is_incoming_for_current_store = bool(dest_store and int(getattr(transfer, 'store_id', 0) or 0) != int(dest_store.id))
     if not is_incoming_for_current_store:
         flash('You can only view incoming wastage transfers sent to your store.', category='error')
         return redirect(url_for('views.store_manager_wastage'))
@@ -6291,23 +6398,11 @@ def store_manager_wastage():
         flash('You are not assigned to any store yet.', category='error')
         return redirect(url_for('views.home'))
 
-    normalized_store_name = str(store.name or '').strip().lower()
-    wastage_transfers = (
-        TafTransfer.query
-        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer')
-        .filter(
-            (
-                (func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name)
-                & (TafTransfer.store_id != store.id)
-            )
-            | (
-                (TafTransfer.store_id == store.id)
-                & (func.lower(func.trim(TafTransfer.transfer_to)) == 'main office')
-            )
-        )
-        .order_by(TafTransfer.transaction_date.desc(), TafTransfer.id.desc())
-        .all()
-    )
+    if role == 'Inventory Staff':
+        candidate_stores = _inventory_staff_assigned_stores() or [store]
+    else:
+        candidate_stores = [store]
+    wastage_transfers = _collect_wastage_transfers_for_stores(candidate_stores)
 
     transfer_ids = [transfer.id for transfer in wastage_transfers]
     item_count_by_transfer = {}
