@@ -1,4 +1,4 @@
-const CACHE_NAME = 'idashboard-pwa-v4';
+const CACHE_NAME = 'idashboard-pwa-v3';
 const STATIC_ASSETS = [
   '/static/css/styles.css',
   '/static/js/modal.js',
