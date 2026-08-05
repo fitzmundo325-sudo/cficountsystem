@@ -9993,3 +9993,28 @@ def get_masterlist_products():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+
+
+
+# ================================================
+# Proper Implementation of Views Py Section Start
+# ================================================
+
+
+
+
+
+#v2 of the product masterlist page 
+@views.route('/admin/product_masterlist', methods=['GET', 'POST'])
+def product_masterlist_v2():
+    page = 'product_masterlist'
+
+    return render_template("admin/product_masterlist_v2.html", user=current_user, page=page)
+        
+
+
+
+
+
+
