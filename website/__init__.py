@@ -284,6 +284,25 @@ def _ensure_daily_ending_inventory_item_columns():
         conn.commit()
 
 
+def _ensure_daily_ending_inventory_adjustment_columns():
+    with db.engine.connect() as conn:
+        existing_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info('daily_ending_inventory_item')")).fetchall()
+        }
+
+        # Additive only: leaves all existing store InvenSync data untouched.
+        if 'adjustment_type' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_ending_inventory_item ADD COLUMN adjustment_type VARCHAR(30) DEFAULT ''"))
+        if 'adjustment_product_master_id' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_ending_inventory_item ADD COLUMN adjustment_product_master_id INTEGER"))
+        if 'adjustment_qty' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_ending_inventory_item ADD COLUMN adjustment_qty INTEGER DEFAULT 0"))
+        if 'adjustment_charges' not in existing_columns:
+            conn.execute(text("ALTER TABLE daily_ending_inventory_item ADD COLUMN adjustment_charges VARCHAR(1000) DEFAULT ''"))
+        conn.commit()
+
+
 def _ensure_daily_ending_inventory_columns():
     with db.engine.connect() as conn:
         existing_columns = {
@@ -449,6 +468,7 @@ def create_app():
         _ensure_taf_transfer_item_columns()
         _ensure_daily_ending_inventory_columns()
         _ensure_daily_ending_inventory_item_columns()
+        _ensure_daily_ending_inventory_adjustment_columns()
         _drop_daily_ending_inventory_discount_columns()
         _drop_daily_forecasting_tables()
         _backfill_store_group_values()

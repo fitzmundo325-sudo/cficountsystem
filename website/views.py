@@ -3045,6 +3045,89 @@ def _build_taf_trans_in_quantity_by_master_id(store, transaction_date):
     return master_quantities
 
 
+def _build_taf_transfer_trace(store, transaction_date, product_master_id, direction):
+    """Return the TafTransfer records that account for a store/day product's
+    Trans-In or Trans-Out column. Mirrors the column source logic so the trace
+    always matches the auto-populated values used by the InvenSync table."""
+    if not store or not transaction_date or not product_master_id:
+        return [], 0
+
+    direction = str(direction or '').strip().lower()
+    if direction not in ('in', 'out'):
+        return [], 0
+
+    normalized_store_name = str(store.name or '').strip().lower()
+
+    query = (
+        db.session.query(TafTransferItem, TafTransfer)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+    )
+    if direction == 'out':
+        query = query.filter(TafTransfer.store_id == store.id)
+    elif direction == 'in':
+        if not normalized_store_name:
+            return [], 0
+        query = query.filter(
+            func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name
+        ).filter(
+            func.lower(func.trim(TafTransfer.status)) != 'pending'
+        )
+
+    transfer_rows = query.all()
+    if not transfer_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    traced_total = 0
+    for transfer_item, transfer in transfer_rows:
+        resolved_master_id = _resolve_pos_sold_master_id(
+            transfer_item.item_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(transfer_item.quantity or 0)
+        received_qty = int(transfer_item.received_quantity) if transfer_item.received_quantity is not None else quantity
+
+        if direction == 'out':
+            count_qty = quantity
+        else:
+            count_qty = received_qty
+        if count_qty <= 0:
+            continue
+
+        traced_total += count_qty
+        records.append({
+            'control_no': getattr(transfer, 'control_no', None),
+            'transaction_date': (
+                transfer.transaction_date.strftime('%Y-%m-%d')
+                if getattr(transfer, 'transaction_date', None) else ''
+            ),
+            'transaction_type': getattr(transfer, 'transaction_type', None),
+            'transfer_from': getattr(transfer, 'transfer_from', None),
+            'transfer_to': getattr(transfer, 'transfer_to', None),
+            'status': getattr(transfer, 'status', None),
+            'prepared_by_name': getattr(transfer, 'prepared_by_name', None),
+            'received_by_name': getattr(transfer, 'received_by_name', None),
+            'quantity': quantity,
+            'received_quantity': received_qty,
+            'short_over_qty': int(transfer_item.short_over_qty or 0),
+            'unit_cost': float(transfer_item.unit_cost or 0.0),
+            'line_total': float(transfer_item.line_total or 0.0),
+            'remarks': transfer_item.remarks,
+            'created_at': (
+                transfer.created_at.strftime('%Y-%m-%d %H:%M')
+                if getattr(transfer, 'created_at', None) else ''
+            ),
+        })
+
+    return records, traced_total
+
+
 def _build_pos_sold_quantity_by_master_id_for_report(report_id, include_bitbit_details=False):
     if not report_id:
         return ({}, {}) if include_bitbit_details else {}
@@ -4687,7 +4770,7 @@ def store_manager_pos_sold():
     motif_product_options = [
         {
             'id': int(product.id),
-            'code': product.code,
+            'code': str(product.code or ''),
             'description': product.description,
             'price': float(product.sp_p or product.sp_np or 0.0),
         }
@@ -8562,7 +8645,6 @@ def invensync():
             )
         )
     ]
-
     # Define category order
     category_order = {
         'breads': 1,
@@ -8657,6 +8739,25 @@ def invensync():
     if new_items_to_add:
         db.session.add_all(new_items_to_add)
     db.session.commit()
+
+    # Keep each item's SRP aligned with the store's current pricing tier so the
+    # price shown in InvenSync always matches the Product Masterlist (sp_np for
+    # non-premium stores, sp_p for premium). Frozen/finalized days keep history.
+    if not inventory.is_finalized:
+        tier_srp_by_product = {
+            p.id: float((p.sp_p if store.store_group == 'premium' else (p.sp_np or p.sp_p)) or 0.0)
+            for p in products
+        }
+        price_dirty = False
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            tier_srp = tier_srp_by_product.get(inv_item.product_master_id)
+            if tier_srp is not None and float(inv_item.srp_price or 0.0) != tier_srp:
+                inv_item.srp_price = tier_srp
+                price_dirty = True
+        if price_dirty:
+            db.session.commit()
 
     # Sync RSO delivery data to inventory items with improved matching
     # Reconcile reviewed RSO rows even after an inventory day is finalized.
@@ -8899,8 +9000,166 @@ def invensync():
         next_missing_date=missing_invensync_dates[0]['iso'] if missing_invensync_dates else None,
         motif_charge_payload=motif_charge_payload,
         motif_product_options=motif_product_options,
+        adj_product_options=[
+            {
+                'id': int(p.id),
+                'description': p.description,
+                'code': str(p.code or ''),
+                'price': float((p.sp_p if store.store_group == 'premium' else (p.sp_np or p.sp_p)) or 0.0),
+            }
+            for p in sorted(products, key=lambda x: (x.description or '').lower())
+            if (p.description or '').strip()
+        ],
+        show_trans_trace=current_user.role in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'),
+        is_edit_adjustments=(current_user.role == 'Inventory Staff'),
         **cluster_sidebar_ctx,
     )
+
+
+@views.route('/store-manager/invensync/trace-data')
+@login_required
+def invensync_transfer_trace():
+    """Return the TafTransfer records behind a Trans-In / Trans-Out cell.
+    Admin roles only."""
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        return jsonify({'ok': False, 'message': 'Access denied.'}), 403
+
+    store_id = request.args.get('store_id', type=int)
+    date_str = request.args.get('date', '').strip()
+    product_master_id = request.args.get('product_master_id', type=int)
+    direction = request.args.get('direction', '').strip().lower()
+
+    if not store_id or not date_str or not product_master_id:
+        return jsonify({'ok': False, 'message': 'Missing required parameters.'}), 400
+    if direction not in ('in', 'out'):
+        return jsonify({'ok': False, 'message': 'Invalid direction.'}), 400
+
+    store = Store.query.get(store_id)
+    if not store:
+        return jsonify({'ok': False, 'message': 'Store not found.'}), 404
+
+    try:
+        transaction_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'ok': False, 'message': 'Invalid date.'}), 400
+
+    if not ProductMaster.query.get(product_master_id):
+        return jsonify({'ok': False, 'message': 'Product not found.'}), 404
+
+    records, traced_total = _build_taf_transfer_trace(
+        store, transaction_date, product_master_id, direction
+    )
+
+    return jsonify({
+        'ok': True,
+        'direction': direction,
+        'store_id': store_id,
+        'date': date_str,
+        'product_master_id': product_master_id,
+        'traced_total': traced_total,
+        'records': records,
+        'record_count': len(records),
+    })
+
+
+ALLOWED_ADJUSTMENT_TYPES = {
+    '': '',
+    'swapping': 'Swapping',
+    'offset': 'OFFSET',
+    'variance': 'Variance',
+}
+
+
+@views.route('/store-manager/invensync/adjustments', methods=['POST'])
+@login_required
+def save_invensync_adjustments():
+    """Save the Inventory Adjustments columns (Swapping / OFFSET / Variance,
+    product, qty, and Variance charges). Inventory Staff only. Adjustments are
+    tracking-only and editable on any date, including finalized days."""
+    if (current_user.role or '').strip() != 'Inventory Staff':
+        return jsonify({'ok': False, 'message': 'Access denied. Only Inventory Staff can edit inventory adjustments.'}), 403
+
+    try:
+        payload = request.get_json() or {}
+        inventory_id = payload.get('inventory_id')
+        items_data = payload.get('items', [])
+        if not inventory_id or not isinstance(items_data, list):
+            return jsonify({'ok': False, 'message': 'Missing inventory_id or items.'}), 400
+
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return jsonify({'ok': False, 'message': 'Inventory not found.'}), 404
+
+        assigned_store_ids = _inventory_staff_assigned_store_ids()
+        if inventory.store_id not in assigned_store_ids:
+            return jsonify({'ok': False, 'message': 'Store not assigned to this Inventory Staff user.'}), 403
+
+        valid_product_ids = {
+            int(product_id) for (product_id,) in
+            db.session.query(ProductMaster.id).all()
+        }
+
+        any_item_found = False
+        for item_data in items_data:
+            if not isinstance(item_data, dict):
+                continue
+            item_id = item_data.get('item_id')
+            item = DailyEndingInventoryItem.query.get(item_id)
+            if not item or item.inventory_id != inventory.id:
+                continue
+            any_item_found = True
+
+            adjustment_type = str(item_data.get('adjustment_type') or '').strip()
+            item.adjustment_type = ALLOWED_ADJUSTMENT_TYPES.get(adjustment_type.lower(), '')
+
+            raw_product_id = item_data.get('adjustment_product_master_id')
+            if raw_product_id is None or str(raw_product_id) in ('', '0', 'None'):
+                parsed_product_id = None
+            else:
+                try:
+                    parsed_product_id = int(raw_product_id)
+                except (TypeError, ValueError):
+                    parsed_product_id = None
+            if parsed_product_id is not None and parsed_product_id not in valid_product_ids:
+                parsed_product_id = None
+            item.adjustment_product_master_id = parsed_product_id
+
+            try:
+                item.adjustment_qty = max(0, int(item_data.get('adjustment_qty', 0) or 0))
+            except (TypeError, ValueError):
+                item.adjustment_qty = 0
+
+            item.adjustment_charges = str(item_data.get('adjustment_charges') or '').strip()[:1000]
+
+        if not any_item_found:
+            return jsonify({'ok': False, 'message': 'No valid inventory items provided.'}), 400
+
+        db.session.commit()
+
+        try:
+            log_audit_event(
+                action='invensync.adjustments.save',
+                entity_type='DailyEndingInventory',
+                entity_id=inventory.id,
+                reason='Inventory Staff recorded inventory adjustments',
+                details={
+                    'store_id': inventory.store_id,
+                    'inventory_date': inventory.inventory_date.strftime('%Y-%m-%d'),
+                    'items_updated': len(items_data),
+                }
+            )
+        except Exception as log_err:
+            print(f"Audit log error: {log_err}")
+
+        return jsonify({
+            'ok': True,
+            'message': 'Inventory adjustments saved.',
+            'items_updated': len(items_data),
+        }), 200
+    except Exception as exc:
+        db.session.rollback()
+        print(f"Save inventory adjustments error: {exc}")
+        return jsonify({'ok': False, 'message': 'Unable to save inventory adjustments.'}), 500
 
 
 def _fetch_oracle_invensync_data(store, products, oracle_date=None):
