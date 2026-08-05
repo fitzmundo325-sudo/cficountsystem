@@ -479,6 +479,14 @@ class DailyEndingInventoryItem(db.Model):
 
     remarks = db.Column(db.String(255), nullable=True)
 
+    # Inventory Adjustments (recorded by Inventory Staff, no math impact)
+    # Values: '' , 'Swapping', 'OFFSET', 'Variance'
+    adjustment_type = db.Column(db.String(30), default='')
+    adjustment_product_master_id = db.Column(db.Integer, nullable=True)
+    adjustment_qty = db.Column(db.Integer, default=0)
+    # Free-text list of the employees who take the charge (multiple names).
+    adjustment_charges = db.Column(db.String(1000), default='')
+
 
 class StoreProductBuffer(db.Model):
     __tablename__ = 'store_product_buffer'

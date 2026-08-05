@@ -303,7 +303,11 @@
         <span class="mx-2">/</span>
         <span class="text-slate-900">InvenSync</span>
         <span class="mx-2">/</span>
+        {% if is_edit_adjustments %}
+        <span class="px-2 py-0.5 bg-violet-100 text-violet-700 text-xs rounded-full font-semibold">Adjustments Editable</span>
+        {% else %}
         <span class="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full font-semibold">View Only</span>
+        {% endif %}
       {% else %}
         <span class="hover:text-slate-900 cursor-pointer">Store Manager</span>
         <span class="mx-2">/</span>
@@ -400,6 +404,11 @@
         </svg>
         <span>Export Excel</span>
       </button>
+      {% if is_edit_adjustments %}
+      <button id="save-adjustments-btn" type="button" onclick="saveAdjustments()" disabled class="px-4 py-2 bg-violet-600 text-white text-sm font-semibold rounded-lg hover:bg-violet-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:hover:bg-slate-300">
+        Save Adjustments
+      </button>
+      {% endif %}
       {% endif %}
       <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-all">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -520,6 +529,11 @@
 
             <!-- Ending Inventory Section -->
             <th colspan="{{ column_count.visible }}" class="px-2 py-3 text-center font-semibold bg-emerald-100 text-black border-l-2 border-emerald-200 sticky top-0 z-40">DAILY ENDING INVENTORY</th>
+
+            <!-- Inventory Adjustments Section -->
+            {% if current_user.role == 'Inventory Staff' %}
+            <th colspan="4" class="px-2 py-3 text-center font-semibold bg-violet-100 text-black border-l-2 border-violet-200 sticky top-0 z-40">INVENTORY ADJUSTMENTS</th>
+            {% endif %}
           </tr>
           <tr class="text-xs">
             {% if header_group_count.before %}
@@ -530,6 +544,9 @@
             {% endif %}
             {% if header_group_count.after %}
             <th colspan="{{ header_group_count.after }}" class="h-8 bg-emerald-50 border-r border-slate-300 sticky top-[44px] z-40" aria-hidden="true"></th>
+            {% endif %}
+            {% if current_user.role == 'Inventory Staff' %}
+            <th colspan="4" class="h-8 bg-violet-50 border-l-2 border-violet-200 border-r border-slate-300 sticky top-[44px] z-40" aria-hidden="true"></th>
             {% endif %}
           </tr>
           <tr class="text-xs">
@@ -556,6 +573,14 @@
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'variance_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Variance</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'variance_peso' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Var Peso</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'remarks' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Remarks</th>
+
+            <!-- Inventory Adjustments Columns -->
+            {% if current_user.role == 'Inventory Staff' %}
+            <th class="px-2 py-2 text-center font-semibold bg-violet-50 text-black border-l-2 border-violet-400 border-r border-slate-300 sticky top-[42px] z-40" title="Swapping, OFFSET, or Variance">Adj Type</th>
+            <th class="px-2 py-2 text-center font-semibold bg-violet-50 text-black border-r border-slate-300 sticky top-[42px] z-40">Product</th>
+            <th class="px-2 py-2 text-center font-semibold bg-violet-50 text-black border-r border-slate-300 sticky top-[42px] z-40">Qty</th>
+            <th class="px-2 py-2 text-center font-semibold bg-violet-50 text-black border-r border-slate-300 sticky top-[42px] z-40" id="header-adjust-charges">Charges (Variance)</th>
+            {% endif %}
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-200">
@@ -573,6 +598,12 @@
                   </div>
                 </td>
                 <td colspan="{{ column_count.visible }}" class="px-4 py-3"></td>
+                {% if current_user.role == 'Inventory Staff' %}
+                <td class="px-4 py-3"></td>
+                <td class="px-4 py-3"></td>
+                <td class="px-4 py-3"></td>
+                <td class="px-4 py-3"></td>
+                {% endif %}
               </tr>
               
               <!-- Category Products -->
@@ -609,8 +640,11 @@
                   {% if 'trans_in_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="trans-in-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'trans_in_qty' not in global_config_data.get('editable_columns', []) or 'trans_in_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
-                      value="{{ inv_item.trans_in_qty if inv_item and inv_item.trans_in_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'trans_in_qty' not in global_config_data.get('editable_columns', []) or 'trans_in_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                    {% set trans_in_has_trace = show_trans_trace and inv_item and (inv_item.trans_in_qty|default(0)|int > 0) %}
+                    <div class="flex items-center justify-center gap-1{% if trans_in_has_trace %} trans-trace-hover cursor-help{% endif %}"{% if trans_in_has_trace %} onmouseenter="showTransTrace('{{ product.id }}', 'in', this)" onmouseleave="hideTransTrace()"{% endif %}>
+                      <input type="number" class="trans-in-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'trans_in_qty' not in global_config_data.get('editable_columns', []) or 'trans_in_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                        value="{{ inv_item.trans_in_qty if inv_item and inv_item.trans_in_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'trans_in_qty' not in global_config_data.get('editable_columns', []) or 'trans_in_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                    </div>
                   {% endif %}
                 </td>
                 <td class="px-2 py-2" data-field="bo_qty"{% if 'bo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>
@@ -633,8 +667,11 @@
                   {% if 'trans_out_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <input type="number" class="trans-out-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'trans_out_qty' not in global_config_data.get('editable_columns', []) or 'trans_out_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
-                      value="{{ inv_item.trans_out_qty if inv_item and inv_item.trans_out_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'trans_out_qty' not in global_config_data.get('editable_columns', []) or 'trans_out_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                    {% set trans_out_has_trace = show_trans_trace and inv_item and (inv_item.trans_out_qty|default(0)|int > 0) %}
+                    <div class="flex items-center justify-center gap-1{% if trans_out_has_trace %} trans-trace-hover cursor-help{% endif %}"{% if trans_out_has_trace %} onmouseenter="showTransTrace('{{ product.id }}', 'out', this)" onmouseleave="hideTransTrace()"{% endif %}>
+                      <input type="number" class="trans-out-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'trans_out_qty' not in global_config_data.get('editable_columns', []) or 'trans_out_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                        value="{{ inv_item.trans_out_qty if inv_item and inv_item.trans_out_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'trans_out_qty' not in global_config_data.get('editable_columns', []) or 'trans_out_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                    </div>
                   {% endif %}
                 </td>
                 <td class="px-2 py-2" data-field="wastage_qty">
@@ -760,6 +797,45 @@
                       value="{{ inv_item.remarks if inv_item else '' }}" onchange="updateInventoryRow(this)"{% if 'remarks' not in global_config_data.get('editable_columns', []) or 'remarks' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
+                <!-- Inventory Adjustments (Inventory Staff only) -->
+                {% if current_user.role == 'Inventory Staff' %}
+                <td class="px-2 py-2 text-center" data-adjust="type">
+                  <select class="adjust-type inv-adjust-only w-24 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded-lg text-sm outline-none{% if not is_edit_adjustments %} cursor-not-allowed opacity-75{% endif %}"{% if not is_edit_adjustments %} disabled{% endif %}>
+                    <option value="" {% if not inv_item or inv_item.adjustment_type == '' %}selected{% endif %}>—</option>
+                    <option value="Swapping" {% if inv_item and inv_item.adjustment_type == 'Swapping' %}selected{% endif %}>Swapping</option>
+                    <option value="OFFSET" {% if inv_item and inv_item.adjustment_type == 'OFFSET' %}selected{% endif %}>OFFSET</option>
+                    <option value="Variance" {% if inv_item and inv_item.adjustment_type == 'Variance' %}selected{% endif %}>Variance</option>
+                  </select>
+                </td>
+                <td class="px-2 py-2" data-adjust="product">
+                  {% set selected_adjustment_product = inv_item.adjustment_product_master_id if inv_item and inv_item.adjustment_product_master_id else '' %}
+                  {% set selected_adjustment_product_name = '' %}
+                  {% if selected_adjustment_product %}
+                    {% for option_product in products %}
+                      {% if option_product.id == selected_adjustment_product|int %}
+                        {% set selected_adjustment_product_name = option_product.description %}
+                      {% endif %}
+                    {% endfor %}
+                  {% endif %}
+                  <div class="relative adjust-product-wrap">
+                    <input type="text"
+                      class="adjust-product-input inv-adjust-only w-40 px-1.5 py-1.5 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400{% if not is_edit_adjustments %} cursor-not-allowed opacity-75{% endif %}"
+                      placeholder="Search product…"
+                      autocomplete="off"
+                      value="{{ selected_adjustment_product_name }}"
+                      {% if not is_edit_adjustments %} disabled{% endif %}>
+                    <input type="hidden" class="adjust-product inv-adjust-only" value="{{ selected_adjustment_product }}">
+                  </div>
+                </td>
+                <td class="px-2 py-2 text-center" data-adjust="qty">
+                  <input type="number" min="0" step="1" class="adjust-qty inv-adjust-only w-14 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400{% if not is_edit_adjustments %} cursor-not-allowed opacity-75{% endif %}"
+                    value="{{ inv_item.adjustment_qty if inv_item and inv_item.adjustment_qty else '' }}"{% if not is_edit_adjustments %} disabled{% endif %}>
+                </td>
+                <td class="px-2 py-2 text-center{% if not inv_item or inv_item.adjustment_type != 'Variance' %} hidden{% endif %}" data-adjust="charges">
+                  <input type="text" class="adjust-charges inv-adjust-only w-44 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400{% if not is_edit_adjustments %} cursor-not-allowed opacity-75{% endif %}"
+                    placeholder="Employee name(s)" value="{{ inv_item.adjustment_charges if inv_item and inv_item.adjustment_charges else '' }}"{% if not is_edit_adjustments %} disabled{% endif %}>
+                </td>
+                {% endif %}
                 <!-- Hidden Data -->
                 <input type="hidden" class="inv-item-id" value="{{ inv_item.id if inv_item else '' }}">
                 <input type="hidden" class="srp-price" value="{{ inv_item.srp_price if inv_item else 0 }}">
@@ -919,6 +995,7 @@ let inventoryInitialSnapshot = '';
 const inventoryDraftKey = `invensyncInventoryDraft:${inventoryId}`;
 const motifChargePayload = {{ motif_charge_payload|default(none)|tojson }};
 const motifProductOptions = {{ motif_product_options|default([])|tojson }};
+const adjProductOptions = {{ adj_product_options|default([])|tojson }};
 const motifBreakdownKey = `invensyncMotifBreakdown:{{ store.id }}:{{ selected_date }}`;
 const missingDates = {{ missing_dates|default([])|tojson }};
 const nextMissingDate = {{ next_missing_date|default(none)|tojson }};
@@ -2159,6 +2236,7 @@ function isFilledInventoryInput(input) {
 function rowNeedsBeginningBeforeInput(row, sourceInput) {
   if (!row || !sourceInput) return false;
   if (sourceInput.classList.contains('beginning-input')) return false;
+  if (sourceInput.classList.contains('inv-adjust-only')) return false;
   if (!isFilledInventoryInput(sourceInput)) return false;
 
   const beginningInput = row.querySelector('.beginning-input');
@@ -2176,7 +2254,8 @@ function rowHasBlankBeginningWithOtherValues(row) {
   if (String(beginningInput.value || '').trim() !== '') return false;
 
   const otherInputs = Array.from(row.querySelectorAll('input:not([type="hidden"]), select, textarea'))
-    .filter(input => !input.classList.contains('beginning-input'));
+    .filter(input => !input.classList.contains('beginning-input'))
+    .filter(input => !input.classList.contains('inv-adjust-only'));
 
   return otherInputs.some(isFilledInventoryInput);
 }
@@ -2585,13 +2664,18 @@ function lockBeginningInputs() {
 }
 
 function lockDayInputs() {
-  document.querySelectorAll('tbody tr[data-product-id] input:not([type="hidden"]), tbody tr[data-product-id] select, tbody tr[data-product-id] textarea').forEach(input => {
+  document.querySelectorAll('tbody tr[data-product-id] input:not([type="hidden"]):not(.inv-adjust-only), tbody tr[data-product-id] textarea:not(.inv-adjust-only)').forEach(input => {
     if (input.type === 'checkbox') {
       input.disabled = true;
     } else {
       input.readOnly = true;
     }
     input.classList.add('readonly', 'cursor-not-allowed', 'opacity-75');
+  });
+
+  document.querySelectorAll('tbody tr[data-product-id] select:not(.inv-adjust-only)').forEach(select => {
+    select.disabled = true;
+    select.classList.add('cursor-not-allowed', 'opacity-75');
   });
 
   setInventorySaveButtons({ text: 'Finalized', disabled: true });
@@ -2622,20 +2706,106 @@ function updateInventoryRow(input) {
   const totalEnding = endingD5 + endingD4 + endingD3;
   const totalPeso = totalEnding * srpPrice;
   const theoEnding = beginning + delivery + transIn + bo + advDel - transOut - wastage - csi - sold;
-  const variance = totalEnding - theoEnding;
-  const variancePeso = variance * srpPrice;
   const wastageAmount = wastage * srpPrice;
 
   // Update display
   row.querySelector('.total-ending').textContent = totalEnding;
   row.querySelector('.total-peso').textContent = totalPeso.toFixed(2);
   row.querySelector('.theo-ending').textContent = theoEnding;
-  row.querySelector('.variance').textContent = variance;
-  row.querySelector('.variance-peso').textContent = variancePeso.toFixed(2);
   row.querySelector('.wastage-amount').textContent = wastageAmount.toFixed(2);
-  
-  // Apply color coding to Theo, Var, and Var Peso cells
-  updateCellColors(row, theoEnding, variance, variancePeso);
+
+  // Re-apply variance cells (includes swap adjustments, if any)
+  refreshVarianceDisplays();
+}
+
+// Compute a row's base variance straight from its inputs.
+function computeRowVariance(row) {
+  const beginningInput = row.querySelector('.beginning-input');
+  const beginning = beginningInput ? parseFloat(beginningInput.value) || 0 : parseFloat(row.querySelector('.beginning-qty').textContent) || 0;
+  const delivery = parseFloat(row.querySelector('.delivery-input').value) || 0;
+  const transIn = parseFloat(row.querySelector('.trans-in-input').value) || 0;
+  const bo = parseFloat(row.querySelector('.bo-input').value) || 0;
+  const advDel = parseFloat(row.querySelector('.adv-del-input').value) || 0;
+  const transOut = parseFloat(row.querySelector('.trans-out-input').value) || 0;
+  const wastage = parseFloat(row.querySelector('.wastage-input').value) || 0;
+  const csi = parseFloat(row.querySelector('.csi-input').value) || 0;
+  const sold = parseFloat(row.querySelector('.sold-input').value) || 0;
+  const endingD5 = parseFloat(row.querySelector('.ending-d5-input').value) || 0;
+  const endingD4 = parseFloat(row.querySelector('.ending-d4-input').value) || 0;
+  const endingD3 = parseFloat(row.querySelector('.ending-d3-input').value) || 0;
+  const srp = parseFloat(row.querySelector('.srp-price').value) || 0;
+  const totalEnding = endingD5 + endingD4 + endingD3;
+  const theoEnding = beginning + delivery + transIn + bo + advDel - transOut - wastage - csi - sold;
+  return {
+    baseVariance: totalEnding - theoEnding,
+    theoEnding: theoEnding,
+    srp: srp
+  };
+}
+
+// Return the swap-out qty for a row when it has an active Swapping adjustment
+// on a same-price product (type=Swapping, qty>0, valid different product,
+// selected product price matches the row product's price).
+function getActiveSwap(row) {
+  if (!row) return 0;
+  const typeSel = row.querySelector('.adjust-type');
+  if (!typeSel || String(typeSel.value).trim() !== 'Swapping') return 0;
+  const hidden = row.querySelector('input[type="hidden"].adjust-product');
+  const selId = hidden ? String(hidden.value || '') : '';
+  const rowProductId = String(row.dataset.productId || '');
+  if (!selId || selId === rowProductId) return 0;
+  const qty = parseInt(row.querySelector('.adjust-qty')?.value, 10) || 0;
+  if (qty <= 0) return 0;
+
+  const pool = (typeof adjProductOptions !== 'undefined' && adjProductOptions.length)
+    ? adjProductOptions
+    : (typeof motifProductOptions !== 'undefined' ? motifProductOptions : []);
+  const rowProduct = pool.find(p => String(p.id) === rowProductId);
+  let targetCents = rowProduct ? Math.round(parseFloat(rowProduct.price || rowProduct.price_p || 0) * 100) : 0;
+  if (!targetCents) {
+    const srpEl = row.querySelector('.srp-price');
+    targetCents = Math.round((parseFloat(srpEl ? srpEl.value : '') || 0) * 100);
+  }
+  if (!targetCents) return 0;
+  const sel = pool.find(p => String(p.id) === selId);
+  if (!sel) return 0;
+  const selPriceCents = Math.round(parseFloat(sel.price || sel.price_p || 0) * 100);
+  if (selPriceCents !== targetCents) return 0;
+  return qty;
+}
+
+// Re-render every row's Variance / Var Peso cells. Rows with an active
+// Swapping adjustment show variance minus the swap qty; the same-price
+// product row they point to shows variance plus the swap qty.
+function refreshVarianceDisplays() {
+  const rows = Array.from(document.querySelectorAll('tbody tr[data-product-id]'));
+  if (!rows.length) return;
+  const base = {};
+  const swapsOut = {};
+  const swapsIn = {};
+  rows.forEach(row => {
+    const id = String(row.dataset.productId || '');
+    if (!id) return;
+    base[id] = computeRowVariance(row);
+    const qty = getActiveSwap(row);
+    if (qty > 0) {
+      swapsOut[id] = qty;
+      const selId = String(row.querySelector('input[type="hidden"].adjust-product')?.value || '');
+      if (selId && selId !== id) {
+        swapsIn[selId] = (swapsIn[selId] || 0) + qty;
+      }
+    }
+  });
+  rows.forEach(row => {
+    const id = String(row.dataset.productId || '');
+    const data = base[id];
+    if (!data) return;
+    const displayVariance = data.baseVariance + (swapsIn[id] || 0) - (swapsOut[id] || 0);
+    const displayPeso = displayVariance * data.srp;
+    row.querySelector('.variance').textContent = displayVariance;
+    row.querySelector('.variance-peso').textContent = displayPeso.toFixed(2);
+    updateCellColors(row, data.theoEnding, displayVariance, displayPeso);
+  });
 }
 
 // Apply color coding to cells based on values
@@ -2647,14 +2817,14 @@ function updateCellColors(row, theoValue, varValue, varPesoValue) {
   // Helper function to apply color based on value
   const applyCellColor = (cell, value) => {
     // Remove existing color classes
-    cell.classList.remove('bg-green-100', 'text-green-800', 'bg-pink-100', 'text-pink-800', 'bg-red-100', 'text-red-800');
+    cell.classList.remove('bg-green-100', 'text-green-800', 'bg-violet-100', 'text-violet-800', 'bg-red-100', 'text-red-800');
     
     if (value === 0) {
       // Green for zero
       cell.classList.add('bg-green-100', 'text-green-800');
     } else if (value >= 1) {
-      // Magenta for values >= 1
-      cell.classList.add('bg-pink-100', 'text-pink-800');
+      // Purple for values >= 1
+      cell.classList.add('bg-violet-100', 'text-violet-800');
     } else if (value < 0) {
       // Red for negative values
       cell.classList.add('bg-red-100', 'text-red-800');
@@ -2678,7 +2848,7 @@ function applyColorCodingOnLoad() {
 
 function getInventoryEditableFields() {
   return Array.from(document.querySelectorAll('tbody tr[data-product-id] input:not([type="hidden"]), tbody tr[data-product-id] select, tbody tr[data-product-id] textarea'))
-    .filter(field => !field.disabled && !field.readOnly && !field.closest('#fullscreen-modal'));
+    .filter(field => !field.disabled && !field.readOnly && !field.closest('#fullscreen-modal') && !field.classList.contains('inv-adjust-only'));
 }
 
 function getInventoryFieldName(field) {
@@ -2760,6 +2930,301 @@ function clearInventoryDraft() {
   } catch (error) {
     console.warn('Could not clear inventory draft:', error);
   }
+}
+
+// ==== Inventory Adjustments (Inventory Staff only) ====
+const isInventoryAdjustmentsEditable = {{ is_edit_adjustments|tojson }};
+const invAdjustmentsSaveUrl = {{ url_for('views.save_invensync_adjustments')|tojson }};
+let adjustmentsInitialSnapshot = '';
+
+function getAdjustmentEditableFields() {
+  return Array.from(document.querySelectorAll('#main-content tbody tr[data-product-id] .inv-adjust-only'))
+    .filter(field => !field.disabled && !field.readOnly && field.type !== 'hidden');
+}
+
+function getAdjustmentFieldName(field) {
+  if (field.classList.contains('adjust-type')) return 'type';
+  if (field.classList.contains('adjust-product-input')) return 'product';
+  if (field.classList.contains('adjust-qty')) return 'qty';
+  return 'charges';
+}
+
+// ==== Adjust-Product Combobox ====
+(function () {
+  // One shared dropdown appended to body
+  const DROP = document.createElement('div');
+  DROP.id = 'adj-product-drop';
+  DROP.style.cssText = 'position:fixed;z-index:99999;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;display:none;';
+  document.body.appendChild(DROP);
+
+  let activeInput = null;
+
+  function getProducts() {
+    return (typeof adjProductOptions !== 'undefined' && adjProductOptions.length)
+      ? adjProductOptions
+      : (typeof motifProductOptions !== 'undefined' ? motifProductOptions : []);
+  }
+
+  function getHidden(input) {
+    return input?.closest('.adjust-product-wrap')?.querySelector('input[type="hidden"].adjust-product');
+  }
+
+  function position(input) {
+    const r = input.getBoundingClientRect();
+    DROP.style.left  = r.left + 'px';
+    DROP.style.top   = (r.bottom + 4) + 'px';
+    DROP.style.width = Math.max(r.width, 220) + 'px';
+  }
+
+  // For Swapping rows, only suggest products priced the same as the row's product.
+  function getRowProductPool(input) {
+    let pool = getProducts();
+    const row = input ? input.closest('tr[data-product-id]') : null;
+    if (!row) return pool;
+    const typeSel = row.querySelector('.adjust-type');
+    const isSwapping = typeSel && String(typeSel.value).trim() === 'Swapping';
+    if (!isSwapping) return pool;
+    // Use the row product's CURRENT price (same source as the suggestions) so a stale
+    // stored SRP never makes the filter compare against the wrong price.
+    const rowProduct = pool.find(p => String(p.id) === String(row.dataset.productId || ''));
+    let targetCents = rowProduct ? Math.round(parseFloat(rowProduct.price || rowProduct.price_p || 0) * 100) : 0;
+    if (!targetCents) {
+      const srpEl = row.querySelector('.srp-price');
+      targetCents = Math.round((parseFloat(srpEl ? srpEl.value : '') || 0) * 100);
+    }
+    if (targetCents > 0) {
+      pool = pool.filter(p => Math.round(parseFloat(p.price || p.price_p || 0) * 100) === targetCents);
+    }
+    return pool;
+  }
+
+  function render(input) {
+    activeInput = input;
+    const q = (input.value || '').trim().toLowerCase();
+    const list = getRowProductPool(input).filter(p =>
+      !q ||
+      String(p.description || '').toLowerCase().includes(q) ||
+      String(p.code || '').toLowerCase().includes(q)
+    ).slice(0, 60);
+
+    DROP.innerHTML = '';
+    if (!list.length) {
+      const d = document.createElement('div');
+      d.style.cssText = 'padding:8px 12px;font-size:13px;color:#94a3b8;font-style:italic;';
+      d.textContent = 'No product found';
+      DROP.appendChild(d);
+    } else {
+      list.forEach(function (p) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:7px 12px;cursor:pointer;';
+        row.onmouseenter = function () { row.style.background = '#f5f3ff'; };
+        row.onmouseleave = function () { row.style.background = ''; };
+        const name = document.createElement('div');
+        name.style.cssText = 'font-size:13px;font-weight:600;color:#1e293b;';
+        name.textContent = p.description || '';
+        row.appendChild(name);
+        if (p.code) {
+          const code = document.createElement('div');
+          code.style.cssText = 'font-size:11px;color:#94a3b8;margin-top:1px;';
+          code.textContent = p.code;
+          row.appendChild(code);
+        }
+        row.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          input.value = p.description || '';
+          const hidden = getHidden(input);
+          if (hidden) {
+            hidden.value = p.id;
+            hidden.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          input.classList.remove('border-red-300');
+          DROP.style.display = 'none';
+          activeInput = null;
+          refreshAdjustmentsSaveButton();
+        });
+        DROP.appendChild(row);
+      });
+    }
+
+    position(input);
+    DROP.style.display = 'block';
+  }
+
+  function hide() {
+    DROP.style.display = 'none';
+    activeInput = null;
+  }
+
+  // Wire up every .adjust-product-input (handles rows rendered at page load)
+  function bindInputs() {
+    document.querySelectorAll('.adjust-product-input').forEach(function (input) {
+      if (input.dataset.adjBound) return;
+      input.dataset.adjBound = '1';
+
+      input.addEventListener('input', function () { render(input); });
+      input.addEventListener('focus', function () { render(input); });
+      input.addEventListener('blur', function () {
+        setTimeout(function () {
+          hide();
+          // If typed text doesn't exactly match, clear
+          const q = (input.value || '').trim().toLowerCase();
+          const exact = getRowProductPool(input).find(p => String(p.description || '').toLowerCase() === q);
+          if (!exact && input.value.trim()) {
+            input.value = '';
+            input.classList.remove('border-red-300');
+            const hidden = getHidden(input);
+            if (hidden) {
+              hidden.value = '';
+              hidden.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            refreshAdjustmentsSaveButton();
+          }
+        }, 200);
+      });
+    });
+  }
+
+  // Close on outside click
+  document.addEventListener('mousedown', function (e) {
+    if (activeInput && !DROP.contains(e.target) && e.target !== activeInput) {
+      hide();
+    }
+  });
+
+  // Reposition on scroll/resize
+  window.addEventListener('scroll', function () {
+    if (activeInput && DROP.style.display !== 'none') position(activeInput);
+  }, true);
+  window.addEventListener('resize', function () {
+    if (activeInput && DROP.style.display !== 'none') position(activeInput);
+  });
+
+  // Allow dynamic rebinding (e.g. fullscreen modal clones the table after load)
+  window.bindAdjustProductCombobox = bindInputs;
+
+  // Re-render the open dropdown for the active input (used when Type changes)
+  window.refreshAdjustProductDropdown = function () {
+    if (activeInput && DROP.style.display !== 'none') render(activeInput);
+  };
+
+  // When a row switches to Swapping, clear a selected product whose price
+  // doesn't match the row product's current price (it can't be picked from the filtered list).
+  window.clearMismatchedSwappingSelection = function (row) {
+    if (!row) return;
+    const hidden = row.querySelector('input[type="hidden"].adjust-product');
+    const visible = row.querySelector('.adjust-product-input');
+    const rowProduct = getProducts().find(p => String(p.id) === String(row.dataset.productId || ''));
+    const srpEl = row.querySelector('.srp-price');
+    const target = rowProduct
+      ? Math.round(parseFloat(rowProduct.price || rowProduct.price_p || 0) * 100)
+      : Math.round((parseFloat(srpEl ? srpEl.value : '') || 0) * 100);
+    const selId = hidden ? String(hidden.value || '') : '';
+    if (!selId || !target) return;
+    const sel = getProducts().find(p => String(p.id) === selId);
+    const selPrice = Math.round(parseFloat(sel ? (sel.price || sel.price_p || 0) : 0) * 100);
+    if (sel && selPrice !== target) {
+      if (visible) visible.value = '';
+      if (hidden) {
+        hidden.value = '';
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+  };
+
+  document.addEventListener('DOMContentLoaded', bindInputs);
+})();
+
+function buildAdjustmentsSnapshot() {
+  return JSON.stringify(getAdjustmentEditableFields().map(field => ({
+    row: field.closest('tr')?.dataset.productId || '',
+    name: getAdjustmentFieldName(field),
+    value: String(field.value || '')
+  })));
+}
+
+function refreshAdjustmentsSaveButton() {
+  const btn = document.getElementById('save-adjustments-btn');
+  if (!btn) return;
+  btn.disabled = !adjustmentsInitialSnapshot || (buildAdjustmentsSnapshot() === adjustmentsInitialSnapshot);
+}
+
+function captureAdjustmentsSnapshot() {
+  adjustmentsInitialSnapshot = buildAdjustmentsSnapshot();
+  refreshAdjustmentsSaveButton();
+}
+
+function syncAdjustmentChargesCell(row) {
+  const typeSelect = row.querySelector('.adjust-type');
+  const chargesCell = row.querySelector('td[data-adjust="charges"]');
+  if (!typeSelect || !chargesCell) return;
+  chargesCell.classList.toggle('hidden', typeSelect.value !== 'Variance');
+  syncAdjustmentChargesHeader();
+}
+
+function syncAdjustmentChargesHeader() {
+  const header = document.getElementById('header-adjust-charges');
+  if (!header) return;
+  const anyVariance = Array.from(document.querySelectorAll('#main-content tbody tr[data-product-id] .adjust-type'))
+    .some(sel => sel.value === 'Variance');
+  header.classList.toggle('hidden', !anyVariance);
+}
+
+document.addEventListener('change', function(event) {
+  if (!event.target.classList || !event.target.classList.contains('inv-adjust-only')) return;
+  const row = event.target.closest('tr[data-product-id]');
+  if (row && event.target.classList.contains('adjust-type')) {
+    syncAdjustmentChargesCell(row);
+    if (event.target.value === 'Swapping' && typeof window.clearMismatchedSwappingSelection === 'function') {
+      window.clearMismatchedSwappingSelection(row);
+    }
+    // If this row's product dropdown is open, filter to same-price products when Swapping.
+    if (typeof window.refreshAdjustProductDropdown === 'function') {
+      window.refreshAdjustProductDropdown();
+    }
+  }
+  refreshAdjustmentsSaveButton();
+  refreshVarianceDisplays();
+}, true);
+
+document.addEventListener('DOMContentLoaded', function() {
+  syncAdjustmentChargesHeader();
+});
+
+function saveAdjustments() {
+  if (!isInventoryAdjustmentsEditable) return;
+  const button = document.getElementById('save-adjustments-btn');
+  if (button && button.disabled) return;
+
+  const items = [];
+  document.querySelectorAll('#main-content tbody tr[data-product-id]').forEach(row => {
+    const itemId = row.querySelector('.inv-item-id')?.value;
+    if (!itemId) return;
+    items.push({
+      item_id: itemId,
+      adjustment_type: row.querySelector('.adjust-type')?.value || '',
+      adjustment_product_master_id: row.querySelector('.adjust-product')?.value || '',
+      adjustment_qty: parseInt(row.querySelector('.adjust-qty')?.value, 10) || 0,
+      adjustment_charges: row.querySelector('.adjust-charges')?.value || ''
+    });
+  });
+
+  if (button) button.disabled = true;
+  fetch(invAdjustmentsSaveUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inventory_id: inventoryId, items })
+  })
+  .then(async response => {
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Unable to save adjustments.');
+    notify(data.message, 'success');
+    captureAdjustmentsSnapshot();
+    return data;
+  })
+  .catch(error => {
+    notify(error.message || 'Error saving adjustments', 'error');
+    refreshAdjustmentsSaveButton();
+  });
 }
 
 function clearConsumedAdminStoreUnlock() {
@@ -3054,6 +3519,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   updateDateHeaders();
   applyColorCodingOnLoad();
+  refreshVarianceDisplays();
   enableHorizontalScroll();
   filterInventoryCategory('all');
   if (isDayFinalized) {
@@ -3063,6 +3529,11 @@ document.addEventListener('DOMContentLoaded', function() {
   captureInventorySnapshot();
   restoreInventoryDraft();
   refreshBeginningSaveMode();
+
+  document.querySelectorAll('tbody tr[data-product-id]').forEach(row => {
+    syncAdjustmentChargesCell(row);
+  });
+  captureAdjustmentsSnapshot();
 
   const productSearchInput = document.getElementById('product-search-input');
   if (productSearchInput) {
@@ -3366,8 +3837,70 @@ function updateFullscreenContent() {
       input.addEventListener('change', syncToOriginal);
     });
 
+    clonedTable.querySelectorAll('select').forEach(select => {
+      const syncToOriginal = function() {
+        const rowIndex = Array.from(this.closest('tbody').querySelectorAll('tr')).indexOf(this.closest('tr'));
+        const cellIndex = Array.from(this.closest('tr').querySelectorAll('td')).indexOf(this.closest('td'));
+
+        const originalTable = tableContainer.querySelector('table');
+        const originalRow = originalTable.querySelectorAll('tbody tr')[rowIndex];
+        if (originalRow) {
+          const originalCell = originalRow.querySelectorAll('td')[cellIndex];
+          const originalSelect = originalCell ? originalCell.querySelector('select') : null;
+          if (originalSelect) {
+            originalSelect.value = this.value;
+            originalSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }
+      };
+
+      select.addEventListener('change', syncToOriginal);
+    });
+
     modalContent.appendChild(clonedTable);
     attachEnterNavigation(modalContent);
+
+    // Inventory Adjustments: rebind product search/suggest in the cloned table
+    // (clones inherit data-adj-bound but not the listeners, so strip and rebind).
+    clonedTable.querySelectorAll('.adjust-product-input').forEach(input => {
+      input.removeAttribute('data-adj-bound');
+    });
+    // Sync adjustment product selections made in fullscreen back to the main table
+    // (visible description + hidden product id), so Save Adjustments sees the change.
+    clonedTable.querySelectorAll('td[data-adjust="product"]').forEach(cell => {
+      const wrap = cell.querySelector('.adjust-product-wrap');
+      if (!wrap) return;
+      const hidden = wrap.querySelector('input[type="hidden"].adjust-product');
+      const visible = wrap.querySelector('input[type="text"].adjust-product-input');
+      const syncAdjustmentProductToOriginal = function () {
+        const rowIndex = Array.from(cell.closest('tbody').querySelectorAll('tr')).indexOf(cell.closest('tr'));
+        const cellIndex = Array.from(cell.closest('tr').querySelectorAll('td')).indexOf(cell);
+        const originalTable = tableContainer.querySelector('table');
+        const originalRow = originalTable.querySelectorAll('tbody tr')[rowIndex];
+        const originalCell = originalRow ? originalRow.querySelectorAll('td')[cellIndex] : null;
+        const originalWrap = originalCell ? originalCell.querySelector('.adjust-product-wrap') : null;
+        if (!originalWrap) return;
+        const originalVisible = originalWrap.querySelector('input[type="text"].adjust-product-input');
+        const originalHidden = originalWrap.querySelector('input[type="hidden"].adjust-product');
+        if (visible && originalVisible && originalVisible.value !== visible.value) {
+          originalVisible.value = visible.value;
+          originalVisible.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        if (hidden && originalHidden && originalHidden.value !== hidden.value) {
+          originalHidden.value = hidden.value;
+          originalHidden.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      };
+      if (hidden) hidden.addEventListener('change', syncAdjustmentProductToOriginal);
+      if (visible) visible.addEventListener('change', syncAdjustmentProductToOriginal);
+      if (visible) visible.addEventListener('blur', function () {
+        setTimeout(syncAdjustmentProductToOriginal, 250);
+      });
+    });
+    if (typeof window.bindAdjustProductCombobox === 'function') {
+      window.bindAdjustProductCombobox();
+    }
+    refreshVarianceDisplays();
   }
 
   // Update subtitle
@@ -3382,6 +3915,7 @@ function updateFullscreenContent() {
 {% if is_view_only %}
 document.addEventListener('DOMContentLoaded', function() {
   document.querySelectorAll('#main-content tbody tr[data-product-id] input[type="number"], #main-content tbody tr[data-product-id] input[type="text"], #main-content tbody tr[data-product-id] input[type="checkbox"], #main-content tbody tr[data-product-id] select').forEach(function(input) {
+    if (input.classList.contains('inv-adjust-only')) return;
     if (input.type === 'checkbox') {
       input.disabled = true;
     } else {
@@ -3391,6 +3925,7 @@ document.addEventListener('DOMContentLoaded', function() {
   });
   
   document.querySelectorAll('#main-content tbody tr[data-product-id] [onchange]').forEach(function(el) {
+    if (el.classList.contains('inv-adjust-only')) return;
     el.removeAttribute('onchange');
   });
 });
@@ -3525,6 +4060,184 @@ function closeInvensyncExportModal() {
     </div>
   </div>
 </div>
+
+{% if show_trans_trace %}
+<style>
+  .trans-trace-tooltip {
+    position: fixed;
+    z-index: 9999;
+    min-width: 340px;
+    max-width: 500px;
+    max-height: 340px;
+    overflow: auto;
+    background: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.45;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+  }
+
+  .trans-trace-tooltip.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+
+  .trans-trace-hover:hover {
+    background: #eef2ff;
+    border-radius: 6px;
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.35);
+  }
+</style>
+<script>
+(function () {
+  const TRANSFER_TRACE_URL = {{ url_for('views.invensync_transfer_trace')|tojson }};
+  const TRANSFER_TRACE_STORE_ID = {{ store.id }};
+  const TRANSFER_TRACE_DATE = {{ selected_date|tojson }};
+  const traceCache = {};
+  let hideTimer = null;
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function getTooltip() {
+    let el = document.getElementById('trans-trace-tooltip');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'trans-trace-tooltip';
+      el.className = 'trans-trace-tooltip';
+      document.body.appendChild(el);
+      el.addEventListener('mouseenter', clearHideTimer);
+      el.addEventListener('mouseleave', scheduleHide);
+    }
+    return el;
+  }
+
+  function clearHideTimer() {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function scheduleHide() {
+    clearHideTimer();
+    hideTimer = setTimeout(function () {
+      getTooltip().classList.remove('show');
+    }, 200);
+  }
+
+  function positionTooltip(anchor, tooltip) {
+    const margin = 8;
+    const rect = anchor.getBoundingClientRect();
+    const tipRect = tooltip.getBoundingClientRect();
+    let top = rect.bottom + margin;
+    if (top + tipRect.height > window.innerHeight - margin) {
+      top = rect.top - tipRect.height - margin;
+    }
+    if (top < margin) top = margin;
+    let left = Math.min(rect.left, window.innerWidth - tipRect.width - margin);
+    if (left < margin) left = margin;
+    tooltip.style.top = top + 'px';
+    tooltip.style.left = left + 'px';
+  }
+
+  async function showTransTrace(productId, direction, anchor) {
+    clearHideTimer();
+    const tooltip = getTooltip();
+    tooltip.innerHTML = '<div style="padding:6px 2px;color:#cbd5e1">Loading source...</div>';
+    positionTooltip(anchor, tooltip);
+    tooltip.classList.add('show');
+
+    const cacheKey = productId + ':' + direction;
+    try {
+      if (traceCache[cacheKey] === undefined) {
+        const params = new URLSearchParams({
+          store_id: TRANSFER_TRACE_STORE_ID,
+          date: TRANSFER_TRACE_DATE,
+          product_master_id: productId,
+          direction: direction,
+        });
+        const response = await fetch(TRANSFER_TRACE_URL + '?' + params.toString(), {
+          headers: { 'Accept': 'application/json' },
+          credentials: 'same-origin',
+        });
+        if (!response.ok) throw new Error('Request failed');
+        traceCache[cacheKey] = await response.json();
+      }
+      renderTrace(tooltip, traceCache[cacheKey], anchor);
+      positionTooltip(anchor, tooltip);
+    } catch (error) {
+      tooltip.innerHTML = '<div style="padding:6px 2px;color:#fca5a5">Unable to load trace data.</div>';
+    }
+  }
+
+  function renderTrace(tooltip, data, anchor) {
+    if (!data || !data.ok) {
+      tooltip.innerHTML = '<div style="padding:6px 2px;color:#fca5a5">Unable to load trace data.</div>';
+      return;
+    }
+    const records = data.records || [];
+    const directionLabel = data.direction === 'in' ? 'Trans-In source' : 'Trans-Out source';
+    const cellInput = anchor.closest('td') ? anchor.closest('td').querySelector('input') : null;
+    const cellValue = cellInput ? (parseInt(cellInput.value || '0', 10) || 0) : null;
+
+    let bodyHtml = '';
+    if (!records.length) {
+      bodyHtml = '<tr><td colspan="8" style="padding:10px 2px;color:#cbd5e1">No TAF transfer records found for this product and day. The value may have been entered manually.</td></tr>';
+    } else {
+      bodyHtml = records.map(function (r) {
+        return '<tr style="border-bottom:1px solid #1e293b">' +
+          '<td style="padding:3px 8px 3px 0;white-space:nowrap;font-weight:700;color:#7dd3fc">' + escapeHtml(r.control_no) + '</td>' +
+          '<td style="padding:3px 8px;white-space:nowrap">' + escapeHtml(r.transaction_date) + '</td>' +
+          '<td style="padding:3px 8px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(r.transfer_from) + ' \u2192 ' + escapeHtml(r.transfer_to) + '</td>' +
+          '<td style="padding:3px 8px;text-align:center">' + escapeHtml(r.status) + '</td>' +
+          '<td style="padding:3px 8px;text-align:center">' + escapeHtml(r.quantity) + '</td>' +
+          '<td style="padding:3px 8px;text-align:center">' + escapeHtml(r.received_quantity) + '</td>' +
+          '<td style="padding:3px 8px;text-align:center">' + escapeHtml(r.short_over_qty) + '</td>' +
+          '<td style="padding:3px 8px">' + escapeHtml(r.remarks || '\u2014') + '</td>' +
+          '</tr>';
+      }).join('');
+    }
+
+    const noteHtml = (cellValue !== null && cellValue !== data.traced_total)
+      ? '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #334155;color:#fbbf24">Note: Column shows <b>' + cellValue + '</b> while traced TAF total is <b>' + data.traced_total + '</b>. The difference may be a manual entry or adjustment.</div>'
+      : '';
+
+    tooltip.innerHTML =
+      '<div style="margin-bottom:10px;font-weight:700;color:#fff">' + directionLabel + '</div>' +
+      '<table style="width:100%;border-collapse:collapse">' +
+        '<thead><tr style="color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:.04em">' +
+          '<th style="text-align:left;padding:2px 8px 2px 0">Control No.</th>' +
+          '<th style="text-align:left;padding:2px 8px">Date</th>' +
+          '<th style="text-align:left;padding:2px 8px">From \u2192 To</th>' +
+          '<th style="text-align:center;padding:2px 8px">Status</th>' +
+          '<th style="text-align:center;padding:2px 8px">Sent</th>' +
+          '<th style="text-align:center;padding:2px 8px">Rcvd</th>' +
+          '<th style="text-align:center;padding:2px 8px">S/O</th>' +
+          '<th style="text-align:left;padding:2px 8px">Remarks</th>' +
+        '</tr></thead>' +
+        '<tbody>' + bodyHtml + '</tbody>' +
+      '</table>' +
+      '<div style="margin-top:6px;color:#cbd5e1">Traced TAF total: <b style="color:#fff">' + data.traced_total + '</b></div>' +
+      noteHtml;
+  }
+
+  window.showTransTrace = showTransTrace;
+  window.hideTransTrace = scheduleHide;
+})();
+</script>
+{% endif %}
 
 {% endblock %}
 
