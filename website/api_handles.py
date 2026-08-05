@@ -57,11 +57,8 @@ def api_product_masterlist():
         return {'type': 'error', 'message': 'Access denied.'}, 403
 
     try:
-        current_page = request.form.get('page') or request.args.get('page')
-    except ValueError:
-        current_page = 1
-    
-    if current_page is None:
+        current_page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
         current_page = 1
     
     per_page = post_per_page
