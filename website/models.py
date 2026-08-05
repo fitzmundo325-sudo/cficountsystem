@@ -498,3 +498,16 @@ class StoreProductBuffer(db.Model):
     updated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
 
     __table_args__ = (db.UniqueConstraint('store_id', 'product_id', name='uq_store_product_buffer'),)
+    
+    
+class ProductChangesEventsLog(db.Model):
+    __tablename__ = 'product_changes_events_log'
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product_master.id'), nullable=False, index=True)
+    product_json = db.Column(db.String(10000))
+    current_tp = db.Column(db.Float, default=0.0)
+    current_sp_p = db.Column(db.Float, default=0.0)
+    current_sp_t = db.Column(db.Float, default=0.0)
+    updated_at = db.Column(db.DateTime(timezone=True), default=func.now())
+    misc = db.Column(db.String(10000))
+    
