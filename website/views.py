@@ -5701,7 +5701,7 @@ def _update_inventory_wastage_on_receive(transfer, transfer_items):
         _recalculate_inventory_item(source_inventory_item)
 
 
-def _update_inventory_trans_in_on_receive(transfer, transfer_items):
+def _update_inventory_trans_in_on_receive(transfer, transfer_items, received_date=None):
     """Update invensync Trans-In quantity when transfer receiving is confirmed."""
     from datetime import date as date_type
 
@@ -5727,7 +5727,8 @@ def _update_inventory_trans_in_on_receive(transfer, transfer_items):
     if not dest_store:
         return
 
-    received_date = date_type.today()
+    if received_date is None:
+        received_date = date_type.today()
 
     dest_inventory = DailyEndingInventory.query.filter_by(
         store_id=dest_store.id,
@@ -6298,8 +6299,19 @@ def store_manager_incoming_transfer_view(transfer_id):
         else:
             transfer.status = 'Received'
 
+        received_date_str = str(request.form.get('received_date', '') or '').strip()
+        received_date = None
+        if received_date_str:
+            try:
+                from datetime import datetime
+                received_date = datetime.strptime(received_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                pass
+
+        transfer.received_date = received_date
+
         # Update invensync Trans-In quantity when receiving is confirmed
-        _update_inventory_trans_in_on_receive(transfer, transfer_items)
+        _update_inventory_trans_in_on_receive(transfer, transfer_items, received_date=received_date)
 
         log_audit_event(
             action='taf.product_transfer.receive',
