@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="application-name" content="iDashboard">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="iDashboard">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>{% block title %}{% endblock %} - Admin Panel</title>
+
+  <script>
+    try {
+      if (localStorage.getItem('adminTheme') === 'dark') {
+        document.documentElement.classList.add('admin-dark');
+      }
+    } catch (error) {}
+  </script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+
+  <script>
+    (function () {
+      const isAuthenticated = {{ 'true' if current_user.is_authenticated else 'false' }};
+      if (!isAuthenticated) return;
+
+      const timeoutSeconds = Number('{{ config.get("SESSION_IDLE_TIMEOUT_SECONDS", 3600) }}') || 3600;
+      let idleTimer;
+
+      const resetTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          window.location.replace('{{ url_for("auth.logout") }}');
+        }, timeoutSeconds * 1000);
+      };
+
+      ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll', 'click'].forEach((eventName) => {
+        document.addEventListener(eventName, resetTimer, { passive: true });
+      });
+
+      resetTimer();
+    })();
+  </script>
+
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+  <link href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" rel="stylesheet">
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+    }
+
+    html.admin-dark { color-scheme: dark; }
+    html.admin-dark body,
+    html.admin-dark #main-content {
+      background-color: #020617 !important;
+      color: #e2e8f0;
+    }
+    html.admin-dark #main-content .bg-white,
+    html.admin-dark #main-content .bg-white\/80,
+    html.admin-dark #main-content .bg-white\/85,
+    html.admin-dark #main-content .bg-slate-50,
+    html.admin-dark #main-content .bg-slate-100,
+    html.admin-dark #main-content .bg-sky-50,
+    html.admin-dark #main-content .bg-indigo-50,
+    html.admin-dark #main-content .bg-blue-50,
+    html.admin-dark #main-content .bg-amber-50,
+    html.admin-dark #main-content .bg-emerald-50,
+    html.admin-dark #main-content .bg-green-50,
+    html.admin-dark #main-content .bg-rose-50 {
+      background-color: #0f172a !important;
+    }
+    html.admin-dark #main-content .text-slate-900,
+    html.admin-dark #main-content .text-slate-800,
+    html.admin-dark #main-content .text-black {
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content .text-slate-700,
+    html.admin-dark #main-content .text-slate-600,
+    html.admin-dark #main-content .text-slate-500,
+    html.admin-dark #main-content .text-slate-400 {
+      color: #cbd5e1 !important;
+    }
+    html.admin-dark #main-content .text-slate-300 {
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content .text-indigo-700,
+    html.admin-dark #main-content .text-indigo-600 {
+      color: #a5b4fc !important;
+    }
+    html.admin-dark #main-content .text-sky-800,
+    html.admin-dark #main-content .text-sky-700,
+    html.admin-dark #main-content .text-blue-800,
+    html.admin-dark #main-content .text-blue-700 {
+      color: #7dd3fc !important;
+    }
+    html.admin-dark #main-content .text-emerald-800,
+    html.admin-dark #main-content .text-emerald-700,
+    html.admin-dark #main-content .text-green-800,
+    html.admin-dark #main-content .text-green-700 {
+      color: #6ee7b7 !important;
+    }
+    html.admin-dark #main-content .text-amber-900,
+    html.admin-dark #main-content .text-amber-800,
+    html.admin-dark #main-content .text-amber-700,
+    html.admin-dark #main-content .text-orange-700 {
+      color: #fcd34d !important;
+    }
+    html.admin-dark #main-content .text-red-800,
+    html.admin-dark #main-content .text-red-700,
+    html.admin-dark #main-content .text-rose-700 {
+      color: #fda4af !important;
+    }
+    html.admin-dark #main-content a:not([class*="text-white"]):hover {
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .border-slate-100,
+    html.admin-dark #main-content .border-slate-200,
+    html.admin-dark #main-content .border-slate-300 {
+      border-color: #334155 !important;
+    }
+    html.admin-dark #main-content input,
+    html.admin-dark #main-content select,
+    html.admin-dark #main-content textarea {
+      background-color: #0f172a;
+      border-color: #475569;
+      color: #f8fafc;
+    }
+    html.admin-dark #main-content input::placeholder,
+    html.admin-dark #main-content textarea::placeholder {
+      color: #64748b;
+    }
+    html.admin-dark #main-content button.bg-white,
+    html.admin-dark #main-content a.bg-white {
+      background-color: #1e293b !important;
+      border-color: #475569 !important;
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content button.bg-slate-900,
+    html.admin-dark #main-content a.bg-slate-900,
+    html.admin-dark #main-content button.bg-slate-800,
+    html.admin-dark #main-content a.bg-slate-800,
+    html.admin-dark #main-content button.bg-slate-700,
+    html.admin-dark #main-content a.bg-slate-700,
+    html.admin-dark #main-content button.bg-slate-600,
+    html.admin-dark #main-content a.bg-slate-600 {
+      background-color: #334155 !important;
+      border-color: #475569 !important;
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-slate-800:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-800:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-700:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-700:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-600:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-600:hover {
+      background-color: #475569 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-slate-300,
+    html.admin-dark #main-content a.bg-slate-300,
+    html.admin-dark #main-content button.bg-slate-200,
+    html.admin-dark #main-content a.bg-slate-200,
+    html.admin-dark #main-content button.bg-slate-100,
+    html.admin-dark #main-content a.bg-slate-100 {
+      background-color: #1e293b !important;
+      border-color: #475569 !important;
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-slate-300:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-300:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-200:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-200:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-100:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-100:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-50:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-50:hover {
+      background-color: #334155 !important;
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content button.bg-indigo-600,
+    html.admin-dark #main-content a.bg-indigo-600,
+    html.admin-dark #main-content button.bg-violet-600,
+    html.admin-dark #main-content a.bg-violet-600 {
+      background-color: #4f46e5 !important;
+      border-color: #6366f1 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-indigo-700:hover,
+    html.admin-dark #main-content a.hover\:bg-indigo-700:hover {
+      background-color: #6366f1 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-indigo-100,
+    html.admin-dark #main-content a.bg-indigo-100,
+    html.admin-dark #main-content button.bg-indigo-50,
+    html.admin-dark #main-content a.bg-indigo-50 {
+      background-color: #312e81 !important;
+      border-color: #4f46e5 !important;
+      color: #c7d2fe !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-indigo-200:hover,
+    html.admin-dark #main-content a.hover\:bg-indigo-200:hover,
+    html.admin-dark #main-content button.hover\:bg-indigo-100:hover,
+    html.admin-dark #main-content a.hover\:bg-indigo-100:hover {
+      background-color: #4338ca !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-emerald-600,
+    html.admin-dark #main-content a.bg-emerald-600,
+    html.admin-dark #main-content button.bg-green-600,
+    html.admin-dark #main-content a.bg-green-600 {
+      background-color: #047857 !important;
+      border-color: #10b981 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-emerald-100,
+    html.admin-dark #main-content a.bg-emerald-100,
+    html.admin-dark #main-content button.bg-emerald-50,
+    html.admin-dark #main-content a.bg-emerald-50 {
+      background-color: #064e3b !important;
+      border-color: #10b981 !important;
+      color: #a7f3d0 !important;
+    }
+    html.admin-dark #main-content button.bg-amber-100,
+    html.admin-dark #main-content a.bg-amber-100,
+    html.admin-dark #main-content button.bg-amber-50,
+    html.admin-dark #main-content a.bg-amber-50 {
+      background-color: #78350f !important;
+      border-color: #f59e0b !important;
+      color: #fde68a !important;
+    }
+    html.admin-dark #main-content button.bg-red-600,
+    html.admin-dark #main-content a.bg-red-600,
+    html.admin-dark #main-content button.bg-rose-600,
+    html.admin-dark #main-content a.bg-rose-600 {
+      background-color: #be123c !important;
+      border-color: #fb7185 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-rose-100,
+    html.admin-dark #main-content a.bg-rose-100,
+    html.admin-dark #main-content button.bg-rose-50,
+    html.admin-dark #main-content a.bg-rose-50,
+    html.admin-dark #main-content button.bg-red-100,
+    html.admin-dark #main-content a.bg-red-100,
+    html.admin-dark #main-content button.bg-red-50,
+    html.admin-dark #main-content a.bg-red-50 {
+      background-color: #4c0519 !important;
+      border-color: #be123c !important;
+      color: #fecdd3 !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-rose-200:hover,
+    html.admin-dark #main-content a.hover\:bg-rose-200:hover,
+    html.admin-dark #main-content button.hover\:bg-rose-100:hover,
+    html.admin-dark #main-content a.hover\:bg-rose-100:hover {
+      background-color: #881337 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button:disabled,
+    html.admin-dark #main-content a[aria-disabled="true"] {
+      background-color: #475569 !important;
+      border-color: #64748b !important;
+      color: #cbd5e1 !important;
+      opacity: 0.7;
+    }
+    html.admin-dark #main-content .border-slate-100,
+    html.admin-dark #main-content .border-slate-200,
+    html.admin-dark #main-content .border-slate-300 {
+      border-color: #334155 !important;
+    }
+    html.admin-dark #main-content [class*="shadow"] {
+      --tw-shadow-color: rgba(0, 0, 0, 0.35);
+    }
+    html.admin-dark #main-content tr.hover\:bg-slate-50:hover,
+    html.admin-dark #main-content .hover\:bg-slate-50:hover,
+    html.admin-dark #main-content .hover\:bg-slate-100:hover {
+      background-color: #1e293b !important;
+    }
+    html.admin-dark #main-content table {
+      background-color: #0f172a !important;
+      color: #e2e8f0;
+    }
+    html.admin-dark #main-content table thead,
+    html.admin-dark #main-content table thead tr,
+    html.admin-dark #main-content table th {
+      background-color: #1e293b !important;
+      border-color: #475569 !important;
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content table tbody,
+    html.admin-dark #main-content table tbody tr,
+    html.admin-dark #main-content table td {
+      background-color: #0f172a !important;
+      border-color: #334155 !important;
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content table tbody tr:nth-child(even) td {
+      background-color: #111827 !important;
+    }
+    html.admin-dark #main-content table tbody tr:hover td {
+      background-color: #1e293b !important;
+    }
+    html.admin-dark #main-content table input,
+    html.admin-dark #main-content table select,
+    html.admin-dark #main-content table textarea {
+      background-color: #020617 !important;
+      border-color: #475569 !important;
+      color: #f8fafc !important;
+    }
+  </style>
+
+  <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-no-spinner-20260727"></script>
+  
+  
+  <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
+  
+  
+  <script src="{{ url_for('static', filename='js/auto_scrollbar.js') }}?v=scrollbar-fade-1"></script>
+
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="m-0 overflow-x-hidden">
+
+  <!-- Main Content Area (full width — no sidebar offset) -->
+  <main id="main-content" class="min-h-screen flex flex-col">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
+
+  <!-- Flash Messages as Toast Notifications -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <script>
+        document.addEventListener('DOMContentLoaded', function () {
+          {% for category, message in messages %}
+            if (window.toast && typeof window.toast.show === 'function') {
+              window.toast.show({{ message|tojson }}, {{ category|tojson }});
+            }
+          {% endfor %}
+        });
+      </script>
+    {% endif %}
+  {% endwith %}
+
+
+<script src="{{ url_for('static', filename='js/request_builder.js') }}?v=scrollbar-fade-1"></script>
+
+<script>
+	qBuilder.server_address = "_";
+</script>
+
+</body>
+</html>
