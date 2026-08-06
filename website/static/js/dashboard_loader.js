@@ -137,12 +137,7 @@
       showDashboardSkeletons();
     }
 
-    var url = API_URL;
-    if (window.location.search) {
-      url += (url.indexOf('?') === -1 ? '?' : '&') + window.location.search.replace(/^\?/, '');
-    }
-
-    fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+    fetch(API_URL, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (d) { renderDashboard(d); })
       .catch(function (err) {
