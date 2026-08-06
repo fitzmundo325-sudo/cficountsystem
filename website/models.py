@@ -278,6 +278,7 @@ class TafTransfer(db.Model):
     transfer_to = db.Column(db.String(255), nullable=False)
     prepared_by_name = db.Column(db.String(255), nullable=False)
     received_by_name = db.Column(db.String(255), nullable=True)
+    received_date = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(20), nullable=False, default='Pending')
     grand_total = db.Column(db.Float, nullable=False, default=0.0)
     submitted_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
