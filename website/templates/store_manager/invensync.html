@@ -2720,24 +2720,39 @@ function updateInventoryRow(input) {
   refreshVarianceDisplays();
 }
 
-// Compute a row's base variance straight from its inputs.
+// Compute a row's base variance. Prefers the displayed cells (kept in sync
+// with inputs by updateInventoryRow) so swap adjustments act on what staff
+// actually see; falls back to recomputing from inputs when the cells are
+// hidden or the row lives in the fullscreen clone (stale cells there).
 function computeRowVariance(row) {
-  const beginningInput = row.querySelector('.beginning-input');
-  const beginning = beginningInput ? parseFloat(beginningInput.value) || 0 : parseFloat(row.querySelector('.beginning-qty').textContent) || 0;
-  const delivery = parseFloat(row.querySelector('.delivery-input').value) || 0;
-  const transIn = parseFloat(row.querySelector('.trans-in-input').value) || 0;
-  const bo = parseFloat(row.querySelector('.bo-input').value) || 0;
-  const advDel = parseFloat(row.querySelector('.adv-del-input').value) || 0;
-  const transOut = parseFloat(row.querySelector('.trans-out-input').value) || 0;
-  const wastage = parseFloat(row.querySelector('.wastage-input').value) || 0;
-  const csi = parseFloat(row.querySelector('.csi-input').value) || 0;
-  const sold = parseFloat(row.querySelector('.sold-input').value) || 0;
-  const endingD5 = parseFloat(row.querySelector('.ending-d5-input').value) || 0;
-  const endingD4 = parseFloat(row.querySelector('.ending-d4-input').value) || 0;
-  const endingD3 = parseFloat(row.querySelector('.ending-d3-input').value) || 0;
+  const inFullscreen = !!(row.closest && row.closest('#fullscreen-modal'));
+  const totalCell = row.querySelector('.total-ending');
+  const theoCell = row.querySelector('.theo-ending');
+  const totalText = totalCell ? String(totalCell.textContent || '').trim() : '';
+  const theoText = theoCell ? String(theoCell.textContent || '').trim() : '';
+  let totalEnding;
+  let theoEnding;
+  if (!inFullscreen && totalText && theoText) {
+    totalEnding = parseFloat(totalText) || 0;
+    theoEnding = parseFloat(theoText) || 0;
+  } else {
+    const beginningInput = row.querySelector('.beginning-input');
+    const beginning = beginningInput ? parseFloat(beginningInput.value) || 0 : parseFloat(row.querySelector('.beginning-qty').textContent) || 0;
+    const delivery = parseFloat(row.querySelector('.delivery-input').value) || 0;
+    const transIn = parseFloat(row.querySelector('.trans-in-input').value) || 0;
+    const bo = parseFloat(row.querySelector('.bo-input').value) || 0;
+    const advDel = parseFloat(row.querySelector('.adv-del-input').value) || 0;
+    const transOut = parseFloat(row.querySelector('.trans-out-input').value) || 0;
+    const wastage = parseFloat(row.querySelector('.wastage-input').value) || 0;
+    const csi = parseFloat(row.querySelector('.csi-input').value) || 0;
+    const sold = parseFloat(row.querySelector('.sold-input').value) || 0;
+    const endingD5 = parseFloat(row.querySelector('.ending-d5-input').value) || 0;
+    const endingD4 = parseFloat(row.querySelector('.ending-d4-input').value) || 0;
+    const endingD3 = parseFloat(row.querySelector('.ending-d3-input').value) || 0;
+    totalEnding = endingD5 + endingD4 + endingD3;
+    theoEnding = beginning + delivery + transIn + bo + advDel - transOut - wastage - csi - sold;
+  }
   const srp = parseFloat(row.querySelector('.srp-price').value) || 0;
-  const totalEnding = endingD5 + endingD4 + endingD3;
-  const theoEnding = beginning + delivery + transIn + bo + advDel - transOut - wastage - csi - sold;
   return {
     baseVariance: totalEnding - theoEnding,
     theoEnding: theoEnding,
@@ -2750,6 +2765,7 @@ function computeRowVariance(row) {
 // selected product price matches the row product's price).
 function getActiveSwap(row) {
   if (!row) return 0;
+  if (row.dataset.autoLinked === '1') return 0;
   const typeSel = row.querySelector('.adjust-type');
   if (!typeSel || String(typeSel.value).trim() !== 'Swapping') return 0;
   const hidden = row.querySelector('input[type="hidden"].adjust-product');
@@ -2807,6 +2823,139 @@ function refreshVarianceDisplays() {
     row.querySelector('.variance').textContent = displayVariance;
     row.querySelector('.variance-peso').textContent = displayPeso.toFixed(2);
     updateCellColors(row, data.theoEnding, displayVariance, displayPeso);
+  });
+}
+
+// ==== Auto-link reciprocal Swapping adjustments ====
+function getAdjProductPool() {
+  return (typeof adjProductOptions !== 'undefined' && adjProductOptions.length)
+    ? adjProductOptions
+    : (typeof motifProductOptions !== 'undefined' ? motifProductOptions : []);
+}
+
+function readAdjustment(row) {
+  const typeSel = row.querySelector('.adjust-type');
+  const hidden = row.querySelector('input[type="hidden"].adjust-product');
+  const qtyInput = row.querySelector('.adjust-qty');
+  return {
+    type: typeSel ? String(typeSel.value || '') : '',
+    productId: hidden ? String(hidden.value || '') : '',
+    qty: qtyInput ? String(qtyInput.value || '') : ''
+  };
+}
+
+function writeAdjustment(row, adj) {
+  const typeSel = row.querySelector('.adjust-type');
+  const hidden = row.querySelector('input[type="hidden"].adjust-product');
+  const visible = row.querySelector('.adjust-product-input');
+  const qtyInput = row.querySelector('.adjust-qty');
+  if (typeSel) typeSel.value = adj.type;
+  if (visible) {
+    const product = adj.productId
+      ? getAdjProductPool().find(p => String(p.id) === String(adj.productId))
+      : null;
+    visible.value = product ? product.description : '';
+  }
+  if (hidden) hidden.value = adj.productId || '';
+  if (qtyInput) qtyInput.value = (adj.qty === undefined || adj.qty === null || adj.qty === '') ? '' : String(adj.qty);
+  if (typeSel) syncAdjustmentChargesCell(row);
+}
+
+function lockAdjustmentRow(row, sourceId) {
+  if (row.dataset.autoLinked === '1' && row.dataset.autoLinkSource === String(sourceId)) return;
+  row.dataset.autoLinked = '1';
+  row.dataset.autoLinkSource = String(sourceId);
+  row.querySelectorAll('.inv-adjust-only').forEach(field => {
+    if (field.type === 'hidden') return;
+    if (field.tagName === 'SELECT') {
+      field.disabled = true;
+    } else {
+      field.readOnly = true;
+    }
+    field.classList.add('cursor-not-allowed', 'opacity-75');
+  });
+  let badge = row.querySelector('.auto-link-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'auto-link-badge';
+    badge.style.cssText = 'display:inline-block;margin-left:3px;padding:0 3px;border-radius:4px;background:#ede9fe;color:#6d28d9;font-size:7px;font-weight:700;line-height:1.4;vertical-align:middle;white-space:nowrap;';
+    const typeCell = row.querySelector('td[data-adjust="type"]');
+    if (typeCell) typeCell.appendChild(badge);
+  }
+  const source = getAdjProductPool().find(p => String(p.id) === String(sourceId));
+  badge.textContent = 'Auto';
+  badge.title = 'Auto-linked from ' + (source ? source.description : 'another product') + ' - edit from that row';
+  syncAdjustmentChargesHeader();
+}
+
+function unlockAdjustmentRow(row) {
+  if (row.dataset.autoLinked !== '1') return;
+  delete row.dataset.autoLinked;
+  delete row.dataset.autoLinkSource;
+  row.querySelectorAll('.inv-adjust-only').forEach(field => {
+    if (field.type === 'hidden') return;
+    field.disabled = false;
+    field.readOnly = false;
+    field.classList.remove('cursor-not-allowed', 'opacity-75');
+  });
+  const badge = row.querySelector('.auto-link-badge');
+  if (badge) badge.remove();
+  syncAdjustmentChargesHeader();
+}
+
+// Keep reciprocal swap pairs in sync: when a row has an active Swapping
+// adjustment on another same-price product, that target row is auto-filled
+// with the reciprocal swap and hard-locked (if still empty or already the
+// same pair). Auto-filled rows are cleared and unlocked once the source swap
+// is changed or removed.
+function syncAllSwapPairs(notify) {
+  const rows = Array.from(document.querySelectorAll('tbody tr[data-product-id]'));
+  if (!rows.length) return;
+  const byId = {};
+  rows.forEach(row => {
+    const id = String(row.dataset.productId || '');
+    if (id) byId[id] = row;
+  });
+
+  const active = {};
+  rows.forEach(row => {
+    const id = String(row.dataset.productId || '');
+    if (!id) return;
+    const qty = getActiveSwap(row);
+    if (qty > 0) {
+      const selId = String(row.querySelector('input[type="hidden"].adjust-product')?.value || '');
+      if (selId && selId !== id) active[id] = { targetId: selId, qty };
+    }
+  });
+
+  Object.keys(active).forEach(sourceId => {
+    const swap = active[sourceId];
+    const targetRow = byId[swap.targetId];
+    if (!targetRow) return;
+    const current = readAdjustment(targetRow);
+    const isEmpty = !current.type && !current.productId && !current.qty;
+    const isSamePair = current.type === 'Swapping' && current.productId === sourceId;
+    if (isEmpty || isSamePair) {
+      const targetVar = computeRowVariance(targetRow).baseVariance;
+      const covered = targetVar + swap.qty >= 0;
+      writeAdjustment(targetRow, { type: 'Swapping', productId: sourceId, qty: covered ? 0 : swap.qty });
+      lockAdjustmentRow(targetRow, sourceId);
+    } else if (notify && typeof notify === 'function') {
+      const targetProduct = getAdjProductPool().find(p => String(p.id) === swap.targetId);
+      notify((targetProduct ? targetProduct.description : 'The selected product') + ' already has an adjustment - swap was not auto-linked (variance still adjusts).', 'info');
+    }
+  });
+
+  rows.forEach(row => {
+    if (row.dataset.autoLinked !== '1') return;
+    const rowId = String(row.dataset.productId || '');
+    const sourceId = row.dataset.autoLinkSource || '';
+    const srcSwap = active[sourceId];
+    const stillLinked = srcSwap && srcSwap.targetId === rowId;
+    if (!stillLinked) {
+      writeAdjustment(row, { type: '', productId: '', qty: '' });
+      unlockAdjustmentRow(row);
+    }
   });
 }
 
@@ -3133,6 +3282,31 @@ function getAdjustmentFieldName(field) {
     }
   };
 
+  // When a row switches away from Swapping (blank / OFFSET / Variance), the
+  // product and quantity columns must be cleared - they only apply to Swapping.
+  window.clearAdjustmentForNonSwap = function (row) {
+    if (!row) return;
+    const typeSel = row.querySelector('.adjust-type');
+    if (!typeSel || String(typeSel.value).trim() === 'Swapping') return;
+    const hidden = row.querySelector('input[type="hidden"].adjust-product');
+    const visible = row.querySelector('.adjust-product-input');
+    const qtyInput = row.querySelector('.adjust-qty');
+    const hasProduct = (hidden && String(hidden.value || '') !== '')
+      || (visible && String(visible.value || '').trim() !== '');
+    const hasQty = qtyInput && String(qtyInput.value || '').trim() !== '';
+    if (hasProduct) {
+      if (visible) visible.value = '';
+      if (hidden) {
+        hidden.value = '';
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+    if (hasQty) {
+      qtyInput.value = '';
+      qtyInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  };
+
   document.addEventListener('DOMContentLoaded', bindInputs);
 })();
 
@@ -3178,14 +3352,17 @@ document.addEventListener('change', function(event) {
     syncAdjustmentChargesCell(row);
     if (event.target.value === 'Swapping' && typeof window.clearMismatchedSwappingSelection === 'function') {
       window.clearMismatchedSwappingSelection(row);
+    } else if (typeof window.clearAdjustmentForNonSwap === 'function') {
+      window.clearAdjustmentForNonSwap(row);
     }
     // If this row's product dropdown is open, filter to same-price products when Swapping.
     if (typeof window.refreshAdjustProductDropdown === 'function') {
       window.refreshAdjustProductDropdown();
     }
   }
-  refreshAdjustmentsSaveButton();
+  syncAllSwapPairs(true);
   refreshVarianceDisplays();
+  refreshAdjustmentsSaveButton();
 }, true);
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -3535,6 +3712,8 @@ document.addEventListener('DOMContentLoaded', function() {
   document.querySelectorAll('tbody tr[data-product-id]').forEach(row => {
     syncAdjustmentChargesCell(row);
   });
+  syncAllSwapPairs(false);
+  refreshVarianceDisplays();
   captureAdjustmentsSnapshot();
 
   const productSearchInput = document.getElementById('product-search-input');
@@ -3903,6 +4082,7 @@ function updateFullscreenContent() {
       window.bindAdjustProductCombobox();
     }
     refreshVarianceDisplays();
+    syncAllSwapPairs(false);
   }
 
   // Update subtitle

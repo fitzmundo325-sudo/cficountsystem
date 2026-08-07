@@ -511,4 +511,68 @@ class ProductChangesEventsLog(db.Model):
     current_sp_t = db.Column(db.Float, default=0.0)
     updated_at = db.Column(db.DateTime(timezone=True), default=func.now())
     misc = db.Column(db.String(10000))
+
+
+class ProductPriceChangeLog(db.Model):
+    """Price change history for the TP / SP_P / SP_NP price columns."""
+    __tablename__ = 'product_price_change_log'
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product_master.id'), nullable=False, index=True)
+    change_type = db.Column(db.String(20), nullable=False, default='UPDATE')
+    product_code = db.Column(db.String(50), nullable=True)
+    product_description = db.Column(db.String(255), nullable=True)
+    old_tp = db.Column(db.Float, nullable=True)
+    new_tp = db.Column(db.Float, nullable=True)
+    old_sp_p = db.Column(db.Float, nullable=True)
+    new_sp_p = db.Column(db.Float, nullable=True)
+    old_sp_np = db.Column(db.Float, nullable=True)
+    new_sp_np = db.Column(db.Float, nullable=True)
+    changed_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    changed_by_username = db.Column(db.String(100), nullable=True)
+    changed_at = db.Column(db.DateTime(timezone=True), default=func.now(), index=True)
+
+
+class SupplyItem(db.Model):
+    """Masterlist of office/supply items with available stock."""
+    __tablename__ = 'supply_item'
+    id = db.Column(db.Integer, primary_key=True)
+    category = db.Column(db.String(100), nullable=False, index=True)
+    item_name = db.Column(db.String(255), nullable=False)
+    available_stock = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime(timezone=True), default=func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+
+class SupplyRequest(db.Model):
+    """Supply request submitted by a store, approved/rejected by an admin."""
+    __tablename__ = 'supply_request'
+    id = db.Column(db.Integer, primary_key=True)
+    request_no = db.Column(db.String(50), nullable=False, unique=True, index=True)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
+    store_name = db.Column(db.String(100), nullable=True)
+    requested_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    request_type = db.Column(db.String(20), nullable=False, default='menu')
+    remarks = db.Column(db.String(500), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='Pending', index=True)
+    approved_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    approved_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    rejected_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    rejected_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=func.now(), index=True)
+    store = db.relationship('Store', backref='supply_requests')
+    requester = db.relationship('User', foreign_keys=[requested_by], lazy=True)
+    approver = db.relationship('User', foreign_keys=[approved_by], lazy=True)
+    rejecter = db.relationship('User', foreign_keys=[rejected_by], lazy=True)
+    items = db.relationship('SupplyRequestItem', backref='request', lazy=True, cascade='all, delete-orphan')
+
+
+class SupplyRequestItem(db.Model):
+    """Line items of a supply request (snapshots of the supply masterlist)."""
+    __tablename__ = 'supply_request_item'
+    id = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey('supply_request.id'), nullable=False, index=True)
+    supply_item_id = db.Column(db.Integer, db.ForeignKey('supply_item.id'), nullable=True)
+    item_name = db.Column(db.String(255), nullable=False)
+    category = db.Column(db.String(100), nullable=True)
+    quantity = db.Column(db.Integer, nullable=False, default=0)
     

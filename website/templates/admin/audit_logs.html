@@ -130,6 +130,20 @@
             {% set action_text = 'Daily report field edited' %}
           {% elif action == 'report.approve' %}
             {% set action_text = 'Daily report approved' %}
+          {% elif action == 'store.supply_request.create' %}
+            {% set action_text = 'Supply request submitted' %}
+          {% elif action == 'admin.supply_request.approve' %}
+            {% set action_text = 'Supply request approved' %}
+          {% elif action == 'admin.supply_request.reject' %}
+            {% set action_text = 'Supply request rejected' %}
+          {% elif action == 'admin.supply_request.delete' %}
+            {% set action_text = 'Supply request deleted' %}
+          {% elif action == 'admin.supply_item.create' %}
+            {% set action_text = 'Supply item created' %}
+          {% elif action == 'admin.supply_item.update' %}
+            {% set action_text = 'Supply item updated' %}
+          {% elif action == 'admin.supply_item.delete' %}
+            {% set action_text = 'Supply item deleted' %}
           {% endif %}
           <tr class="hover:bg-slate-50 transition-colors align-top audit-row"
               data-integrity="{{ 'tampered' if tampered else 'verified' }}"
