@@ -243,6 +243,10 @@ def _ensure_taf_transfer_columns():
             conn.execute(
                 text("ALTER TABLE taf_transfer ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'Pending'")
             )
+        if 'received_date' not in existing_columns:
+            conn.execute(
+                text("ALTER TABLE taf_transfer ADD COLUMN received_date DATE")
+            )
         conn.execute(
             text(
                 "UPDATE taf_transfer SET status = 'Pending' "
