@@ -21,6 +21,10 @@ from .models import (
     TafTransfer,
     TafTransferItem,
     StoreProductBuffer,
+    ProductPriceChangeLog,
+    SupplyItem,
+    SupplyRequest,
+    SupplyRequestItem,
 )
 from . import db, cache
 from .audit import log_audit_event, verify_audit_chain
@@ -3989,6 +3993,23 @@ def add_product():
         db.session.add(product)
         db.session.commit()
 
+        # Record initial prices as the first price history entry
+        db.session.add(ProductPriceChangeLog(
+            product_id=product.id,
+            change_type='CREATE',
+            product_code=str(product.code) if product.code is not None else None,
+            product_description=product.description,
+            old_tp=None,
+            new_tp=product.tp,
+            old_sp_p=None,
+            new_sp_p=product.sp_p,
+            old_sp_np=None,
+            new_sp_np=product.sp_np,
+            changed_by=current_user.id,
+            changed_by_username=getattr(current_user, 'username', None),
+        ))
+        db.session.commit()
+
         # Log audit event
         log_audit_event(
             current_user.id,
@@ -4037,6 +4058,13 @@ def edit_product(product_id):
         if existing_product:
             return jsonify({'success': False, 'message': 'Another product with this code already exists.'}), 400
 
+        # Capture previous prices before updating
+        old_prices = {
+            'tp': product.tp,
+            'sp_p': product.sp_p,
+            'sp_np': product.sp_np,
+        }
+
         # Update product
         product.code = code
         product.description = data['description'].strip()
@@ -4048,6 +4076,32 @@ def edit_product(product_id):
         product.shelf_life = data.get('shelf_life', '').strip() or None
 
         db.session.commit()
+
+        # Record price changes (only when at least one price actually changed)
+        new_prices = {
+            'tp': product.tp,
+            'sp_p': product.sp_p,
+            'sp_np': product.sp_np,
+        }
+        if any(
+            (old_prices[key] or 0) != (new_prices[key] or 0)
+            for key in ('tp', 'sp_p', 'sp_np')
+        ):
+            db.session.add(ProductPriceChangeLog(
+                product_id=product.id,
+                change_type='UPDATE',
+                product_code=str(product.code) if product.code is not None else None,
+                product_description=product.description,
+                old_tp=old_prices['tp'],
+                new_tp=new_prices['tp'],
+                old_sp_p=old_prices['sp_p'],
+                new_sp_p=new_prices['sp_p'],
+                old_sp_np=old_prices['sp_np'],
+                new_sp_np=new_prices['sp_np'],
+                changed_by=current_user.id,
+                changed_by_username=getattr(current_user, 'username', None),
+            ))
+            db.session.commit()
 
         # Log audit event
         log_audit_event(
@@ -5946,3 +6000,312 @@ def admin_delete_taf(transfer_id):
         error_trace = traceback.format_exc()
         print(f'Error deleting TAF: {error_trace}')
         return jsonify({'success': False, 'error': f'Failed to delete transfer: {str(e)}'}), 500
+
+
+# ================================================
+# Supply Management (admin side)
+# ================================================
+
+@admin.route('/admin/supply')
+@login_required
+def supply_management():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    active_tab = (request.args.get('tab') or 'requests').strip()
+    if active_tab not in ('requests', 'items'):
+        active_tab = 'requests'
+
+    status_filter = (request.args.get('status') or '').strip()
+    q = (request.args.get('q') or '').strip()
+    category_filter = (request.args.get('category') or '').strip()
+
+    requests_query = SupplyRequest.query.options(selectinload(SupplyRequest.items))
+    if status_filter in ('Pending', 'Approved', 'Rejected'):
+        requests_query = requests_query.filter(SupplyRequest.status == status_filter)
+    if q:
+        pattern = f'%{q}%'
+        requests_query = requests_query.filter(
+            or_(
+                SupplyRequest.request_no.ilike(pattern),
+                SupplyRequest.store_name.ilike(pattern),
+            )
+        )
+
+    all_requests = (
+        requests_query
+        .order_by(SupplyRequest.created_at.desc(), SupplyRequest.id.desc())
+        .limit(500)
+        .all()
+    )
+    pending_count = SupplyRequest.query.filter_by(status='Pending').count()
+
+    items_query = SupplyItem.query
+    if category_filter:
+        items_query = items_query.filter(SupplyItem.category == category_filter)
+    if q:
+        pattern = f'%{q}%'
+        items_query = items_query.filter(
+            or_(
+                SupplyItem.item_name.ilike(pattern),
+                SupplyItem.category.ilike(pattern),
+            )
+        )
+
+    all_items = items_query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc()).all()
+    categories = [c[0] for c in db.session.query(SupplyItem.category).distinct().order_by(SupplyItem.category.asc()).all()]
+
+    return render_template(
+        'admin/supply_management.html',
+        user=current_user,
+        requests=all_requests,
+        items=all_items,
+        categories=categories,
+        active_tab=active_tab,
+        status_filter=status_filter,
+        category_filter=category_filter,
+        search_query=q,
+        pending_count=pending_count,
+    )
+
+
+@admin.route('/admin/supply-request/<int:request_id>/approve', methods=['POST'])
+@login_required
+def admin_approve_supply_request(request_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'error': 'Access denied.'}), 403
+
+    supply_request = SupplyRequest.query.options(selectinload(SupplyRequest.items)).get_or_404(request_id)
+    if supply_request.status != 'Pending':
+        return jsonify({'success': False, 'error': f'This request is already {supply_request.status.lower()}.'}), 400
+
+    insufficient = []
+    for line in supply_request.items:
+        if not line.supply_item_id:
+            continue
+        item = SupplyItem.query.get(line.supply_item_id)
+        if item and item.available_stock < line.quantity:
+            insufficient.append({
+                'item_name': line.item_name,
+                'requested': line.quantity,
+                'available': item.available_stock,
+            })
+
+    if insufficient:
+        return jsonify({
+            'success': False,
+            'error': 'Insufficient stock. Update the supply item stock first.',
+            'insufficient_items': insufficient,
+        }), 400
+
+    try:
+        for line in supply_request.items:
+            if line.supply_item_id:
+                item = SupplyItem.query.get(line.supply_item_id)
+                if item:
+                    item.available_stock = max(0, item.available_stock - line.quantity)
+
+        supply_request.status = 'Approved'
+        supply_request.approved_by = current_user.id
+        supply_request.approved_at = func.now()
+
+        log_audit_event(
+            action='admin.supply_request.approve',
+            entity_type='SupplyRequest',
+            entity_id=supply_request.id,
+            reason=f'Admin approved supply request {supply_request.request_no}',
+            details={
+                'request_no': supply_request.request_no,
+                'store_id': supply_request.store_id,
+                'store_name': supply_request.store_name,
+                'items': len(supply_request.items),
+            },
+        )
+
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': f'Supply request {supply_request.request_no} approved. Stock updated.',
+        })
+    except Exception as e:
+        db.session.rollback()
+        print(f'Error approving supply request: {e}')
+        return jsonify({'success': False, 'error': f'Failed to approve request: {str(e)}'}), 500
+
+
+@admin.route('/admin/supply-request/<int:request_id>/reject', methods=['POST'])
+@login_required
+def admin_reject_supply_request(request_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'error': 'Access denied.'}), 403
+
+    supply_request = SupplyRequest.query.get_or_404(request_id)
+    if supply_request.status != 'Pending':
+        return jsonify({'success': False, 'error': f'This request is already {supply_request.status.lower()}.'}), 400
+
+    supply_request.status = 'Rejected'
+    supply_request.rejected_by = current_user.id
+    supply_request.rejected_at = func.now()
+
+    log_audit_event(
+        action='admin.supply_request.reject',
+        entity_type='SupplyRequest',
+        entity_id=supply_request.id,
+        reason=f'Admin rejected supply request {supply_request.request_no}',
+        details={
+            'request_no': supply_request.request_no,
+            'store_id': supply_request.store_id,
+            'store_name': supply_request.store_name,
+        },
+    )
+
+    db.session.commit()
+    return jsonify({
+        'success': True,
+        'message': f'Supply request {supply_request.request_no} rejected.',
+    })
+
+
+@admin.route('/admin/supply-request/<int:request_id>/delete', methods=['POST'])
+@login_required
+def admin_delete_supply_request(request_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'error': 'Access denied.'}), 403
+
+    supply_request = SupplyRequest.query.get_or_404(request_id)
+    request_no = supply_request.request_no
+
+    log_audit_event(
+        action='admin.supply_request.delete',
+        entity_type='SupplyRequest',
+        entity_id=supply_request.id,
+        reason=f'Admin deleted supply request {request_no}',
+        details={
+            'request_no': request_no,
+            'store_id': supply_request.store_id,
+            'store_name': supply_request.store_name,
+            'status': supply_request.status,
+        },
+    )
+
+    db.session.delete(supply_request)
+    db.session.commit()
+    return jsonify({'success': True, 'message': f'Supply request {request_no} deleted.'})
+
+
+# ================================================
+# Supply Items masterlist (admin side)
+# ================================================
+
+@admin.route('/admin/supply-items/create', methods=['POST'])
+@login_required
+def admin_create_supply_item():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'error': 'Access denied.'}), 403
+
+    data = request.get_json() or {}
+    category = str(data.get('category') or '').strip()[:100]
+    item_name = str(data.get('item_name') or '').strip()[:255]
+    try:
+        available_stock = max(0, int(data.get('available_stock') or 0))
+    except (TypeError, ValueError):
+        available_stock = 0
+
+    if not category or not item_name:
+        return jsonify({'success': False, 'error': 'Category and item name are required.'}), 400
+
+    existing = SupplyItem.query.filter(
+        SupplyItem.category == category,
+        SupplyItem.item_name == item_name,
+    ).first()
+    if existing:
+        return jsonify({'success': False, 'error': 'An item with this name already exists in this category.'}), 400
+
+    item = SupplyItem(category=category, item_name=item_name, available_stock=available_stock)
+    db.session.add(item)
+    db.session.flush()
+
+    log_audit_event(
+        action='admin.supply_item.create',
+        entity_type='SupplyItem',
+        entity_id=item.id,
+        reason=f'Admin created supply item {item_name}',
+        details={'category': category, 'item_name': item_name, 'available_stock': available_stock},
+    )
+
+    db.session.commit()
+    return jsonify({'success': True, 'message': f'Supply item "{item_name}" created.', 'id': item.id})
+
+
+@admin.route('/admin/supply-items/<int:item_id>/update', methods=['POST'])
+@login_required
+def admin_update_supply_item(item_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'error': 'Access denied.'}), 403
+
+    item = SupplyItem.query.get_or_404(item_id)
+    data = request.get_json() or {}
+    category = str(data.get('category') or '').strip()[:100]
+    item_name = str(data.get('item_name') or '').strip()[:255]
+    try:
+        available_stock = max(0, int(data.get('available_stock') or 0))
+    except (TypeError, ValueError):
+        available_stock = 0
+
+    if not category or not item_name:
+        return jsonify({'success': False, 'error': 'Category and item name are required.'}), 400
+
+    duplicate = SupplyItem.query.filter(
+        SupplyItem.category == category,
+        SupplyItem.item_name == item_name,
+        SupplyItem.id != item.id,
+    ).first()
+    if duplicate:
+        return jsonify({'success': False, 'error': 'An item with this name already exists in this category.'}), 400
+
+    old_stock = item.available_stock
+    item.category = category
+    item.item_name = item_name
+    item.available_stock = available_stock
+
+    log_audit_event(
+        action='admin.supply_item.update',
+        entity_type='SupplyItem',
+        entity_id=item.id,
+        reason=f'Admin updated supply item {item_name}',
+        details={
+            'category': category,
+            'item_name': item_name,
+            'old_stock': old_stock,
+            'new_stock': available_stock,
+        },
+    )
+
+    db.session.commit()
+    return jsonify({'success': True, 'message': f'Supply item "{item_name}" updated.'})
+
+
+@admin.route('/admin/supply-items/<int:item_id>/delete', methods=['POST'])
+@login_required
+def admin_delete_supply_item(item_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'success': False, 'error': 'Access denied.'}), 403
+
+    item = SupplyItem.query.get_or_404(item_id)
+    item_name = item.item_name
+    category = item.category
+
+    SupplyRequestItem.query.filter_by(supply_item_id=item.id).update({'supply_item_id': None})
+
+    log_audit_event(
+        action='admin.supply_item.delete',
+        entity_type='SupplyItem',
+        entity_id=item.id,
+        reason=f'Admin deleted supply item {item_name}',
+        details={'category': category, 'item_name': item_name},
+    )
+
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify({'success': True, 'message': f'Supply item "{item_name}" deleted.'})

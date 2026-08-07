@@ -19,6 +19,9 @@ from .models import (
     StoreTarget,
     StoreProductBuffer,
     GlobalInvenSyncConfig,
+    SupplyItem,
+    SupplyRequest,
+    SupplyRequestItem,
 )
 from . import db
 from .audit import log_audit_event
@@ -5924,9 +5927,9 @@ def store_manager_transaction_activity_form():
 
     if request.method == 'POST':
         transaction_type = str(request.form.get('transaction_type', '') or '').strip()
-        allowed_transaction_types = {'Product Transfer', 'Wastage Transfer', 'EGI Plant Transfer'}
+        allowed_transaction_types = {'Product Transfer', 'Wastage Transfer', 'EGI Plant Transfer', 'Supplies Transfer'}
         if transaction_type not in allowed_transaction_types:
-            flash('Only Product Transfer, Wastage Transfer, and EGI Plant Transfer submission are enabled for now.', category='error')
+            flash('Only Product Transfer, Wastage Transfer, EGI Plant Transfer, and Supplies Transfer submission are enabled for now.', category='error')
             return redirect(url_for('views.store_manager_transaction_activity_form', date=selected_date.strftime('%Y-%m-%d')))
         is_egi_plant_transfer = transaction_type == 'EGI Plant Transfer'
 
@@ -6128,6 +6131,22 @@ def store_manager_transaction_activity_form():
     force_taf_guide = str(request.args.get('guide') or '').strip() == '1'
     show_taf_guide = force_taf_guide or TafTransfer.query.filter_by(store_id=store.id).first() is None
 
+    supply_categories = (
+        db.session.query(SupplyItem.category)
+        .filter(SupplyItem.category.isnot(None), SupplyItem.category != '')
+        .distinct()
+        .order_by(SupplyItem.category.asc())
+        .all()
+    )
+    supply_items = SupplyItem.query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc()).all()
+    supply_requests = (
+        SupplyRequest.query
+        .options(db.selectinload(SupplyRequest.items))
+        .filter(SupplyRequest.store_id == store.id)
+        .order_by(SupplyRequest.created_at.desc(), SupplyRequest.id.desc())
+        .all()
+    )
+
     return render_template(
         'store_manager/transaction_activity_form.html',
         user=current_user,
@@ -6138,6 +6157,9 @@ def store_manager_transaction_activity_form():
         product_names=product_names,
         product_price_map=product_price_map,
         show_taf_guide=show_taf_guide,
+        supply_categories=[row[0] for row in supply_categories],
+        supply_items=supply_items,
+        supply_requests=supply_requests,
     )
 
 
@@ -9122,17 +9144,55 @@ def save_invensync_adjustments():
                     parsed_product_id = None
             if parsed_product_id is not None and parsed_product_id not in valid_product_ids:
                 parsed_product_id = None
+            # The adjustment product and qty only apply to Swapping; clear them
+            # for blank / OFFSET / Variance types.
+            if item.adjustment_type != 'Swapping':
+                parsed_product_id = None
+                item.adjustment_qty = 0
             item.adjustment_product_master_id = parsed_product_id
 
-            try:
-                item.adjustment_qty = max(0, int(item_data.get('adjustment_qty', 0) or 0))
-            except (TypeError, ValueError):
+            if item.adjustment_type == 'Swapping':
+                try:
+                    item.adjustment_qty = max(0, int(item_data.get('adjustment_qty', 0) or 0))
+                except (TypeError, ValueError):
+                    item.adjustment_qty = 0
+            else:
                 item.adjustment_qty = 0
 
             item.adjustment_charges = str(item_data.get('adjustment_charges') or '').strip()[:1000]
 
         if not any_item_found:
             return jsonify({'ok': False, 'message': 'No valid inventory items provided.'}), 400
+
+        # Auto-link reciprocal Swapping adjustments (safety net for the
+        # front-end pairing): if a swap points to a target row whose
+        # adjustment fields are still empty, write the reciprocal swap there.
+        inventory_items = DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
+        for inv_item in inventory_items:
+            target_id = inv_item.adjustment_product_master_id
+            if (
+                inv_item.adjustment_type == 'Swapping'
+                and target_id is not None
+                and target_id != inv_item.product_master_id
+                and (inv_item.adjustment_qty or 0) > 0
+            ):
+                target = DailyEndingInventoryItem.query.filter_by(
+                    inventory_id=inventory.id,
+                    product_master_id=target_id,
+                ).first()
+                if (
+                    target is not None
+                    and not target.adjustment_type
+                    and not target.adjustment_qty
+                    and target.adjustment_product_master_id is None
+                ):
+                    target.adjustment_type = 'Swapping'
+                    target.adjustment_product_master_id = inv_item.product_master_id
+                    target_variance = (target.total_ending_qty or 0) - (target.theo_ending_qty or 0)
+                    if target_variance + inv_item.adjustment_qty >= 0:
+                        target.adjustment_qty = 0
+                    else:
+                        target.adjustment_qty = inv_item.adjustment_qty
 
         db.session.commit()
 
@@ -10012,6 +10072,141 @@ def product_masterlist_v2():
 
     return render_template("admin/product_masterlist_v2.html", user=current_user, page=page)
         
+
+
+# ================================================
+# Supply Requests (store side)
+# ================================================
+
+
+@views.route('/store-manager/supply-request')
+@login_required
+def store_supply_request():
+    if (current_user.role or '').strip() not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Managers and Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    categories = (
+        db.session.query(SupplyItem.category)
+        .distinct()
+        .order_by(SupplyItem.category.asc())
+        .all()
+    )
+    category_list = [c[0] for c in categories]
+    supply_items = SupplyItem.query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc()).all()
+    my_requests = (
+        SupplyRequest.query
+        .filter_by(store_id=store.id)
+        .options(selectinload(SupplyRequest.items))
+        .order_by(SupplyRequest.created_at.desc())
+        .all()
+    )
+
+    return render_template(
+        'store_manager/supply_request.html',
+        user=current_user,
+        store=store,
+        categories=category_list,
+        supply_items=supply_items,
+        my_requests=my_requests,
+    )
+
+
+@views.route('/store-manager/supply-request/create', methods=['POST'])
+@login_required
+def create_store_supply_request():
+    if (current_user.role or '').strip() not in ('Store Manager', 'Inventory Staff'):
+        return jsonify({'success': False, 'error': 'Access denied.'}), 403
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        return jsonify({'success': False, 'error': 'No assigned store found.'}), 400
+
+    try:
+        data = request.get_json() or {}
+        items_data = data.get('items') or []
+        remarks = str(data.get('remarks') or '').strip()[:500]
+
+        if not items_data:
+            return jsonify({'success': False, 'error': 'Add at least one item to the request.'}), 400
+
+        valid_ids = {item.id: item for item in SupplyItem.query.all()}
+        line_items = []
+        for row in items_data:
+            try:
+                supply_item_id = int(row.get('supply_item_id'))
+            except (TypeError, ValueError):
+                continue
+            supply_item = valid_ids.get(supply_item_id)
+            if not supply_item:
+                return jsonify({'success': False, 'error': 'A selected supply item no longer exists.'}), 400
+            try:
+                quantity = int(row.get('quantity'))
+            except (TypeError, ValueError):
+                quantity = 0
+            if quantity <= 0:
+                continue
+            line_items.append((supply_item, quantity))
+
+        if not line_items:
+            return jsonify({'success': False, 'error': 'Enter a quantity greater than zero for at least one item.'}), 400
+
+        import uuid
+
+        request_type = str(data.get('request_type') or '').strip()
+        if request_type not in ('menu', 'taf'):
+            request_type = 'menu'
+
+        supply_request = SupplyRequest(
+            store_id=store.id,
+            store_name=store.name,
+            requested_by=current_user.id,
+            request_type=request_type,
+            remarks=remarks or None,
+            status='Pending',
+            request_no=f'__TMP__{uuid.uuid4().hex[:12]}',
+        )
+        db.session.add(supply_request)
+        db.session.flush()
+
+        today = datetime.now().strftime('%Y%m%d')
+        supply_request.request_no = f'SR-{today}-{supply_request.id:04d}'
+
+        for supply_item, quantity in line_items:
+            db.session.add(SupplyRequestItem(
+                request_id=supply_request.id,
+                supply_item_id=supply_item.id,
+                item_name=supply_item.item_name,
+                category=supply_item.category,
+                quantity=quantity,
+            ))
+
+        log_audit_event(
+            action='store.supply_request.create',
+            entity_type='SupplyRequest',
+            entity_id=supply_request.id,
+            reason='Store submitted a supply request.',
+            details={
+                'request_no': supply_request.request_no,
+                'store_id': store.id,
+                'store_name': store.name,
+                'request_type': request_type,
+                'items': len(line_items),
+                'remarks': remarks,
+            },
+        )
+        db.session.commit()
+        return jsonify({'success': True, 'message': f'Supply request {supply_request.request_no} submitted.', 'request_no': supply_request.request_no}), 200
+
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': f'Error submitting request: {exc}'}), 500
+
 
 
 
