@@ -161,25 +161,37 @@
             </button>
           </div>
         </div>
-        <div>
-          <label for="transfer_from" class="block text-xs font-medium text-slate-700 mb-1">Transfer From</label>
-          <input id="transfer_from" name="transfer_from" type="text" placeholder="Source store/location" value="{{ store.name }}" data-current-store="{{ store.name }}" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+        <div id="supplies-toggle-wrap" class="md:col-span-2 hidden">
+          <label class="block text-xs font-medium text-slate-700 mb-1">Request Type</label>
+          <input id="supplies_request_mode" type="hidden" name="supplies_request_mode" value="other_store">
+          <div class="inline-flex items-center rounded-lg border border-slate-200 bg-slate-100 p-1 gap-1">
+            <button type="button" id="supplies-mode-other" data-supplies-mode="other_store" class="supplies-mode-btn px-3 py-1.5 text-xs font-semibold rounded-md bg-white text-slate-900 shadow-sm">Other Store</button>
+            <button type="button" id="supplies-mode-main" data-supplies-mode="main_office" class="supplies-mode-btn px-3 py-1.5 text-xs font-semibold rounded-md text-slate-500 hover:text-slate-700">Main Office</button>
+          </div>
+          <p class="text-xs text-slate-500 mt-1">Other Store sends a supplies transfer to another store. Main Office submits a supply request to the main office.</p>
         </div>
-        <div id="taf-transfer-to-guide-target">
-          <label for="transfer_to" class="block text-xs font-medium text-slate-700 mb-1">Transfer To</label>
-          <input id="transfer_to" name="transfer_to" type="text" placeholder="Destination store/location" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
-          <select id="transfer_to_store" class="hidden w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
-            <option value="" selected disabled>Select destination store</option>
-            {% for store_option in all_stores %}
-            <option value="{{ store_option.name }}">{{ store_option.name }}</option>
-            {% endfor %}
-          </select>
-          <select id="transfer_to_wastage" class="hidden w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
-            <option value="Main Office">Main Office</option>
-          </select>
+        <div id="taf-transfer-section" class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label for="transfer_from" class="block text-xs font-medium text-slate-700 mb-1">Transfer From</label>
+            <input id="transfer_from" name="transfer_from" type="text" placeholder="Source store/location" value="{{ store.name }}" data-current-store="{{ store.name }}" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+          </div>
+          <div id="taf-transfer-to-guide-target">
+            <label for="transfer_to" class="block text-xs font-medium text-slate-700 mb-1">Transfer To</label>
+            <input id="transfer_to" name="transfer_to" type="text" placeholder="Destination store/location" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+            <select id="transfer_to_store" class="hidden w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+              <option value="" selected disabled>Select destination store</option>
+              {% for store_option in all_stores %}
+              <option value="{{ store_option.name }}">{{ store_option.name }}</option>
+              {% endfor %}
+            </select>
+            <select id="transfer_to_wastage" class="hidden w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+              <option value="Main Office">Main Office</option>
+            </select>
+          </div>
         </div>
       </div>
 
+      <div id="taf-items-section">
       <div id="taf-items-guide-target" class="rounded-lg border border-slate-200 overflow-hidden">
         <div class="bg-slate-100 px-3 py-2 flex items-center justify-between">
           <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Items</p>
@@ -210,7 +222,9 @@
           </table>
         </div>
       </div>
+      </div>
 
+      <div id="taf-signatories-section">
       <div id="taf-signatories-guide-target" class="rounded-lg border border-slate-200 overflow-hidden">
         <div class="bg-slate-100 px-3 py-2">
           <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Signatories</p>
@@ -236,11 +250,14 @@
           </table>
         </div>
       </div>
+      </div>
 
+      <div id="taf-submit-section">
       <div id="taf-submit-guide-target" class="flex items-center justify-end gap-2 pt-1">
         <button id="taf-submit-btn" type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors">
           Submit Product Transfer
         </button>
+      </div>
       </div>
 
       <datalist id="taf-product-options">
@@ -249,6 +266,147 @@
         {% endfor %}
       </datalist>
     </form>
+
+    <div id="supplies-panel" class="p-4 md:p-5 space-y-4 hidden">
+      <div class="space-y-3">
+        <div>
+          <div class="grid gap-3 sm:grid-cols-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Category</label>
+              <select id="sr-category" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100">
+                <option value="">All Categories</option>
+                {% for category in supply_categories %}
+                <option value="{{ category }}">{{ category }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Item</label>
+              <select id="sr-item" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100">
+                <option value="">Select an item</option>
+                {% for item in supply_items %}
+                <option value="{{ item.id }}" data-category="{{ item.category }}" data-stock="{{ item.available_stock }}">{{ item.item_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Quantity</label>
+              <input id="sr-qty" type="number" min="1" value="1" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">&nbsp;</label>
+              <button id="sr-add-btn" type="button" class="w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">Add</button>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+            <table class="min-w-full divide-y divide-slate-200">
+              <thead class="bg-slate-100">
+                <tr>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Item</th>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Category</th>
+                  <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Qty</th>
+                  <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+                </tr>
+              </thead>
+              <tbody id="sr-cart-body" class="divide-y divide-slate-100">
+                <tr>
+                  <td colspan="4" class="px-4 py-6 text-center text-sm text-slate-400">No items added yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Remarks <span class="font-normal text-slate-400">(optional)</span></label>
+            <textarea id="sr-remarks" rows="2" maxlength="500" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" placeholder="Notes for the admin..."></textarea>
+          </div>
+
+          <div class="flex items-center justify-end gap-2">
+            <button id="sr-clear" type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors">Clear</button>
+            <button id="sr-submit" type="button" class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+              Submit Request
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-slate-200 overflow-hidden">
+        <div class="px-4 py-2.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h4 class="text-xs font-bold text-slate-700 uppercase">My Requests</h4>
+            <p class="text-xs text-slate-500 mt-0.5">Supply requests submitted by this store.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="sr-hist-count-label" class="text-xs text-slate-500 font-medium"></span>
+            <input id="sr-hist-search" type="search" placeholder="Search..." class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 w-44">
+          </div>
+        </div>
+        <div class="p-4">
+          {% if supply_requests %}
+          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+            <table class="min-w-full divide-y divide-slate-200">
+              <thead class="bg-slate-100">
+                <tr>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Request No</th>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Date</th>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Items</th>
+                  <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Status</th>
+                  <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Details</th>
+                </tr>
+              </thead>
+              <tbody id="sr-hist-tbody" class="divide-y divide-slate-100">
+                {% for req in supply_requests %}
+                <tr class="odd:bg-white even:bg-slate-50">
+                  <td class="px-4 py-2 text-sm font-semibold text-slate-900">{{ req.request_no }}</td>
+                  <td class="px-4 py-2 text-sm text-slate-700">{{ req.created_at.strftime('%b %d, %Y %I:%M %p') }}</td>
+                  <td class="px-4 py-2 text-sm text-slate-700">{{ req.items|length }}</td>
+                  <td class="px-4 py-2 text-center">
+                    <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold {% if req.status == 'Pending' %}bg-amber-100 text-amber-700{% elif req.status == 'Approved' %}bg-emerald-100 text-emerald-700{% elif req.status == 'Rejected' %}bg-rose-100 text-rose-700{% else %}bg-slate-100 text-slate-700{% endif %}">
+                      {{ req.status }}
+                    </span>
+                  </td>
+                  <td class="px-4 py-2 text-center">
+                    <button type="button" onclick="toggleRequestDetails(this)" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors" title="View items" aria-label="View items">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                  </td>
+                </tr>
+                <tr class="sr-detail-row hidden bg-slate-50/70">
+                  <td colspan="5" class="px-4 py-3">
+                    <div class="text-xs text-slate-500 mb-1">Requested by {{ req.requester.username if req.requester else '-' }}{% if req.remarks %} · Remarks: {{ req.remarks }}{% endif %}{% if req.status == 'Approved' and req.approver %} · Approved by {{ req.approver.username }}{% endif %}{% if req.status == 'Rejected' and req.rejecter %} · Rejected by {{ req.rejecter.username }}{% endif %}</div>
+                    <table class="min-w-full divide-y divide-slate-100">
+                      <thead>
+                        <tr>
+                          <th class="px-3 py-1.5 text-left text-[11px] font-semibold text-slate-500 uppercase">Item</th>
+                          <th class="px-3 py-1.5 text-left text-[11px] font-semibold text-slate-500 uppercase">Category</th>
+                          <th class="px-3 py-1.5 text-right text-[11px] font-semibold text-slate-500 uppercase">Qty</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for line in req.items %}
+                        <tr>
+                          <td class="px-3 py-1.5 text-sm text-slate-700">{{ line.item_name }}</td>
+                          <td class="px-3 py-1.5 text-sm text-slate-500">{{ line.category or '-' }}</td>
+                          <td class="px-3 py-1.5 text-sm text-slate-700 text-right font-semibold">{{ line.quantity }}</td>
+                        </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div id="sr-hist-pagination" class="flex items-center justify-between mt-4 flex-wrap gap-2"></div>
+          {% else %}
+          <p class="text-sm text-slate-500">No supply requests submitted yet.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
   </section>
 </div>
 
@@ -321,6 +479,14 @@
     const transferToStoreEl = document.getElementById('transfer_to_store');
     const transferToWastageEl = document.getElementById('transfer_to_wastage');
     const preparedByEl = document.getElementById('prepared_by_name');
+    const suppliesToggleWrapEl = document.getElementById('supplies-toggle-wrap');
+    const suppliesModeEl = document.getElementById('supplies_request_mode');
+    const suppliesModeBtnsEl = document.querySelectorAll('.supplies-mode-btn');
+    const suppliesPanelEl = document.getElementById('supplies-panel');
+    const tafTransferSectionEl = document.getElementById('taf-transfer-section');
+    const tafItemsSectionEl = document.getElementById('taf-items-section');
+    const tafSignatoriesSectionEl = document.getElementById('taf-signatories-section');
+    const tafSubmitSectionEl = document.getElementById('taf-submit-section');
     const tafTourStartModal = document.getElementById('taf-tour-start-modal');
     const tafTourStartBtn = document.getElementById('taf-tour-start-btn');
     const tafTourHelpBtn = document.getElementById('taf-tour-help-btn');
@@ -377,7 +543,7 @@
     }
 
     function usesProductMasterLookup(transactionType) {
-      return transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer';
+      return transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer' || transactionType === 'Supplies Transfer';
     }
 
     function syncItemNameMode() {
@@ -415,10 +581,11 @@
       const isProductTransfer = transactionType === 'Product Transfer';
       const isWastageTransfer = transactionType === 'Wastage Transfer';
       const isEgiPlantTransfer = transactionType === 'EGI Plant Transfer';
+      const isSuppliesTransfer = transactionType === 'Supplies Transfer';
       const currentStoreName = transferFromEl?.dataset?.currentStore || '';
       if (!transferFromEl || !transferToEl || !transferToStoreEl || !transferToWastageEl) return;
 
-      if (isProductTransfer || isEgiPlantTransfer) {
+      if (isProductTransfer || isEgiPlantTransfer || isSuppliesTransfer) {
         transferFromEl.value = currentStoreName;
         transferFromEl.readOnly = true;
         transferFromEl.classList.add('cursor-not-allowed', 'text-slate-600');
@@ -469,7 +636,7 @@
 
     function syncSubmitMode() {
       const transactionType = transactionTypeEl?.value || '';
-      const canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer';
+      const canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer' || transactionType === 'Supplies Transfer';
       if (submitBtnEl) {
         if (isSubmittingTaf) {
           submitBtnEl.disabled = true;
@@ -525,8 +692,9 @@
     function renderTransactionTypeCards() {
       const selectedType = transactionTypeEl?.value || '';
       transactionTypeCardEls.forEach((card) => {
-        const isActive = (card.dataset.transactionType || '') === selectedType;
-        const isWastage = card.dataset.transactionType === 'Wastage Transfer';
+        const cardType = card.dataset.transactionType || '';
+        const isActive = (cardType === selectedType) || (cardType === 'Supplies Request' && selectedType === 'Supplies Transfer');
+        const isWastage = cardType === 'Wastage Transfer';
         card.classList.toggle('border-cyan-500', isActive && !isWastage);
         card.classList.toggle('bg-cyan-50', isActive && !isWastage);
         card.classList.toggle('border-emerald-200', isActive && isWastage);
@@ -534,6 +702,52 @@
         card.classList.toggle('ring-2', isActive);
         card.classList.toggle('ring-cyan-200', isActive && !isWastage);
         card.classList.toggle('ring-emerald-100', isActive && isWastage);
+      });
+    }
+
+    function syncSuppliesMode() {
+      const transactionType = transactionTypeEl?.value || '';
+      const isSuppliesRequestType = transactionType === 'Supplies Request' || transactionType === 'Supplies Transfer';
+      suppliesToggleWrapEl?.classList.toggle('hidden', !isSuppliesRequestType);
+      if (!isSuppliesRequestType) {
+        suppliesModeEl.value = 'other_store';
+        suppliesPanelEl?.classList.add('hidden');
+        tafTransferSectionEl?.classList.remove('hidden');
+        tafItemsSectionEl?.classList.remove('hidden');
+        tafSignatoriesSectionEl?.classList.remove('hidden');
+        tafSubmitSectionEl?.classList.remove('hidden');
+        renderSuppliesModeButtons();
+        return;
+      }
+      const isMainOffice = suppliesModeEl.value === 'main_office';
+      if (isMainOffice) {
+        transactionTypeEl.value = 'Supplies Request';
+        suppliesPanelEl?.classList.remove('hidden');
+        tafTransferSectionEl?.classList.add('hidden');
+        tafItemsSectionEl?.classList.add('hidden');
+        tafSignatoriesSectionEl?.classList.add('hidden');
+        tafSubmitSectionEl?.classList.add('hidden');
+      } else {
+        transactionTypeEl.value = 'Supplies Transfer';
+        suppliesPanelEl?.classList.add('hidden');
+        tafTransferSectionEl?.classList.remove('hidden');
+        tafItemsSectionEl?.classList.remove('hidden');
+        tafSignatoriesSectionEl?.classList.remove('hidden');
+        tafSubmitSectionEl?.classList.remove('hidden');
+      }
+      renderSuppliesModeButtons();
+      syncItemNameMode();
+      syncTransferMode();
+    }
+
+    function renderSuppliesModeButtons() {
+      const isMainOffice = suppliesModeEl?.value === 'main_office';
+      suppliesModeBtnsEl?.forEach((btn) => {
+        const isActive = (btn.dataset.suppliesMode === 'main_office') === isMainOffice;
+        btn.classList.toggle('bg-white', isActive);
+        btn.classList.toggle('text-slate-900', isActive);
+        btn.classList.toggle('shadow-sm', isActive);
+        btn.classList.toggle('text-slate-500', !isActive);
       });
     }
 
@@ -739,8 +953,18 @@
     transactionTypeEl?.addEventListener('change', () => {
       syncItemNameMode();
       syncTransferMode();
+      syncSuppliesMode();
       syncSubmitMode();
       renderTransactionTypeCards();
+    });
+
+    suppliesModeBtnsEl?.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (suppliesModeEl) suppliesModeEl.value = btn.dataset.suppliesMode || 'other_store';
+        syncSuppliesMode();
+        syncSubmitMode();
+        renderTransactionTypeCards();
+      });
     });
 
     body?.addEventListener('input', (event) => {
@@ -832,6 +1056,7 @@
     addRow();
     syncItemNameMode();
     syncTransferMode();
+    syncSuppliesMode();
     syncSubmitMode();
     renderTransactionTypeCards();
 
@@ -848,5 +1073,216 @@
       if (tafTourActive) renderTafTourSpotlight();
     }, { passive: true });
   })();
+</script>
+
+<script>
+(function() {
+  const categorySelect = document.getElementById('sr-category');
+  const itemSelect = document.getElementById('sr-item');
+  const qtyInput = document.getElementById('sr-qty');
+  const cartBody = document.getElementById('sr-cart-body');
+  if (!categorySelect || !itemSelect || !cartBody) return;
+  const cart = [];
+
+  const optionItems = Array.from(itemSelect.options).slice(1).map(o => ({ id: o.value, name: o.textContent, category: o.dataset.category, stock: parseInt(o.dataset.stock || '0') }));
+
+  function applyCategoryFilter() {
+    const cat = categorySelect.value;
+    const item = itemSelect.value;
+    itemSelect.innerHTML = '<option value="">Select an item</option>';
+    optionItems
+      .filter(o => !cat || o.category === cat)
+      .forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.id;
+        opt.dataset.category = o.category;
+        opt.dataset.stock = o.stock;
+        opt.textContent = o.name;
+        itemSelect.appendChild(opt);
+      });
+    if (item && optionItems.some(o => o.id === item && (!cat || o.category === cat))) itemSelect.value = item;
+  }
+
+  function renderCart() {
+    const rowClass = 'px-4 py-2 text-sm text-slate-700';
+    if (cart.length === 0) {
+      cartBody.innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-sm text-slate-400">No items added yet.</td></tr>';
+    } else {
+      cartBody.innerHTML = cart.map((entry, idx) => `
+        <tr class="odd:bg-white even:bg-slate-50">
+          <td class="${rowClass} font-semibold text-slate-900">${entry.name}</td>
+          <td class="${rowClass} text-slate-500">${entry.category}</td>
+          <td class="${rowClass} text-center font-semibold">${entry.qty}</td>
+          <td class="px-4 py-2 text-center">
+            <button type="button" onclick="window.removeCartItem(${idx})" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-rose-500 hover:bg-rose-50 transition-colors" title="Remove" aria-label="Remove">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+            </button>
+          </td>
+        </tr>`).join('');
+    }
+  }
+
+  window.removeCartItem = function(idx) {
+    cart.splice(idx, 1);
+    renderCart();
+  };
+
+  function addItem() {
+    const selected = itemSelect.options[itemSelect.selectedIndex];
+    if (!selected || !selected.value) { alert('Please select an item first.'); return; }
+    const qty = parseInt(qtyInput.value, 10);
+    if (!qty || qty < 1) { alert('Enter a quantity greater than zero.'); return; }
+    const existing = cart.findIndex(e => e.id === selected.value);
+    if (existing >= 0) {
+      cart[existing].qty += qty;
+    } else {
+      cart.push({ id: selected.value, name: selected.textContent, category: selected.dataset.category || '', stock: parseInt(selected.dataset.stock || '0'), qty: qty });
+    }
+    itemSelect.value = '';
+    qtyInput.value = '1';
+    renderCart();
+  }
+
+  document.getElementById('sr-submit').addEventListener('click', async function() {
+    if (cart.length === 0) { alert('Add at least one item to the request.'); return; }
+    const payload = {
+      items: cart.map(e => ({ supply_item_id: parseInt(e.id), quantity: e.qty })),
+      remarks: document.getElementById('sr-remarks').value,
+      request_type: 'taf'
+    };
+    this.disabled = true;
+    const original = this.textContent;
+    this.textContent = 'Submitting...';
+    try {
+      const res = await fetch('/store-manager/supply-request/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message || 'Request submitted.');
+        window.location.reload();
+      } else {
+        alert(data.error || 'Failed to submit request.');
+      }
+    } catch (err) {
+      alert('Network error while submitting the request.');
+    } finally {
+      this.disabled = false;
+      this.textContent = original;
+    }
+  });
+
+  document.getElementById('sr-clear').addEventListener('click', function() {
+    cart.length = 0;
+    document.getElementById('sr-remarks').value = '';
+    renderCart();
+  });
+
+  document.getElementById('sr-add-btn').addEventListener('click', addItem);
+  qtyInput.addEventListener('keydown', function(event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addItem();
+    }
+  });
+  categorySelect.addEventListener('change', applyCategoryFilter);
+  applyCategoryFilter();
+  renderCart();
+})();
+</script>
+
+<script>
+(function() {
+  const tbody = document.getElementById('sr-hist-tbody');
+  const paginationEl = document.getElementById('sr-hist-pagination');
+  const countLabel = document.getElementById('sr-hist-count-label');
+  const searchInput = document.getElementById('sr-hist-search');
+  if (!tbody) return;
+
+  const allRows = Array.from(tbody.querySelectorAll('tr.sr-detail-row')).length
+    ? Array.from(tbody.querySelectorAll('tr:not(.sr-detail-row)'))
+    : Array.from(tbody.querySelectorAll('tr'));
+  let filteredRows = allRows.slice();
+  let currentPage = 1;
+  const perPage = 10;
+
+  function applySearch(query) {
+    const q = (query || '').toLowerCase().trim();
+    filteredRows = q ? allRows.filter(r => r.textContent.toLowerCase().includes(q)) : allRows.slice();
+    currentPage = 1;
+    render();
+  }
+
+  function render() {
+    const total = filteredRows.length;
+    const totalPages = Math.max(1, Math.ceil(total / perPage));
+    if (currentPage > totalPages) currentPage = totalPages;
+    const start = (currentPage - 1) * perPage;
+    const end = start + perPage;
+
+    tbody.querySelectorAll('tr').forEach(r => { r.style.display = 'none'; });
+    filteredRows.slice(start, end).forEach(r => {
+      r.style.display = '';
+      const detail = r.nextElementSibling;
+      if (detail && detail.classList.contains('sr-detail-row')) detail.style.display = 'none';
+    });
+
+    if (countLabel) {
+      countLabel.textContent = total === 0 ? 'No results' : `${start + 1}–${Math.min(end, total)} of ${total}`;
+    }
+
+    if (!paginationEl) return;
+    if (totalPages <= 1) { paginationEl.innerHTML = ''; return; }
+
+    const btnClass = 'inline-flex h-8 min-w-8 items-center justify-center rounded-lg border border-slate-200 px-2.5 text-xs font-semibold transition-colors';
+    const activeClass = 'bg-indigo-600 text-white border-indigo-600';
+    const inactiveClass = 'bg-white text-slate-700 hover:bg-slate-50';
+
+    let pages = [];
+    for (let i = 1; i <= totalPages; i++) {
+      if (i === 1 || i === totalPages || (i >= currentPage - 2 && i <= currentPage + 2)) pages.push(i);
+      else if (pages[pages.length - 1] !== '…') pages.push('…');
+    }
+
+    paginationEl.innerHTML = `
+      <span class="text-xs text-slate-500">Page ${currentPage} of ${totalPages}</span>
+      <div class="flex items-center gap-1">
+        <button type="button" data-page="prev" class="${btnClass} ${currentPage===1?'opacity-40 cursor-not-allowed bg-white text-slate-400':inactiveClass}" ${currentPage===1?'disabled':''}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        ${pages.map(p => p === '…' ? `<span class="px-1 text-slate-400 text-xs">…</span>` : `<button type="button" data-page="${p}" class="${btnClass} ${p===currentPage?activeClass:inactiveClass}">${p}</button>`).join('')}
+        <button type="button" data-page="next" class="${btnClass} ${currentPage===totalPages?'opacity-40 cursor-not-allowed bg-white text-slate-400':inactiveClass}" ${currentPage===totalPages?'disabled':''}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>`;
+
+    paginationEl.querySelectorAll('button[data-page]').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const p = this.getAttribute('data-page');
+        if (p === 'prev') { if (currentPage > 1) currentPage--; }
+        else if (p === 'next') { if (currentPage < totalPages) currentPage++; }
+        else currentPage = parseInt(p);
+        render();
+        tbody.closest('section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  }
+
+  if (searchInput) searchInput.addEventListener('input', function() { applySearch(this.value); });
+  render();
+})();
+</script>
+
+<script>
+function toggleRequestDetails(btn) {
+  const detailRow = btn.closest('tr').nextElementSibling;
+  if (detailRow && detailRow.classList.contains('sr-detail-row')) {
+    detailRow.classList.toggle('hidden');
+    const open = !detailRow.classList.contains('hidden');
+    btn.querySelector('svg').innerHTML = open ? '<polyline points="18 15 12 9 6 15"/>' : '<polyline points="6 9 12 15 18 9"/>';
+  }
+}
 </script>
 {% endblock %}
