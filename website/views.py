@@ -3131,6 +3131,108 @@ def _build_taf_transfer_trace(store, transaction_date, product_master_id, direct
     return records, traced_total
 
 
+def _build_delivery_trace(store, transaction_date, product_master_id):
+    from website.models import RsoDelivery, User
+    
+    query = (
+        db.session.query(RsoDelivery)
+        .filter(RsoDelivery.store_id == store.id)
+        .filter(RsoDelivery.delivery_reviewed_date == transaction_date)
+    )
+    delivery_rows = query.all()
+    if not delivery_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    traced_total = 0
+    for delivery in delivery_rows:
+        resolved_master_id = _resolve_pos_sold_master_id(
+            delivery.product_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(delivery.quantity or 0)
+        received_qty = int(delivery.received_quantity) if delivery.received_quantity is not None else quantity
+
+        traced_total += received_qty
+
+        uploader_name = ''
+        if delivery.uploaded_by:
+            uploader = User.query.get(delivery.uploaded_by)
+            if uploader:
+                uploader_name = uploader.first_name
+
+        records.append({
+            'control_no': getattr(delivery, 'rso_no', None) or 'N/A',
+            'transaction_date': delivery.report_date.strftime('%Y-%m-%d') if getattr(delivery, 'report_date', None) else '',
+            'transaction_type': 'Bulk Order' if str(getattr(delivery, 'upload_source', '')).strip().lower() == 'bulk' else 'Delivery',
+            'transfer_from': 'Supplier/Warehouse',
+            'transfer_to': store.name,
+            'status': 'Reviewed',
+            'prepared_by_name': uploader_name,
+            'received_by_name': uploader_name,
+            'quantity': quantity,
+            'received_quantity': received_qty,
+            'short_over_qty': quantity - received_qty if quantity and received_qty is not None else 0,
+            'remarks': delivery.manual_note,
+        })
+    return records, traced_total
+
+
+def _build_sold_trace(store, transaction_date, product_master_id):
+    from website.models import PosSold, DailyReport, User
+    
+    query = (
+        db.session.query(PosSold, DailyReport)
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(DailyReport.store_id == store.id)
+        .filter(DailyReport.date == transaction_date)
+    )
+    pos_rows = query.all()
+    if not pos_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    traced_total = 0
+    for item, report in pos_rows:
+        resolved_master_id = _resolve_pos_sold_master_id(
+            item.product_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(item.quantity or 0)
+        traced_total += quantity
+
+        uploader_name = ''
+        if report.user_id:
+            uploader = User.query.get(report.user_id)
+            if uploader:
+                uploader_name = uploader.first_name
+
+        records.append({
+            'control_no': 'POS Upload',
+            'transaction_date': report.date.strftime('%Y-%m-%d') if getattr(report, 'date', None) else '',
+            'transaction_type': 'POS Sold',
+            'transfer_from': store.name,
+            'transfer_to': 'Customer',
+            'status': 'Sold',
+            'prepared_by_name': uploader_name,
+            'received_by_name': 'Customer',
+            'quantity': quantity,
+            'received_quantity': quantity,
+            'short_over_qty': 0,
+            'remarks': item.product_name,
+        })
+    return records, traced_total
+
+
+
 def _build_pos_sold_quantity_by_master_id_for_report(report_id, include_bitbit_details=False):
     if not report_id:
         return ({}, {}) if include_bitbit_details else {}
@@ -9065,7 +9167,7 @@ def invensync_transfer_trace():
 
     if not store_id or not date_str or not product_master_id:
         return jsonify({'ok': False, 'message': 'Missing required parameters.'}), 400
-    if direction not in ('in', 'out'):
+    if direction not in ('in', 'out', 'delivery', 'sold'):
         return jsonify({'ok': False, 'message': 'Invalid direction.'}), 400
 
     store = Store.query.get(store_id)
@@ -9080,9 +9182,20 @@ def invensync_transfer_trace():
     if not ProductMaster.query.get(product_master_id):
         return jsonify({'ok': False, 'message': 'Product not found.'}), 404
 
-    records, traced_total = _build_taf_transfer_trace(
-        store, transaction_date, product_master_id, direction
-    )
+    if direction in ('in', 'out'):
+        records, traced_total = _build_taf_transfer_trace(
+            store, transaction_date, product_master_id, direction
+        )
+    elif direction == 'delivery':
+        records, traced_total = _build_delivery_trace(
+            store, transaction_date, product_master_id
+        )
+    elif direction == 'sold':
+        records, traced_total = _build_sold_trace(
+            store, transaction_date, product_master_id
+        )
+    else:
+        records, traced_total = [], 0
 
     return jsonify({
         'ok': True,

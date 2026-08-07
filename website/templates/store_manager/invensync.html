@@ -630,7 +630,8 @@
                   {% if 'delivery_qty' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <div class="flex items-center gap-1">
+                    {% set delivery_has_trace = show_trans_trace and inv_item and (inv_item.delivery_qty|default(0)|int > 0) %}
+                    <div class="flex items-center gap-1{% if delivery_has_trace %} trans-trace-hover cursor-help{% endif %}"{% if delivery_has_trace %} onmouseenter="showTransTrace('{{ product.id }}', 'delivery', this)" onmouseleave="hideTransTrace()"{% endif %}>
                       <input type="number" class="delivery-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                         value="{{ inv_item.delivery_qty if inv_item and inv_item.delivery_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'delivery_qty' not in global_config_data.get('editable_columns', []) or 'delivery_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                     </div>
@@ -701,7 +702,8 @@
                   {% if 'quantity_sold' in global_config_data.get('hidden_columns', []) %}
                     <!-- Hidden -->
                   {% else %}
-                    <div class="flex items-center justify-center gap-0.5 min-w-[86px]">
+                    {% set sold_has_trace = show_trans_trace and inv_item and (inv_item.draft_quantity_sold|default(inv_item.quantity_sold|default(0)))|int > 0 %}
+                    <div class="flex items-center justify-center gap-0.5 min-w-[86px]{% if sold_has_trace %} trans-trace-hover cursor-help{% endif %}"{% if sold_has_trace %} onmouseenter="showTransTrace('{{ product.id }}', 'sold', this)" onmouseleave="hideTransTrace()"{% endif %}>
                       <input type="number" class="sold-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                         value="{{ inv_item.draft_quantity_sold if inv_item and inv_item.draft_quantity_sold is defined else (inv_item.quantity_sold if inv_item and inv_item.quantity_sold else '') }}" onchange="updateInventoryRow(this)"{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                       <span class="inline-flex flex-row items-center gap-0.5 flex-wrap">
@@ -4368,13 +4370,13 @@ function closeInvensyncExportModal() {
       return;
     }
     const records = data.records || [];
-    const directionLabel = data.direction === 'in' ? 'Trans-In source' : 'Trans-Out source';
+    const directionLabel = data.direction === 'in' ? 'Trans-In source' : data.direction === 'out' ? 'Trans-Out source' : data.direction === 'delivery' ? 'Delivery source' : 'POS Sold source';
     const cellInput = anchor.closest('td') ? anchor.closest('td').querySelector('input') : null;
     const cellValue = cellInput ? (parseInt(cellInput.value || '0', 10) || 0) : null;
 
     let bodyHtml = '';
     if (!records.length) {
-      bodyHtml = '<tr><td colspan="8" style="padding:10px 2px;color:#cbd5e1">No TAF transfer records found for this product and day. The value may have been entered manually.</td></tr>';
+      bodyHtml = '<tr><td colspan="8" style="padding:10px 2px;color:#cbd5e1">No source records found for this product and day. The value may have been entered manually.</td></tr>';
     } else {
       bodyHtml = records.map(function (r) {
         return '<tr style="border-bottom:1px solid #1e293b">' +
