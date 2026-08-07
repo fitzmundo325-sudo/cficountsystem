@@ -222,20 +222,34 @@
             <span class="inline-block min-w-[220px] border-b border-slate-400 pb-0.5">{{ transfer.received_by_name if transfer.received_by_name else ' ' }}</span>
             {% endif %}
           </div>
+          {% if not is_pending and transfer.received_date %}
+          <div class="flex items-center gap-2 md:col-span-2">
+            <span class="font-semibold">Received Date:</span>
+            <span class="inline-block min-w-[220px] border-b border-slate-400 pb-0.5">{{ transfer.received_date.strftime('%Y-%m-%d') }}</span>
+          </div>
+          {% endif %}
         </div>
       </div>
 
-      <div class="flex items-center justify-between gap-2 pt-1">
-        <div>
-          {% if not is_pending %}
-          <p class="mt-1 text-xs text-slate-500">Finalized transfer. Editing is disabled.</p>
+      <div class="flex flex-col items-end gap-3 pt-3">
+        {% if is_pending and can_edit_receive %}
+        <div class="flex items-center gap-2">
+          <label for="received_date" class="text-sm font-semibold text-slate-700">Receiving Date:</label>
+          <input type="date" id="received_date" name="received_date" class="px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-cyan-500" required>
+        </div>
+        {% endif %}
+        <div class="flex items-center justify-between w-full gap-2">
+          <div>
+            {% if not is_pending %}
+            <p class="mt-1 text-xs text-slate-500">Finalized transfer. Editing is disabled.</p>
+            {% endif %}
+          </div>
+          {% if is_pending and can_edit_receive %}
+          <button id="trans-receive-submit-btn" type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors shadow-sm">
+            Confirm Receiving
+          </button>
           {% endif %}
         </div>
-         {% if is_pending and can_edit_receive %}
-         <button id="trans-receive-submit-btn" type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors">
-           Confirm Receiving
-         </button>
-        {% endif %}
       </div>
     </form>
   </section>
@@ -245,7 +259,16 @@
   (function() {
     const receiveFormEl = document.getElementById('trans-receive-form');
     const receiveSubmitBtnEl = document.getElementById('trans-receive-submit-btn');
+    const receivedDateInput = document.getElementById('received_date');
     let hasConfirmedReceive = false;
+
+    if (receivedDateInput && !receivedDateInput.value) {
+      const today = new Date();
+      // Adjust to local timezone to prevent showing yesterday for eastern timezones
+      const offset = today.getTimezoneOffset() * 60000;
+      const localISOTime = (new Date(today - offset)).toISOString().split('T')[0];
+      receivedDateInput.value = localISOTime;
+    }
 
     function updateShortOverForInput(inputEl) {
       if (!inputEl) return;
