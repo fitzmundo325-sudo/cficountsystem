@@ -237,12 +237,32 @@
     <div class="p-4 md:p-5 space-y-4">
       {% if user and user.role == 'Store Manager' %}
       {% if delivery_day_finalized %}
-      <div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5">
-        <p class="text-xs font-semibold text-rose-800">
+      <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+        <p class="text-xs font-semibold text-emerald-800">
           End of Day is already done for {{ selected_report_date if selected_report_date else today }} — Delivery (RSO) is locked and can no longer be edited.
           Contact an Admin to unfinalize the day.
         </p>
       </div>
+      {% if delivery_data['items'] or bulk_data['items'] %}
+      <div class="space-y-4">
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+          <p class="text-xs font-semibold uppercase tracking-wide text-slate-600">Saved RSO Data</p>
+          <p class="mt-1 text-xs text-slate-500">This delivery data is available for viewing only because End of Day is finalized.</p>
+        </div>
+        {% if delivery_data['items'] %}
+        <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <h4 class="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800">Delivery RSO{% if delivery_data.rso_no %} · {{ delivery_data.rso_no }}{% endif %}</h4>
+          {{ rso_review_table(delivery_data['items'], delivery_data.rso_no, 'saved', '') }}
+        </div>
+        {% endif %}
+        {% if bulk_data['items'] %}
+        <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <h4 class="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800">Bulk Order RSO{% if bulk_data.rso_no %} · {{ bulk_data.rso_no }}{% endif %}</h4>
+          {{ rso_review_table(bulk_data['items'], bulk_data.rso_no, 'saved', '') }}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
       {% else %}
       {% set show_delivery_draft_actions = delivery_data.status == 'draft' %}
       {% set show_bulk_draft_actions = bulk_data.status == 'draft' %}
