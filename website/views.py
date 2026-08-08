@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file, current_app
+﻿from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file, current_app
 from flask_login import login_required, current_user
 from .models import (
     User,
@@ -2881,12 +2881,15 @@ def _build_pos_sold_quantities_by_master_id(items, include_bitbit_details=False)
     master_quantities = {}
     bitbit_details = {}
 
-    for item in items:
-        quantity = int(item.get('quantity', 0) or 0)
+    for raw_item in items:
+        if isinstance(raw_item, dict):
+            quantity = int(raw_item.get('quantity', 0) or 0)
+            product_name = raw_item.get('product_name', '')
+        else:
+            quantity = int(getattr(raw_item, 'quantity', 0) or 0)
+            product_name = str(getattr(raw_item, 'product_name', '') or '')
         if quantity <= 0:
             continue
-
-        product_name = item.get('product_name', '')
         bitbit_rule = _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup)
         if bitbit_rule:
             source_master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
@@ -3151,7 +3154,8 @@ def _build_delivery_trace(store, transaction_date, product_master_id):
     query = (
         db.session.query(RsoDelivery)
         .filter(RsoDelivery.store_id == store.id)
-        .filter(RsoDelivery.delivery_reviewed_date == transaction_date)
+        .filter(RsoDelivery.report_date == transaction_date)
+        .filter(RsoDelivery.delivery_reviewed_date.isnot(None))
     )
     delivery_rows = query.all()
     if not delivery_rows:
@@ -3162,6 +3166,8 @@ def _build_delivery_trace(store, transaction_date, product_master_id):
     records = []
     traced_total = 0
     for delivery in delivery_rows:
+        if str(delivery.upload_source or 'delivery').strip().lower() == 'bulk':
+            continue
         resolved_master_id = _resolve_pos_sold_master_id(
             delivery.product_name, alias_lookup, master_lookup
         )
@@ -3177,7 +3183,7 @@ def _build_delivery_trace(store, transaction_date, product_master_id):
         if delivery.uploaded_by:
             uploader = User.query.get(delivery.uploaded_by)
             if uploader:
-                uploader_name = uploader.first_name
+                uploader_name = uploader.full_name
 
         records.append({
             'control_no': getattr(delivery, 'rso_no', None) or 'N/A',
@@ -3203,7 +3209,7 @@ def _build_sold_trace(store, transaction_date, product_master_id):
         db.session.query(PosSold, DailyReport)
         .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
         .filter(DailyReport.store_id == store.id)
-        .filter(DailyReport.date == transaction_date)
+        .filter(DailyReport.report_date == transaction_date)
     )
     pos_rows = query.all()
     if not pos_rows:
@@ -3212,7 +3218,6 @@ def _build_sold_trace(store, transaction_date, product_master_id):
     alias_lookup, master_lookup = _build_pos_sold_master_lookups()
 
     records = []
-    traced_total = 0
     for item, report in pos_rows:
         resolved_master_id = _resolve_pos_sold_master_id(
             item.product_name, alias_lookup, master_lookup
@@ -3221,17 +3226,18 @@ def _build_sold_trace(store, transaction_date, product_master_id):
             continue
 
         quantity = int(item.quantity or 0)
-        traced_total += quantity
+        if quantity <= 0:
+            continue
 
         uploader_name = ''
-        if report.user_id:
-            uploader = User.query.get(report.user_id)
+        if report.submitted_by:
+            uploader = User.query.get(report.submitted_by)
             if uploader:
-                uploader_name = uploader.first_name
+                uploader_name = uploader.full_name
 
         records.append({
             'control_no': 'POS Upload',
-            'transaction_date': report.date.strftime('%Y-%m-%d') if getattr(report, 'date', None) else '',
+            'transaction_date': report.report_date.strftime('%Y-%m-%d') if getattr(report, 'report_date', None) else '',
             'transaction_type': 'POS Sold',
             'transfer_from': store.name,
             'transfer_to': 'Customer',
@@ -3243,6 +3249,19 @@ def _build_sold_trace(store, transaction_date, product_master_id):
             'short_over_qty': 0,
             'remarks': item.product_name,
         })
+
+    # traced_total uses the same quantity logic as the InvenSync Sold column
+    # (Bitbit 6s conversion + motif additions), so the trace matches the cell.
+    try:
+        motif_rows = json.loads(pos_rows[0][1].pos_motif_breakdown_json or '[]')
+    except (TypeError, ValueError):
+        motif_rows = []
+    sold_map = _build_complete_pos_quantities(
+        [item for item, _report in pos_rows],
+        motif_rows,
+    )
+    traced_total = int(sold_map.get(int(product_master_id), 0) or 0)
+
     return records, traced_total
 
 
@@ -3268,16 +3287,27 @@ def _build_motif_charge_payload_from_pos_items(items):
     motif_items = []
     normalized_motif_name = _normalize_product_text('ADDITIONAL CHARGE FOR MOTIF')
     for item in items or []:
-        product_name = str(item.get('product_name') or '').strip()
+        if isinstance(item, dict):
+            product_name = str(item.get('product_name') or '').strip()
+            quantity = item.get('quantity', 0)
+            gross_sales = item.get('gross_sales', 0.0)
+            discount = item.get('discount', 0.0)
+            net_sales = item.get('net_sales', 0.0)
+        else:
+            product_name = str(getattr(item, 'product_name', '') or '').strip()
+            quantity = getattr(item, 'quantity', 0)
+            gross_sales = getattr(item, 'gross_sales', 0.0)
+            discount = getattr(item, 'discount', 0.0)
+            net_sales = getattr(item, 'net_sales', 0.0)
         normalized_product_name = _normalize_product_text(product_name)
         if not normalized_product_name or normalized_motif_name not in normalized_product_name:
             continue
         motif_items.append({
             'product_name': product_name,
-            'quantity': int(item.get('quantity', 0) or 0),
-            'gross_sales': float(item.get('gross_sales', 0.0) or 0.0),
-            'discount': float(item.get('discount', 0.0) or 0.0),
-            'net_sales': float(item.get('net_sales', 0.0) or 0.0),
+            'quantity': int(quantity or 0),
+            'gross_sales': float(gross_sales or 0.0),
+            'discount': float(discount or 0.0),
+            'net_sales': float(net_sales or 0.0),
         })
 
     if not motif_items:
@@ -3312,7 +3342,7 @@ def _apply_pos_sold_quantities_to_inventory(store_id, report_date, master_quanti
         if item.quantity_sold:
             continue
 
-        item.quantity_sold = int(master_quantities[item.product_master_id] or 0)
+        item.quantity_sold = int(master_quantities[item.product_master_id]) if master_quantities.get(item.product_master_id) else None
         _recalculate_inventory_item(item)
 
     db.session.flush()
@@ -3329,7 +3359,8 @@ def _reconcile_pos_sold_quantities_to_inventory(store_id, report_date, master_qu
     for item in inventory.items:
         if not item.product_master_id:
             continue
-        item.quantity_sold = int(master_quantities.get(item.product_master_id, 0) or 0)
+        sold_qty = master_quantities.get(item.product_master_id)
+        item.quantity_sold = int(sold_qty) if sold_qty else None
         _recalculate_inventory_item(item)
     db.session.flush()
     return True
@@ -4843,7 +4874,6 @@ def store_manager_pos_sold():
     current_z_reading_image_link = ''
     current_z_reading_image_preview_url = ''
     pos_sold_locked = bool(pos_staging)
-    pos_sold_editable_saved = False
     saved_pos_sold_items = []
     if pos_staging:
         pos_sold_items = staged_pos_sold_items
@@ -4856,8 +4886,6 @@ def store_manager_pos_sold():
             .order_by(PosSold.id.asc())
             .all()
         )
-        if saved_pos_sold_items:
-            pos_sold_editable_saved = not _is_operational_day_finalized(store.id, selected_date)
         pos_sold_locked = bool(pos_sold_locked or saved_pos_sold_items)
         for saved_item in saved_pos_sold_items:
             candidate_link = str(getattr(saved_item, 'z_reading_image_path', '') or '').strip()
@@ -4916,8 +4944,6 @@ def store_manager_pos_sold():
         pos_sold_items=pos_sold_items,
         pos_sold_source=pos_sold_source,
         pos_sold_locked=pos_sold_locked,
-        pos_sold_editable_saved=pos_sold_editable_saved,
-        pos_sold_day_finalized=_is_operational_day_finalized(store.id, selected_date),
         missing_dates=missing_dates,
         next_missing_date=next_missing_date,
         show_pos_flow_guide=show_pos_flow_guide,
@@ -6467,13 +6493,13 @@ def store_manager_incoming_transfer_view(transfer_id):
         .all()
     )
     can_receive_action = (
-        role == 'Store Manager'
-        or (role == 'Inventory Staff' and transfer_type_normalized == 'wastage transfer')
+        (role == 'Inventory Staff' and transfer_type_normalized == 'wastage transfer')
+        or (role == 'Store Manager' and transfer_type_normalized != 'wastage transfer')
     )
 
     if request.method == 'POST':
         if not can_receive_action:
-            flash('Access denied. Only Store Managers or assigned Inventory Staff can finalize this transfer.', category='error')
+            flash('Access denied. Only assigned Inventory Staff can confirm receipt of a Wastage Transfer.', category='error')
             return redirect(url_for('views.store_manager_incoming_transfer_view', transfer_id=transfer.id))
 
         current_status = str(getattr(transfer, 'status', '') or 'Pending').strip()
@@ -6976,14 +7002,6 @@ def review_pos_sold_excel():
             flash('Report date cannot be in the future.', category='error')
             return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
 
-        if _is_operational_day_finalized(store.id, report_date):
-            flash(
-                f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
-                'POS Sold can no longer be edited. Contact an Admin to unfinalize the day.',
-                category='error'
-            )
-            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
-
         upload_file = request.files.get('pos_file')
         if not upload_file or upload_file.filename == '':
             flash('Please select a POS Excel file to upload.', category='error')
@@ -6998,10 +7016,7 @@ def review_pos_sold_excel():
 
         report = DailyReport.query.filter_by(store_id=store.id, report_date=report_date).first()
         if report and PosSold.query.filter_by(daily_report_id=report.id).first():
-            if _is_operational_day_finalized(store.id, report_date):
-                flash('POS sold for this report date is already finalized and can no longer be re-uploaded.', category='error')
-            else:
-                flash('POS Sold is already saved for this date. Re-scanning replaces the saved rows (until End of Day).', category='info')
+            flash('POS sold for this report date has already been uploaded. Upload is allowed once only.', category='error')
             return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
         if _get_pos_sold_staging(store.id, report_date):
             flash('POS Sold is already saved for this date.', category='error')
@@ -7094,17 +7109,10 @@ def submit_pos_sold_report():
             flash('Report date cannot be in the future.', category='error')
             return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
 
-        if _is_operational_day_finalized(store.id, report_date):
-            flash(
-                f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
-                'POS Sold can no longer be edited. Contact an Admin to unfinalize the day.',
-                category='error'
-            )
-            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
-
         existing_report = DailyReport.query.filter_by(store_id=store.id, report_date=report_date).first()
         if existing_report and PosSold.query.filter_by(daily_report_id=existing_report.id).first():
-            flash('POS Sold is already saved for this date. Re-saving will replace the saved rows (until End of Day).', category='info')
+            flash('POS sold for this report date has already been uploaded. Submission is allowed once only.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
         if _get_pos_sold_staging(store.id, report_date):
             flash('POS Sold is already saved for this date.', category='error')
             return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
@@ -7123,10 +7131,7 @@ def submit_pos_sold_report():
             motif_breakdown = json.loads(motif_breakdown_raw) if motif_breakdown_raw else {}
         except (TypeError, ValueError):
             motif_breakdown = {}
-        try:
-            motif_rows = _validate_saved_motif_rows(draft_pos_sold_items, motif_breakdown)
-        except ValueError:
-            motif_rows = []
+        motif_rows = _validate_saved_motif_rows(draft_pos_sold_items, motif_breakdown)
 
         z_reading_image_file = request.files.get('z_reading_image')
         z_reading_base64 = (request.form.get('z_reading_image_base64') or '').strip()
@@ -7188,18 +7193,13 @@ def submit_pos_sold_report():
         _pop_pos_sold_draft(store.id, report_date)
         report = _ensure_daily_report_exists(store.id, report_date, current_user.id)
         has_existing_pos = PosSold.query.filter_by(daily_report_id=report.id).first() is not None
-        if has_existing_pos:
-            PosSold.query.filter_by(daily_report_id=report.id).delete(synchronize_session=False)
-            db.session.flush()
-        _commit_pos_sold_from_staging_items(
-            report,
-            draft_pos_sold_items,
-            z_reading_path=drive_link or None,
-            motif_json=json.dumps(motif_rows),
-        )
-        pos_totals = _build_pos_sales_autofill_totals(draft_pos_sold_items)
-        report.pos_gross_sales = pos_totals['pos_gross_sales']
-        report.pos_net_sales = pos_totals['pos_net_sales']
+        if not has_existing_pos:
+            _commit_pos_sold_from_staging_items(
+                report,
+                draft_pos_sold_items,
+                z_reading_path=drive_link or None,
+                motif_json=json.dumps(motif_rows),
+            )
 
         log_audit_event(
             action='report.pos_sold.save',
@@ -7308,262 +7308,6 @@ def upload_pos_sold_z_reading():
     except Exception as exc:
         db.session.rollback()
         flash(f'Error uploading Z Reading image: {str(exc)}', category='error')
-
-    return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
-
-
-def _daily_report_has_meaningful_data(report):
-    if not report:
-        return False
-
-    if (report.ci_number or '').strip():
-        return True
-
-    numeric_fields = [
-        'pos_gross_sales', 'pos_net_sales', 'pos_tc',
-        'ci_regular_gross_sales', 'ci_regular_net_sales', 'ci_tc',
-        'ci_sales_discount',
-        'boothselling_sales', 'boothselling_tc',
-        'bulk_order_sales', 'bulk_order_tc',
-        'reseller_sales', 'reseller_tc',
-        'tieup_sales', 'tieup_tc',
-        'gow_sales', 'gow_tc',
-        'ambulant_sales', 'ambulant_tc',
-        'extended_hours_sales', 'extended_hours_tc',
-        'gds_sales', 'gds_tc',
-        'grab_sales', 'grab_tc',
-        'foodpanda_sales', 'foodpanda_tc',
-        'paymaya_sales', 'paymaya_tc',
-        'gcash_sales', 'gcash_tc',
-        'ldts_gc', 'ldts_rolls', 'ldts_premium',
-        'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium',
-        'ending_inv_slices', 'ending_inv_mamon',
-        'spoilage_gc', 'spoilage_rolls', 'spoilage_premium', 'spoilage_others',
-        'senior_pwd_discount', 'promo_ldts_discount', 'bulk_orders_discount',
-        'total_net_spoilage', 'spoilage_percentage', 'mtd_percentage',
-    ]
-
-    for field_name in numeric_fields:
-        value = getattr(report, field_name, None)
-        if value is None:
-            continue
-        try:
-            if float(value) != 0.0:
-                return True
-        except (TypeError, ValueError):
-            continue
-
-    return False
-
-
-def _delete_empty_pending_report(report):
-    """Delete a Pending DailyReport when it no longer holds any meaningful data."""
-    if not report or report.status != 'Pending':
-        return False
-    if PosSold.query.filter_by(daily_report_id=report.id).first():
-        return False
-    if _daily_report_has_meaningful_data(report):
-        return False
-    db.session.delete(report)
-    return True
-
-
-def _reconcile_pos_sold_report_totals(report):
-    """Recompute DailyReport POS totals from its saved PosSold rows."""
-    saved_items = (
-        PosSold.query.filter_by(daily_report_id=report.id)
-        .order_by(PosSold.id.asc())
-        .all()
-    )
-    if not saved_items:
-        report.pos_gross_sales = 0.0
-        report.pos_net_sales = 0.0
-        report.pos_motif_breakdown_json = '[]'
-        return 0
-    totals = _build_pos_sales_autofill_totals(saved_items)
-    report.pos_gross_sales = totals['pos_gross_sales']
-    report.pos_net_sales = totals['pos_net_sales']
-    return len(saved_items)
-
-
-def _reconcile_saved_pos_sold_to_inventory(report, store, report_date):
-    """Re-run InvenSync quantity_sold reconciliation for a store/date.
-
-    Uses the saved PosSold rows (plus motif breakdown) as the source of truth
-    so row edits and deletions stay reflected in InvenSync until End of Day.
-    """
-    saved_items = (
-        PosSold.query.filter_by(daily_report_id=report.id)
-        .order_by(PosSold.id.asc())
-        .all()
-    )
-    try:
-        motif_rows = json.loads(report.pos_motif_breakdown_json or '[]')
-    except (TypeError, ValueError):
-        motif_rows = []
-    saved_quantities = _build_complete_pos_quantities(saved_items, motif_rows)
-    return _reconcile_pos_sold_quantities_to_inventory(store.id, report_date, saved_quantities)
-
-
-@views.route('/store-manager/daily-report/pos-sold/<int:pos_sold_id>/edit', methods=['POST'])
-@login_required
-def store_manager_edit_pos_sold(pos_sold_id):
-    if current_user.role != 'Store Manager':
-        flash('Access denied.', category='error')
-        return redirect(url_for('views.home'))
-
-    pos_item = PosSold.query.get(pos_sold_id)
-    if not pos_item:
-        flash('POS Sold entry not found.', category='error')
-        return redirect(url_for('views.store_manager_pos_sold'))
-
-    report = DailyReport.query.get(pos_item.daily_report_id)
-    if not report:
-        flash('Daily report for this POS Sold entry was not found.', category='error')
-        return redirect(url_for('views.store_manager_pos_sold'))
-
-    store = Store.query.filter_by(manager_id=current_user.id).first()
-    if not store or store.id != report.store_id:
-        flash('Access denied. This POS Sold entry belongs to another store.', category='error')
-        return redirect(url_for('views.home'))
-
-    report_date = report.report_date
-    if _is_operational_day_finalized(store.id, report_date):
-        flash(
-            f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
-            'POS Sold can no longer be edited. Contact an Admin to unfinalize the day.',
-            category='error'
-        )
-        return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
-
-    try:
-        new_quantity = max(0, int(request.form.get('quantity', 0)))
-    except (TypeError, ValueError):
-        flash('Please enter a valid POS Sold quantity.', category='error')
-        return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
-
-    try:
-        old_quantity = int(pos_item.quantity or 0)
-        old_values = {
-            'quantity': old_quantity,
-            'gross_sales': float(pos_item.gross_sales or 0.0),
-            'discount': float(pos_item.discount or 0.0),
-            'net_sales': float(pos_item.net_sales or 0.0),
-        }
-        pos_item.quantity = new_quantity
-        if old_quantity > 0:
-            factor = new_quantity / old_quantity
-            pos_item.gross_sales = round(old_values['gross_sales'] * factor, 2)
-            pos_item.discount = round(old_values['discount'] * factor, 2)
-            pos_item.net_sales = round(old_values['net_sales'] * factor, 2)
-        elif new_quantity == 0:
-            pos_item.gross_sales = 0.0
-            pos_item.discount = 0.0
-            pos_item.net_sales = 0.0
-
-        _reconcile_pos_sold_report_totals(report)
-        _reconcile_saved_pos_sold_to_inventory(report, store, report_date)
-
-        log_audit_event(
-            action='report.pos_sold.edit',
-            entity_type='PosSold',
-            entity_id=pos_sold_id,
-            reason='Store manager edited saved POS Sold quantity before End of Day.',
-            details={
-                'pos_sold_id': pos_item.id,
-                'daily_report_id': report.id,
-                'store_id': store.id,
-                'report_date': report_date.strftime('%Y-%m-%d'),
-                'product_name': pos_item.product_name,
-                'old': old_values,
-                'new': {
-                    'quantity': pos_item.quantity,
-                    'gross_sales': pos_item.gross_sales,
-                    'discount': pos_item.discount,
-                    'net_sales': pos_item.net_sales,
-                },
-            },
-        )
-        db.session.commit()
-        flash('POS Sold quantity updated and reflected in InvenSync.', category='success')
-    except Exception as exc:
-        db.session.rollback()
-        flash(f'Error updating POS Sold entry: {str(exc)}', category='error')
-
-    return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
-
-
-@views.route('/store-manager/daily-report/pos-sold/<int:pos_sold_id>/delete', methods=['POST'])
-@login_required
-def store_manager_delete_pos_sold(pos_sold_id):
-    if current_user.role != 'Store Manager':
-        flash('Access denied.', category='error')
-        return redirect(url_for('views.home'))
-
-    pos_item = PosSold.query.get(pos_sold_id)
-    if not pos_item:
-        flash('POS Sold entry not found.', category='error')
-        return redirect(url_for('views.store_manager_pos_sold'))
-
-    report = DailyReport.query.get(pos_item.daily_report_id)
-    if not report:
-        flash('Daily report for this POS Sold entry was not found.', category='error')
-        return redirect(url_for('views.store_manager_pos_sold'))
-
-    store = Store.query.filter_by(manager_id=current_user.id).first()
-    if not store or store.id != report.store_id:
-        flash('Access denied. This POS Sold entry belongs to another store.', category='error')
-        return redirect(url_for('views.home'))
-
-    report_date = report.report_date
-    if _is_operational_day_finalized(store.id, report_date):
-        flash(
-            f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
-            'POS Sold can no longer be edited. Contact an Admin to unfinalize the day.',
-            category='error'
-        )
-        return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
-
-    try:
-        details = {
-            'pos_sold_id': pos_item.id,
-            'daily_report_id': pos_item.daily_report_id,
-            'store_id': store.id,
-            'report_date': report_date.strftime('%Y-%m-%d'),
-            'product_name': pos_item.product_name,
-            'quantity': pos_item.quantity,
-            'gross_sales': pos_item.gross_sales,
-            'discount': pos_item.discount,
-            'net_sales': pos_item.net_sales,
-        }
-        db.session.delete(pos_item)
-        db.session.flush()
-        remaining_pos_items = PosSold.query.filter_by(daily_report_id=report.id).count()
-        if remaining_pos_items == 0:
-            report.pos_gross_sales = 0.0
-            report.pos_net_sales = 0.0
-            report.pos_tc = 0
-            report.pos_motif_breakdown_json = '[]'
-            _delete_empty_pending_report(report)
-        else:
-            _reconcile_pos_sold_report_totals(report)
-        _reconcile_saved_pos_sold_to_inventory(
-            _ensure_daily_report_exists(store.id, report_date, current_user.id),
-            store,
-            report_date,
-        )
-        log_audit_event(
-            action='report.pos_sold.delete',
-            entity_type='PosSold',
-            entity_id=pos_sold_id,
-            reason='Store manager deleted saved POS Sold entry before End of Day.',
-            details=details,
-        )
-        db.session.commit()
-        flash('POS Sold entry deleted and InvenSync reconciled.', category='success')
-    except Exception as exc:
-        db.session.rollback()
-        flash(f'Error deleting POS Sold entry: {str(exc)}', category='error')
 
     return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
 
@@ -8982,12 +8726,25 @@ def save_daily_ending_inventory():
         data = request.get_json()
         inventory_id = data.get('inventory_id')
         items_data = data.get('items', [])
+        motif_breakdown = data.get('motif_breakdown')
         finalize_day = bool(data.get('finalize_day'))
         finalize_beginning = bool(data.get('finalize_beginning'))
         
         inventory = DailyEndingInventory.query.get(inventory_id)
         if not inventory:
             return jsonify({'success': False, 'error': 'Inventory not found'}), 404
+
+        motif_quantities = None
+        report = DailyReport.query.filter_by(
+            store_id=inventory.store_id,
+            report_date=inventory.inventory_date,
+        ).first()
+        if motif_breakdown is not None and report:
+            pos_items = PosSold.query.filter_by(daily_report_id=report.id).all()
+            motif_rows = _validate_saved_motif_rows(pos_items, motif_breakdown)
+            if motif_rows:
+                report.pos_motif_breakdown_json = json.dumps(motif_rows)
+                motif_quantities = _build_complete_pos_quantities(pos_items, motif_rows)
         config, global_config_data = _get_or_create_global_invensync_config()
         effective_config_data = _get_effective_invensync_config(global_config_data, inventory.store_id)
         admin_unlock_scope = _get_invensync_admin_unlock(global_config_data, inventory.store_id, inventory.inventory_date)
@@ -9067,6 +8824,12 @@ def save_daily_ending_inventory():
                         if field in item_data and _is_invensync_admin_unlocked(admin_unlock_scope, item.id, field):
                             setattr(item, field, int(item_data.get(field, 0)))
                     if (
+                        'quantity_sold' in item_data
+                        and _is_invensync_admin_unlocked(admin_unlock_scope, item.id, 'quantity_sold')
+                    ):
+                        raw_sold = item_data.get('quantity_sold')
+                        item.quantity_sold = None if raw_sold in (None, '', 0, '0') else int(raw_sold)
+                    if (
                         'remarks' in item_data
                         and _is_invensync_admin_unlocked(admin_unlock_scope, item.id, 'remarks')
                     ):
@@ -9083,11 +8846,15 @@ def save_daily_ending_inventory():
                 item.trans_out_qty = int(item_data.get('trans_out_qty', 0))
                 item.wastage_qty = int(item_data.get('wastage_qty', 0))
                 item.csi_qty = int(item_data.get('csi_qty', 0))
-                item.quantity_sold = int(item_data.get('quantity_sold', 0))
+                raw_sold = item_data.get('quantity_sold', 0)
+                item.quantity_sold = None if raw_sold in (None, '', 0, '0') else int(raw_sold)
                 item.ending_d5_qty = int(item_data.get('ending_d5_qty', 0))
                 item.ending_d4_qty = int(item_data.get('ending_d4_qty', 0))
                 item.ending_d3_qty = int(item_data.get('ending_d3_qty', 0))
                 item.remarks = item_data.get('remarks', '')
+                if motif_quantities is not None and item.product_master_id:
+                    sold_qty = motif_quantities.get(item.product_master_id)
+                    item.quantity_sold = int(sold_qty) if sold_qty else None
                 
                 # Recalculate derived fields
                 _recalculate_inventory_item(item)
@@ -9733,7 +9500,8 @@ def invensync():
     if final_pos_items or staged_pos_items:
         for inv_item in inventory_items.values():
             if inv_item.product_master_id:
-                inv_item.quantity_sold = int(saved_sales_map.get(inv_item.product_master_id, 0) or 0)
+                sold_qty = saved_sales_map.get(inv_item.product_master_id)
+                inv_item.quantity_sold = int(sold_qty) if sold_qty else None
                 inv_item.pos_reviewed_source = 'saved'
                 inv_item.pos_reviewed_date = selected_date
                 _recalculate_inventory_item(inv_item)

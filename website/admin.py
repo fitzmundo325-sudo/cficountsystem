@@ -853,12 +853,34 @@ def delete_pos_sold_entry(pos_sold_id):
         }
         db.session.delete(pos_item)
         db.session.flush()
-        remaining_pos_items = PosSold.query.filter_by(daily_report_id=report.id).count()
-        if remaining_pos_items == 0:
+        remaining_pos_items = PosSold.query.filter_by(daily_report_id=report.id).all()
+        if remaining_pos_items:
+            from .views import _build_complete_pos_quantities, _reconcile_pos_sold_quantities_to_inventory
+            try:
+                motif_rows = json.loads(report.pos_motif_breakdown_json or '[]')
+            except (TypeError, ValueError):
+                motif_rows = []
+            if not isinstance(motif_rows, list):
+                motif_rows = []
+            quantities = _build_complete_pos_quantities(
+                [
+                    {'product_name': item.product_name, 'quantity': item.quantity}
+                    for item in remaining_pos_items
+                ],
+                motif_rows,
+            )
+            _reconcile_pos_sold_quantities_to_inventory(report.store_id, report.report_date, quantities)
+        else:
             report.pos_gross_sales = 0.0
             report.pos_net_sales = 0.0
             report.pos_tc = 0
             report.pos_motif_breakdown_json = '[]'
+            from .views import _reconcile_pos_sold_quantities_to_inventory
+            _reconcile_pos_sold_quantities_to_inventory(report.store_id, report.report_date, {})
+            PosSoldStaging.query.filter_by(
+                store_id=report.store_id,
+                report_date=report.report_date,
+            ).delete(synchronize_session=False)
             _delete_empty_pending_report(report)
         log_audit_event(
             action='admin.pos_sold.delete',
@@ -1004,6 +1026,12 @@ def delete_all_pos_sold_entries():
         report.pos_net_sales = 0.0
         report.pos_tc = 0
         report.pos_motif_breakdown_json = '[]'
+        from .views import _reconcile_pos_sold_quantities_to_inventory
+        _reconcile_pos_sold_quantities_to_inventory(review_store_id, review_date, {})
+        PosSoldStaging.query.filter_by(
+            store_id=review_store_id,
+            report_date=review_date,
+        ).delete(synchronize_session=False)
         _delete_empty_pending_report(report)
         log_audit_event(
             action='admin.pos_sold.delete_all',
@@ -3647,7 +3675,7 @@ def targets():
 @admin.route('/admin/targets/save', methods=['POST'])
 @login_required
 def save_targets():
-    if current_user.role != 'Superadmin':
+    if current_user.role not in ('Superadmin', 'General Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
@@ -3741,7 +3769,7 @@ def save_targets():
 @admin.route('/admin/targets/upload', methods=['POST'])
 @login_required
 def upload_targets():
-    if current_user.role != 'Superadmin':
+    if current_user.role not in ('Superadmin', 'General Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
     
@@ -3866,7 +3894,7 @@ def upload_targets():
 @admin.route('/admin/targets/update', methods=['POST'])
 @login_required
 def update_target():
-    if current_user.role != 'Superadmin':
+    if current_user.role not in ('Superadmin', 'General Manager'):
         return {'success': False, 'message': 'Access denied'}, 403
     
     try:
@@ -5277,6 +5305,9 @@ def save_invensync_inventory_correction():
                 new_value = int(float(raw_value)) if str(raw_value).strip() else 0
             else:
                 new_value = str(change.get('value', '') or '').strip()
+
+            if field == 'quantity_sold' and new_value in (None, 0):
+                new_value = None
 
             setattr(item, field, new_value)
             changed_items[item.id] = item

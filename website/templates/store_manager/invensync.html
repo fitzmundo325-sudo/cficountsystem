@@ -93,7 +93,11 @@
   input[type="number"] {
     -moz-appearance: textfield;
   }
-
+  
+    .admin-range-selected {
+      background-color: rgba(139, 92, 246, 0.12) !important;
+    }
+  
   /* Subtle inventory column dividers */
   #main-content table thead th,
   #main-content table tbody tr[data-product-id] td {
@@ -705,14 +709,14 @@
                     {% set sold_has_trace = show_trans_trace and inv_item and (inv_item.draft_quantity_sold|default(inv_item.quantity_sold|default(0)))|int > 0 %}
                     <div class="flex items-center justify-center gap-0.5 min-w-[86px]{% if sold_has_trace %} trans-trace-hover cursor-help{% endif %}"{% if sold_has_trace %} onmouseenter="showTransTrace('{{ product.id }}', 'sold', this)" onmouseleave="hideTransTrace()"{% endif %}>
                       <input type="number" class="sold-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
-                        value="{{ inv_item.draft_quantity_sold if inv_item and inv_item.draft_quantity_sold is defined else (inv_item.quantity_sold if inv_item and inv_item.quantity_sold else '') }}" onchange="updateInventoryRow(this)"{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                        value="{{ inv_item.draft_quantity_sold if inv_item and (inv_item.draft_quantity_sold|default(0)|int > 0) else (inv_item.quantity_sold if inv_item and (inv_item.quantity_sold|default(0)|int > 0) else '') }}" onchange="updateInventoryRow(this)"{% if 'quantity_sold' not in global_config_data.get('editable_columns', []) or 'quantity_sold' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                       <span class="inline-flex flex-row items-center gap-0.5 flex-wrap">
                       {% set sold_source_qty = inv_item.draft_quantity_sold if inv_item and inv_item.draft_quantity_sold is defined else (inv_item.quantity_sold if inv_item and inv_item.quantity_sold else 0) %}
                       {% set bitbit_slices = inv_item.bitbit_sold_tags|sum(attribute='slices') if inv_item and inv_item.bitbit_sold_tags is defined and inv_item.bitbit_sold_tags else 0 %}
                       {% set pos_only_qty = sold_source_qty - bitbit_slices %}
-                      {% set should_show_pos_tag = bitbit_slices %}
-                      {% if inv_item and inv_item.pos_reviewed_source %}
-                      <span class="pos-review-badge{% if not should_show_pos_tag %} hidden{% endif %} bg-amber-100 text-amber-700 text-[8px] px-1 py-0.5 rounded whitespace-nowrap font-semibold leading-none cursor-default select-none transition-transform duration-150 ease-out hover:scale-110 hover:shadow-sm" title="POS Sold Qty: {{ pos_only_qty if pos_only_qty > 0 else 0 }}{{ ' | From POS Review - ' ~ inv_item.pos_reviewed_date if inv_item.pos_reviewed_date else ' | From POS Review' }}">POS {{ pos_only_qty if pos_only_qty > 0 else 0 }}</span>
+                      {% set should_show_pos_tag = bitbit_slices and pos_only_qty > 0 %}
+                      {% if inv_item and inv_item.pos_reviewed_source and pos_only_qty > 0 %}
+                      <span class="pos-review-badge{% if not should_show_pos_tag %} hidden{% endif %} bg-amber-100 text-amber-700 text-[8px] px-1 py-0.5 rounded whitespace-nowrap font-semibold leading-none cursor-default select-none transition-transform duration-150 ease-out hover:scale-110 hover:shadow-sm" title="POS Sold Qty: {{ pos_only_qty }}{{ ' | From POS Review - ' ~ inv_item.pos_reviewed_date if inv_item.pos_reviewed_date else ' | From POS Review' }}">POS {{ pos_only_qty }}</span>
                       {% endif %}
                       {% if inv_item and inv_item.bitbit_sold_tags is defined and inv_item.bitbit_sold_tags %}
                         {% set bitbit_packs = inv_item.bitbit_sold_tags|sum(attribute='packs') %}
@@ -1027,6 +1031,7 @@ let adminAllCellsUnlocked = false;
 let adminSelectedInput = null;
 let adminSelectedInputs = [];
 const adminOriginalValues = new Map();
+const adminUndoStack = [];
 const adminCellInstructionKey = 'invensyncAdminSelectionInstructionSeenV2';
 
 function getInventorySaveButtons() {
@@ -1255,6 +1260,65 @@ function refreshAdminCorrectionButton() {
     button.disabled = !changed;
   });
 }
+
+function getAdminKeyboardSelection() {
+  return adminSelectedInputs.length
+    ? adminSelectedInputs
+    : (adminSelectedInput ? [adminSelectedInput] : []);
+}
+
+function clearAdminSelection() {
+  if (!isAdminCorrectionMode) return;
+  const inputs = getAdminKeyboardSelection();
+  if (!inputs.length) return;
+  const changes = inputs.map(input => ({ input, value: input.value }));
+  if (!changes.some(change => change.value !== '')) return;
+  adminUndoStack.push(changes);
+  if (adminUndoStack.length > 30) adminUndoStack.shift();
+  inputs.forEach(input => {
+    unlockAdminInput(input);
+    input.value = '';
+    if (input.classList.contains('sold-input') || input.classList.contains('beginning-input') || input.classList.contains('delivery-input') || input.classList.contains('trans-in-input') || input.classList.contains('bo-input') || input.classList.contains('adv-del-input') || input.classList.contains('trans-out-input') || input.classList.contains('wastage-input') || input.classList.contains('csi-input') || input.classList.contains('ending-d5-input') || input.classList.contains('ending-d4-input') || input.classList.contains('ending-d3-input')) {
+      updateInventoryRow(input);
+    }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  refreshAdminCorrectionButton();
+}
+
+function undoAdminClear() {
+  if (!isAdminCorrectionMode) return;
+  const changes = adminUndoStack.pop();
+  if (!changes?.length) return;
+  changes.forEach(({ input, value }) => {
+    input.value = value;
+    if (input.type === 'number') updateInventoryRow(input);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  refreshAdminCorrectionButton();
+}
+
+document.addEventListener('keydown', event => {
+  if (!isAdminCorrectionMode) return;
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+    if (getAdminKeyboardSelection().length) {
+      event.preventDefault();
+      event.stopPropagation();
+      undoAdminClear();
+    }
+    return;
+  }
+  if (event.key === 'Backspace' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (getAdminKeyboardSelection().length) {
+      event.preventDefault();
+      event.stopPropagation();
+      clearAdminSelection();
+    }
+    return;
+  }
+  const gridTarget = event.target.closest?.('#main-content tbody tr[data-product-id], #fullscreen-modal tbody tr[data-product-id]');
+  if (!gridTarget) return;
+}, true);
 
 document.addEventListener('click', event => {
   if (!isAdminCorrectionMode) return;
@@ -1637,7 +1701,7 @@ function applyMotifTagsToSoldColumn() {
     }
     if (soldInput) {
       if (soldInput.dataset.motifBaseSold === undefined) {
-        soldInput.dataset.motifBaseSold = soldInput.value || '0';
+        soldInput.dataset.motifBaseSold = soldInput.value || '';
       }
       soldInput.value = soldInput.dataset.motifBaseSold || '';
     }
@@ -3499,7 +3563,7 @@ function saveInventory(isBeginningSave = false, finalizeDay = false) {
       trans_out_qty: parseInt(row.querySelector('.trans-out-input')?.value) || 0,
       wastage_qty: parseInt(row.querySelector('.wastage-input')?.value) || 0,
       csi_qty: parseInt(row.querySelector('.csi-input')?.value) || 0,
-      quantity_sold: parseInt(row.querySelector('.sold-input')?.value) || 0,
+      quantity_sold: row.querySelector('.sold-input')?.value || '',
       ending_d5_qty: parseInt(row.querySelector('.ending-d5-input')?.value) || 0,
       ending_d4_qty: parseInt(row.querySelector('.ending-d4-input')?.value) || 0,
       ending_d3_qty: parseInt(row.querySelector('.ending-d3-input')?.value) || 0,
@@ -3517,6 +3581,7 @@ function saveInventory(isBeginningSave = false, finalizeDay = false) {
     body: JSON.stringify({
       inventory_id: inventoryId,
       items: items,
+      motif_breakdown: getSavedMotifBreakdown()?.rows || null,
       finalize_beginning: isBeginningSave,
       finalize_day: finalizeDay
     })

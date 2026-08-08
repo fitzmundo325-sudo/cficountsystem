@@ -5,6 +5,16 @@
 {% block extra_head %}
 <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
 <style>
+  .target-sheet-input::-webkit-outer-spin-button,
+  .target-sheet-input::-webkit-inner-spin-button {
+    margin: 0;
+    -webkit-appearance: none;
+  }
+
+  .target-sheet-input {
+    -moz-appearance: textfield;
+  }
+
   .target-sheet-input.is-selected {
     border-color: #6366f1;
     background: #eef2ff;
