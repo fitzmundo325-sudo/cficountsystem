@@ -109,6 +109,14 @@
             <label for="taf_date" class="text-sm font-semibold text-slate-700">Date:</label>
             <input id="taf_date" name="taf_date" type="date" value="{{ selected_report_date if selected_report_date else today }}" class="w-[180px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
           </div>
+          {% if taf_date_finalized %}
+          <div class="w-full rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 md:w-auto">
+            <p class="text-xs font-semibold text-rose-800">
+              End of Day is already done for this date — Wastage Transfer can no longer be entered or edited.
+              Contact an Admin to unfinalize the day.
+            </p>
+          </div>
+          {% endif %}
           <div class="flex flex-wrap items-center gap-2 sm:ml-auto">
             <label for="control_no" class="text-sm font-semibold text-slate-700">Control No:</label>
             <input id="control_no" name="control_no" type="text" placeholder="Enter control number" value="{{ request.form.get('control_no', '') if request.form else '' }}" required class="w-[230px] px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
@@ -127,7 +135,7 @@
                 </span>
                 <span class="text-sm font-semibold text-slate-800">Product Transfer</span>
             </button>
-            <button type="button" data-transaction-type="Wastage Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-emerald-200 hover:bg-emerald-50 transition-colors">
+            <button type="button" data-transaction-type="Wastage Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-emerald-200 hover:bg-emerald-50 transition-colors" {% if taf_date_finalized %}data-locked="1" title="End of Day is already done for this date. Wastage can no longer be entered or edited."{% endif %}>
                 <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M3 6h18"></path>
@@ -501,6 +509,7 @@
     let tafTourStepIndex = 0;
     let hasConfirmedSubmit = false;
     let isSubmittingTaf = false;
+    const tafWastageLocked = {{ 'true' if taf_date_finalized else 'false' }};
 
     function asNumber(value) {
       const n = Number(value);
@@ -636,7 +645,10 @@
 
     function syncSubmitMode() {
       const transactionType = transactionTypeEl?.value || '';
-      const canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer' || transactionType === 'Supplies Transfer';
+      let canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer' || transactionType === 'Supplies Transfer';
+      if (tafWastageLocked && transactionType === 'Wastage Transfer') {
+        canSubmit = false;
+      }
       if (submitBtnEl) {
         if (isSubmittingTaf) {
           submitBtnEl.disabled = true;
@@ -695,6 +707,9 @@
         const cardType = card.dataset.transactionType || '';
         const isActive = (cardType === selectedType) || (cardType === 'Supplies Request' && selectedType === 'Supplies Transfer');
         const isWastage = cardType === 'Wastage Transfer';
+        const isLocked = card.dataset.locked === '1';
+        card.classList.toggle('opacity-50', isLocked);
+        card.classList.toggle('cursor-not-allowed', isLocked);
         card.classList.toggle('border-cyan-500', isActive && !isWastage);
         card.classList.toggle('bg-cyan-50', isActive && !isWastage);
         card.classList.toggle('border-emerald-200', isActive && isWastage);
@@ -947,6 +962,10 @@
     transactionTypeCardEls.forEach((card) => {
       card.addEventListener('click', () => {
         const selectedValue = card.dataset.transactionType || '';
+        if (tafWastageLocked && selectedValue === 'Wastage Transfer') {
+          alert('End of Day is already done for this date. Wastage can no longer be entered or edited. Contact an Admin to unfinalize the day.');
+          return;
+        }
         selectTransactionType(selectedValue);
       });
     });
@@ -1015,7 +1034,10 @@
       }
       event.preventDefault();
       const transactionType = transactionTypeEl?.value || '';
-      const canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer';
+      let canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer';
+      if (tafWastageLocked && transactionType === 'Wastage Transfer') {
+        canSubmit = false;
+      }
       if (!canSubmit) {
         return;
       }

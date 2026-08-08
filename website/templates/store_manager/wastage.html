@@ -44,6 +44,14 @@
     </div>
 
     <div class="p-4 md:p-5">
+      <div class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+        <p class="text-xs text-amber-800">
+          Wastage Transfer records with a <strong>Pending</strong> status can still be <strong>edited</strong> (via the
+          Transaction Activity Form) and <strong>deleted</strong> until <strong>End of Day</strong> is done for their
+          transaction date. Once End of Day is finalized, wastage is locked and can no longer be edited or deleted —
+          contact an Admin to unfinalize the day.
+        </p>
+      </div>
       {% if wastage_transfers %}
       <div class="overflow-x-auto border border-slate-200 rounded-lg">
         <table class="min-w-full divide-y divide-slate-200">
@@ -75,12 +83,24 @@
                 </span>
               </td>
               <td class="px-4 py-2 text-center">
+                <div class="inline-flex items-center gap-1.5">
                 <a href="{{ url_for('views.store_manager_incoming_transfer_view', transfer_id=transfer.id) }}" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors" title="View TAF" aria-label="View TAF">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path>
                     <circle cx="12" cy="12" r="3"></circle>
                   </svg>
                 </a>
+                {% if transfer.id in editable_wastage_ids %}
+                <a href="{{ url_for('views.store_manager_transaction_activity_form', date=transfer.transaction_date.strftime('%Y-%m-%d')) }}" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors" title="Edit Wastage Transfer" aria-label="Edit Wastage Transfer">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg>
+                </a>
+                <form method="POST" action="{{ url_for('views.store_manager_delete_taf_transfer', transfer_id=transfer.id) }}" onsubmit="return confirm('Delete Wastage Transfer {{ transfer.control_no }}? InvenSync wastage will be reconciled.');">
+                  <button type="submit" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors" title="Delete Wastage Transfer" aria-label="Delete Wastage Transfer">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                  </button>
+                </form>
+                {% endif %}
+                </div>
               </td>
             </tr>
             {% endfor %}

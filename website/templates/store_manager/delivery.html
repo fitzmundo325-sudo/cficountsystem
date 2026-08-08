@@ -111,7 +111,7 @@
         <td class="px-4 py-2 text-sm font-medium text-slate-700">{{ item.rso_no if item.rso_no else number }}</td>
         <td class="px-4 py-2 text-sm text-slate-900 text-right font-semibold">{{ item.quantity }}</td>
         <td class="px-4 py-2 text-right">
-          <input type="number" min="0" inputmode="numeric" name="received_qty[]" form="{{ save_form_id }}" value="{{ item.received_quantity if item.received_quantity is not none else '' }}" class="rso-received-input w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm font-semibold text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" placeholder="0" {% if status == 'saved' or (user and user.role == 'Inventory Staff') %}readonly{% endif %}>
+          <input type="number" min="0" inputmode="numeric" name="received_qty[]" form="{{ save_form_id }}" value="{{ item.received_quantity if item.received_quantity is not none else '' }}" class="rso-received-input w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm font-semibold text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" placeholder="0" {% if delivery_day_finalized or (user and user.role == 'Inventory Staff') %}readonly{% endif %}>
         </td>
         <td class="px-4 py-2 text-center">
           <button type="button" class="rso-check-btn inline-flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50" title="Mark received quantity as checked" aria-label="Check received quantity" {% if status == 'saved' or (user and user.role == 'Inventory Staff') %}disabled{% endif %}>
@@ -236,6 +236,14 @@
     </div>
     <div class="p-4 md:p-5 space-y-4">
       {% if user and user.role == 'Store Manager' %}
+      {% if delivery_day_finalized %}
+      <div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5">
+        <p class="text-xs font-semibold text-rose-800">
+          End of Day is already done for {{ selected_report_date if selected_report_date else today }} — Delivery (RSO) is locked and can no longer be edited.
+          Contact an Admin to unfinalize the day.
+        </p>
+      </div>
+      {% else %}
       {% set show_delivery_draft_actions = delivery_data.status == 'draft' %}
       {% set show_bulk_draft_actions = bulk_data.status == 'draft' %}
       <div class="space-y-3">
@@ -401,6 +409,7 @@
         {{ manual_product_form('bulk', 'save-bulk-rso-form') }}
         </div>
       </div>
+      {% endif %}
       {% else %}
         {% if user and user.role == 'Inventory Staff' %}
         <div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5">
@@ -410,6 +419,30 @@
       {% endif %}
 
       {% if user and user.role == 'Store Manager' %}
+      {% if not delivery_day_finalized and (delivery_data.status == 'saved' or bulk_data.status == 'saved') %}
+      <div class="flex flex-wrap items-center justify-end gap-2 pt-1">
+        <p class="text-xs text-slate-500">Saved RSO rows are editable (received qty) and replaceable until End of Day.</p>
+        {% if not delivery_day_finalized and delivery_data.status == 'saved' %}
+        <button type="submit" form="save-delivery-rso-form" class="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100" title="Save received quantity changes for saved RSO rows">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+          Save RSO Changes
+        </button>
+        {% endif %}
+        {% if not delivery_day_finalized and bulk_data.status == 'saved' %}
+        <button type="submit" form="save-bulk-rso-form" class="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100" title="Save received quantity changes for saved Bulk Order RSO rows">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+          Save Bulk Changes
+        </button>
+        {% endif %}
+        <form method="POST" action="{{ url_for('views.delete_all_rso_data') }}" onsubmit="return confirm('Delete ALL saved RSO records for {{ selected_report_date if selected_report_date else today }}? Delivery quantities in InvenSync will be cleared.');">
+          <input type="hidden" name="report_date" value="{{ selected_report_date if selected_report_date else today }}">
+          <button type="submit" class="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100" title="Delete all saved RSO rows for this date">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            Delete All RSO
+          </button>
+        </form>
+      </div>
+      {% endif %}
       <form id="save-delivery-rso-form" action="{{ url_for('views.save_rso_review_data') }}" method="POST" class="hidden">
         <input type="hidden" name="report_date" id="rso-save-report-date" value="{{ selected_report_date if selected_report_date else today }}">
         <input type="hidden" name="upload_source" value="delivery">
