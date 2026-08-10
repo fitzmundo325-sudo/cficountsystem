@@ -458,7 +458,7 @@
     {% endif %}
   {% endif %}
 
-  {% if is_first_time and current_user.role == 'Store Manager' %}
+  {% if (is_first_time or request.args.get('guide') == '1') and current_user.role == 'Store Manager' %}
   <!-- First Time User Popup Modal -->
   <div id="first-time-modal" class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40" style="margin-top: 0;" onclick="if(event.target===this)this.remove()">
     <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
@@ -489,7 +489,7 @@
       </div>
       <!-- Footer -->
       <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
-        <button onclick="startBeginningStockGuide()" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+        <button onclick="startBeginningStockGuide(true)" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
           Got it, let me start!
         </button>
       </div>
@@ -1021,6 +1021,7 @@ let beginningGuideActive = false;
 let beginningGuideStepIndex = 0;
 let beginningGuideRenderTimer = null;
 let beginningGuideScrollRenderTimer = null;
+const beginningGuideCompletionKey = 'invensync-beginning-guide-completed-store-{{ store.id }}';
 let motifGuideActive = false;
 let motifGuideStepIndex = 0;
 const motifGuideSeenKey = 'motifBreakdownGuideSeenV2';
@@ -2642,6 +2643,11 @@ function showBeginningStockGuideStep() {
 function nextBeginningStockGuideStep() {
   removeBeginningSpotlightPanels();
   beginningGuideStepIndex += 1;
+  if (!getBeginningGuideStep()) {
+    localStorage.setItem(beginningGuideCompletionKey, '1');
+    clearBeginningStockGuide();
+    return;
+  }
   showBeginningStockGuideStep();
 }
 
@@ -2657,6 +2663,10 @@ function startBeginningStockGuide(force = false) {
   beginningGuideActive = true;
   beginningGuideStepIndex = 0;
   showBeginningStockGuideStep();
+}
+
+if (!isInvenSyncGuideMode && localStorage.getItem(beginningGuideCompletionKey) === '1') {
+  document.getElementById('first-time-modal')?.remove();
 }
 
 function showMissingBeginningPopup(row, options = {}) {
@@ -3816,9 +3826,6 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   setTimeout(refreshBeginningSaveMode, 100);
-  if (isInvenSyncGuideMode) {
-    setTimeout(() => startBeginningStockGuide(true), 550);
-  }
 });
 
 function attachEnterNavigation(scope) {
@@ -4458,7 +4465,7 @@ function closeInvensyncExportModal() {
     }
 
     const noteHtml = (cellValue !== null && cellValue !== data.traced_total)
-      ? '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #334155;color:#fbbf24">Note: Column shows <b>' + cellValue + '</b> while traced TAF total is <b>' + data.traced_total + '</b>. The difference may be a manual entry or adjustment.</div>'
+      ? '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #334155;color:#fbbf24">Note: Column shows <b>' + cellValue + '</b> while traced total is <b>' + data.traced_total + '</b>. The difference may be a manual entry or adjustment.</div>'
       : '';
 
     tooltip.innerHTML =
@@ -4476,7 +4483,7 @@ function closeInvensyncExportModal() {
         '</tr></thead>' +
         '<tbody>' + bodyHtml + '</tbody>' +
       '</table>' +
-      '<div style="margin-top:6px;color:#cbd5e1">Traced TAF total: <b style="color:#fff">' + data.traced_total + '</b></div>' +
+      '<div style="margin-top:6px;color:#cbd5e1">Traced total: <b style="color:#fff">' + data.traced_total + '</b></div>' +
       noteHtml;
   }
 

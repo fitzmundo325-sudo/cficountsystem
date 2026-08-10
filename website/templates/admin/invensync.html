@@ -524,7 +524,7 @@ function filterInvensyncStores() {
     let visibleCount = 0;
 
     cards.forEach((card) => {
-        const haystack = String(card.dataset.storeSearch || '').toLowerCase();
+      const haystack = `${card.dataset.storeSearch || ''} ${card.textContent || ''}`.toLowerCase();
         const isMatch = !query || haystack.includes(query);
         card.classList.toggle('hidden', !isMatch);
         if (isMatch) visibleCount += 1;
@@ -536,7 +536,10 @@ function filterInvensyncStores() {
     }
 }
 
-document.getElementById('invensyncStoreSearch')?.addEventListener('input', filterInvensyncStores);
+const invensyncStoreSearch = document.getElementById('invensyncStoreSearch');
+invensyncStoreSearch?.addEventListener('input', filterInvensyncStores);
+invensyncStoreSearch?.addEventListener('search', filterInvensyncStores);
+filterInvensyncStores();
 
 function initializeInvensyncCardScrolling() {
     const cards = Array.from(document.querySelectorAll('.invensync-store-card'));

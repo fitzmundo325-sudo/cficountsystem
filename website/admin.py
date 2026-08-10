@@ -3302,6 +3302,37 @@ def update_store(store_id):
     return redirect(url_for('admin.stores'))
 
 
+@admin.route('admin/stores/<int:store_id>/delete', methods=['POST'])
+@login_required
+def delete_store(store_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied. Only Admins and Superadmins can delete stores.', category='error')
+        return redirect(url_for('views.home'))
+
+    try:
+        store = Store.query.get_or_404(store_id)
+        store_snapshot = {
+            'name': store.name,
+            'address': store.address,
+            'manager_id': store.manager_id,
+        }
+        log_audit_event(
+            action='admin.store.delete',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store deleted by administrator.',
+            details=store_snapshot,
+        )
+        db.session.delete(store)
+        db.session.commit()
+        flash(f'Store "{store_snapshot["name"]}" deleted successfully!', category='success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error deleting store: {str(e)}', category='error')
+
+    return redirect(url_for('admin.stores'))
+
+
 # Cluster Routes
 @admin.route('admin/clusters')
 @login_required

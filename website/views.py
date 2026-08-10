@@ -8690,6 +8690,8 @@ def store_manager_data_export():
         'wastage': ['Date', 'Control No', 'Type', 'From', 'To', 'Status', 'Item', 'Quantity', 'Received Quantity', 'Short/Over', 'Unit Cost', 'Line Total', 'Remarks'],
     }
     dataframe = pd.DataFrame(rows, columns=columns_by_type[export_type])
+    if role == 'Inventory Staff':
+        dataframe = dataframe.mask(dataframe.eq(0), None)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         dataframe.to_excel(writer, index=False, sheet_name='Data')
