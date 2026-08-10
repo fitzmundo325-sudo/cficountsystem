@@ -435,8 +435,7 @@
 </div>
 {% endif %}
 
-{% if show_pos_flow_guide %}
-<div id="pos-tour-start-modal" class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40" style="margin-top: 0;">
+<div id="pos-tour-start-modal" class="fixed inset-0 z-[9999] items-center justify-center bg-black/40 {% if show_pos_flow_guide or request.args.get('guide') == '1' %}flex{% else %}hidden{% endif %}" style="margin-top: 0;">
   <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
     <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
       <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
@@ -467,7 +466,6 @@
     </div>
   </div>
 </div>
-{% endif %}
 
 {% if user and user.role == 'Store Manager' and motif_charge_payload %}
 <div id="pos-motif-breakdown-modal" class="fixed inset-0 z-[9998] hidden">
@@ -609,6 +607,7 @@
     const posTourStartModal = document.getElementById('pos-tour-start-modal');
     const posTourStartBtn = document.getElementById('pos-tour-start-btn');
     const posTourHelpBtn = document.getElementById('pos-tour-help-btn');
+    const posTourCompletionKey = 'pos-tour-completed-store-{{ store.id }}';
     const posFileInput = document.getElementById('pos_file');
     const posFileLabel = document.getElementById('pos-file-label');
     const zReadingRequiredInput = document.getElementById('z_reading_image_required');
@@ -1485,6 +1484,15 @@
 
     function nextPosTourStep() {
       posTourStepIndex += 1;
+      if (!getPosTourStep()) {
+        try {
+          window.localStorage.setItem(posTourCompletionKey, '1');
+        } catch (error) {
+          return;
+        }
+        clearPosTour();
+        return;
+      }
       showPosTourStep();
     }
 
@@ -1499,8 +1507,18 @@
       showPosTourStep();
     }
 
+    try {
+      if (!isPosGuideMode && window.localStorage.getItem(posTourCompletionKey) === '1') {
+        posTourStartModal?.remove();
+      }
+    } catch (error) {
+      // Keep the first-time guide available when browser storage is blocked.
+    }
+
     if (posTourStartBtn) {
-      posTourStartBtn.addEventListener('click', startPosTour);
+      posTourStartBtn.addEventListener('click', function() {
+        startPosTour(isPosGuideMode);
+      });
     } else if (shouldShowPosTour) {
       setTimeout(startPosTour, 550);
     }

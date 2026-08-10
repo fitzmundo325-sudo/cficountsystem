@@ -41,6 +41,8 @@
     text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
     box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
     pointer-events: auto;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
   }
 
   .taf-tour-label button {
@@ -418,8 +420,7 @@
   </section>
 </div>
 
-{% if show_taf_guide %}
-<div id="taf-tour-start-modal" class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40" style="margin-top: 0;">
+<div id="taf-tour-start-modal" class="fixed inset-0 z-[9999] items-center justify-center bg-black/40 {% if show_taf_guide or request.args.get('guide') == '1' %}flex{% else %}hidden{% endif %}" style="margin-top: 0;">
   <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
     <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
       <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
@@ -445,7 +446,7 @@
         </svg>
         <p class="text-sm text-slate-700">Use this guide to complete a Transaction Activity Form step by step.</p>
       </div>
-      <p class="text-sm text-slate-600">You will enter the control number, choose the transaction type and destination, add transfer items and quantity, then prepare and submit the form.</p>
+      <p class="text-sm text-slate-600">You will enter the control number, choose the transaction type and destination, add transfer items and quantity, then prepare and submit the form. For the new Supply Request flow, choose <span class="font-semibold text-slate-800">Other Store</span> to send supplies to another store, or <span class="font-semibold text-slate-800">Main Office</span> to submit a request to the Main Office.</p>
     </div>
     <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
       <button id="taf-tour-start-btn" type="button" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
@@ -454,7 +455,6 @@
     </div>
   </div>
 </div>
-{% endif %}
 
 <script>
   (function() {
@@ -498,6 +498,12 @@
     const tafTourStartModal = document.getElementById('taf-tour-start-modal');
     const tafTourStartBtn = document.getElementById('taf-tour-start-btn');
     const tafTourHelpBtn = document.getElementById('taf-tour-help-btn');
+    const isTafGuideMode = {{ (request.args.get('guide') == '1')|tojson }};
+    const tafTourCompletionKey = 'taf-tour-completed-store-{{ store.id }}';
+    const productTransferCardEl = document.querySelector('[data-transaction-type="Product Transfer"]');
+    const wastageTransferCardEl = document.querySelector('[data-transaction-type="Wastage Transfer"]');
+    const egiPlantTransferCardEl = document.querySelector('[data-transaction-type="EGI Plant Transfer"]');
+    const suppliesRequestCardEl = document.querySelector('[data-transaction-type="Supplies Request"]');
     const EGI_PLANT_DESTINATION = 'EGI Plant';
     const transferToStoreOptions = Array.from(transferToStoreEl?.options || []).map((option) => ({
       text: option.text,
@@ -795,15 +801,31 @@
     }
 
     function getVisibleTransferToTarget() {
+      if (suppliesModeEl?.value === 'main_office') return suppliesPanelEl;
       return [transferToStoreEl, transferToWastageEl, transferToEl].find((el) => el && el.offsetParent !== null) || document.getElementById('taf-transfer-to-guide-target');
     }
 
     function getFirstItemTargets() {
+      if (suppliesModeEl?.value === 'main_office') return [suppliesPanelEl].filter(Boolean);
       const firstRow = body?.querySelector('.taf-row');
       return [
         firstRow?.querySelector('.taf-item-name'),
         firstRow?.querySelector('.taf-qty')
       ].filter(Boolean);
+    }
+
+    function getPreparedGuideTarget() {
+      return suppliesModeEl?.value === 'main_office' ? suppliesPanelEl : preparedByEl;
+    }
+
+    function getSubmitGuideTarget() {
+      return suppliesModeEl?.value === 'main_office' ? document.getElementById('sr-submit') : submitBtnEl;
+    }
+
+    function getSupplyRequestGuideTarget() {
+      return suppliesToggleWrapEl && suppliesToggleWrapEl.offsetParent !== null
+        ? suppliesToggleWrapEl
+        : document.getElementById('transaction_type_cards');
     }
 
     function getTafTourStep() {
@@ -815,14 +837,60 @@
           nextText: 'Next'
         },
         {
-          elements: [document.getElementById('transaction_type_cards')],
-          text: 'Select the transaction type for this form.',
+          elements: [productTransferCardEl],
+          text: 'Product Transfer moves products from this store to another store or location.',
           placement: 'bottom',
-          nextText: 'Next'
+          nextText: 'Next',
+          prepare: () => selectTransactionType('Product Transfer')
+        },
+        {
+          elements: [wastageTransferCardEl],
+          text: 'Wastage Transfer records products that were wasted or discarded. Select the Wastage Transfer card when this is the transaction you are recording.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => selectTransactionType('Wastage Transfer')
+        },
+        {
+          elements: [egiPlantTransferCardEl],
+          text: 'EGI Plant Transfer records a transfer of products to or from the EGI Plant.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => selectTransactionType('EGI Plant Transfer')
+        },
+        {
+          elements: [suppliesRequestCardEl],
+          text: 'Supplies Request is used to request supply items. Select it to choose whether the request is for another store or for the Main Office.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => {
+            selectTransactionType('Supplies Request');
+            if (suppliesModeEl) suppliesModeEl.value = 'other_store';
+            syncSuppliesMode();
+          }
+        },
+        {
+          elements: [getSupplyRequestGuideTarget()],
+          text: 'Choose Other Store when this store is sending a supplies transfer to another store. Select the destination store, add the supply items and quantities, then submit the TAF.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => {
+            if (suppliesModeEl) suppliesModeEl.value = 'other_store';
+            syncSuppliesMode();
+          }
+        },
+        {
+          elements: [getSupplyRequestGuideTarget()],
+          text: 'Choose Main Office when this store needs supplies from the Main Office. Select the supply items and quantities in the request panel, add optional remarks, then submit the Supply Request.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => {
+            if (suppliesModeEl) suppliesModeEl.value = 'main_office';
+            syncSuppliesMode();
+          }
         },
         {
           elements: [getVisibleTransferToTarget()],
-          text: 'Select the destination store or location to transfer to.',
+          text: 'Select the destination store or location to transfer to. Supply Requests use the Other Store or Main Office choice shown above.',
           placement: 'bottom',
           nextText: 'Next'
         },
@@ -833,14 +901,14 @@
           nextText: 'Next'
         },
         {
-          elements: [preparedByEl],
-          text: 'Enter the name of the person who prepared this TAF.',
+          elements: [getPreparedGuideTarget()],
+          text: 'Complete the request details, or enter the name of the person who prepared this TAF.',
           placement: 'top',
           nextText: 'Next'
         },
         {
-          elements: [submitBtnEl],
-          text: 'Submit the TAF when the details are complete.',
+          elements: [getSubmitGuideTarget()],
+          text: 'Submit the Supply Request or TAF when the details are complete.',
           placement: 'top',
           nextText: 'Finish'
         }
@@ -858,6 +926,15 @@
       tafTourStepIndex = 0;
       removeTafTourPanels();
       document.querySelectorAll('.taf-tour-target').forEach((el) => el.classList.remove('taf-tour-target'));
+    }
+
+    function completeTafTour() {
+      try {
+        window.localStorage.setItem(tafTourCompletionKey, '1');
+      } catch (error) {
+        // Ignore storage restrictions; the tour can still be replayed manually.
+      }
+      clearTafTour();
     }
 
     function applyTafTourTarget() {
@@ -923,14 +1000,26 @@
         label.style.top = `${Math.max(24, rect.top + Math.min(96, Math.max(0, (rect.bottom - rect.top) / 3)))}px`;
       }
       document.body.appendChild(label);
+
+      const labelRect = label.getBoundingClientRect();
+      const viewportMargin = 16;
+      const maxTop = Math.max(viewportMargin, window.innerHeight - labelRect.height - viewportMargin);
+      const maxLeft = Math.max(viewportMargin, window.innerWidth - labelRect.width - viewportMargin);
+      const requestedTop = Number.parseFloat(label.style.top) || viewportMargin;
+      const requestedLeft = Number.parseFloat(label.style.left) || viewportMargin;
+      label.style.top = `${Math.min(Math.max(requestedTop, viewportMargin), maxTop)}px`;
+      label.style.left = `${Math.min(Math.max(requestedLeft, viewportMargin), maxLeft)}px`;
     }
 
     function showTafTourStep() {
-      const step = getTafTourStep();
+      let step = getTafTourStep();
       if (!step) {
         clearTafTour();
         return;
       }
+
+      step.prepare?.();
+      step = getTafTourStep();
 
       const target = step.elements.find((el) => el && el.offsetParent !== null);
       if (target) {
@@ -945,6 +1034,10 @@
 
     function nextTafTourStep() {
       tafTourStepIndex += 1;
+      if (!getTafTourStep()) {
+        completeTafTour();
+        return;
+      }
       showTafTourStep();
     }
 
@@ -956,6 +1049,14 @@
       tafTourActive = true;
       tafTourStepIndex = 0;
       showTafTourStep();
+    }
+
+    try {
+      if (!isTafGuideMode && window.localStorage.getItem(tafTourCompletionKey) === '1') {
+        tafTourStartModal?.remove();
+      }
+    } catch (error) {
+      // The intro modal remains available when browser storage is blocked.
     }
 
     addBtn?.addEventListener('click', addRow);
@@ -1308,8 +1409,9 @@
 function toggleRequestDetails(btn) {
   const detailRow = btn.closest('tr').nextElementSibling;
   if (detailRow && detailRow.classList.contains('sr-detail-row')) {
-    detailRow.classList.toggle('hidden');
-    const open = !detailRow.classList.contains('hidden');
+    const open = detailRow.classList.contains('hidden') || detailRow.style.display === 'none';
+    detailRow.classList.toggle('hidden', !open);
+    detailRow.style.display = open ? '' : 'none';
     btn.querySelector('svg').innerHTML = open ? '<polyline points="18 15 12 9 6 15"/>' : '<polyline points="6 9 12 15 18 9"/>';
   }
 }

@@ -41,6 +41,15 @@
     text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
     box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
     pointer-events: auto;
+    max-height: calc(100vh - 32px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .delivery-tour-label > div:first-child {
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .delivery-tour-label button {
@@ -57,6 +66,9 @@
     text-shadow: none;
     box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
     transition: background-color 0.15s ease, transform 0.15s ease;
+    position: sticky;
+    bottom: 0;
+    align-self: flex-start;
   }
 
   .delivery-tour-label button:hover {
@@ -326,7 +338,6 @@
         </form>
         {{ manual_product_form('delivery', 'save-delivery-rso-form', 'delivery-tour-manual-form') }}
 
-        {% if delivery_data.status == 'none' %}
         <div id="delivery-tour-sample-card" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
           <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p class="text-xs font-medium text-emerald-700">Showing extracted RSO rows for review.</p>
@@ -375,7 +386,6 @@
             </table>
           </div>
         </div>
-        {% endif %}
         </div>
 
         <div id="delivery-tab-panel-bulk" class="delivery-tab-panel hidden space-y-3">
@@ -489,8 +499,7 @@
   </section>
 </div>
 
-{% if show_delivery_guide %}
-<div id="delivery-tour-start-modal" class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40" style="margin-top: 0;">
+<div id="delivery-tour-start-modal" class="fixed inset-0 z-[9999] items-center justify-center bg-black/40 {% if show_delivery_guide or request.args.get('guide') == '1' %}flex{% else %}hidden{% endif %}" style="margin-top: 0;">
   <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
     <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
       <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
@@ -522,7 +531,6 @@
     </div>
   </div>
 </div>
-{% endif %}
 
 <script>
   document.addEventListener('DOMContentLoaded', function() {
@@ -544,7 +552,9 @@
     const deliveryTabPanels = document.querySelectorAll('.delivery-tab-panel');
     const baseUrl = {{ url_for('views.store_manager_delivery')|tojson }};
     const rsoReceivedDraftKey = `deliveryRsoReceived:{{ store.id }}:{{ selected_report_date if selected_report_date else today }}`;
+    const deliveryTourCompletionKey = 'delivery-tour-completed-v2-store-{{ store.id }}';
     const shouldShowDeliveryTour = {{ show_delivery_guide|tojson }};
+    const isDeliveryGuideMode = {{ (request.args.get('guide') == '1')|tojson }};
     const initialDeliveryTab = {{ ('bulk' if bulk_data.status in ['draft', 'saved'] and delivery_data.status not in ['draft', 'saved'] else 'rso')|tojson }};
     const deliveryTourSampleCard = document.getElementById('delivery-tour-sample-card');
     let deliveryTourActive = false;
@@ -885,14 +895,16 @@
           topGap: 64,
           inlineAction: true,
           nextText: 'Next',
-          showSample: false
+          showSample: false,
+          prepare: function() { setDeliveryTab('bulk'); }
         },
         {
           elements: [document.getElementById('bulk-rso-scan-guide-target')],
           text: 'Click Scan BO RSO to extract the bulk order RSO rows for review.',
           placement: 'left',
           nextText: 'Next',
-          showSample: false
+          showSample: false,
+          prepare: function() { setDeliveryTab('bulk'); }
         },
         {
           elements: [document.getElementById('delivery-tour-manual-form')],
@@ -928,14 +940,16 @@
           placement: 'bottom-right',
           align: 'right',
           nextText: 'Next',
-          showSample: true
+          showSample: true,
+          prepare: function() { setDeliveryTab('rso'); }
         },
         {
           elements: [document.getElementById('delivery-tour-clear-target')],
           text: 'Use X to clear the extracted data if this is not the correct file.',
           placement: 'left',
           nextText: 'Next',
-          showSample: true
+          showSample: true,
+          prepare: function() { setDeliveryTab('rso'); }
         },
         {
           elements: [
@@ -948,14 +962,16 @@
           text: 'Check the Qty and use the check button when the received quantity matches.',
           placement: 'bottom',
           nextText: 'Next',
-          showSample: true
+          showSample: true,
+          prepare: function() { setDeliveryTab('rso'); }
         },
         {
           elements: [document.getElementById('delivery-tour-save-target')],
           text: 'Click Save Data when the reviewed rows are correct.',
           placement: 'bottom',
           nextText: 'Finish',
-          showSample: true
+          showSample: true,
+          prepare: function() { setDeliveryTab('rso'); }
         }
       ];
       return steps[deliveryTourStepIndex] || null;
@@ -1004,8 +1020,12 @@
         return;
       }
 
-      const rect = getDeliveryTourElementGroupRect(step.elements);
-      if (!rect) return;
+      const rect = getDeliveryTourElementGroupRect(step.elements) || {
+        top: Math.max(24, window.innerHeight / 2 - 40),
+        left: Math.max(16, window.innerWidth / 2 - 160),
+        right: Math.min(window.innerWidth - 16, window.innerWidth / 2 + 160),
+        bottom: Math.min(window.innerHeight - 24, window.innerHeight / 2 + 40)
+      };
 
       const panels = [
         { top: 0, left: 0, width: window.innerWidth, height: rect.top },
@@ -1065,14 +1085,26 @@
         label.style.top = `${Math.max(24, rect.top + Math.min(96, Math.max(0, (rect.bottom - rect.top) / 3)))}px`;
       }
       document.body.appendChild(label);
+
+      const labelRect = label.getBoundingClientRect();
+      const viewportMargin = 16;
+      const maxTop = Math.max(viewportMargin, window.innerHeight - labelRect.height - viewportMargin);
+      const maxLeft = Math.max(viewportMargin, window.innerWidth - labelRect.width - viewportMargin);
+      const requestedTop = Number.parseFloat(label.style.top) || viewportMargin;
+      const requestedLeft = Number.parseFloat(label.style.left) || viewportMargin;
+      label.style.top = `${Math.min(Math.max(requestedTop, viewportMargin), maxTop)}px`;
+      label.style.left = `${Math.min(Math.max(requestedLeft, viewportMargin), maxLeft)}px`;
     }
 
     function showDeliveryTourStep() {
-      const step = getDeliveryTourStep();
+      let step = getDeliveryTourStep();
       if (!step) {
         clearDeliveryTour();
         return;
       }
+
+      step.prepare?.();
+      step = getDeliveryTourStep();
 
       if (deliveryTourSampleCard) {
         deliveryTourSampleCard.classList.toggle('hidden', !step.showSample);
@@ -1093,11 +1125,24 @@
 
     function nextDeliveryTourStep() {
       deliveryTourStepIndex += 1;
+      if (!getDeliveryTourStep()) {
+        try {
+          window.localStorage.setItem(deliveryTourCompletionKey, '1');
+        } catch (error) {
+        }
+        clearDeliveryTour();
+        return;
+      }
       showDeliveryTourStep();
     }
 
     function startDeliveryTour(force = false) {
-      if (!force && !shouldShowDeliveryTour) return;
+      let tourCompleted = false;
+      try {
+        tourCompleted = window.localStorage.getItem(deliveryTourCompletionKey) === '1';
+      } catch (error) {
+      }
+      if (!force && (tourCompleted || !shouldShowDeliveryTour)) return;
       if (deliveryTourStartModal) {
         deliveryTourStartModal.remove();
       }
@@ -1105,6 +1150,14 @@
       deliveryTourActive = true;
       deliveryTourStepIndex = 0;
       showDeliveryTourStep();
+    }
+
+    try {
+      if (!isDeliveryGuideMode && window.localStorage.getItem(deliveryTourCompletionKey) === '1') {
+        deliveryTourStartModal?.remove();
+      }
+    } catch (error) {
+      // Keep the first-time guide available when browser storage is blocked.
     }
 
     function syncRsoDateFields() {
@@ -1253,9 +1306,13 @@
     document.querySelectorAll('.rso-row').forEach(updateRsoReceivedState);
 
     if (deliveryTourStartBtn) {
-      deliveryTourStartBtn.addEventListener('click', startDeliveryTour);
+      deliveryTourStartBtn.addEventListener('click', function() {
+        startDeliveryTour(isDeliveryGuideMode);
+      });
     } else if (shouldShowDeliveryTour) {
-      setTimeout(startDeliveryTour, 550);
+      setTimeout(function() {
+        startDeliveryTour(isDeliveryGuideMode);
+      }, 550);
     }
     if (deliveryTourHelpBtn) {
       deliveryTourHelpBtn.addEventListener('click', function() {
