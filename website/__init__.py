@@ -587,7 +587,16 @@ def create_app():
             'inventory_staff_stores': assigned_stores,
             'inventory_staff_selected_store_id': selected_id,
         }
-
+    
+    @app.context_processor
+    def get_theme():
+        def get_theme():
+            if 'theme' in session:
+                return session.get('theme')
+            return ""
+        return dict(get_theme=get_theme)
+    
+    
     @app.context_processor
     def inject_trans_in_pending_count():
         pending_trans_in_count = 0
