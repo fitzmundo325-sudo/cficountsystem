@@ -1,4 +1,4 @@
-﻿from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file, current_app
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file, current_app
 from flask_login import login_required, current_user
 from .models import (
     User,
@@ -3040,7 +3040,7 @@ def _build_taf_trans_in_quantity_by_master_id(store, transaction_date):
             TafTransferItem.received_quantity,
         )
         .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
-        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.coalesce(TafTransfer.received_date, TafTransfer.transaction_date) == transaction_date)
         .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
         .filter(func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name)
         .filter(func.lower(func.trim(TafTransfer.status)) != 'pending')
@@ -3081,11 +3081,10 @@ def _build_taf_transfer_trace(store, transaction_date, product_master_id, direct
     query = (
         db.session.query(TafTransferItem, TafTransfer)
         .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
-        .filter(TafTransfer.transaction_date == transaction_date)
         .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
     )
     if direction == 'out':
-        query = query.filter(TafTransfer.store_id == store.id)
+        query = query.filter(TafTransfer.store_id == store.id).filter(TafTransfer.transaction_date == transaction_date)
     elif direction == 'in':
         if not normalized_store_name:
             return [], 0
@@ -3093,6 +3092,8 @@ def _build_taf_transfer_trace(store, transaction_date, product_master_id, direct
             func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name
         ).filter(
             func.lower(func.trim(TafTransfer.status)) != 'pending'
+        ).filter(
+            func.coalesce(TafTransfer.received_date, TafTransfer.transaction_date) == transaction_date
         )
 
     transfer_rows = query.all()
@@ -5928,6 +5929,46 @@ def _sync_taf_wastage_inventory_for_store_date(store, transaction_date, affected
     db.session.flush()
 
 
+def _sync_taf_trans_in_inventory_for_store_date(store, target_date):
+    """Reconcile InvenSync trans_in_qty for a store/date from confirmed TAFs."""
+    if not store or not target_date:
+        return
+
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=target_date,
+    ).first()
+
+    trans_in_map = _build_taf_trans_in_quantity_by_master_id(store, target_date)
+    if not inventory:
+        if not trans_in_map:
+            return
+        inventory = DailyEndingInventory(
+            store_id=store.id,
+            inventory_date=target_date,
+            created_by=getattr(current_user, 'id', None)
+        )
+        db.session.add(inventory)
+        db.session.flush()
+
+    for item in inventory.items:
+        if not item.product_master_id:
+            continue
+        item.trans_in_qty = int(trans_in_map.get(item.product_master_id, 0) or 0)
+        _recalculate_inventory_item(item)
+
+    existing_pm_ids = {item.product_master_id for item in inventory.items if item.product_master_id}
+    for pm_id, qty in trans_in_map.items():
+        if pm_id not in existing_pm_ids and qty > 0:
+            product = ProductMaster.query.get(pm_id)
+            if product:
+                item = _find_or_create_inventory_item(inventory, pm_id, product.description)
+                item.trans_in_qty = qty
+                _recalculate_inventory_item(item)
+
+    db.session.flush()
+
+
 def _update_inventory_trans_in_on_receive(transfer, transfer_items, received_date=None):
     """Update invensync Trans-In quantity when transfer receiving is confirmed."""
     from datetime import date as date_type
@@ -5955,33 +5996,12 @@ def _update_inventory_trans_in_on_receive(transfer, transfer_items, received_dat
         return
 
     if received_date is None:
-        received_date = date_type.today()
+        received_date = getattr(transfer, 'received_date', None) or getattr(transfer, 'transaction_date', None) or date_type.today()
 
-    dest_inventory = DailyEndingInventory.query.filter_by(
-        store_id=dest_store.id,
-        inventory_date=received_date
-    ).first()
-    if not dest_inventory:
-        dest_inventory = DailyEndingInventory(
-            store_id=dest_store.id,
-            inventory_date=received_date,
-            created_by=getattr(transfer, 'submitted_by', None) or getattr(current_user, 'id', None)
-        )
-        db.session.add(dest_inventory)
-        db.session.flush()
-
-    for item in transfer_items:
-        item_name = str(getattr(item, 'item_name', '') or '').strip()
-        received_qty = int(getattr(item, 'received_quantity', None) or getattr(item, 'quantity', 0) or 0)
-        if not item_name or received_qty <= 0:
-            continue
-
-        product_master_id = _resolve_product_master_id(item_name)
-        dest_inventory_item = _find_or_create_inventory_item(
-            dest_inventory, product_master_id, item_name
-        )
-        dest_inventory_item.trans_in_qty = (dest_inventory_item.trans_in_qty or 0) + received_qty
-        _recalculate_inventory_item(dest_inventory_item)
+    _sync_taf_trans_in_inventory_for_store_date(dest_store, received_date)
+    sent_date = getattr(transfer, 'transaction_date', None)
+    if sent_date and sent_date != received_date:
+        _sync_taf_trans_in_inventory_for_store_date(dest_store, sent_date)
 
 
 def _parse_float(value, default=0.0):
@@ -9408,16 +9428,10 @@ def invensync():
                 inv_item.trans_out_qty = taf_trans_out_qty
 
     taf_trans_in_map = _build_taf_trans_in_quantity_by_master_id(store, selected_date)
-    if taf_trans_in_map:
-        for inv_item in inventory_items.values():
-            if not inv_item.product_master_id:
-                continue
-
-            taf_trans_in_qty = int(taf_trans_in_map.get(inv_item.product_master_id, 0) or 0)
-            if taf_trans_in_qty <= 0:
-                continue
-
-            inv_item.trans_in_qty = taf_trans_in_qty
+    for inv_item in inventory_items.values():
+        if not inv_item.product_master_id:
+            continue
+        inv_item.trans_in_qty = int(taf_trans_in_map.get(inv_item.product_master_id, 0) or 0)
 
     # Wastage uses the quantity sent on the TAF immediately. Pending transfers
     # are included, and assigning the calculated total prevents a later receive
