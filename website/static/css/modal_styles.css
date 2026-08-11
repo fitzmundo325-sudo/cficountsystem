@@ -1,0 +1,133 @@
+.ns_modal_container_standard {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+	background:rgba(0,0,0,0.1);
+	font-family:inherit;
+	z-index:99;
+}
+
+.ns_modal_icon {
+    padding: 10px;
+    border-radius: 100%;
+	display:block;
+	text-align:center;
+    /* width: 50px; */
+    /* height: 50px; */
+    aspect-ratio: 1/1;
+		font-size:2em !important;
+}
+
+.ns_modal_content {
+	min-width:300px;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background-color: var(--primary_background);
+    color: var(--primary_color);
+    text-align: center;
+    border-radius: 6px;
+    padding: 30px 30px 70px;
+	box-shadow:0px 0px 5px 5px rgba(145,145,145, 0.03);
+}
+
+.custom_modal_ns > .choices_button,
+.ns_modal_content > .choices_button {
+    display: flex;
+	align-items:center;
+	justify-content:center;
+	gap:10px;
+	flex-wrap:wrap;
+	width:100%;
+}
+
+.custom_modal_ns{
+	width:100%;
+}
+
+
+
+.ns_cookiesContent img {
+    width: 82px;
+    margin-bottom: 15px;
+}
+
+.ns_cookiesContent p {
+    margin-bottom: 40px;
+    font-size: 18px;
+}
+
+button{
+	cursor:pointer;
+}
+
+button.ns_button {
+    background-color: var(--secondary_background);
+    border: none;
+    border-radius: 5px;
+    padding: 14px;
+    font-size: 16px;
+    color: white;
+	width:100%;
+	max-width:90px;
+	white-space:nowrap;
+	font-size:12px;
+	
+	font-family:inherit;
+	
+}
+
+.ns_fields{
+	width:100%;
+	min-height:30px;
+	padding:5px;
+	background:var(--primary_background);
+	margin:5px;
+	outline:0px solid transparent;
+	border:solid gray 1px;
+	border-radius:5px;
+	-webkit-transition:0.3s;
+	transition:0.3s;
+
+}
+
+.ns_fields:focus{
+	box-shadow:0px 0px 3px 3px rgba(60,60,60,0.08);
+	outline:1px solid var(--secondary_background);
+	
+}
+
+button.ns_close {
+    background-color: var(--secondary_background);
+    border: none;
+    border-radius: 5px;
+    padding: 14px;
+    font-size: 16px;
+    color: white;
+	width:100%;
+	max-width:90px;
+	white-space:nowrap;
+	font-size:12px;
+	
+}
+
+button.ns_button.cancel{
+    background-color: var(--primary_background_darker);
+	color:var(--primary_color);
+	
+}
+
+
+button.ns_button:hover, button.ns_close:hover, button.ns_button.cancel:hover{
+	opacity:0.6;
+	
+}
+
+
+
