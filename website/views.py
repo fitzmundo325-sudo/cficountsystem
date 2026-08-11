@@ -10786,3 +10786,15 @@ def create_store_supply_request():
 
 
 
+@views.route('/set_theme', methods=['POST'])
+def themes():
+    theme = request.form.get("theme")
+
+    if 'theme' not in session:
+        session['theme'] = theme
+
+    session['theme'] = theme
+
+    return theme
+
+
