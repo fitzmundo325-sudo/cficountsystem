@@ -502,6 +502,7 @@ class StoreProductBuffer(db.Model):
     
     
 class ProductChangesEventsLog(db.Model):
+    #To Be removed - Outdated of ProductPriceChangeLog
     __tablename__ = 'product_changes_events_log'
     id = db.Column(db.Integer, primary_key=True)
     product_id = db.Column(db.Integer, db.ForeignKey('product_master.id'), nullable=False, index=True)
@@ -514,7 +515,8 @@ class ProductChangesEventsLog(db.Model):
 
 
 class ProductPriceChangeLog(db.Model):
-    """Price change history for the TP / SP_P / SP_NP price columns."""
+    # Price change history for the TP / SP_P / SP_NP price columns.
+    
     __tablename__ = 'product_price_change_log'
     id = db.Column(db.Integer, primary_key=True)
     product_id = db.Column(db.Integer, db.ForeignKey('product_master.id'), nullable=False, index=True)

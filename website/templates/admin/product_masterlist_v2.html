@@ -49,9 +49,9 @@
     <div class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
       <h2 class="text-lg font-bold text-slate-900">Product Masterlist Preview</h2>
       <div class="flex gap-2">
-        <input id="product-live-search" type="text" placeholder="Search code, description, category, sub category, TP, prices, shelf life" 
+        <input id="product-live-search" type="search" placeholder="Search code, description, category, sub category, TP, prices, shelf life" 
 		
-		class="px-3 py-2 text-sm border border-slate-300 rounded-lg w-72 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
+		class="px-3 py-2 text-sm border border-slate-300 rounded-lg w-72 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors no_outline"
 		
 		oninput="delayedQuerry(true)"
 		
@@ -290,7 +290,7 @@
 <script>
   // ── Declarations ──────────────────────────────────────────
   let addProductUrl  = '{{ url_for("admin.add_product") }}';
-  let deleteProductUrl = '{{ url_for("admin.delete_product", product_id=0) }}';
+  let deleteProductUrl = '{{ url_for("api_handles.delete_product_master", product_id=0) }}';
 
   let addProductModal;
 </script>

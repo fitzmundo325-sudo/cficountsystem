@@ -103,6 +103,17 @@ var ajax_request = new XMLHttpRequest();
 function monitorThemeChange(){
 	let saved = localStorage.getItem('theme_mode');
 	
+	//modified
+	
+	let adminTheme = localStorage.getItem("adminTheme");
+	
+	if(adminTheme == "dark" && saved == "normal"){
+		saved = adminTheme;
+	}	
+	
+	if(adminTheme == "light" && saved == "dark"){
+		saved = "normal";
+	}
 	
 	if(current_theme != saved){
 		try{
