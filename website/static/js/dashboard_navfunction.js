@@ -26,6 +26,8 @@ function showProductMasterList(elm){
 	closeAllPages(page,true);
 	hideDashboardContents(true);
 	
+
+	
 }
 
 
@@ -86,5 +88,18 @@ function closeAllPages(exclude=undefined,retain_elements=false){
 		
 	}
 	
+	try{
+		closeSidebar();
+	}catch(e){
+		//---
+	}
+	
 }
 
+
+
+	
+
+function closeSidebar(){
+	document.documentElement.classList.remove('sidebar-open');
+}
