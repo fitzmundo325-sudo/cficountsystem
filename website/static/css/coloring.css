@@ -1,0 +1,110 @@
+
+:root {
+  --primary_background: #efefef;
+  --primary_background_faded: #efefef35;
+  --primary_background_darker: #e3e3e3;
+  --primary_color: rgba(40,40,40,1);
+  --primary_color_faded: rgba(40,40,40,0.6);
+  --primary_color_invert: rgba(254,254,255,1);
+  --secondary_color: #ffdca8;
+  --secondary_color_faded: #ff980088;
+  --secondary_color_darker: #f5c800;
+  --third_color_faded: rgba(24,24,24,0.30);
+  --third_much_faded: rgba(24,24,24,0.05);
+  
+  --secondary_background: #ffb637;
+  --accent_color:#D6BC3D;
+  --error_color: #e91e63;
+  /* Extra Colors */
+  --secondary_color_faded1: #ffbe4560;
+  --secondary_color_faded2: #61ff5c60;
+  --failed_color_faded: #e91e63a0;
+  
+  /* BGs */
+  
+  --bg_src: url('../images/mosiac_light.webp');
+
+}
+
+
+*::-moz-selection { /* Code for Firefox */
+  color: rgba(230,230,230,1);
+  background: rgba(0,180,50,0.7);
+  border-radius:4px;
+}
+
+*::selection {
+  color: var(--primary_color_invert);
+  background: var(--secondary_color);
+  border-radius:4px;
+}
+
+
+
+
+.primary_color::placeholder { /* Chrome, Firefox, Opera, Safari 10.1+ */
+  color: var(--primary_color);
+  opacity: 0.6; /* Firefox */
+}
+
+
+
+.primary_color{
+	color: var(--primary_color)!important;
+	
+}
+
+.primary_color_invert{
+	color: var(--primary_color_invert);
+	
+}
+
+.secondary_color{
+	color:var(--secondary_color);
+	
+}
+
+.outline_only_bg{
+	background:rgba(0,0,0,0.0) ;
+	border:solid rgba(45,45,45,0.5) 1px !important;
+}
+
+.primary_background{
+	background-color:var(--primary_background);
+}
+.primary_background_darker{
+	background-color:var(--primary_background_darker);
+}
+
+.secondary_background{
+	background-color:var(--secondary_background);
+}
+
+
+.third_background_faded{
+	background-color:var(--third_color_faded);
+	
+	
+}
+
+
+
+.secondary_background_gradient{
+	background-color:var(--secondary_background);
+	background: #028090;
+	background: -webkit-linear-gradient(90deg,var(--secondary_background) 0%, var(--secondary_color) 100%);
+	background: -moz-linear-gradient(90deg,var(--secondary_background) 0%, var(--secondary_color) 100%);
+	background: linear-gradient(90deg,var(--secondary_background) 0%, var(--secondary_color) 100%);
+}
+
+
+
+
+.profile_page_con{
+	
+	border-right:var(--secondary_background);
+	
+}
+
+
+
