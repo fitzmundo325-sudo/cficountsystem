@@ -397,29 +397,45 @@ body.scrollbar-active::-webkit-scrollbar,
 
 
 
-th.sortable::after {
-    content: " ⇅";
+th.sortable::before {
+    content: "⇅ ";
     font-size: 1em;
     padding-left: 5px;
     cursor: pointer;
     opacity: 0.4;
     user-select: none;
-	float:right;
+	/* float:right; */
 	bottom:0px;
 }
 
-th.sortable[sort-order="asc"]::after {
-    content: " ↑";
+th.sortable[sort-order="asc"]::before {
+    content: "↑ ";
     opacity: 0.8;
 }
 
-th.sortable[sort-order="desc"]::after {
-    content: " ↓";
+th.sortable[sort-order="desc"]::before {
+    content: "↓ ";
     opacity: 0.8;
+}
+th.sortable {
+    min-width: 120px;
+    white-space: nowrap;        
+    overflow: hidden;           
+    text-overflow: ellipsis;  
+    max-width: 200px;   
+	cursor:pointer;	
+}
+
+th.sortable:hover {
+	opacity:0.8;
 }
 
 .relative{
 	position:relative;
+}
+
+.no_outline{
+	outline:none;
 }
 
 
