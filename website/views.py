@@ -6410,10 +6410,7 @@ def store_manager_incoming_transfers():
         flash('You are not assigned to any store yet.', category='error')
         return redirect(url_for('views.home'))
 
-    if role == 'Inventory Staff':
-        candidate_stores = _inventory_staff_assigned_stores() or [store]
-    else:
-        candidate_stores = [store]
+    candidate_stores = [store]
     incoming_transfers = _collect_incoming_transfers_for_stores(candidate_stores)
 
     transfer_ids = [transfer.id for transfer in incoming_transfers]
@@ -6807,10 +6804,7 @@ def store_manager_outgoing_transfers():
         flash('You are not assigned to any store yet.', category='error')
         return redirect(url_for('views.home'))
 
-    if role == 'Inventory Staff':
-        candidate_store_ids = [s.id for s in (_inventory_staff_assigned_stores() or [store])]
-    else:
-        candidate_store_ids = [store.id]
+    candidate_store_ids = [store.id]
 
     outgoing_transfers = (
         TafTransfer.query
@@ -6944,10 +6938,7 @@ def store_manager_wastage():
         flash('You are not assigned to any store yet.', category='error')
         return redirect(url_for('views.home'))
 
-    if role == 'Inventory Staff':
-        candidate_stores = _inventory_staff_assigned_stores() or [store]
-    else:
-        candidate_stores = [store]
+    candidate_stores = [store]
     wastage_transfers = _collect_wastage_transfers_for_stores(candidate_stores)
 
     editable_wastage_ids = set()
