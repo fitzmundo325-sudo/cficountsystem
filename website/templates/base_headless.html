@@ -17,7 +17,15 @@
       }
     } catch (error) {}
   </script>
-
+	
+	{% if get_theme() == 'dark' %}
+	<link  id='theme' rel="stylesheet" href="{{ url_for('static', filename='css/coloring_dark.css') }}">
+	{% else %}
+	<link  id='theme' rel="stylesheet" href="{{ url_for('static', filename='css/coloring.css') }}">
+	
+	{% endif %}	
+	
+  <script src="{{ url_for('static', filename='js/light_dark.js') }}"> </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
@@ -33,7 +41,7 @@
       const resetTimer = () => {
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
-          window.location.replace('{{ url_for("auth.logout") }}');
+         // window.location.replace('{{ url_for("auth.logout") }}');
         }, timeoutSeconds * 1000);
       };
 
@@ -48,6 +56,12 @@
   <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
   <link href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" rel="stylesheet">
+
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/modal_styles.css') }}">
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/modal_views.css') }}">
+	
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/font-awesome.css') }}">
+
 
   <style>
     html, body {
@@ -350,7 +364,8 @@
   {% endwith %}
 
 
-<script src="{{ url_for('static', filename='js/request_builder.js') }}?v=scrollbar-fade-1"></script>
+<script src="{{ url_for('static', filename='js/utilities.js') }}"></script>
+<script src="{{ url_for('static', filename='js/request_builder.js') }}"></script>
 
 <script>
 	qBuilder.server_address = "_";

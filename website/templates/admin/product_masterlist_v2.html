@@ -22,7 +22,7 @@
   </div>
 </header>
 
-<div class="p-6 md:p-8 bg-slate-50 min-h-screen space-y-6">
+<div class="p-6 md:p-8 bg-slate-50 min-h-screen space-y-6 relative">
   <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
       <div>
@@ -49,24 +49,39 @@
     <div class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
       <h2 class="text-lg font-bold text-slate-900">Product Masterlist Preview</h2>
       <div class="flex gap-2">
-        <input id="product-live-search" type="text" placeholder="Search code, description, category, sub category, TP, prices, shelf life" class="px-3 py-2 text-sm border border-slate-300 rounded-lg w-72 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+        <input id="product-live-search" type="search" placeholder="Search code, description, category, sub category, TP, prices, shelf life" 
+		
+		class="px-3 py-2 text-sm border border-slate-300 rounded-lg w-72 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors no_outline"
+		
+		oninput="delayedQuerry(true)"
+		
+		>
       </div>
     </div>
 
     <div id="product-table-scroll" class="overflow-x-auto">
       <table class="w-full">
-        <thead class="bg-slate-50 border-b border-slate-200">
+        <thead class="bg-slate-50 border-b border-slate-200 sticky_header_top">
           <tr>
-            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Code</th>
-            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Description</th>
-            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Category</th>
-            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Sub Category</th>
-            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">TP</th>
-            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">SP_P</th>
-            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">SP_T</th>
-            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Shelf Life</th>
-            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Updated</th>
-            <th class="px-6 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider">Actions</th>
+			<th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sortable" onclick="sortByThis(this)" sortname="code">Code</th>
+			
+			<th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sortable" onclick="sortByThis(this)" sortname="description">Description</th>
+			
+			<th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sortable" onclick="sortByThis(this)" sortname="category">Category</th>
+			
+			<th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sortable" onclick="sortByThis(this)" sortname="sub_category">Sub Category</th>
+			
+			<th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sortable" onclick="sortByThis(this)" sortname="tp">TP</th>
+			
+			<th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sortable" onclick="sortByThis(this)" sortname="sp_p">SP_P</th>
+			
+			<th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sortable" onclick="sortByThis(this)" sortname="sp_np">SP_T</th>
+			
+			<th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sortable" onclick="sortByThis(this)" sortname="shelf_life">Shelf Life</th>
+			
+			<th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sortable" onclick="sortByThis(this)" sortname="created_at">Updated</th>
+			
+            <th class="px-6 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider sticky_column_right primary_background">Actions</th>
           </tr>
         </thead>
         <tbody id="product-table-body" class="divide-y divide-slate-100">
@@ -80,20 +95,23 @@
         </tbody>
       </table>
 
-      <!-- Pagination -->
-      <div id="product-pagination" class="flex items-center justify-between px-6 py-3 border-t border-slate-200 bg-slate-50 hidden">
-        <span id="pagination-info" class="text-xs text-slate-500"></span>
-        <div class="flex gap-2">
-          <button id="pagination-prev" class="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Previous</button>
-          <button id="pagination-next" class="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Next</button>
-        </div>
-      </div>
+
     </div>
+	
+
+	
   </div>
+  
+  	
+	      <!-- Pagination -->
+      <div id="paginations" class="pagination">
+
+      </div>
+  
 </div>
 
 <!-- ═══════════════════════════════════════════════
-     TEMPLATES (not rendered, cloned by JS)
+     TEMPLATES section
 ════════════════════════════════════════════════ -->
 
 <!-- Product Row Template -->
@@ -125,7 +143,7 @@
     <td class="px-6 py-3 text-sm text-slate-700" data-cell="sp_np"></td>
     <td class="px-6 py-3 text-sm text-slate-700" data-cell="shelf_life"></td>
     <td class="px-6 py-3 text-xs text-slate-500" data-cell="updated_at"></td>
-    <td class="px-6 py-3">
+    <td class="px-6 py-3 sticky_column_right primary_background">
       <div class="flex items-center justify-center gap-2">
         <button type="button" class="edit-product-btn inline-flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-colors" title="Edit Product" aria-label="Edit Product">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -142,6 +160,15 @@
             <line x1="14" x2="14" y1="11" y2="17" />
           </svg>
         </button>
+		
+		<button type="button" class="inline-flex items-center justify-center w-8 h-8 rounded-lg primary_background secondary_color hover:bg-yellow-200 transition-colors" title="Chart Trends" aria-label="Chart Trends">
+			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+			  <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
+			  <polyline points="16 7 22 7 22 13" />
+			  <circle cx="8.5" cy="12" r="1.8" fill="currentColor" stroke="white" />
+			</svg>
+		</button>
+				
       </div>
     </td>
   </tr>
@@ -269,323 +296,18 @@
   </div>
 </div>
 
-
 <script>
-(function () {
-  // ── State ─────────────────────────────────────────────────
-  let currentPage = 1;
-  let totalPages  = 1;
-  let totalResults = 0;
-  let searchDebounce = null;
+  // ── Declarations ──────────────────────────────────────────
+  let addProductUrl  = '{{ url_for("admin.add_product") }}';
+  let deleteProductUrl = '{{ url_for("api_handles.delete_product_master", product_id=0) }}';
 
-  // ── DOM refs ──────────────────────────────────────────────
-  const tbody       = document.getElementById('product-table-body');
-  const tmplRow     = document.getElementById('tmpl-product-row');
-  const emptyRow    = document.getElementById('product-empty-row');
-  const loadingRow  = document.getElementById('product-loading-row');
-  const searchInput = document.getElementById('product-live-search');
-  const pagination  = document.getElementById('product-pagination');
-  const paginationInfo = document.getElementById('pagination-info');
-  const prevBtn     = document.getElementById('pagination-prev');
-  const nextBtn     = document.getElementById('pagination-next');
-  const totalCount  = document.getElementById('total-products-count');
-
-  // ── Fetch ─────────────────────────────────────────────────
-  function fetchProducts(page = 1) {
-    loadingRow.classList.remove('hidden');
-    emptyRow.classList.add('hidden');
-    clearRows();
-
-    const form = new FormData();
-    form.append('page', page);
-    if (searchInput.value.trim()) {
-      form.append('search', searchInput.value.trim());
-    }
-
-    fetch('/api/product_masterlist', { method: 'POST', body: form })
-      .then(r => r.json())
-      .then(data => {
-        loadingRow.classList.add('hidden');
-        if (data.type !== 'success') {
-          toast.error(data.message || 'Failed to load products.');
-          return;
-        }
-        currentPage  = data.pagination_data.current_page;
-        totalPages   = data.pagination_data.total_pages;
-        totalResults = data.pagination_data.total_results;
-
-        totalCount.textContent = totalResults;
-        renderRows(data.products);
-        renderPagination();
-      })
-      .catch(() => {
-        loadingRow.classList.add('hidden');
-        toast.error('Error loading products.');
-      });
-  }
-
-  // ── Render rows ───────────────────────────────────────────
-  function fmt(val) {
-    return (val !== null && val !== undefined) ? parseFloat(val).toFixed(2) : '-';
-  }
-
-  function renderRows(products) {
-    if (!products.length) {
-      emptyRow.classList.remove('hidden');
-      return;
-    }
-
-    const frag = document.createDocumentFragment();
-    products.forEach(p => {
-      const clone = tmplRow.content.cloneNode(true);
-      const tr    = clone.querySelector('tr');
-
-      // Store data on row for edit modal
-      tr.dataset.productId   = p.id;
-      tr.dataset.productData = JSON.stringify(p);
-
-      clone.querySelector('[data-cell="code"]').textContent          = p.code ?? '-';
-      clone.querySelector('[data-cell="description-text"]').textContent = p.description ?? '-';
-      clone.querySelector('[data-cell="category"]').textContent      = p.category ?? '-';
-      clone.querySelector('[data-cell="sub_category"]').textContent  = p.sub_category || '-';
-      clone.querySelector('[data-cell="tp"]').textContent            = fmt(p.tp);
-      clone.querySelector('[data-cell="sp_p"]').textContent          = fmt(p.sp_p);
-      clone.querySelector('[data-cell="sp_np"]').textContent         = fmt(p.sp_np);
-      clone.querySelector('[data-cell="shelf_life"]').textContent    = p.shelf_life || '-';
-      clone.querySelector('[data-cell="updated_at"]').textContent    = p.updated_at ?? '-';
-
-      // Aliases
-      const aliasLabel = clone.querySelector('[data-cell="alias-label"]');
-      const aliasList  = clone.querySelector('[data-cell="alias-list"]');
-      if (p.aliases && p.aliases.length) {
-        aliasLabel.textContent = 'Aliases';
-        aliasList.textContent  = p.aliases.map(a => a.alias_name).join(', ');
-      } else {
-        aliasLabel.textContent = '';
-        aliasList.textContent  = 'No linked aliases yet.';
-        aliasList.classList.add('text-slate-500');
-      }
-
-      // Button data
-      clone.querySelector('.edit-product-btn').dataset.productId   = p.id;
-      clone.querySelector('.delete-product-btn').dataset.productId  = p.id;
-      clone.querySelector('.delete-product-btn').dataset.productName = p.description;
-
-      frag.appendChild(clone);
-    });
-
-    tbody.appendChild(frag);
-    initAliasDropdowns();
-  }
-
-  function clearRows() {
-    Array.from(tbody.querySelectorAll('.product-row')).forEach(r => r.remove());
-  }
-
-  // ── Pagination UI ─────────────────────────────────────────
-  function renderPagination() {
-    if (totalPages <= 1) {
-      pagination.classList.add('hidden');
-      return;
-    }
-    pagination.classList.remove('hidden');
-    paginationInfo.textContent = `Page ${currentPage} of ${totalPages} (${totalResults} products)`;
-    prevBtn.disabled = currentPage <= 1;
-    nextBtn.disabled = currentPage >= totalPages;
-  }
-
-  prevBtn.addEventListener('click', () => { if (currentPage > 1) fetchProducts(currentPage - 1); });
-  nextBtn.addEventListener('click', () => { if (currentPage < totalPages) fetchProducts(currentPage + 1); });
-
-  // ── Search ────────────────────────────────────────────────
-  searchInput.addEventListener('input', () => {
-    clearTimeout(searchDebounce);
-    searchDebounce = setTimeout(() => fetchProducts(1), 350);
-  });
-
-  // ── Alias dropdowns (re-bound after each render) ──────────
-  function initAliasDropdowns() {
-    const triggers  = Array.from(tbody.querySelectorAll('.alias-dropdown-trigger'));
-    const dropdowns = Array.from(tbody.querySelectorAll('.alias-dropdown'));
-
-    function closeAll() {
-      dropdowns.forEach(d => d.classList.add('hidden'));
-      triggers.forEach(t => t.setAttribute('aria-expanded', 'false'));
-    }
-
-    triggers.forEach(trigger => {
-      trigger.addEventListener('click', e => {
-        e.preventDefault();
-        e.stopPropagation();
-        const dropdown = trigger.closest('td').querySelector('.alias-dropdown');
-        if (!dropdown) return;
-        const isOpen = !dropdown.classList.contains('hidden');
-        closeAll();
-        if (!isOpen) {
-          dropdown.classList.remove('hidden');
-          trigger.setAttribute('aria-expanded', 'true');
-        }
-      });
-    });
-  }
-
-  document.addEventListener('click', e => {
-    if (!e.target.closest('.alias-dropdown') && !e.target.closest('.alias-dropdown-trigger')) {
-      document.querySelectorAll('.alias-dropdown').forEach(d => d.classList.add('hidden'));
-    }
-  });
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') document.querySelectorAll('.alias-dropdown').forEach(d => d.classList.add('hidden'));
-  });
-
-  // ── Edit button (delegated) ───────────────────────────────
-  document.addEventListener('click', function (e) {
-    const editBtn = e.target.closest('.edit-product-btn');
-    if (!editBtn) return;
-
-    const row = editBtn.closest('tr');
-    const p   = JSON.parse(row.dataset.productData);
-
-    document.getElementById('edit-product-id').value           = p.id;
-    document.getElementById('edit-product-code').value         = p.code ?? '';
-    document.getElementById('edit-product-description').value  = p.description ?? '';
-    document.getElementById('edit-product-category').value     = p.category ?? '';
-    document.getElementById('edit-product-sub-category').value = p.sub_category ?? '';
-    document.getElementById('edit-product-tp').value           = p.tp ?? '';
-    document.getElementById('edit-product-sp-p').value         = p.sp_p ?? '';
-    document.getElementById('edit-product-sp-np').value        = p.sp_np ?? '';
-    document.getElementById('edit-product-shelf-life').value   = p.shelf_life ?? '';
-
-    editProductModal.open();
-  });
-
-  // ── Delete button (delegated) ─────────────────────────────
-  document.addEventListener('click', function (e) {
-    const deleteBtn = e.target.closest('.delete-product-btn');
-    if (!deleteBtn) return;
-
-    const productId   = deleteBtn.dataset.productId;
-    const productName = deleteBtn.dataset.productName;
-
-    const doDelete = () => {
-      fetch(`{{ url_for("admin.delete_product", product_id=0) }}`.replace('0', productId), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      })
-        .then(r => r.json())
-        .then(result => {
-          if (result.success) {
-            toast.success('Product deleted successfully');
-            fetchProducts(currentPage);
-          } else {
-            toast.error('Error: ' + (result.message || 'Failed to delete product'));
-          }
-        })
-        .catch(() => toast.error('Error deleting product. Please try again.'));
-    };
-
-    if (typeof showConfirmationModal === 'function') {
-      showConfirmationModal({
-        title: 'Delete Product',
-        message: `Are you sure you want to delete "${productName}"? This action cannot be undone.`,
-        confirmText: 'Yes, Delete',
-        cancelText: 'Cancel',
-        onConfirm: doDelete,
-      });
-    } else {
-      if (confirm(`Are you sure you want to delete "${productName}"? This action cannot be undone.`)) {
-        doDelete();
-      }
-    }
-  });
-
-  // ── Add Product ───────────────────────────────────────────
-  document.getElementById('add-product-btn').addEventListener('click', () => addProductModal.open());
-
-  document.getElementById('addProductForm').addEventListener('submit', function (e) {
-    e.preventDefault();
-    const code        = document.getElementById('product-code');
-    const description = document.getElementById('product-description');
-    const category    = document.getElementById('product-category');
-
-    if (!code.value.trim())        { addProductModal.shakeElement(code);        toast.error('Please enter a product code!');  return; }
-    if (!description.value.trim()) { addProductModal.shakeElement(description); toast.error('Please enter a description!');   return; }
-    if (!category.value.trim())    { addProductModal.shakeElement(category);    toast.error('Please enter a category!');      return; }
-
-    const data = {
-      code:        code.value.trim(),
-      description: description.value.trim(),
-      category:    category.value.trim(),
-      sub_category:document.getElementById('product-sub-category').value.trim(),
-      tp:          parseFloat(document.getElementById('product-tp').value),
-      sp_p:        parseFloat(document.getElementById('product-sp-p').value),
-      sp_np:       parseFloat(document.getElementById('product-sp-np').value),
-      shelf_life:  document.getElementById('product-shelf-life').value.trim(),
-    };
-
-    fetch('{{ url_for("admin.add_product") }}', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-      .then(r => r.json())
-      .then(result => {
-        if (result.success) { addProductModal.close(); fetchProducts(currentPage); }
-        else toast.error('Error: ' + (result.message || 'Failed to add product'));
-      })
-      .catch(() => toast.error('Error adding product. Please try again.'));
-  });
-
-  // ── Edit Product submit ───────────────────────────────────
-  document.getElementById('editProductForm').addEventListener('submit', function (e) {
-    e.preventDefault();
-    const productId   = document.getElementById('edit-product-id').value;
-    const code        = document.getElementById('edit-product-code');
-    const description = document.getElementById('edit-product-description');
-    const category    = document.getElementById('edit-product-category');
-
-    if (!code.value.trim())        { editProductModal.shakeElement(code);        toast.error('Please enter a product code!'); return; }
-    if (!description.value.trim()) { editProductModal.shakeElement(description); toast.error('Please enter a description!');  return; }
-    if (!category.value.trim())    { editProductModal.shakeElement(category);    toast.error('Please enter a category!');     return; }
-
-    const data = {
-      code:        code.value.trim(),
-      description: description.value.trim(),
-      category:    category.value.trim(),
-      sub_category:document.getElementById('edit-product-sub-category').value.trim(),
-      tp:          parseFloat(document.getElementById('edit-product-tp').value),
-      sp_p:        parseFloat(document.getElementById('edit-product-sp-p').value),
-      sp_np:       parseFloat(document.getElementById('edit-product-sp-np').value),
-      shelf_life:  document.getElementById('edit-product-shelf-life').value.trim(),
-    };
-
-    fetch(`{{ url_for("admin.edit_product", product_id=0) }}`.replace('0', productId), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-      .then(r => r.json())
-      .then(result => {
-        if (result.success) { editProductModal.close(); fetchProducts(currentPage); }
-        else toast.error('Error: ' + (result.message || 'Failed to update product'));
-      })
-      .catch(() => toast.error('Error updating product. Please try again.'));
-  });
-
-  // ── Horizontal scroll (Alt+wheel) ────────────────────────
-  document.getElementById('product-table-scroll').addEventListener('wheel', function (e) {
-    if (e.altKey) {
-      e.preventDefault();
-      this.scrollLeft += e.deltaY > 0 ? 50 : -50;
-    }
-  });
-
-  // ── Init ──────────────────────────────────────────────────
-  const addProductModal  = new Modal('addProductModal');
-  const editProductModal = new Modal('editProductModal');
-
-  fetchProducts(1);
-})();
+  let addProductModal;
 </script>
+
+
+
+<script defer src="{{ url_for('static', filename='js/handles/product_masterlist_handles.js') }}"></script>
+
+
 
 {% endblock %}
