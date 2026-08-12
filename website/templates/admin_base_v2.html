@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="application-name" content="iDashboard">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="iDashboard">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>{% block title %}{% endblock %} - Admin Panel</title>
+
+  <!-- Dark mode applied before paint to avoid flash -->
+  <script>
+    try {
+      if (localStorage.getItem('adminTheme') === 'dark') {
+        document.documentElement.classList.add('admin-dark');
+      }
+    } catch (e) {}
+  </script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="{{ url_for('static', filename='js/utilities.js') }}"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+
+  <!-- Session idle timeout -->
+  <script>
+    (function () {
+      const isAuthenticated = {{ 'true' if current_user.is_authenticated else 'false' }};
+      if (!isAuthenticated) return;
+      const timeoutSeconds = Number('{{ config.get("SESSION_IDLE_TIMEOUT_SECONDS", 3600) }}') || 3600;
+      let idleTimer;
+      const resetTimer = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          <!-- window.location.replace('{{ url_for("auth.logout") }}'); -->
+        }, timeoutSeconds * 1000);
+      };
+      ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll', 'click'].forEach(ev => {
+        document.addEventListener(ev, resetTimer, { passive: true });
+      });
+      resetTimer();
+    })();
+  </script>
+
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+  <link href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" rel="stylesheet">
+
+  <style>
+    /* ─── Reset ─────────────────────────────────────────────── */
+    html, body { margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; }
+	
+	html, body, * {
+    /* scrollbar-color: transparent transparent;
+     scrollbar-gutter: unset;
+	 */
+
+	}
+	
+	
+    /* ─── Sidebar hidden scrollbar ───────────────────────────── */
+    #sidebar nav.custom-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    #sidebar nav.custom-scrollbar::-webkit-scrollbar,
+    #sidebar nav.custom-scrollbar::-webkit-scrollbar-button { display: none !important; width: 0 !important; height: 0 !important; }
+
+    /* ─── Sidebar width / collapse transition ────────────────── */
+    :root { --sidebar-w: 256px; }
+    #sidebar {
+      width: var(--sidebar-w);
+      transition: transform 0.25s ease, width 0.25s ease;
+    }
+
+    /* Collapsed desktop state */
+    html.sidebar-collapsed #sidebar { width: 72px; }
+    html.sidebar-collapsed #sidebar .nav-label,
+    html.sidebar-collapsed #sidebar .logo-text,
+    html.sidebar-collapsed #sidebar .user-info,
+    html.sidebar-collapsed #sidebar .store-scope-btn + .store-scope-btn,
+    html.sidebar-collapsed #sidebar textarea,
+    html.sidebar-collapsed #sidebar p.nav-label { display: none !important; }
+    html.sidebar-collapsed #sidebar .store-scope-section { display: none !important; }
+    html.sidebar-collapsed #sidebar nav { padding-left: 0.5rem; padding-right: 0.5rem; }
+    html.sidebar-collapsed #sidebar .nav-item,
+    html.sidebar-collapsed #sidebar .nav-item-group > button { justify-content: center; padding: 0.75rem; }
+    html.sidebar-collapsed #sidebar .nav-item gap-4,
+    html.sidebar-collapsed #sidebar .nav-item { gap: 0; }
+    html.sidebar-collapsed #main-content { margin-left: 72px !important; }
+    html.sidebar-collapsed #toggle-desktop svg { transform: rotate(180deg); }
+
+    /* Mobile: sidebar off-canvas by default, overlays when open */
+    @media (max-width: 1023px) {
+      #sidebar { transform: translateX(-100%); }
+      html.sidebar-open #sidebar { transform: translateX(0); }
+      #main-content { margin-left: 0 !important; }
+    }
+
+    /* ─── Main content transition ────────────────────────────── */
+    #main-content {
+      margin-left: var(--sidebar-w);
+      transition: margin-left 0.25s ease;
+      min-height: 100vh;
+    }
+
+    /* ─── Page shell / content area ─────────────────────────── */
+    .app-page-shell {
+      width: 100%;
+      max-width: 2400px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 1rem 1rem 1.5rem;
+      overflow-x: hidden;
+    }
+    @media (min-width: 768px) {
+      .app-page-shell { padding-left: 1.5rem; padding-right: 1.5rem; }
+    }
+
+    /* ─── Dark mode ──────────────────────────────────────────── */
+    html.admin-dark { color-scheme: dark; }
+    html.admin-dark body,
+    html.admin-dark #main-content { background-color: #020617 !important; color: #e2e8f0; }
+
+    html.admin-dark #sidebar { background-color: #172554 !important; border-color: #1e3a8a !important; }
+    html.admin-dark #sidebar > div,
+    html.admin-dark #sidebar .border-slate-800 { border-color: #1e3a8a !important; }
+    html.admin-dark #sidebar .nav-item.bg-slate-800,
+    html.admin-dark #sidebar .nav-item-group > button.bg-slate-800 { background-color: #1d4ed8 !important; color: #fff !important; }
+    html.admin-dark #sidebar .nav-item:hover,
+    html.admin-dark #sidebar .nav-item-group > button:hover { background-color: #1e40af !important; color: #fff !important; }
+    html.admin-dark #sidebar .bg-slate-700 { background-color: #1e40af !important; }
+    html.admin-dark #sidebar .bg-slate-800\/70,
+    html.admin-dark #sidebar .hover\:bg-slate-800:hover { background-color: #1e3a8a !important; }
+    html.admin-dark #sidebar .text-slate-500,
+    html.admin-dark #sidebar .text-slate-400,
+    html.admin-dark #sidebar .text-slate-300 { color: #dbeafe !important; }
+
+    html.admin-dark #main-content .bg-white,
+    html.admin-dark #main-content .bg-white\/80,
+    html.admin-dark #main-content .bg-white\/85,
+    html.admin-dark #main-content .bg-slate-50,
+    html.admin-dark #main-content .bg-slate-100 { background-color: #0f172a !important; }
+    html.admin-dark #main-content .text-slate-900,
+    html.admin-dark #main-content .text-slate-800,
+    html.admin-dark #main-content .text-black { color: #f8fafc !important; }
+    html.admin-dark #main-content .text-slate-700,
+    html.admin-dark #main-content .text-slate-600,
+    html.admin-dark #main-content .text-slate-500,
+    html.admin-dark #main-content .text-slate-400 { color: #cbd5e1 !important; }
+    html.admin-dark #main-content .border-slate-100,
+    html.admin-dark #main-content .border-slate-200,
+    html.admin-dark #main-content .border-slate-300 { border-color: #334155 !important; }
+    html.admin-dark #main-content input,
+    html.admin-dark #main-content select,
+    html.admin-dark #main-content textarea { background-color: #0f172a; border-color: #475569; color: #f8fafc; }
+    html.admin-dark #main-content table { background-color: #0f172a !important; color: #e2e8f0; }
+    html.admin-dark #main-content table thead,
+    html.admin-dark #main-content table th { background-color: #1e293b !important; border-color: #475569 !important; color: #f8fafc !important; }
+    html.admin-dark #main-content table tbody td { background-color: #0f172a !important; border-color: #334155 !important; color: #e2e8f0 !important; }
+    html.admin-dark #main-content table tbody tr:hover td { background-color: #1e293b !important; }
+
+    /* ─── SPA loading overlay ────────────────────────────────── */
+    #spa-loading-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9998;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(248,250,252,0.75);
+      backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.15s ease; transition-delay: 0s;
+    }
+    html.admin-dark #spa-loading-overlay { background: rgba(15,23,42,0.75) !important; }
+    #spa-loading-overlay.spa-visible { opacity: 1; pointer-events: all; transition-delay: 300ms; }
+    .spa-spinner {
+      width: 44px; height: 44px;
+      border: 3.5px solid #e2e8f0; border-top-color: #6366f1;
+      border-radius: 50%; animation: spa-spin 0.7s linear infinite;
+    }
+    html.admin-dark .spa-spinner { border-color: #334155 !important; border-top-color: #6366f1 !important; }
+    @keyframes spa-spin { to { transform: rotate(360deg); } }
+
+    /* ─── Toggle button (inline in content header) ───────────── */
+    #sidebar-toggle-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 36px; height: 36px; border-radius: 8px;
+      border: 1px solid #e2e8f0; background: #fff;
+      color: #64748b; cursor: pointer; flex-shrink: 0;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    #sidebar-toggle-btn:hover { background: #f1f5f9; color: #1e293b; }
+    html.admin-dark #sidebar-toggle-btn { background: #1e293b; border-color: #334155; color: #94a3b8; }
+    html.admin-dark #sidebar-toggle-btn:hover { background: #334155; color: #f1f5f9; }
+    #sidebar-toggle-btn svg { transition: transform 0.25s ease; }
+    html.sidebar-collapsed #sidebar-toggle-btn svg { transform: rotate(180deg); }
+
+    /* ─── Tooltip for collapsed icons ───────────────────────── */
+    html.sidebar-collapsed [data-tooltip] { position: relative; }
+    html.sidebar-collapsed [data-tooltip]:hover::after {
+      content: attr(data-tooltip);
+      position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%);
+      background: #1e293b; color: #f1f5f9; font-size: 12px; font-weight: 500;
+      white-space: nowrap; padding: 4px 10px; border-radius: 6px; z-index: 9999;
+      pointer-events: none;
+    }
+    html.admin-dark.sidebar-collapsed [data-tooltip]:hover::after { background: #0f172a; border: 1px solid #334155; }
+  </style>
+
+  <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-no-spinner-20260727"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
+  <script src="{{ url_for('static', filename='js/auto_scrollbar.js') }}?v=scrollbar-fade-1"></script>
+
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="m-0 overflow-x-hidden bg-slate-50">
+
+  <!-- Mobile overlay -->
+  <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden backdrop-blur-sm lg:hidden"></div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       SIDEBAR
+  ═══════════════════════════════════════════════════════════ -->
+	<aside id="sidebar" class="sidebar-transition fixed inset-y-0 left-0 h-screen max-h-screen z-40 w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex min-h-0 flex-col -translate-x-full lg:translate-x-0">
+
+    <!-- Logo -->
+    <div class="flex items-center justify-between h-20 px-5 border-b border-slate-800 shrink-0">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-8 h-8 rounded-lg bg-slate-700 flex items-center justify-center shrink-0 shadow-lg">
+          <span class="text-white font-bold text-lg">A</span>
+        </div>
+        <span class="logo-text text-xl font-bold text-white tracking-tight whitespace-nowrap">
+          Admin<span class="text-slate-400">Panel</span>
+        </span>
+      </div>
+      <!-- Desktop collapse toggle (inside sidebar header) -->
+      <button id="toggle-desktop"
+        class="hidden lg:flex items-center justify-center w-8 h-8 rounded-md hover:bg-slate-800 text-slate-400 transition-colors shrink-0"
+        aria-label="Collapse sidebar">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          style="transition: transform 0.25s ease;">
+          <path d="m15 18-6-6 6-6"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="min-h-0 flex-1 px-3 space-y-1 custom-scrollbar overflow-y-auto overscroll-contain mt-2 pb-3">
+
+      <!-- Store Scope Filter -->
+      <div class="store-scope-section mb-2 rounded-xl border border-slate-700/60 bg-slate-800/40 p-2">
+        <p class="px-1 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 nav-label">Store View</p>
+        <div class="grid grid-cols-2 gap-1">
+          {% set store_scope = (request.cookies.get('store_scope') or 'official')|lower %}
+          <button type="button"
+            class="store-scope-btn rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition-colors
+              {% if store_scope == 'official' %}bg-indigo-500 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}"
+            data-scope="official">Official</button>
+          <button type="button"
+            class="store-scope-btn rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition-colors
+              {% if store_scope == 'starlink' %}bg-indigo-500 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}"
+            data-scope="starlink">Starlink</button>
+        </div>
+      </div>
+
+      <!-- Dashboard -->
+      <a href="{% if user and user.role == 'Area Manager' %}/admin/area-manager-dashboard{% else %}/admin/dashboard{% endif %}"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/dashboard') or request.path.startswith('/admin/area-manager-dashboard') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Dashboard">
+        <div class="shrink-0 {% if request.path.startswith('/admin/dashboard') or request.path.startswith('/admin/area-manager-dashboard') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <polyline points="9 22 9 12 15 12 15 22"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Dashboard</span>
+      </a>
+
+      {% if user and user.role == 'General Manager' %}
+      <a href="/admin/targets"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/targets') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Store Targets">
+        <div class="shrink-0 {% if request.path.startswith('/admin/targets') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <path d="M12 18v-6"/><path d="M9 15h6"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Store Targets</span>
+      </a>
+      {% endif %}
+
+      {% if not user or user.role not in ('General Manager', 'Auditor', 'Area Manager') %}
+      <!-- Administration section -->
+      <div class="pt-4 pb-2">
+        <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider nav-label">Administration</p>
+      </div>
+
+      <a href="/admin/users"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/users') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Users">
+        <div class="shrink-0 {% if request.path.startswith('/admin/users') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Users</span>
+      </a>
+
+      <a href="/admin/clusters"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if '/admin/clusters' in request.path %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Clusters">
+        <div class="shrink-0 {% if '/admin/clusters' in request.path %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="7" height="9" x="3" y="3" rx="1"/>
+            <rect width="7" height="5" x="14" y="3" rx="1"/>
+            <rect width="7" height="9" x="14" y="12" rx="1"/>
+            <rect width="7" height="5" x="3" y="16" rx="1"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Clusters</span>
+      </a>
+
+      <a href="/admin/stores"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/stores') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Stores">
+        <div class="shrink-0 {% if request.path.startswith('/admin/stores') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+            <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+            <path d="M2 7h20"/>
+            <path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Stores</span>
+      </a>
+
+      <a href="/admin/targets"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/targets') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Store Targets">
+        <div class="shrink-0 {% if request.path.startswith('/admin/targets') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <path d="M12 18v-6"/><path d="M9 15h6"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Store Targets</span>
+      </a>
+
+
+      <a onclick="showProductMasterList(this)" 
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/product-masterlist') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Product Masterlist">
+        <div class="shrink-0 {% if request.path.startswith('/admin/product-masterlist') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 7h-9"/><path d="M14 17H5"/>
+            <circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Product Masterlist</span>
+      </a>
+
+
+      <a href="/admin/supply"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/supply') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Supply Management">
+        <div class="shrink-0 {% if request.path.startswith('/admin/supply') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+            <path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Supply Management</span>
+      </a>
+
+      <a href="/admin/system-analyzer"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/system-analyzer') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="System Analyzer">
+        <div class="shrink-0 {% if request.path.startswith('/admin/system-analyzer') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3v18h18"/><path d="m7 14 3-3 3 2 4-5"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">System Analyzer</span>
+      </a>
+
+      <a href="/admin/audit-logs"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/audit-logs') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Audit Logs">
+        <div class="shrink-0 {% if request.path.startswith('/admin/audit-logs') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 11l3 3L22 4"/>
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Audit Logs</span>
+      </a>
+      {% endif %}
+
+      <a href="/admin/pos-sold"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/pos-sold') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="POS Sold">
+        <div class="shrink-0 {% if request.path.startswith('/admin/pos-sold') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/>
+            <circle cx="7" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="17" cy="19" r="1"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">POS Sold</span>
+      </a>
+
+      <a href="/admin/delivery"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/delivery') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Delivery">
+        <div class="shrink-0 {% if request.path.startswith('/admin/delivery') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="3" width="15" height="13" rx="2"/>
+            <path d="M16 8h4l3 3v5h-7"/>
+            <circle cx="5.5" cy="18.5" r="2.5"/>
+            <circle cx="18.5" cy="18.5" r="2.5"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Delivery</span>
+      </a>
+
+      <!-- Tools section -->
+      <div class="pt-4 pb-2">
+        <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider nav-label">Tools</p>
+      </div>
+
+      <a href="/admin/invensync"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/invensync') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="InvenSync">
+        <div class="shrink-0 {% if request.path.startswith('/admin/invensync') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3v18h18"/><path d="m7 14 3-3 3 2 4-5"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">InvenSync</span>
+      </a>
+
+      <a href="/admin/oracle"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/oracle') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Oracle">
+        <div class="shrink-0 {% if request.path.startswith('/admin/oracle') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Oracle</span>
+      </a>
+
+      <a href="/admin/taf"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/taf') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="TransAct Form">
+        <div class="shrink-0 {% if request.path.startswith('/admin/taf') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">TransAct Form</span>
+      </a>
+
+      <!-- Reports section -->
+      <div class="pt-4 pb-2">
+        <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider nav-label">Reports</p>
+      </div>
+
+      <a href="#"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl hover:bg-slate-800 hover:text-white transition-all group"
+        data-tooltip="Analytics">
+        <div class="shrink-0 text-slate-400 group-hover:text-white">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" x2="12" y1="20" y2="10"/>
+            <line x1="18" x2="18" y1="20" y2="4"/>
+            <line x1="6" x2="6" y1="20" y2="16"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Analytics</span>
+      </a>
+
+      {% if not user or user.role not in ('General Manager', 'Auditor', 'Area Manager') %}
+      <!-- System section -->
+      <div class="pt-4 pb-2">
+        <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider nav-label">System</p>
+      </div>
+
+      <a href="{{ url_for('admin.settings') }}"
+        class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
+          {% if request.path.startswith('/admin/settings') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
+        data-tooltip="Settings">
+        <div class="shrink-0 {% if request.path.startswith('/admin/settings') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Settings</span>
+      </a>
+
+      <form method="POST" action="{{ url_for('admin.toggle_maintenance_mode') }}"
+        class="mt-2 rounded-xl border p-2 nav-label
+          {% if system_maintenance_mode and system_maintenance_mode.is_enabled %}border-amber-500/50 bg-amber-500/10{% else %}border-slate-700 bg-slate-800/40{% endif %}">
+        <textarea name="message" rows="2"
+          class="mb-2 w-full resize-none rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white placeholder:text-slate-500"
+          placeholder="Maintenance message">{{ system_maintenance_mode.message if system_maintenance_mode else '' }}</textarea>
+        <button type="submit"
+          class="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm font-semibold
+            {% if system_maintenance_mode and system_maintenance_mode.is_enabled %}bg-emerald-600 text-white hover:bg-emerald-500{% else %}bg-amber-500 text-slate-950 hover:bg-amber-400{% endif %}">
+          <span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-black/10">⚙</span>
+          <span class="nav-label">{% if system_maintenance_mode and system_maintenance_mode.is_enabled %}Disable Maintenance{% else %}Enable Maintenance{% endif %}</span>
+        </button>
+      </form>
+      {% endif %}
+    </nav>
+
+    <!-- User section -->
+    <div class="mt-auto border-t border-slate-800 p-4 shrink-0">
+      <button id="admin-theme-toggle" type="button"
+        class="mb-3 flex w-full items-center gap-3 rounded-xl border border-slate-700 bg-slate-800/70 p-2 text-left text-slate-200 transition-colors hover:bg-slate-800"
+        aria-label="Toggle theme">
+        <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-700 text-amber-300">
+          <svg data-admin-theme-sun xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg data-admin-theme-moon class="hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </span>
+        <span class="nav-label text-sm font-semibold" data-admin-theme-label>Dark Theme</span>
+      </button>
+
+      <button type="button"
+        class="pwa-install-btn mb-3 w-full flex items-center gap-3 rounded-xl border border-indigo-400/20 bg-indigo-500/10 p-2 text-left text-indigo-100 transition-colors hover:bg-indigo-500/20"
+        data-tooltip="Install App">
+        <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>
+          </svg>
+        </span>
+        <span class="nav-label min-w-0">
+          <span class="block text-sm font-semibold text-white">Install App</span>
+          <span class="block truncate text-xs text-indigo-200">Desktop shortcut</span>
+        </span>
+      </button>
+
+      <div class="flex items-center gap-2 hover:bg-slate-800/50 p-2 rounded-xl cursor-pointer transition-colors group">
+        <div class="relative shrink-0">
+          <div class="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold border-2 border-slate-800 group-hover:border-indigo-500 transition-colors">
+            {% if user %}{{ user.username[:1].upper() }}{% else %}A{% endif %}
+          </div>
+          <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-900 rounded-full"></div>
+        </div>
+        <div class="user-info min-w-0 flex-1 pr-1">
+          <p class="text-sm font-semibold text-white truncate">{% if user %}{{ user.full_name }}{% else %}Administrator{% endif %}</p>
+          <p class="text-xs text-slate-500 truncate">{% if user %}{{ user.role }}{% else %}System Admin{% endif %}</p>
+        </div>
+        <a href="/logout"
+          class="ml-auto inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-500 transition-colors"
+          title="Logout" aria-label="Logout">
+          <svg class="block h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" x2="9" y1="12" y2="12"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <!-- SPA loading overlay -->
+  <div id="spa-loading-overlay" class="htmx-indicator" aria-hidden="true">
+    <div class="spa-spinner"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       MAIN CONTENT AREA
+       Child templates fill { block content } inside .app-page-shell.
+       The sticky header row at the top holds the sidebar toggle + page title slot.
+  ═══════════════════════════════════════════════════════════ -->
+  <main id="general_container" class="flex flex-col min-h-screen">
+
+    <!-- ── Sticky top bar ──────────────────────────────────────── -->
+    <header id="header_title" class="sticky top-0 z-20 flex items-center gap-3 px-4 py-3 bg-white/90 border-b border-slate-200 backdrop-blur-sm"
+      style="min-height: 56px;">
+      <!-- Mobile hamburger / Desktop collapse toggle -->
+      <button id="sidebar-toggle-btn" aria-label="Toggle sidebar">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <!-- Three-bar menu that also serves as the collapse indicator -->
+          <line x1="3" y1="6"  x2="21" y2="6"/>
+          <line x1="3" y1="12" x2="21" y2="12"/>
+          <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+
+      <!-- Page title / breadcrumb slot -->
+      <div class="flex-1 min-w-0">
+        {% block page_header %}
+        <h1 class="text-sm font-semibold text-slate-800 truncate">{% block page_title %}{% endblock %}</h1>
+        {% endblock %}
+      </div>
+
+      <!-- Right-side actions slot -->
+      <div class="flex items-center gap-2 shrink-0">
+        {% block header_actions %}{% endblock %}
+      </div>
+    </header>
+
+    <!-- ── Page content ────────────────────────────────────────── -->
+    <div class="app-page-shell flex-1">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       SCRIPTS
+  ═══════════════════════════════════════════════════════════ -->
+  <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
+  <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
+  <script src="{{ url_for('static', filename='js/dashboard_navfunction.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+  
+  
+  <script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=modal-no-spinner-20260727"></script>
+
+  <!-- Sidebar collapse logic (desktop) + mobile open/close -->
+  <script>
+    (function () {
+      const STORAGE_KEY = 'adminSidebarCollapsed';
+      const html = document.documentElement;
+
+      // Restore saved state
+      try {
+        if (localStorage.getItem(STORAGE_KEY) === 'true') {
+          html.classList.add('sidebar-collapsed');
+        }
+      } catch (e) {}
+
+      function setCollapsed(collapsed) {
+        html.classList.toggle('sidebar-collapsed', collapsed);
+        try { localStorage.setItem(STORAGE_KEY, String(collapsed)); } catch (e) {}
+      }
+
+      // Desktop toggle (inside sidebar header)
+      const desktopBtn = document.getElementById('toggle-desktop');
+      if (desktopBtn) {
+        desktopBtn.addEventListener('click', () => {
+          setCollapsed(!html.classList.contains('sidebar-collapsed'));
+        });
+      }
+
+      // Inline toggle button (top bar) — collapses on desktop, opens on mobile
+      const inlineBtn = document.getElementById('sidebar-toggle-btn');
+      const overlay = document.getElementById('sidebar-overlay');
+      if (inlineBtn) {
+        inlineBtn.addEventListener('click', () => {
+          const isMobile = window.innerWidth < 1024;
+          if (isMobile) {
+            html.classList.toggle('sidebar-open');
+          } else {
+            setCollapsed(!html.classList.contains('sidebar-collapsed'));
+          }
+        });
+      }
+
+      // Close sidebar when overlay is clicked (mobile)
+      if (overlay) {
+        overlay.addEventListener('click', () => {
+          html.classList.remove('sidebar-open');
+          overlay.classList.add('hidden');
+        });
+      }
+
+      // Keep overlay in sync with sidebar-open class
+      const observer = new MutationObserver(() => {
+        if (overlay) overlay.classList.toggle('hidden', !html.classList.contains('sidebar-open'));
+      });
+      observer.observe(html, { attributes: true, attributeFilter: ['class'] });
+    })();
+  </script>
+
+  <!-- Dark mode toggle -->
+  <script>
+    (function () {
+      const button = document.getElementById('admin-theme-toggle');
+      if (!button) return;
+      const themeColor = document.querySelector('meta[name="theme-color"]');
+
+      function refresh() {
+        const dark = document.documentElement.classList.contains('admin-dark');
+        button.querySelector('[data-admin-theme-sun]').classList.toggle('hidden', dark);
+        button.querySelector('[data-admin-theme-moon]').classList.toggle('hidden', !dark);
+        button.querySelector('[data-admin-theme-label]').textContent = dark ? 'Light Theme' : 'Dark Theme';
+        button.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+        if (themeColor) themeColor.content = dark ? '#020617' : '#0f172a';
+      }
+
+      button.addEventListener('click', () => {
+        const dark = document.documentElement.classList.toggle('admin-dark');
+        try { localStorage.setItem('adminTheme', dark ? 'dark' : 'light'); } catch (e) {}
+        refresh();
+        if (document.querySelector('.admin-dashboard-surface canvas')) {
+          setTimeout(() => window.location.reload(), 80);
+        }
+      });
+      refresh();
+    })();
+  </script>
+
+  <!-- Store scope switcher -->
+  <script>
+    (function () {
+      const buttons = Array.from(document.querySelectorAll('.store-scope-btn'));
+      if (!buttons.length) return;
+
+      function updateStyles(activeScope) {
+        buttons.forEach(btn => {
+          const selected = (btn.getAttribute('data-scope') || 'official').toLowerCase() === activeScope;
+          btn.classList.toggle('bg-indigo-500', selected);
+          btn.classList.toggle('text-white', selected);
+          btn.classList.toggle('text-slate-300', !selected);
+          btn.classList.toggle('hover:bg-slate-800', !selected);
+          btn.classList.toggle('hover:text-white', !selected);
+        });
+      }
+
+      buttons.forEach(btn => {
+        btn.addEventListener('click', function () {
+          const scope = (this.getAttribute('data-scope') || 'official').toLowerCase();
+          document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${60*60*24*365}; samesite=lax`;
+          updateStyles(scope);
+          const url = new URL(window.location.href);
+          if (url.searchParams.has('store_id')) {
+            url.searchParams.delete('store_id');
+            window.history.replaceState({}, '', url.toString());
+          }
+          if (typeof window.reloadDashboard === 'function') {
+            window.reloadDashboard(true);
+          } else {
+            window.location.reload();
+          }
+        });
+      });
+    })();
+  </script>
+
+  <!-- Flash messages as toast notifications -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <script>
+        document.addEventListener('DOMContentLoaded', function () {
+          {% for category, message in messages %}
+            if (window.toast && typeof window.toast.show === 'function') {
+              window.toast.show({{ message|tojson }}, {{ category|tojson }});
+            }
+          {% endfor %}
+        });
+      </script>
+    {% endif %}
+  {% endwith %}
+
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

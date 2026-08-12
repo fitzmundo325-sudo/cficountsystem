@@ -151,3 +151,10 @@ textarea.form_display[readonly] {
 	max-width:1024px !important;
 	
 }
+
+
+
+html, body, * {
+    scrollbar-color: transparent transparent;
+    scrollbar-gutter: unset;
+}

@@ -10629,67 +10629,6 @@ def get_masterlist_products():
 
 
 
-
-# ================================================
-# Proper Implementation of Views Py Section Start
-# ================================================
-
-
-
-
-
-#v2 of the product masterlist page 
-@views.route('/admin/product_masterlist', methods=['GET', 'POST'])
-def product_masterlist_v2():
-    page = 'product_masterlist'
-
-    return render_template("admin/product_masterlist_v2.html", user=current_user, page=page)
-        
-
-
-# ================================================
-# Supply Requests (store side)
-# ================================================
-
-
-@views.route('/store-manager/supply-request')
-@login_required
-def store_supply_request():
-    if (current_user.role or '').strip() not in ('Store Manager', 'Inventory Staff'):
-        flash('Access denied. Only Store Managers and Inventory Staff can access this page.', category='error')
-        return redirect(url_for('views.home'))
-
-    store = _resolve_store_for_store_scope_user()
-    if not store:
-        flash('You are not assigned to any store yet.', category='error')
-        return redirect(url_for('views.home'))
-
-    categories = (
-        db.session.query(SupplyItem.category)
-        .distinct()
-        .order_by(SupplyItem.category.asc())
-        .all()
-    )
-    category_list = [c[0] for c in categories]
-    supply_items = SupplyItem.query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc()).all()
-    my_requests = (
-        SupplyRequest.query
-        .filter_by(store_id=store.id)
-        .options(selectinload(SupplyRequest.items))
-        .order_by(SupplyRequest.created_at.desc())
-        .all()
-    )
-
-    return render_template(
-        'store_manager/supply_request.html',
-        user=current_user,
-        store=store,
-        categories=category_list,
-        supply_items=supply_items,
-        my_requests=my_requests,
-    )
-
-
 @views.route('/store-manager/supply-request/create', methods=['POST'])
 @login_required
 def create_store_supply_request():
@@ -10785,7 +10724,6 @@ def create_store_supply_request():
 
 
 
-
 @views.route('/set_theme', methods=['POST'])
 def themes():
     theme = request.form.get("theme")
@@ -10796,5 +10734,80 @@ def themes():
     session['theme'] = theme
 
     return theme
+
+
+
+# ================================================
+# Proper Implementation of Views Py Section Start
+# ================================================
+
+
+## IMPORTANT Notice to all freaking coding agents... you shall not put any none render templates below, put them above where they belong, stop poisoning the codebase from videcoded garbage.
+
+
+#v2 of the product masterlist page 
+@views.route('admin/v2', methods=['GET', 'POST'])
+def v2_main():
+    page = 'main'
+
+    return render_template("admin_base_v2.html", user=current_user, page=page)
+        
+
+
+
+#v2 of the product masterlist page 
+@views.route('/admin/product_masterlist', methods=['GET', 'POST'])
+def product_masterlist_v2():
+    page = 'product_masterlist'
+
+    return render_template("admin/product_masterlist_v2.html", user=current_user, page=page)
+        
+
+
+
+
+
+# ================================================
+# Supply Requests (store side)
+# ================================================
+
+
+@views.route('/store-manager/supply-request')
+@login_required
+def store_supply_request():
+    if (current_user.role or '').strip() not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Managers and Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    categories = (
+        db.session.query(SupplyItem.category)
+        .distinct()
+        .order_by(SupplyItem.category.asc())
+        .all()
+    )
+    category_list = [c[0] for c in categories]
+    supply_items = SupplyItem.query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc()).all()
+    my_requests = (
+        SupplyRequest.query
+        .filter_by(store_id=store.id)
+        .options(selectinload(SupplyRequest.items))
+        .order_by(SupplyRequest.created_at.desc())
+        .all()
+    )
+
+    return render_template(
+        'store_manager/supply_request.html',
+        user=current_user,
+        store=store,
+        categories=category_list,
+        supply_items=supply_items,
+        my_requests=my_requests,
+    )
+
 
 
