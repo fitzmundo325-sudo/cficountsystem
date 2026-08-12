@@ -2,7 +2,7 @@ if (!window.__sidebar_initialized) {
     window.__sidebar_initialized = true;
 
     const sidebar = document.getElementById('sidebar');
-    const mainContent = document.getElementById('main-content');
+    const mainContent = document.getElementById('main-content') || document.getElementById('general_container');
     const sidebarOverlay = document.getElementById('sidebar-overlay');
     const toggleDesktop = document.getElementById('toggle-desktop');
     const sidebarNav = sidebar ? sidebar.querySelector('nav.custom-scrollbar') : null;
@@ -96,6 +96,8 @@ if (!window.__sidebar_initialized) {
             if (!sidebar || !mainContent) return;
             sidebar.classList.toggle('sidebar-collapsed');
             
+			console.log(toggleDesktop);
+			
             if (sidebar.classList.contains('sidebar-collapsed')) {
                 mainContent.style.marginLeft = '80px';
                 toggleDesktop.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
@@ -184,4 +186,34 @@ if (!window.__sidebar_mobile_delegated) {
             }
         }
     });
+}
+
+
+
+
+
+
+
+
+
+
+
+function toggleDesktopSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const mainContent = document.getElementById('main-content');
+    const toggleDesktop = document.getElementById('toggle-desktop');
+
+    if (!sidebar) return;
+
+    const isCollapsed = sidebar.classList.toggle('sidebar-collapsed');
+
+    mainContent.style.marginLeft = isCollapsed ? '80px' : '16rem';
+
+    if (toggleDesktop) {
+        toggleDesktop.innerHTML = isCollapsed
+            ? '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>'
+            : '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>';
+    }
+
+    localStorage.setItem('sidebarCollapsed', isCollapsed);
 }

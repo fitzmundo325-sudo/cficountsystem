@@ -679,15 +679,16 @@ th.sortable:hover {
 
 }
 
-.modal_on_container {
-	padding-left:250px;
+
+
+#general_container {
+	margin-left:250px;
 	
 }
 
+
 .modal_iframe_con.no_close_button > .close_modal_rev{
 	display:none;
-	
-	
 }
 
 
@@ -867,7 +868,5 @@ th.sortable:hover {
 
 
 @media (max-width: 1023px) {
-	.modal_on_container{
-		padding-left:0px;
-	}
+	
 }

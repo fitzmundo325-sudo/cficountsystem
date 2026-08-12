@@ -72,23 +72,32 @@
       width: var(--sidebar-w);
       transition: transform 0.25s ease, width 0.25s ease;
     }
+	
+		
+	/* Collapsed desktop state */
+	html.sidebar-collapsed > body > aside#sidebar { width: 72px; overflow: hidden; }
 
-    /* Collapsed desktop state */
-    html.sidebar-collapsed #sidebar { width: 72px; }
-    html.sidebar-collapsed #sidebar .nav-label,
-    html.sidebar-collapsed #sidebar .logo-text,
-    html.sidebar-collapsed #sidebar .user-info,
-    html.sidebar-collapsed #sidebar .store-scope-btn + .store-scope-btn,
-    html.sidebar-collapsed #sidebar textarea,
-    html.sidebar-collapsed #sidebar p.nav-label { display: none !important; }
-    html.sidebar-collapsed #sidebar .store-scope-section { display: none !important; }
-    html.sidebar-collapsed #sidebar nav { padding-left: 0.5rem; padding-right: 0.5rem; }
-    html.sidebar-collapsed #sidebar .nav-item,
-    html.sidebar-collapsed #sidebar .nav-item-group > button { justify-content: center; padding: 0.75rem; }
-    html.sidebar-collapsed #sidebar .nav-item gap-4,
-    html.sidebar-collapsed #sidebar .nav-item { gap: 0; }
-    html.sidebar-collapsed #main-content { margin-left: 72px !important; }
-    html.sidebar-collapsed #toggle-desktop svg { transform: rotate(180deg); }
+	html.sidebar-collapsed > body > aside#sidebar .nav-label,
+	html.sidebar-collapsed > body > aside#sidebar .logo-text,
+	html.sidebar-collapsed > body > aside#sidebar .user-info,
+	html.sidebar-collapsed > body > aside#sidebar textarea,
+	html.sidebar-collapsed > body > aside#sidebar p,
+	html.sidebar-collapsed > body > aside#sidebar span.block { display: none !important; }
+
+	html.sidebar-collapsed > body > aside#sidebar .store-scope-section { display: none !important; }
+
+	html.sidebar-collapsed > body > aside#sidebar nav { padding-left: 0.5rem; padding-right: 0.5rem; }
+
+	html.sidebar-collapsed > body > aside#sidebar .nav-item,
+	html.sidebar-collapsed > body > aside#sidebar .nav-item-group > button {
+	  justify-content: center;
+	  padding: 0.75rem;
+	  gap: 0;
+	}
+
+html.sidebar-collapsed > body > main#main-content { margin-left: 72px !important; }
+
+html.sidebar-collapsed > body > aside#sidebar > div > button#toggle-desktop svg { transform: rotate(180deg); }
 
     /* Mobile: sidebar off-canvas by default, overlays when open */
     @media (max-width: 1023px) {
@@ -638,7 +647,7 @@
   <!-- ═══════════════════════════════════════════════════════════
        SCRIPTS
   ═══════════════════════════════════════════════════════════ -->
-  <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
+
   <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
   <script src="{{ url_for('static', filename='js/dashboard_navfunction.js') }}"></script>
   <script src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
@@ -649,57 +658,33 @@
   <!-- Sidebar collapse logic (desktop) + mobile open/close -->
   <script>
     (function () {
-      const STORAGE_KEY = 'adminSidebarCollapsed';
-      const html = document.documentElement;
+  const html = document.documentElement;
 
-      // Restore saved state
-      try {
-        if (localStorage.getItem(STORAGE_KEY) === 'true') {
-          html.classList.add('sidebar-collapsed');
-        }
-      } catch (e) {}
-
-      function setCollapsed(collapsed) {
-        html.classList.toggle('sidebar-collapsed', collapsed);
-        try { localStorage.setItem(STORAGE_KEY, String(collapsed)); } catch (e) {}
+  // Top-bar toggle — mobile only (opens overlay)
+  const inlineBtn = document.getElementById('sidebar-toggle-btn');
+  const overlay   = document.getElementById('sidebar-overlay');
+  if (inlineBtn) {
+    inlineBtn.addEventListener('click', () => {
+      if (window.innerWidth < 1024) {
+        html.classList.toggle('sidebar-open');
       }
+    });
+  }
 
-      // Desktop toggle (inside sidebar header)
-      const desktopBtn = document.getElementById('toggle-desktop');
-      if (desktopBtn) {
-        desktopBtn.addEventListener('click', () => {
-          setCollapsed(!html.classList.contains('sidebar-collapsed'));
-        });
-      }
+  // Close sidebar when overlay is clicked
+  if (overlay) {
+    overlay.addEventListener('click', () => {
+      html.classList.remove('sidebar-open');
+      overlay.classList.add('hidden');
+    });
+  }
 
-      // Inline toggle button (top bar) — collapses on desktop, opens on mobile
-      const inlineBtn = document.getElementById('sidebar-toggle-btn');
-      const overlay = document.getElementById('sidebar-overlay');
-      if (inlineBtn) {
-        inlineBtn.addEventListener('click', () => {
-          const isMobile = window.innerWidth < 1024;
-          if (isMobile) {
-            html.classList.toggle('sidebar-open');
-          } else {
-            setCollapsed(!html.classList.contains('sidebar-collapsed'));
-          }
-        });
-      }
-
-      // Close sidebar when overlay is clicked (mobile)
-      if (overlay) {
-        overlay.addEventListener('click', () => {
-          html.classList.remove('sidebar-open');
-          overlay.classList.add('hidden');
-        });
-      }
-
-      // Keep overlay in sync with sidebar-open class
-      const observer = new MutationObserver(() => {
-        if (overlay) overlay.classList.toggle('hidden', !html.classList.contains('sidebar-open'));
-      });
-      observer.observe(html, { attributes: true, attributeFilter: ['class'] });
-    })();
+  // Keep overlay visibility in sync with sidebar-open class
+  const observer = new MutationObserver(() => {
+    if (overlay) overlay.classList.toggle('hidden', !html.classList.contains('sidebar-open'));
+  });
+  observer.observe(html, { attributes: true, attributeFilter: ['class'] });
+})();
   </script>
 
   <!-- Dark mode toggle -->
@@ -765,8 +750,15 @@
         });
       });
     })();
-  </script>
+	
 
+	
+	
+	
+  </script>
+	
+  <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
+	
   <!-- Flash messages as toast notifications -->
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
