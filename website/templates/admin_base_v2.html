@@ -147,7 +147,7 @@
         <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider nav-label">Administration</p>
       </div>
 
-      <a href="/admin/users"
+      <a onclick="showUsersAdminView(this)"
         class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
           {% if request.path.startswith('/admin/users') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
         data-tooltip="Users">

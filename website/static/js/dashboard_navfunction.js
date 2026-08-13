@@ -1,3 +1,17 @@
+/*
+═══════════════════════════════════════
+
+██╗   ██╗  ██████╗                 
+██║   ██║       ╚██╗   	  ██████╗  
+██║   ██║   █████╔╝    	 ██╔═══██╗ 
+╚██╗ ██╔╝  ██╔═══╝     	 ██║   ██║ 
+ ╚████╔╝   ███████╗  ██  ╚██████╔╝ 
+  ╚═══╝    ╚══════╝       ╚═════╝    
+ 
+═══════════════════════════════════════
+
+*/
+
 // --------------------------------------------------
 function activate(elm){
 	let parent_elm = elm.parentNode.parentNode;
@@ -14,9 +28,20 @@ function activate(elm){
 
 
 
+// ====================================
+// Administration Section
 
 
-// --------------------------------------------------
+function showUsersAdminView(elm){
+	activate(elm);
+
+	let page = open_modal("users", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+
+	
+}
 
 
 function showProductMasterList(elm){
@@ -34,6 +59,9 @@ function showProductMasterList(elm){
 
 
 
+
+// Administration Section END
+// ====================================
 
 
 
