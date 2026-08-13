@@ -225,9 +225,11 @@ html.sidebar-collapsed > body > aside#sidebar > div > button#toggle-desktop svg 
   <!-- Mobile overlay -->
   <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden backdrop-blur-sm lg:hidden"></div>
 
-  <!-- ═══════════════════════════════════════════════════════════
+  <!-- ══════════════════════════════════════════════════════
        SIDEBAR
   ═══════════════════════════════════════════════════════════ -->
+  
+  
 	<aside id="sidebar" class="sidebar-transition fixed inset-y-0 left-0 h-screen max-h-screen z-40 w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex min-h-0 flex-col -translate-x-full lg:translate-x-0">
 
     <!-- Logo -->
@@ -648,116 +650,16 @@ html.sidebar-collapsed > body > aside#sidebar > div > button#toggle-desktop svg 
        SCRIPTS
   ═══════════════════════════════════════════════════════════ -->
 
-  <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
-  <script src="{{ url_for('static', filename='js/dashboard_navfunction.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
-  
-  
-  <script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=modal-no-spinner-20260727"></script>
+	<script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
+	<script src="{{ url_for('static', filename='js/dashboard_navfunction.js') }}"></script>
+	<script src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
 
-  <!-- Sidebar collapse logic (desktop) + mobile open/close -->
-  <script>
-    (function () {
-  const html = document.documentElement;
+	<script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=modal-no-spinner-20260727"></script>
 
-  // Top-bar toggle — mobile only (opens overlay)
-  const inlineBtn = document.getElementById('sidebar-toggle-btn');
-  const overlay   = document.getElementById('sidebar-overlay');
-  if (inlineBtn) {
-    inlineBtn.addEventListener('click', () => {
-      if (window.innerWidth < 1024) {
-        html.classList.toggle('sidebar-open');
-      }
-    });
-  }
+	<script src="{{ url_for('static', filename='js/v2/dashboard_logics_v2.js') }}"></script>
 
-  // Close sidebar when overlay is clicked
-  if (overlay) {
-    overlay.addEventListener('click', () => {
-      html.classList.remove('sidebar-open');
-      overlay.classList.add('hidden');
-    });
-  }
-
-  // Keep overlay visibility in sync with sidebar-open class
-  const observer = new MutationObserver(() => {
-    if (overlay) overlay.classList.toggle('hidden', !html.classList.contains('sidebar-open'));
-  });
-  observer.observe(html, { attributes: true, attributeFilter: ['class'] });
-})();
-  </script>
-
-  <!-- Dark mode toggle -->
-  <script>
-    (function () {
-      const button = document.getElementById('admin-theme-toggle');
-      if (!button) return;
-      const themeColor = document.querySelector('meta[name="theme-color"]');
-
-      function refresh() {
-        const dark = document.documentElement.classList.contains('admin-dark');
-        button.querySelector('[data-admin-theme-sun]').classList.toggle('hidden', dark);
-        button.querySelector('[data-admin-theme-moon]').classList.toggle('hidden', !dark);
-        button.querySelector('[data-admin-theme-label]').textContent = dark ? 'Light Theme' : 'Dark Theme';
-        button.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
-        if (themeColor) themeColor.content = dark ? '#020617' : '#0f172a';
-      }
-
-      button.addEventListener('click', () => {
-        const dark = document.documentElement.classList.toggle('admin-dark');
-        try { localStorage.setItem('adminTheme', dark ? 'dark' : 'light'); } catch (e) {}
-        refresh();
-        if (document.querySelector('.admin-dashboard-surface canvas')) {
-          setTimeout(() => window.location.reload(), 80);
-        }
-      });
-      refresh();
-    })();
-  </script>
-
-  <!-- Store scope switcher -->
-  <script>
-    (function () {
-      const buttons = Array.from(document.querySelectorAll('.store-scope-btn'));
-      if (!buttons.length) return;
-
-      function updateStyles(activeScope) {
-        buttons.forEach(btn => {
-          const selected = (btn.getAttribute('data-scope') || 'official').toLowerCase() === activeScope;
-          btn.classList.toggle('bg-indigo-500', selected);
-          btn.classList.toggle('text-white', selected);
-          btn.classList.toggle('text-slate-300', !selected);
-          btn.classList.toggle('hover:bg-slate-800', !selected);
-          btn.classList.toggle('hover:text-white', !selected);
-        });
-      }
-
-      buttons.forEach(btn => {
-        btn.addEventListener('click', function () {
-          const scope = (this.getAttribute('data-scope') || 'official').toLowerCase();
-          document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${60*60*24*365}; samesite=lax`;
-          updateStyles(scope);
-          const url = new URL(window.location.href);
-          if (url.searchParams.has('store_id')) {
-            url.searchParams.delete('store_id');
-            window.history.replaceState({}, '', url.toString());
-          }
-          if (typeof window.reloadDashboard === 'function') {
-            window.reloadDashboard(true);
-          } else {
-            window.location.reload();
-          }
-        });
-      });
-    })();
+	<script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
 	
-
-	
-	
-	
-  </script>
-	
-  <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
 	
   <!-- Flash messages as toast notifications -->
   {% with messages = get_flashed_messages(with_categories=true) %}
