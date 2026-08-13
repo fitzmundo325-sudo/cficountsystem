@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="iDashboard">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>{% block title %}{% endblock %} - Admin Panel</title>
+  <title>{% block title %}{% endblock %}Home - Admin Panel (Beta v2)</title>
 
   <!-- Dark mode applied before paint to avoid flash -->
   <script>
@@ -43,191 +43,29 @@
       resetTimer();
     })();
   </script>
-
+  
+  
   <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
   <link href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" rel="stylesheet">
-
-  <style>
-    /* ─── Reset ─────────────────────────────────────────────── */
-    html, body { margin: 0; padding: 0; }
-    body { font-family: 'Inter', sans-serif; }
-	
-	html, body, * {
-    /* scrollbar-color: transparent transparent;
-     scrollbar-gutter: unset;
-	 */
-
-	}
-	
-	
-    /* ─── Sidebar hidden scrollbar ───────────────────────────── */
-    #sidebar nav.custom-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-    #sidebar nav.custom-scrollbar::-webkit-scrollbar,
-    #sidebar nav.custom-scrollbar::-webkit-scrollbar-button { display: none !important; width: 0 !important; height: 0 !important; }
-
-    /* ─── Sidebar width / collapse transition ────────────────── */
-    :root { --sidebar-w: 256px; }
-    #sidebar {
-      width: var(--sidebar-w);
-      transition: transform 0.25s ease, width 0.25s ease;
-    }
-	
-		
-	/* Collapsed desktop state */
-	html.sidebar-collapsed > body > aside#sidebar { width: 72px; overflow: hidden; }
-
-	html.sidebar-collapsed > body > aside#sidebar .nav-label,
-	html.sidebar-collapsed > body > aside#sidebar .logo-text,
-	html.sidebar-collapsed > body > aside#sidebar .user-info,
-	html.sidebar-collapsed > body > aside#sidebar textarea,
-	html.sidebar-collapsed > body > aside#sidebar p,
-	html.sidebar-collapsed > body > aside#sidebar span.block { display: none !important; }
-
-	html.sidebar-collapsed > body > aside#sidebar .store-scope-section { display: none !important; }
-
-	html.sidebar-collapsed > body > aside#sidebar nav { padding-left: 0.5rem; padding-right: 0.5rem; }
-
-	html.sidebar-collapsed > body > aside#sidebar .nav-item,
-	html.sidebar-collapsed > body > aside#sidebar .nav-item-group > button {
-	  justify-content: center;
-	  padding: 0.75rem;
-	  gap: 0;
-	}
-
-html.sidebar-collapsed > body > main#main-content { margin-left: 72px !important; }
-
-html.sidebar-collapsed > body > aside#sidebar > div > button#toggle-desktop svg { transform: rotate(180deg); }
-
-    /* Mobile: sidebar off-canvas by default, overlays when open */
-    @media (max-width: 1023px) {
-      #sidebar { transform: translateX(-100%); }
-      html.sidebar-open #sidebar { transform: translateX(0); }
-      #main-content { margin-left: 0 !important; }
-    }
-
-    /* ─── Main content transition ────────────────────────────── */
-    #main-content {
-      margin-left: var(--sidebar-w);
-      transition: margin-left 0.25s ease;
-      min-height: 100vh;
-    }
-
-    /* ─── Page shell / content area ─────────────────────────── */
-    .app-page-shell {
-      width: 100%;
-      max-width: 2400px;
-      margin-left: auto;
-      margin-right: auto;
-      padding: 1rem 1rem 1.5rem;
-      overflow-x: hidden;
-    }
-    @media (min-width: 768px) {
-      .app-page-shell { padding-left: 1.5rem; padding-right: 1.5rem; }
-    }
-
-    /* ─── Dark mode ──────────────────────────────────────────── */
-    html.admin-dark { color-scheme: dark; }
-    html.admin-dark body,
-    html.admin-dark #main-content { background-color: #020617 !important; color: #e2e8f0; }
-
-    html.admin-dark #sidebar { background-color: #172554 !important; border-color: #1e3a8a !important; }
-    html.admin-dark #sidebar > div,
-    html.admin-dark #sidebar .border-slate-800 { border-color: #1e3a8a !important; }
-    html.admin-dark #sidebar .nav-item.bg-slate-800,
-    html.admin-dark #sidebar .nav-item-group > button.bg-slate-800 { background-color: #1d4ed8 !important; color: #fff !important; }
-    html.admin-dark #sidebar .nav-item:hover,
-    html.admin-dark #sidebar .nav-item-group > button:hover { background-color: #1e40af !important; color: #fff !important; }
-    html.admin-dark #sidebar .bg-slate-700 { background-color: #1e40af !important; }
-    html.admin-dark #sidebar .bg-slate-800\/70,
-    html.admin-dark #sidebar .hover\:bg-slate-800:hover { background-color: #1e3a8a !important; }
-    html.admin-dark #sidebar .text-slate-500,
-    html.admin-dark #sidebar .text-slate-400,
-    html.admin-dark #sidebar .text-slate-300 { color: #dbeafe !important; }
-
-    html.admin-dark #main-content .bg-white,
-    html.admin-dark #main-content .bg-white\/80,
-    html.admin-dark #main-content .bg-white\/85,
-    html.admin-dark #main-content .bg-slate-50,
-    html.admin-dark #main-content .bg-slate-100 { background-color: #0f172a !important; }
-    html.admin-dark #main-content .text-slate-900,
-    html.admin-dark #main-content .text-slate-800,
-    html.admin-dark #main-content .text-black { color: #f8fafc !important; }
-    html.admin-dark #main-content .text-slate-700,
-    html.admin-dark #main-content .text-slate-600,
-    html.admin-dark #main-content .text-slate-500,
-    html.admin-dark #main-content .text-slate-400 { color: #cbd5e1 !important; }
-    html.admin-dark #main-content .border-slate-100,
-    html.admin-dark #main-content .border-slate-200,
-    html.admin-dark #main-content .border-slate-300 { border-color: #334155 !important; }
-    html.admin-dark #main-content input,
-    html.admin-dark #main-content select,
-    html.admin-dark #main-content textarea { background-color: #0f172a; border-color: #475569; color: #f8fafc; }
-    html.admin-dark #main-content table { background-color: #0f172a !important; color: #e2e8f0; }
-    html.admin-dark #main-content table thead,
-    html.admin-dark #main-content table th { background-color: #1e293b !important; border-color: #475569 !important; color: #f8fafc !important; }
-    html.admin-dark #main-content table tbody td { background-color: #0f172a !important; border-color: #334155 !important; color: #e2e8f0 !important; }
-    html.admin-dark #main-content table tbody tr:hover td { background-color: #1e293b !important; }
-
-    /* ─── SPA loading overlay ────────────────────────────────── */
-    #spa-loading-overlay {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9998;
-      display: flex; align-items: center; justify-content: center;
-      background: rgba(248,250,252,0.75);
-      backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
-      opacity: 0; pointer-events: none;
-      transition: opacity 0.15s ease; transition-delay: 0s;
-    }
-    html.admin-dark #spa-loading-overlay { background: rgba(15,23,42,0.75) !important; }
-    #spa-loading-overlay.spa-visible { opacity: 1; pointer-events: all; transition-delay: 300ms; }
-    .spa-spinner {
-      width: 44px; height: 44px;
-      border: 3.5px solid #e2e8f0; border-top-color: #6366f1;
-      border-radius: 50%; animation: spa-spin 0.7s linear infinite;
-    }
-    html.admin-dark .spa-spinner { border-color: #334155 !important; border-top-color: #6366f1 !important; }
-    @keyframes spa-spin { to { transform: rotate(360deg); } }
-
-    /* ─── Toggle button (inline in content header) ───────────── */
-    #sidebar-toggle-btn {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 36px; height: 36px; border-radius: 8px;
-      border: 1px solid #e2e8f0; background: #fff;
-      color: #64748b; cursor: pointer; flex-shrink: 0;
-      transition: background 0.15s, border-color 0.15s, color 0.15s;
-    }
-    #sidebar-toggle-btn:hover { background: #f1f5f9; color: #1e293b; }
-    html.admin-dark #sidebar-toggle-btn { background: #1e293b; border-color: #334155; color: #94a3b8; }
-    html.admin-dark #sidebar-toggle-btn:hover { background: #334155; color: #f1f5f9; }
-    #sidebar-toggle-btn svg { transition: transform 0.25s ease; }
-    html.sidebar-collapsed #sidebar-toggle-btn svg { transform: rotate(180deg); }
-
-    /* ─── Tooltip for collapsed icons ───────────────────────── */
-    html.sidebar-collapsed [data-tooltip] { position: relative; }
-    html.sidebar-collapsed [data-tooltip]:hover::after {
-      content: attr(data-tooltip);
-      position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%);
-      background: #1e293b; color: #f1f5f9; font-size: 12px; font-weight: 500;
-      white-space: nowrap; padding: 4px 10px; border-radius: 6px; z-index: 9999;
-      pointer-events: none;
-    }
-    html.admin-dark.sidebar-collapsed [data-tooltip]:hover::after { background: #0f172a; border: 1px solid #334155; }
-  </style>
-
+  <link href="{{ url_for('static', filename='css/v2/extra_dashboard_style.css') }}" rel="stylesheet">
   <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-no-spinner-20260727"></script>
   <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
   <script src="{{ url_for('static', filename='js/auto_scrollbar.js') }}?v=scrollbar-fade-1"></script>
 
-  {% block extra_head %}{% endblock %}
+  {% block extra_head %}
+  {% endblock %}
+  
+  
 </head>
 <body class="m-0 overflow-x-hidden bg-slate-50">
 
   <!-- Mobile overlay -->
   <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden backdrop-blur-sm lg:hidden"></div>
 
-  <!-- ══════════════════════════════════════════════════════
+  <!-- ======================================================
        SIDEBAR
-  ═══════════════════════════════════════════════════════════ -->
+  =========================================================== -->
   
   
 	<aside id="sidebar" class="sidebar-transition fixed inset-y-0 left-0 h-screen max-h-screen z-40 w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex min-h-0 flex-col -translate-x-full lg:translate-x-0">
@@ -606,11 +444,11 @@ html.sidebar-collapsed > body > aside#sidebar > div > button#toggle-desktop svg 
     <div class="spa-spinner"></div>
   </div>
 
-  <!-- ═══════════════════════════════════════════════════════════
+  <!-- ===========================================================
        MAIN CONTENT AREA
        Child templates fill { block content } inside .app-page-shell.
        The sticky header row at the top holds the sidebar toggle + page title slot.
-  ═══════════════════════════════════════════════════════════ -->
+  =========================================================== -->
   <main id="general_container" class="flex flex-col min-h-screen">
 
     <!-- ── Sticky top bar ──────────────────────────────────────── -->
@@ -646,9 +484,9 @@ html.sidebar-collapsed > body > aside#sidebar > div > button#toggle-desktop svg 
     </div>
   </main>
 
-  <!-- ═══════════════════════════════════════════════════════════
+  <!-- ===========================================================
        SCRIPTS
-  ═══════════════════════════════════════════════════════════ -->
+  =========================================================== -->
 
 	<script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
 	<script src="{{ url_for('static', filename='js/dashboard_navfunction.js') }}"></script>
