@@ -368,8 +368,11 @@
 <script src="{{ url_for('static', filename='js/request_builder.js') }}"></script>
 
 <script>
-	qBuilder.server_address = "_";
+	qBuilder.server_address = "_";	
+	function inIframe() {
+			return window.self !== window.top;
+		}
 </script>
-
+	
 </body>
 </html>

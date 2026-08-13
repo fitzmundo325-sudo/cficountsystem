@@ -4,13 +4,17 @@
 {% block content %}
 <header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
   <div class="flex items-center gap-4">
-    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+  
+  
+    <button id="toggle-mobile" onclick="childViewToggleSidebar()" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <line x1="4" x2="20" y1="12" y2="12" />
         <line x1="4" x2="20" y1="6" y2="6" />
         <line x1="4" x2="20" y1="18" y2="18" />
       </svg>
     </button>
+	
+	
     <nav class="hidden sm:flex text-sm font-medium text-slate-500">
       <span class="hover:text-slate-900 cursor-pointer">Admin</span>
       <span class="mx-2">/</span>
@@ -307,7 +311,7 @@
 
 
 <script defer src="{{ url_for('static', filename='js/handles/product_masterlist_handles.js') }}"></script>
-  <script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
 
 
 {% endblock %}

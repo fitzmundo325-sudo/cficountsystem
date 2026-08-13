@@ -1,8 +1,5 @@
 // ItsAtomtech Utilities v1.5
 
-
-
-
 if(typeof(make) == 'undefined'){
 	make = function(df){
 		return document.createElement(df);
@@ -619,4 +616,13 @@ function generatePagination(paginationData = undefined, callbackName , jumpNameC
     container.appendChild(nextPage);
 
     return container;
+}
+
+
+
+
+//Helper Function for cross-toggle of sidebars etc. ==================
+
+function childViewToggleSidebar(){
+	postMessageToParent("function:toggleSidebarCollapse");
 }

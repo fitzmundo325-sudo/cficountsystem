@@ -192,9 +192,27 @@ if (!window.__sidebar_mobile_delegated) {
 
 
 
+// A cleaner way to do proper functions in JS, no BS.
+function toggleMobileSidebar() {
+    const sidebarEl = document.getElementById('sidebar');
+    const overlayEl = document.getElementById('sidebar-overlay');
 
+    if (sidebarEl && overlayEl) {
+        const isOpen = !sidebarEl.classList.contains('-translate-x-full');
 
-
+        if (isOpen) {
+            sidebarEl.classList.add('-translate-x-full');
+            overlayEl.classList.add('hidden');
+            document.body.classList.remove('mobile-sidebar-open');
+            document.documentElement.classList.remove('sidebar-open');
+        } else {
+            sidebarEl.classList.remove('-translate-x-full');
+            overlayEl.classList.remove('hidden');
+            document.body.classList.add('mobile-sidebar-open');
+            document.documentElement.classList.add('sidebar-open');
+        }
+    }
+}
 
 
 
