@@ -498,11 +498,20 @@
 
 	<script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
 	
+	<script>
+		function inIframe() {
+			return true;
+		}
+	
+	</script>
+	
 	
   <!-- Flash messages as toast notifications -->
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
       <script>
+	  
+	  
         document.addEventListener('DOMContentLoaded', function () {
           {% for category, message in messages %}
             if (window.toast && typeof window.toast.show === 'function') {
