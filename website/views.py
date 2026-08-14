@@ -10746,6 +10746,18 @@ def v2_main():
 
 
 
+#v2 of the Admin Users page 
+@views.route('/admin/users_v2', methods=['GET', 'POST'])
+def users_v2_():
+    page = 'users_v2'
+
+    return render_template("admin/users_v2.html", user=current_user, page=page)
+        
+
+
+
+
+
 #v2 of the product masterlist page 
 @views.route('/admin/product_masterlist', methods=['GET', 'POST'])
 def product_masterlist_v2():

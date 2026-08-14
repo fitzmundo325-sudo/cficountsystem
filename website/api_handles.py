@@ -43,7 +43,8 @@ def manila_time():
     return datetime.now(pytz.timezone("Asia/Manila"))
 
 
-
+def _can_manage_users():
+    return hasattr(current_user, 'role') and current_user.role in ('Superadmin', 'Admin', 'General Manager')
 
 
 
@@ -337,6 +338,114 @@ def delete_product_master(product_id):
  
 # ================================
 # Product Masterlist Section End
+# ================================
+
+ 
+ 
+# ================================
+# Users Section Start
+# ================================
+@api_handles.route('/users', methods=['POST', 'GET'])
+@login_required
+def api_users():
+    if not _can_manage_users():
+        return {'type': 'error', 'message': 'Access denied. Only Admin or Superadmin can access this page.'}, 403
+
+    try:
+        current_page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        current_page = 1
+
+    per_page = post_per_page
+
+    query = User.query.options(
+        selectinload(User.assigned_stores),
+        selectinload(User.assigned_clusters),
+        selectinload(User.managed_stores),
+        selectinload(User.managed_clusters),
+    )
+
+    # ── Search ───────────────────────────────────────────────
+    search = request.form.get('search')
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                User.full_name.ilike(pattern),
+                User.username.ilike(pattern),
+                User.email.ilike(pattern),
+                User.role.ilike(pattern),
+            )
+        )
+
+    # ── Sorting ──────────────────────────────────────────────
+    sortby = request.form.get('sort')
+    order = request.form.get('order_by', 'asc').lower()
+
+    sortable_columns = {
+        'id':         User.id,
+        'full_name':  User.full_name,
+        'username':   User.username,
+        'email':      User.email,
+        'role':       User.role,
+        'date_added': User.date_added,
+    }
+
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(User.date_added.desc(), User.id.desc())
+
+    # ── Pagination ───────────────────────────────────────────
+    pagination = query.paginate(page=current_page, per_page=per_page, error_out=False)
+    results      = pagination.items
+    total_pages  = pagination.pages
+    total_results = pagination.total
+
+    # ── Serialize ────────────────────────────────────────────
+    user_list = []
+    for u in results:
+        # assigned store display — mirrors the Jinja logic
+        if u.role == 'Store Manager':
+            managed_store = u.managed_stores[0].name if u.managed_stores else None
+        else:
+            managed_store = None
+
+        if u.role == 'Cluster Manager':
+            managed_cluster = u.managed_clusters[0].name if u.managed_clusters else None
+        else:
+            managed_cluster = None
+
+        user_list.append({
+            'id':                  u.id,
+            'full_name':           u.full_name  or '',
+            'username':            u.username   or '',
+            'email':               u.email      or '',
+            'role':                u.role       or '',
+            'date_added':          u.date_added.strftime('%b %d, %Y') if u.date_added else None,
+            # for display in the assigned store column
+            'managed_store':       managed_store,
+            'managed_cluster':     managed_cluster,
+            'assigned_clusters':   [c.name for c in u.assigned_clusters],
+            'assigned_stores':     [s.name for s in u.assigned_stores],
+            # for edit modal checkbox pre-selection
+            'assigned_store_ids':  [s.id   for s in u.assigned_stores],
+            'assigned_cluster_ids':[c.id   for c in u.assigned_clusters],
+        })
+
+    return {
+        'type': 'success',
+        'users': user_list,
+        'pagination_data': {
+            'current_page':  current_page,
+            'total_pages':   total_pages,
+            'total_results': total_results,
+        }
+    }
+ 
+# ================================
+# Users Section End
 # ================================
 
 
