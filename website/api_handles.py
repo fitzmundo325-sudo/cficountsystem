@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 from . import db
 from datetime import datetime, timedelta
-from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog
+from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store
 from .admin import log_audit_event
 
 plt = ""  # empty this var when on live website
@@ -67,7 +67,7 @@ def api_product_masterlist():
 
     query = ProductMaster.query.options(selectinload(ProductMaster.aliases))
 
-    # ── Filters ──────────────────────────────────────────────
+    # -- Filters ----------------------------------------------
     filters_raw = request.form.get('filters')
     if filters_raw:
         try:
@@ -82,7 +82,7 @@ def api_product_masterlist():
         except json.JSONDecodeError:
             pass
 
-    # ── Search ───────────────────────────────────────────────
+    # -- Search -----------------------------------------------
     search = request.form.get('search')
     if search:
         pattern = f'%{search}%'
@@ -99,7 +99,7 @@ def api_product_masterlist():
             )
         )
 
-    # ── Sorting ──────────────────────────────────────────────
+    # -- Sorting ----------------------------------------------
     sortby = request.form.get('sort')
     order = request.form.get('order_by', 'asc').lower()
 
@@ -122,13 +122,13 @@ def api_product_masterlist():
     else:
         query = query.order_by(ProductMaster.id.asc())
 
-    # ── Pagination ───────────────────────────────────────────
+    # -- Pagination -------------------------------------------
     pagination = query.paginate(page=current_page, per_page=per_page, error_out=False)
     results      = pagination.items
     total_pages  = pagination.pages
     total_results = pagination.total
 
-    # ── Serialize ────────────────────────────────────────────
+    # -- Serialize --------------------------------------------
     product_list = []
     for product in results:
         product_list.append({
@@ -365,7 +365,7 @@ def api_users():
         selectinload(User.managed_clusters),
     )
 
-    # ── Search ───────────────────────────────────────────────
+    # -- Search -----------------------------------------------
     search = request.form.get('search')
     if search:
         pattern = f'%{search}%'
@@ -378,7 +378,7 @@ def api_users():
             )
         )
 
-    # ── Sorting ──────────────────────────────────────────────
+    # -- Sorting ----------------------------------------------
     sortby = request.form.get('sort')
     order = request.form.get('order_by', 'asc').lower()
 
@@ -397,13 +397,13 @@ def api_users():
     else:
         query = query.order_by(User.date_added.desc(), User.id.desc())
 
-    # ── Pagination ───────────────────────────────────────────
+    # -- Pagination -------------------------------------------
     pagination = query.paginate(page=current_page, per_page=per_page, error_out=False)
     results      = pagination.items
     total_pages  = pagination.pages
     total_results = pagination.total
 
-    # ── Serialize ────────────────────────────────────────────
+    # -- Serialize --------------------------------------------
     user_list = []
     for u in results:
         # assigned store display — mirrors the Jinja logic
@@ -443,7 +443,238 @@ def api_users():
             'total_results': total_results,
         }
     }
+
+
+@api_handles.route('/users/create', methods=['POST'])
+@login_required
+def api_create_user():
+    if not _can_manage_users():
+        return {'type': 'error', 'message': 'Access denied. Only Admin or Superadmin can manage users.'}, 403
+
+    try:
+        full_name        = (request.form.get('full_name')        or '').strip()
+        username         = (request.form.get('username')         or '').strip()
+        email            = (request.form.get('email')            or '').strip()
+        role             = (request.form.get('role')             or '').strip()
+        password         = request.form.get('password')          or ''
+        confirm_password = request.form.get('confirm_password')  or ''
+        assigned_store_ids_raw   = request.form.getlist('assigned_store_ids')
+        assigned_cluster_ids_raw = request.form.getlist('assigned_cluster_ids')
+
+        # -- Validation -------------------------------------------
+        if not full_name or not username or not email or not role or not password:
+            return {'type': 'error', 'message': 'All required fields must be filled.'}, 400
+
+        if password != confirm_password:
+            return {'type': 'error', 'message': 'Passwords do not match.'}, 400
+
+        if len(password) < 6:
+            return {'type': 'error', 'message': 'Password must be at least 6 characters.'}, 400
+
+        if User.query.filter_by(email=email).first():
+            return {'type': 'error', 'message': 'Email already exists.'}, 409
+
+        if User.query.filter_by(username=username).first():
+            return {'type': 'error', 'message': 'Username already exists.'}, 409
+
+        # -- Assigned stores ---------------------------------------
+        assigned_store_id = None
+        assigned_stores   = []
+        if role == 'Inventory Staff':
+            assigned_store_ids = [int(v) for v in assigned_store_ids_raw if str(v).isdigit()]
+            assigned_stores = Store.query.filter(Store.id.in_(assigned_store_ids)).order_by(Store.name.asc()).all() if assigned_store_ids else []
+            if not assigned_stores:
+                return {'type': 'error', 'message': 'At least one Assigned Store is required for Inventory Staff.'}, 400
+            assigned_store_id = assigned_stores[0].id
+
+        # -- Assigned clusters -------------------------------------
+        assigned_clusters = []
+        if role == 'Area Manager':
+            assigned_cluster_ids = [int(v) for v in assigned_cluster_ids_raw if str(v).isdigit()]
+            assigned_clusters = Cluster.query.filter(Cluster.id.in_(assigned_cluster_ids)).order_by(Cluster.name.asc()).all() if assigned_cluster_ids else []
+            if not assigned_clusters:
+                return {'type': 'error', 'message': 'At least one Cluster must be assigned to an Area Manager.'}, 400
+            if len(assigned_clusters) > 6:
+                return {'type': 'error', 'message': 'An Area Manager can be assigned a maximum of 6 clusters.'}, 400
+
+        # -- Create ------------------------------------------------
+        new_user = User(
+            full_name        = full_name,
+            username         = username,
+            email            = email,
+            role             = role,
+            assigned_store_id= assigned_store_id,
+            password         = generate_password_hash(password, method='pbkdf2:sha256')
+        )
+
+        db.session.add(new_user)
+        db.session.flush()
+        new_user.assigned_stores   = assigned_stores
+        new_user.assigned_clusters = assigned_clusters
+
+        log_audit_event(
+            action='admin.user.create',
+            entity_type='User',
+            entity_id=new_user.id,
+            reason='New user account created by administrator.',
+            details={
+                'username':            new_user.username,
+                'email':               new_user.email,
+                'role':                new_user.role,
+                'assigned_store_id':   new_user.assigned_store_id,
+                'assigned_store_ids':  [s.id for s in new_user.assigned_stores],
+                'assigned_cluster_ids':[c.id for c in new_user.assigned_clusters],
+            },
+        )
+
+        db.session.commit()
+        return {'type': 'success', 'message': f'User {username} created successfully.'}
+
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error creating user: {str(e)}'}, 500
  
+ 
+@api_handles.route('/users/<int:user_id>/update', methods=['POST'])
+@login_required
+def api_update_user(user_id):
+    if not _can_manage_users():
+        return {'type': 'error', 'message': 'Access denied. Only Admin or Superadmin can manage users.'}, 403
+
+    try:
+        user = User.query.get_or_404(user_id)
+
+        previous_state = {
+            'full_name':           user.full_name,
+            'username':            user.username,
+            'email':               user.email,
+            'role':                user.role,
+            'assigned_store_id':   user.assigned_store_id,
+            'assigned_store_ids':  [s.id for s in user.assigned_stores],
+            'assigned_cluster_ids':[c.id for c in user.assigned_clusters],
+        }
+
+        full_name = (request.form.get('full_name') or '').strip()
+        username  = (request.form.get('username')  or '').strip()
+        email     = (request.form.get('email')     or '').strip()
+        role      = (request.form.get('role')      or '').strip()
+        new_password         = request.form.get('new_password')         or ''
+        confirm_new_password = request.form.get('confirm_new_password') or ''
+        assigned_store_ids_raw   = request.form.getlist('assigned_store_ids')
+        assigned_cluster_ids_raw = request.form.getlist('assigned_cluster_ids')
+
+        # -- Validation ----------------------------------------
+        if not full_name or not username or not email or not role:
+            return {'type': 'error', 'message': 'Full name, username, email, and role are required.'}, 400
+
+        if User.query.filter(User.email == email, User.id != user_id).first():
+            return {'type': 'error', 'message': 'Email already exists.'}, 409
+
+        if User.query.filter(User.username == username, User.id != user_id).first():
+            return {'type': 'error', 'message': 'Username already exists.'}, 409
+
+        # -- Apply fields --------------------------------------
+        user.full_name = full_name
+        user.username  = username
+        user.email     = email
+        user.role      = role
+
+        # -- Assigned stores -----------------------------------
+        if role == 'Inventory Staff':
+            assigned_store_ids = [int(v) for v in assigned_store_ids_raw if str(v).isdigit()]
+            assigned_stores = Store.query.filter(Store.id.in_(assigned_store_ids)).order_by(Store.name.asc()).all() if assigned_store_ids else []
+            if not assigned_stores:
+                return {'type': 'error', 'message': 'At least one Assigned Store is required for Inventory Staff.'}, 400
+            user.assigned_stores    = assigned_stores
+            user.assigned_store_id  = assigned_stores[0].id
+        else:
+            user.assigned_stores   = []
+            user.assigned_store_id = None
+
+        # -- Assigned clusters ---------------------------------
+        if role == 'Area Manager':
+            assigned_cluster_ids = [int(v) for v in assigned_cluster_ids_raw if str(v).isdigit()]
+            assigned_clusters = Cluster.query.filter(Cluster.id.in_(assigned_cluster_ids)).order_by(Cluster.name.asc()).all() if assigned_cluster_ids else []
+            if not assigned_clusters:
+                return {'type': 'error', 'message': 'At least one Cluster must be assigned to an Area Manager.'}, 400
+            if len(assigned_clusters) > 6:
+                return {'type': 'error', 'message': 'An Area Manager can be assigned a maximum of 6 clusters.'}, 400
+            user.assigned_clusters = assigned_clusters
+        else:
+            user.assigned_clusters = []
+
+        # -- Password ------------------------------------------
+        if new_password or confirm_new_password:
+            if new_password != confirm_new_password:
+                return {'type': 'error', 'message': 'New password and confirm password do not match.'}, 400
+            if len(new_password) < 6:
+                return {'type': 'error', 'message': 'New password must be at least 6 characters.'}, 400
+            user.password = generate_password_hash(new_password, method='pbkdf2:sha256')
+
+        # -- Audit ---------------------------------------------
+        log_audit_event(
+            action='admin.user.update',
+            entity_type='User',
+            entity_id=user.id,
+            reason='User account updated by administrator.',
+            details={
+                'before': previous_state,
+                'after': {
+                    'full_name':           user.full_name,
+                    'username':            user.username,
+                    'email':               user.email,
+                    'role':                user.role,
+                    'assigned_store_id':   user.assigned_store_id,
+                    'assigned_store_ids':  [s.id for s in user.assigned_stores],
+                    'assigned_cluster_ids':[c.id for c in user.assigned_clusters],
+                    'password_changed':    bool(new_password),
+                },
+            },
+        )
+
+        db.session.commit()
+        return {'type': 'success', 'message': f'User {user.username} updated successfully.'}
+
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error updating user: {str(e)}'}, 500
+
+
+
+@api_handles.route('/users/<int:user_id>/delete', methods=['POST'])
+@login_required
+def api_delete_user(user_id):
+    if not _can_manage_users():
+        return {'type': 'error', 'message': 'Access denied. Only Admin or Superadmin can manage users.'}, 403
+
+    try:
+        user = User.query.get_or_404(user_id)
+
+        if current_user.id == user.id:
+            return {'type': 'error', 'message': 'You cannot delete your own account.'}, 400
+
+        deleted_snapshot = {
+            'username': user.username,
+            'email':    user.email,
+            'role':     user.role,
+        }
+
+        log_audit_event(
+            action='admin.user.delete',
+            entity_type='User',
+            entity_id=user.id,
+            reason='User account deleted by administrator.',
+            details=deleted_snapshot,
+        )
+
+        db.session.delete(user)
+        db.session.commit()
+        return {'type': 'success', 'message': f'User {user.username} deleted successfully.'}
+
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error deleting user: {str(e)}'}, 500
+       
 # ================================
 # Users Section End
 # ================================

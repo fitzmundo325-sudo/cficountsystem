@@ -352,8 +352,10 @@
 <script>
   // ── Declarations ─────────────────────────────────────────
   let apiUsersUrl   = '{{ url_for("api_handles.api_users") }}';
-  let deleteUserUrl = '{{ url_for("admin.delete_user", user_id=0) }}';
-  let updateUserUrl = '{{ url_for("admin.update_user", user_id=0) }}';
+  let deleteUserUrl = '{{ url_for("api_handles.api_delete_user", user_id=0) }}';
+  let updateUserUrl = '{{ url_for("api_handles.api_update_user", user_id=0) }}';
+  let createUserUrl = '{{ url_for("api_handles.api_create_user") }}';
+  
   let usersModal;
   let editUsersModal;
 </script>

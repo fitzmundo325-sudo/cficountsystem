@@ -10750,10 +10750,10 @@ def v2_main():
 @views.route('/admin/users_v2', methods=['GET', 'POST'])
 def users_v2_():
     page = 'users_v2'
-
-    return render_template("admin/users_v2.html", user=current_user, page=page)
-        
-
+    stores   = Store.query.order_by(Store.name.asc()).all()
+    clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    return render_template("admin/users_v2.html", user=current_user, page=page, stores=stores, clusters=clusters)
+    
 
 
 
