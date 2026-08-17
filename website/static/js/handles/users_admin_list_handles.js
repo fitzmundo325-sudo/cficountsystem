@@ -19,7 +19,7 @@ let editClusterGroupEl   = document.getElementById('edit_assigned_cluster_group'
 
 let searchTimer = null;
 
-// ── Load ──────────────────────────────────────────────────
+// -- Load --------------------------------------------------
 function loadAllUsers(dataOnly = false) {
 qBuilder.search = document.getElementById('users-live-search').value;
 loadOnTableSpinner();
@@ -34,7 +34,7 @@ function process(data) {
 }
 }
 
-// ── Table Loader ──────────────────────────────────────────
+// -- Table Loader ------------------------------------------
 function tableLoader(data) {
 let resData = JSON.parse(data.responseText);
 let users   = resData.users;
@@ -73,7 +73,7 @@ users.forEach(u => {
   let deleteBtn = row.querySelector('.deleteUserBtn');
 
   if (editBtn)   editBtn.addEventListener('click',   () => openEditModal(u));
-  if (deleteBtn) deleteBtn.addEventListener('click', () => handleDelete(u.id, row));
+  if (deleteBtn) deleteBtn.addEventListener('click', () => handleDelete(u.id, u.username, row));
 
   frag.appendChild(clone);
 });
@@ -81,7 +81,7 @@ users.forEach(u => {
 tbody.appendChild(frag);
 }
 
-// ── Resolve assigned store display ────────────────────────
+// -- Resolve assigned store display ------------------------
 function resolveAssignedStore(u) {
 if (u.role === 'Store Manager')   return u.managed_store   || '--';
 if (u.role === 'Cluster Manager') return u.managed_cluster || '--';
@@ -90,7 +90,7 @@ if (u.assigned_stores && u.assigned_stores.length) return u.assigned_stores.join
 return '--';
 }
 
-// ── Assignment group toggle ───────────────────────────────
+// -- Assignment group toggle -------------------------------
 function syncAssignmentGroups(roleEl, storeEl, storeGroupEl, clusterEl, clusterGroupEl) {
 if (!roleEl) return;
 let isInventoryStaff = roleEl.value === 'Inventory Staff';
@@ -103,7 +103,7 @@ clusterEl.classList.toggle('border-amber-300', isAreaManager);
 if (!isAreaManager) clusterEl.querySelectorAll('input[type="checkbox"]').forEach(i => i.checked = false);
 }
 
-// ── Edit modal ────────────────────────────────────────────
+// -- Edit modal --------------------------------------------
 function openEditModal(u) {
 let editForm = document.getElementById('editUserForm');
 editForm.action = updateUserUrl.replace('/0/', '/' + u.id + '/');
@@ -128,8 +128,8 @@ syncAssignmentGroups(editRoleEl, editStoreEl, editStoreGroupEl, editClusterEl, e
 editUsersModal.open();
 }
 
-// ── Delete ────────────────────────────────────────────────
-function handleDelete(userId, row) {
+// -- Delete ------------------------------------------------
+function handleDelete_(userId, row) {
 if (!confirm('Delete this user?')) return;
 let url = deleteUserUrl.replace('/0/', '/' + userId + '/');
 fetch(url, { method: 'POST' })
@@ -145,7 +145,40 @@ fetch(url, { method: 'POST' })
   .catch(() => toast.error('Network error while deleting user.'));
 }
 
-// ── Table spinners ────────────────────────────────────────
+
+
+function handleDelete(userId, username, row) {
+    let doDelete = () => {
+        let url = deleteUserUrl.replace('/0/', '/' + userId + '/');
+        fetch(url, { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.type === 'success') {
+                    row.remove();
+                    toast.success(data.message || 'User deleted.');
+                } else {
+                    toast.error(data.message || 'Failed to delete user.');
+                }
+            })
+            .catch(() => toast.error('Network error while deleting user.'));
+    };
+
+    if (typeof showConfirmationModal === 'function') {
+        showConfirmationModal({
+            title:       'Delete User',
+            message:     `Are you sure you want to delete "${username}"? This action cannot be undone.`,
+            confirmText: 'Yes, Delete',
+            cancelText:  'Cancel',
+            onConfirm:   doDelete,
+        });
+    } else {
+        if (confirm(`Are you sure you want to delete "${username}"? This action cannot be undone.`)) {
+            doDelete();
+        }
+    }
+}
+
+// -- Table spinners ----------------------------------------
 function loadOnTableSpinner() {
 let tbody = document.getElementById('users-table-body');
 if (!tbody) return;
@@ -166,13 +199,13 @@ let row = document.getElementById('table-spinner-row');
 if (row) row.remove();
 }
 
-// ── Search ────────────────────────────────────────────────
+// -- Search ------------------------------------------------
 document.getElementById('users-live-search')?.addEventListener('input', () => {
 clearTimeout(searchTimer);
 searchTimer = setTimeout(() => loadAllUsers(true), 350);
 });
 
-// ── Form validation ───────────────────────────────────────
+// -- Form validation ---------------------------------------
 document.getElementById('newUserForm').addEventListener('submit', e => {
 let password        = document.getElementById('password');
 let confirmPassword = document.getElementById('confirm_password');
@@ -255,7 +288,7 @@ if (editRoleEl?.value === 'Area Manager') {
 
 
 
-// ── Init ──────────────────────────────────────────────────
+// -- Init --------------------------------------------------
 document.getElementById('openModalBtn').addEventListener('click', () => usersModal.open());
 createRoleEl?.addEventListener('change', () => syncAssignmentGroups(createRoleEl, createStoreEl, createStoreGroupEl, createClusterEl, createClusterGroupEl));
 editRoleEl?.addEventListener('change',   () => syncAssignmentGroups(editRoleEl, editStoreEl, editStoreGroupEl, editClusterEl, editClusterGroupEl));
@@ -319,3 +352,125 @@ function jumpToPage(page_n){
 	delayedQuerry();
 }
 
+
+// Adding New User
+function submitNewUserForm(e) {
+    e.preventDefault();
+
+    let password        = document.getElementById('password');
+    let confirmPassword = document.getElementById('confirm_password');
+    let assignedStore   = createStoreEl;
+    let assignedCluster = createClusterEl;
+
+    // -- Validation -------------------------------------------
+    if (password.value !== confirmPassword.value) {
+        usersModal.shakeElement(password);
+        usersModal.shakeElement(confirmPassword);
+        toast.error('Passwords do not match!');
+        return;
+    }
+    if (createRoleEl?.value === 'Inventory Staff' && !assignedStore?.querySelector('input[type="checkbox"]:checked')) {
+        usersModal.shakeElement(assignedStore);
+        toast.error('Select at least one Assigned Store for Inventory Staff.');
+        return;
+    }
+    if (createRoleEl?.value === 'Area Manager') {
+        let checkedClusters = assignedCluster?.querySelectorAll('input[type="checkbox"]:checked') || [];
+        if (checkedClusters.length === 0) {
+            usersModal.shakeElement(assignedCluster);
+            toast.error('Select at least one Cluster for the Area Manager.');
+            return;
+        }
+        if (checkedClusters.length > 6) {
+            usersModal.shakeElement(assignedCluster);
+            toast.error('An Area Manager can be assigned a maximum of 6 clusters.');
+            return;
+        }
+    }
+
+    // -- Submit -----------------------------------------------
+    let form     = document.getElementById('newUserForm');
+    let formData = new FormData(form);
+
+    fetch(createUserUrl, { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.type === 'success') {
+                toast.success(data.message || 'User created successfully.');
+                usersModal.close();
+                form.reset();
+                syncAssignmentGroups(createRoleEl, createStoreEl, createStoreGroupEl, createClusterEl, createClusterGroupEl);
+                loadAllUsers();
+            } else {
+                toast.error(data.message || 'Failed to create user.');
+            }
+        })
+        .catch(() => toast.error('Network error while creating user.'));
+}
+
+_('newUserForm').addEventListener('submit', submitNewUserForm);
+
+
+
+
+//Updating User
+function submitEditUserForm(e) {
+    e.preventDefault();
+
+    let password        = document.getElementById('edit_new_password');
+    let confirmPassword = document.getElementById('edit_confirm_new_password');
+    let assignedStore   = editStoreEl;
+    let assignedCluster = editClusterEl;
+
+    // -- Validation -------------------------------------------
+    if (password.value || confirmPassword.value) {
+        if (password.value !== confirmPassword.value) {
+            editUsersModal.shakeElement(password);
+            editUsersModal.shakeElement(confirmPassword);
+            toast.error('New passwords do not match!');
+            return;
+        }
+        if (password.value.length < 6) {
+            editUsersModal.shakeElement(password);
+            toast.error('New password must be at least 6 characters.');
+            return;
+        }
+    }
+    if (editRoleEl?.value === 'Inventory Staff' && !assignedStore?.querySelector('input[type="checkbox"]:checked')) {
+        editUsersModal.shakeElement(assignedStore);
+        toast.error('Select at least one Assigned Store for Inventory Staff.');
+        return;
+    }
+    if (editRoleEl?.value === 'Area Manager') {
+        let checkedClusters = assignedCluster?.querySelectorAll('input[type="checkbox"]:checked') || [];
+        if (checkedClusters.length === 0) {
+            editUsersModal.shakeElement(assignedCluster);
+            toast.error('Select at least one Cluster for the Area Manager.');
+            return;
+        }
+        if (checkedClusters.length > 6) {
+            editUsersModal.shakeElement(assignedCluster);
+            toast.error('An Area Manager can be assigned a maximum of 6 clusters.');
+            return;
+        }
+    }
+
+    // -- Submit -----------------------------------------------
+    let form     = document.getElementById('editUserForm');
+    let formData = new FormData(form);
+
+    fetch(form.action, { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.type === 'success') {
+                toast.success(data.message || 'User updated successfully.');
+                editUsersModal.close();
+                loadAllUsers();
+            } else {
+                toast.error(data.message || 'Failed to update user.');
+            }
+        })
+        .catch(() => toast.error('Network error while updating user.'));
+}
+
+_('editUserForm').addEventListener('submit', submitEditUserForm);
