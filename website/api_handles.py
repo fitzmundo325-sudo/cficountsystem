@@ -335,6 +335,72 @@ def delete_product_master(product_id):
     except Exception as e:
         db.session.rollback()
         return {'type': 'error', 'message': f'Error deleting product: {str(e)}'}, 500
+
+
+# = Product price change log =====
+@api_handles.route('/getPriceHistoryByProductId', methods=['GET','POST'])
+def get_price_history_by_product_id():
+    try:
+        product_id = int(request.args.get('product_id') or request.form.get('product_id'))
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid product_id'}), 400
+    
+    print(product_id)
+    
+    if not product_id:
+        return jsonify({'error': 'product_id is required'}), 400
+
+    logs = (
+        db.session.query(ProductPriceChangeLog, ProductMaster)
+        .join(ProductMaster, ProductPriceChangeLog.product_id == ProductMaster.id)
+        .filter(ProductPriceChangeLog.product_id == product_id)
+        .order_by(ProductPriceChangeLog.changed_at.asc())
+        .all()
+    )
+
+    if not logs:
+        return jsonify({
+            'product_id':          product_id,
+            'product_code':        None,
+            'product_description': None,
+            'product':             None,
+            'stats_data':          []
+        })
+
+    # Aggregate: keep the LAST entry per calendar date
+    daily = {}
+    for log, product in logs:
+        date_key = log.changed_at.strftime('%Y-%m-%d')
+        daily[date_key] = (log, product)
+
+    chart_data = []
+    for date_key in sorted(daily.keys()):
+        log, _ = daily[date_key]
+        chart_data.append({
+            'date':  date_key,
+            'tp':    log.new_tp,
+            'sp_p':  log.new_sp_p,
+            'sp_np': log.new_sp_np,
+        })
+
+    _, product = list(daily.values())[-1]
+    return jsonify({
+        'product_id':          product_id,
+        'product_code':        product.code,
+        'product_description': product.description,
+        'product': {
+            'id':           product.id,
+            'code':         product.code,
+            'description':  product.description,
+            'category':     product.category,
+            'sub_category': product.sub_category,
+            'tp':           product.tp,
+            'sp_p':         product.sp_p,
+            'sp_np':        product.sp_np
+        },
+        'stats_data': chart_data
+    })
+
  
 # ================================
 # Product Masterlist Section End
