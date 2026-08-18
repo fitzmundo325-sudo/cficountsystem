@@ -90,7 +90,10 @@ function tableLoader(data) {
     clone.querySelector('.edit-product-btn').dataset.productId    = p.id;
     clone.querySelector('.delete-product-btn').dataset.productId  = p.id;
     clone.querySelector('.delete-product-btn').dataset.productName = p.description;
-
+	
+	let detailsElement = tag("trend_index",clone)[0];
+		detailsElement.setAttribute("item_id",p.id);
+		
     frag.appendChild(clone);
   });
 
@@ -410,3 +413,128 @@ document.getElementById('editProductForm').addEventListener('submit', function (
     })
     .catch(() => toast.error('Error updating product. Please try again.'));
 });
+
+
+
+
+function loadItemToModal(elm){
+	
+	let itemId = elm.getAttribute("item_id");
+	console.log(itemId);
+	
+	openProductPriceHistoryModal(itemId);
+	
+}
+
+
+
+let openProductPriceHistoryModal = function(productId) {
+    let modal = document.getElementById('productPriceHistoryModal');
+    let backdrop = modal.querySelector('[data-modal-backdrop]');
+    let content = modal.querySelector('[data-modal-content]');
+
+    // Reset state
+    document.getElementById('pph-product-code').textContent = '';
+    document.getElementById('pph-product-description').textContent = '';
+    document.getElementById('pph-current-tp').textContent = '—';
+    document.getElementById('pph-current-sp-p').textContent = '—';
+    document.getElementById('pph-current-sp-np').textContent = '—';
+    document.getElementById('pph-total-changes').textContent = '—';
+    document.getElementById('pph-chart-canvas').classList.add('hidden');
+    document.getElementById('pph-chart-placeholder').classList.remove('hidden');
+
+    // Show modal
+    modal.classList.remove('hidden');
+    requestAnimationFrame(() => {
+        backdrop.classList.add('opacity-100');
+        content.classList.remove('scale-95', 'opacity-0');
+        content.classList.add('scale-100', 'opacity-100');
+    });
+
+		// Fetch data
+		qBuilder.sendQuery(
+			onPriceHistoryLoaded,
+			productHistoryURL,
+			[{ name: 'product_id', 'value': productId }],
+			function(err) { console.error('Price history request failed', err); }
+		);
+
+		function onPriceHistoryLoaded(data) {
+			let res_data = (JSON.parse(data.responseText));
+			
+			let product = res_data.product;
+			let stats = res_data.stats_data;
+			console.log(res_data);
+			
+			if(stats.length <= 0){
+				return toast.info("There was no history yet!");
+			}
+			
+
+			// Populate header
+			document.getElementById('pph-product-code').textContent = product.code;
+			document.getElementById('pph-product-description').textContent = product.description;
+
+			// Populate pills
+			document.getElementById('pph-current-tp').textContent = '₱' + product.tp.toFixed(2);
+			document.getElementById('pph-current-sp-p').textContent = '₱' + product.sp_p.toFixed(2);
+			document.getElementById('pph-current-sp-np').textContent = '₱' + product.sp_np.toFixed(2);
+			document.getElementById('pph-total-changes').textContent = stats.length + ' change(s)';
+
+			// Toggle canvas
+			if (stats.length > 0) {
+				document.getElementById('pph-chart-placeholder').classList.add('hidden');
+				document.getElementById('pph-chart-canvas').classList.remove('hidden');
+				// chart build goes here later
+				
+				let datasets = [
+					{
+						label: 'TP',
+						data: stats.map(function(s) { return [s.date, s.tp]; })
+					},
+					{
+						label: 'SP Premium',
+						data: stats.map(function(s) { return [s.date, s.sp_p]; })
+					},
+					{
+						label: 'SP Regular',
+						data: stats.map(function(s) { return [s.date, s.sp_np]; })
+					}
+				];
+
+				generateMultiLineChart(datasets, 'pph-chart-canvas', false);					
+			}else{
+					document.getElementById('pph-chart-canvas').classList.add('hidden');
+			}
+		}
+		
+		
+
+    // Close handlers
+    modal.querySelectorAll('[data-modal-close]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            backdrop.classList.remove('opacity-100');
+            content.classList.add('scale-95', 'opacity-0');
+            content.classList.remove('scale-100', 'opacity-100');
+            setTimeout(function() { modal.classList.add('hidden'); }, 300);
+        });
+    });
+};
+
+
+
+
+
+let closeProductPriceHistoryModal = function() {
+    let modal = document.getElementById('productPriceHistoryModal');
+    let backdrop = modal.querySelector('[data-modal-backdrop]');
+    let content = modal.querySelector('[data-modal-content]');
+
+    backdrop.classList.remove('opacity-100');
+    content.classList.add('scale-95', 'opacity-0');
+    content.classList.remove('scale-100', 'opacity-100');
+
+    setTimeout(function() { modal.classList.add('hidden'); }, 300);
+};
+
+
