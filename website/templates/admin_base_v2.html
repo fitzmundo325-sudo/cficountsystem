@@ -47,10 +47,10 @@
   
   <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
-  <link href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/styles.css') }}" rel="stylesheet">
   <link href="{{ url_for('static', filename='css/v2/extra_dashboard_style.css') }}" rel="stylesheet">
   <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-no-spinner-20260727"></script>
-  <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
   <script src="{{ url_for('static', filename='js/auto_scrollbar.js') }}?v=scrollbar-fade-1"></script>
 
   {% block extra_head %}
@@ -488,7 +488,7 @@
        SCRIPTS
   =========================================================== -->
 
-	<script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
+	<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
 	<script src="{{ url_for('static', filename='js/dashboard_navfunction.js') }}"></script>
 	<script src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
 
@@ -496,7 +496,7 @@
 
 	<script src="{{ url_for('static', filename='js/v2/dashboard_logics_v2.js') }}"></script>
 
-	<script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
+	<script src="{{ url_for('static', filename='js/sidebar.js') }}"></script>
 	
 	<script>
 		function inIframe() {
