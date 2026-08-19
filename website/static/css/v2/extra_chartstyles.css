@@ -1,0 +1,21 @@
+
+/* Chart extra styles */
+.chart_contianer {
+    box-sizing: border-box;
+    border-radius: 12px;
+    padding: 18px 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.12);
+    margin: 20px auto;
+    /* max-width: 900px; */
+	overflow:hidden;
+}
+
+
+.chart_contianer> canvas{
+	max-height:300px;
+	
+}
+
+.hidden{
+	display:none !important;
+}

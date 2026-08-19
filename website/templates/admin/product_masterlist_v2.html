@@ -2,6 +2,16 @@
 {% block title %}Product Masterlist{% endblock %}
 
 {% block content %}
+
+<script src="{{ url_for('static', filename='js/charts/chart.js') }}"></script>
+<script src="{{ url_for('static', filename='js/charts/chartjs-plugin-datalabels.min.js') }}"></script>
+
+<link
+  rel="stylesheet"
+  href="{{ url_for('static', filename='css/v2/extra_chartstyles.css') }}"
+/>
+
+
 <header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
   <div class="flex items-center gap-4">
   
@@ -165,7 +175,7 @@
           </svg>
         </button>
 		
-		<button type="button" class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-yellow-500 text-yellow-300 hover:bg-yellow-200 transition-colors" title="Chart Trends" aria-label="Chart Trends">
+		<button type="button" class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-yellow-500 text-yellow-300 hover:bg-yellow-200 transition-colors" title="Chart Trends" aria-label="Chart Trends" tag="trend_index" onclick="loadItemToModal(this)">
 			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 			  <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
 			  <polyline points="16 7 22 7 22 13" />
@@ -177,6 +187,7 @@
     </td>
   </tr>
 </template>
+
 
 
 <!-- Edit Product Modal -->
@@ -240,6 +251,9 @@
   </div>
 </div>
 
+
+
+
 <!-- Add Product Modal -->
 <div id="addProductModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
   <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
@@ -300,10 +314,83 @@
   </div>
 </div>
 
+
+<!-- Product Price History Modal -->
+<div id="productPriceHistoryModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-4xl transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+
+      <!-- Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-xl font-bold text-slate-900">Price Change History</h3>
+          <p class="text-sm text-slate-500 mt-1">
+            <span id="pph-product-code" class="font-semibold text-slate-700"></span>
+            <span id="pph-product-description" class="ml-1"></span>
+          </p>
+        </div>
+        <button data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform" onclick="closeProductPriceHistoryModal()">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+            <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Body -->
+      <div class="px-6 py-5 space-y-5">
+
+        <!-- Summary Pills -->
+        <div class="flex flex-wrap gap-3">
+          <div class="flex flex-col px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+            <span class="text-xs text-slate-400 font-medium">Trade Price (TP)</span>
+            <span id="pph-current-tp" class="text-base font-bold text-slate-800">—</span>
+          </div>
+          <div class="flex flex-col px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+            <span class="text-xs text-slate-400 font-medium">SP Premium</span>
+            <span id="pph-current-sp-p" class="text-base font-bold text-slate-800">—</span>
+          </div>
+          <div class="flex flex-col px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+            <span class="text-xs text-slate-400 font-medium">SP Regular</span>
+            <span id="pph-current-sp-np" class="text-base font-bold text-slate-800">—</span>
+          </div>
+          <div class="flex flex-col px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+            <span class="text-xs text-slate-400 font-medium">Total Changes</span>
+            <span id="pph-total-changes" class="text-base font-bold text-slate-800">—</span>
+          </div>
+        </div>
+
+        <!-- Chart Area -->
+        <div class="relative w-full bg-slate-50 border border-slate-200 rounded-xl p-4 chart_contianer" style="height: 340px;">
+          <!-- Placeholder state -->
+          <div id="pph-chart-placeholder" class="absolute inset-0 flex flex-col items-center justify-center rounded-xl gap-2 ">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-slate-300">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            <p class="text-sm text-slate-400 font-medium">No data to display</p>
+          </div>
+          <!-- Canvas -->
+          <canvas id="pph-chart-canvas" class="hidden w-full h-full"></canvas>
+        </div>
+
+      </div>
+
+      <!-- Footer -->
+      <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+        <button onclick="closeProductPriceHistoryModal()" type="button" data-modal-close class="px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-200 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95">Close</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+
 <script>
   // ── Declarations ──────────────────────────────────────────
   let addProductUrl  = '{{ url_for("admin.add_product") }}';
   let deleteProductUrl = '{{ url_for("api_handles.delete_product_master", product_id=0) }}';
+  let productHistoryURL = '{{ url_for("api_handles.get_price_history_by_product_id") }}';
 
   let addProductModal;
 </script>
@@ -312,6 +399,15 @@
 
 <script defer src="{{ url_for('static', filename='js/handles/product_masterlist_handles.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+
+<script
+  defer
+  src="{{ url_for('static', filename='js/chart_helper.js') }}"
+></script>
+
+<script>
+
+</script>
 
 
 {% endblock %}
