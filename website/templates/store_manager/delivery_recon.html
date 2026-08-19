@@ -1,0 +1,857 @@
+{% extends "base.html" %}
+{% block title %}Delivery Recon - {{ store.name }}{% endblock %}
+
+{% block content %}
+<style>
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-in {
+    animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .recon-table-scroll {
+    scrollbar-width: thin !important;
+    scrollbar-color: #94a3b8 #f1f5f9 !important;
+  }
+  .recon-table-scroll::-webkit-scrollbar {
+    width: 8px !important;
+    height: 8px !important;
+    display: block !important;
+  }
+  .recon-table-scroll::-webkit-scrollbar-track {
+    background: #f1f5f9 !important;
+    border-radius: 6px !important;
+  }
+  .recon-table-scroll::-webkit-scrollbar-thumb {
+    background: #94a3b8 !important;
+    border-radius: 6px !important;
+  }
+  .recon-table-scroll::-webkit-scrollbar-thumb:hover {
+    background: #64748b !important;
+  }
+</style>
+
+<!-- Header & Nav Bar with Auto-Submitting Date Picker -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between shadow-xs">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12"></line>
+        <line x1="4" x2="20" y1="6" y2="6"></line>
+        <line x1="4" x2="20" y1="18" y2="18"></line>
+      </svg>
+    </button>
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span class="inline-flex items-center gap-1.5 font-semibold text-indigo-600">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Inventory Staff
+      </span>
+      <span class="mx-2 text-slate-300">/</span>
+      <span class="text-slate-900 font-bold">Delivery Reconciliation</span>
+    </nav>
+  </div>
+
+  <!-- Header Date, Store Controls & Export Excel Button -->
+  <div class="flex items-center gap-3">
+    <form method="GET" action="{{ url_for('views.inventory_delivery_recon') }}" class="flex items-center gap-3">
+      <!-- Auto-submitting Date Picker -->
+      <input id="recon_date" name="date" type="date" value="{{ selected_report_date }}" onchange="this.form.submit()" class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 shadow-2xs cursor-pointer">
+
+      <!-- Store Badge / Selector -->
+      {% if user and user.role == 'Inventory Staff' and inventory_staff_stores and inventory_staff_stores|length > 1 %}
+      <select id="recon_store_id" name="store_id" onchange="this.form.submit()" class="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 outline-none cursor-pointer">
+        {% for assigned_store in inventory_staff_stores %}
+        <option value="{{ assigned_store.id }}" {% if assigned_store.id == inventory_staff_selected_store_id %}selected{% endif %}>
+          {{ assigned_store.name }}
+        </option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-50 border border-indigo-100 text-xs font-bold text-indigo-700">
+        <span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        {{ store.name }}
+      </span>
+      {% endif %}
+    </form>
+
+    <!-- Sticky Header Export Excel Button (Only clickable if reconciled) -->
+    <div id="export-excel-container">
+      {% if is_reconciled %}
+      <a id="export-excel-btn" href="{{ url_for('views.export_delivery_recon_excel', date=selected_report_date, store_id=store.id) }}"
+         class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+         title="Download Delivery Reconciliation Excel">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export Excel
+      </a>
+      {% else %}
+      <button id="export-excel-btn" type="button" disabled
+              class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-100 text-slate-400 border border-slate-200 text-xs font-bold cursor-not-allowed opacity-70"
+              title="Reconciliation must be completed to export Excel">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export Excel
+      </button>
+      {% endif %}
+    </div>
+  </div>
+</header>
+
+<div class="px-4 py-6 md:px-8 max-w-7xl w-full mx-auto space-y-6 animate-fade-in">
+  
+  <!-- UNIFIED MERGED CARD (Delivery RSO & Receipt Excel) -->
+  <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+    <!-- Card Header -->
+    <div class="px-6 py-5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="h-3 w-3 rounded-full bg-indigo-600"></span>
+          <h2 class="text-lg font-bold text-slate-900">Delivery Reconciliation</h2>
+        </div>
+        <p class="text-xs text-slate-500 mt-1">Recorded RSO delivery rows & uploaded plant receipt Excel for {{ selected_report_date }}</p>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <span class="inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700 border border-indigo-200 shadow-2xs">
+          {{ rso_items|length }} RSO Item(s)
+        </span>
+        {% if receipt_items %}
+        <span class="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700 border border-emerald-200 shadow-2xs">
+          {{ receipt_items|length }} Receipt Item(s)
+        </span>
+        {% if not is_reconciled %}
+        <form method="POST" action="{{ url_for('views.clear_delivery_receipt') }}" id="clear-upload-form">
+          <input type="hidden" name="report_date" value="{{ selected_report_date }}">
+          <button type="submit" onclick="clearReconLocalStorage('{{ selected_report_date }}')" class="text-xs text-rose-600 font-bold hover:underline cursor-pointer">Clear Upload</button>
+        </form>
+        {% endif %}
+        {% else %}
+        <span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-500 border border-slate-200">
+          Receipt Not Uploaded
+        </span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Action Subbar (Left: RSO # & Filter Search | Right: Upload File Form) -->
+    <div class="p-4 bg-slate-50/50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4 min-h-[73px]">
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+          <span class="text-slate-400">RSO #:</span>
+          <span class="font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">{{ rso_numbers_display }}</span>
+        </div>
+        <div class="relative">
+          <input id="recon-search-input" type="text" placeholder="Filter items..." class="w-48 sm:w-56 rounded-xl border border-slate-300 bg-white pl-8 pr-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
+          <svg class="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        </div>
+      </div>
+
+      <!-- Upload & Reconcile Controls -->
+      <div class="flex flex-col sm:flex-row items-center gap-2.5">
+        <form method="POST" action="{{ url_for('views.upload_delivery_receipt') }}" enctype="multipart/form-data" class="flex flex-col sm:flex-row items-center gap-2.5">
+          <input type="hidden" name="report_date" value="{{ selected_report_date }}">
+          <div class="w-full sm:w-auto">
+            <input id="receipt_file" name="receipt_file" type="file" accept=".xls,.xlsx" required class="w-full px-3 py-1.5 text-xs bg-white rounded-xl border border-slate-300 text-slate-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100">
+          </div>
+          <button type="submit" class="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-emerald-700 transition-colors shadow-xs cursor-pointer">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload & Match
+          </button>
+        </form>
+
+        <!-- Reconcile Button -->
+        <button id="save-recon-btn" type="button" onclick="handleSaveReconciliation(this)"
+          {% if is_reconciled %}disabled{% endif %}
+          class="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-xs {% if is_reconciled %}bg-emerald-800 text-emerald-100 opacity-90 cursor-not-allowed{% else %}bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer{% endif %}">
+          {% if is_reconciled %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+          Reconciled
+          {% else %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          Reconcile
+          {% endif %}
+        </button>
+      </div>
+    </div>
+
+    <!-- Single Merged Table with Side-by-Side RSO and Receipt Columns (Including Cus PO) -->
+    <div class="overflow-auto max-h-[65vh] min-h-[350px] bg-white recon-table-scroll">
+      <table class="w-full divide-y divide-slate-200">
+        <thead class="bg-slate-100 border-b border-slate-200 sticky top-0 z-10 shadow-2xs">
+          <!-- Top Group Header Row -->
+          <tr class="border-b border-slate-200 text-xs font-bold uppercase tracking-wider text-slate-500 bg-slate-100">
+            <th colspan="3" class="px-4 py-2.5 text-left text-indigo-700 bg-indigo-50 border-r border-slate-200">
+              <div class="flex items-center gap-1.5">
+                <span class="h-2 w-2 rounded-full bg-indigo-600"></span>
+                Delivery RSO Data
+              </div>
+            </th>
+            <th colspan="4" class="px-4 py-2.5 text-left text-emerald-700 bg-emerald-50 border-r border-slate-200">
+              <div class="flex items-center gap-1.5">
+                <span class="h-2 w-2 rounded-full bg-emerald-600"></span>
+                Delivery Receipt Excel
+              </div>
+            </th>
+            <th class="px-4 py-2.5 text-center text-slate-700 bg-slate-100">
+              Audit
+            </th>
+          </tr>
+          <!-- Sub Column Header Row -->
+          <tr class="bg-slate-100 border-b border-slate-200">
+            <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wider bg-slate-100">Item Code</th>
+            <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wider bg-slate-100">Description</th>
+            <th class="px-4 py-2.5 text-right text-xs font-bold text-indigo-700 uppercase tracking-wider border-r border-slate-200 bg-slate-100">RSO Qty</th>
+
+            <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wider bg-slate-100">Cus PO</th>
+            <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wider bg-slate-100">Item Code</th>
+            <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wider bg-slate-100">Description</th>
+            <th class="px-4 py-2.5 text-right text-xs font-bold text-emerald-700 uppercase tracking-wider border-r border-slate-200 bg-slate-100">Receipt Qty</th>
+
+            <th class="px-4 py-2.5 text-center text-xs font-bold text-slate-600 uppercase tracking-wider bg-slate-100">Variance</th>
+          </tr>
+        </thead>
+        <tbody id="recon-tbody" class="divide-y divide-slate-100 bg-white">
+          {% if receipt_items and comparison_rows %}
+            {% for row in comparison_rows %}
+            <tr class="hover:bg-slate-50 recon-row" data-receipt-desc="{{ row.receipt_desc }}" data-rso-desc="{{ row.rso_desc }}">
+              <!-- RSO Columns -->
+              {% if row.rso_desc == '-' and row.receipt_desc != '-' %}
+              <td colspan="2" class="px-3 py-2 text-xs rso-match-cell">
+                <form method="POST" action="{{ url_for('views.manual_link_delivery_recon') }}" class="w-full">
+                  <input type="hidden" name="report_date" value="{{ selected_report_date }}">
+                  <input type="hidden" name="receipt_desc" value="{{ row.receipt_desc }}">
+                  <select name="selected_rso_id" onchange="handleSilentManualLink(this)" class="w-full text-xs font-semibold text-indigo-700 bg-indigo-50/90 border border-indigo-200 rounded-lg px-2.5 py-1.5 outline-none cursor-pointer hover:border-indigo-400 focus:ring-2 focus:ring-indigo-100">
+                    <option value="">+ Match with RSO Product...</option>
+                    {% if unmatched_rso_items %}
+                      {% for rso in unmatched_rso_items %}
+                      <option value="{{ rso.id if rso.id is not none else rso.uid }}">{{ rso.product_code if rso.product_code and rso.product_code != '-' else '' }} {{ rso.product_name }} (Qty: {{ rso.quantity }})</option>
+                      {% endfor %}
+                    {% else %}
+                      <option value="" disabled>No unmatched RSO items remaining</option>
+                    {% endif %}
+                  </select>
+                </form>
+              </td>
+              <td class="px-4 py-2.5 text-sm font-bold text-indigo-900 text-right whitespace-nowrap border-r border-slate-200/80 rso-qty-cell">0</td>
+              {% else %}
+              <td class="px-4 py-2.5 text-xs font-mono text-slate-600 whitespace-nowrap rso-code-cell">{{ row.rso_code }}</td>
+              <td class="px-4 py-2.5 text-sm font-semibold text-slate-900 rso-desc-cell">
+                <div class="flex items-center justify-between gap-1.5">
+                  <span>{{ row.rso_desc }}</span>
+                  {% if row.is_manually_linked %}
+                  <button type="button" onclick="handleSilentUnlink(this, '{{ row.receipt_desc }}')" class="text-[10px] text-slate-400 hover:text-rose-600 font-bold hover:underline cursor-pointer" title="Unlink product">Change</button>
+                  {% endif %}
+                </div>
+              </td>
+              <td class="px-4 py-2.5 text-sm font-bold text-indigo-900 text-right whitespace-nowrap border-r border-slate-200/80 rso-qty-cell">{{ row.rso_qty }}</td>
+              {% endif %}
+
+              <!-- Receipt Columns (including Cus PO) -->
+              <td class="px-4 py-2.5 text-xs font-mono text-slate-600 whitespace-nowrap rec-po-cell">{{ row.receipt_cus_po }}</td>
+              <td class="px-4 py-2.5 text-xs font-mono text-slate-600 whitespace-nowrap rec-code-cell">{{ row.receipt_code }}</td>
+              <td class="px-4 py-2.5 text-sm font-semibold text-slate-900 rec-desc-cell">{{ row.receipt_desc }}</td>
+              <td class="px-4 py-2.5 text-sm font-bold text-emerald-900 text-right whitespace-nowrap border-r border-slate-200/80 rec-qty-cell" data-rec-qty="{{ row.receipt_qty }}">{{ row.receipt_qty }}</td>
+
+              <!-- Variance Column -->
+              <td class="px-4 py-2.5 text-center whitespace-nowrap variance-cell">
+                {% if row.variance == 0 and not row.date_error %}
+                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-extrabold border border-emerald-200">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                  0
+                </span>
+                {% elif row.date_error %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 text-xs font-bold border border-rose-200" title="{{ row.status_desc }}">
+                  Date Err
+                </span>
+                {% elif row.variance > 0 %}
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-extrabold border border-indigo-200">
+                  +{{ row.variance }}
+                </span>
+                {% else %}
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 text-xs font-extrabold border border-rose-200">
+                  {{ row.variance }}
+                </span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            {% for item in rso_items %}
+            <tr class="hover:bg-slate-50 recon-row">
+              <!-- RSO Columns -->
+              <td class="px-4 py-2.5 text-xs font-mono text-slate-600 whitespace-nowrap">{{ item.product_code if item.product_code else '-' }}</td>
+              <td class="px-4 py-2.5 text-sm font-semibold text-slate-900">
+                <div class="flex items-center gap-1.5">
+                  <span>{{ item.product_name }}</span>
+                  {% if item.is_manual %}
+                  <span class="shrink-0 px-1.5 py-0.5 text-[9px] font-extrabold uppercase rounded-full bg-amber-50 text-amber-700 border border-amber-200">Manual</span>
+                  {% endif %}
+                </div>
+              </td>
+              <td class="px-4 py-2.5 text-sm font-bold text-indigo-900 text-right whitespace-nowrap border-r border-slate-200/80">{{ item.quantity }}</td>
+
+              <!-- Receipt Placeholder Columns -->
+              <td class="px-4 py-2.5 text-xs text-slate-300 whitespace-nowrap">-</td>
+              <td class="px-4 py-2.5 text-xs text-slate-300 whitespace-nowrap">-</td>
+              <td class="px-4 py-2.5 text-sm text-slate-300 whitespace-nowrap">-</td>
+              <td class="px-4 py-2.5 text-sm text-slate-300 text-right whitespace-nowrap border-r border-slate-200/80">-</td>
+
+              <!-- Variance Placeholder -->
+              <td class="px-4 py-2.5 text-center text-slate-300 whitespace-nowrap">-</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="8" class="px-4 py-12 text-center text-sm text-slate-400 italic">
+                <div class="mx-auto max-w-xs text-center space-y-1">
+                  <p class="font-bold text-slate-700">No Delivery Records</p>
+                  <p class="text-xs text-slate-400">There are no RSO rows recorded for {{ selected_report_date }}.</p>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- RECONCILIATION ANALYSIS RESULT SUMMARY -->
+  {% if comparison_rows and receipt_items %}
+  <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm space-y-0">
+    <!-- Analysis Section Header -->
+    <div class="px-6 py-4 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="h-3 w-3 rounded-full bg-emerald-400 animate-pulse"></span>
+          <h3 class="text-base font-bold text-white">Reconciliation Analysis Result</h3>
+        </div>
+        <p class="text-xs text-slate-400 mt-0.5">Matched, Short, and Over audit breakdown for {{ selected_report_date }}</p>
+      </div>
+
+      <!-- Quick Metrics Pills -->
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="px-3 py-1 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300">
+          Total: {{ comparison_rows|length }}
+        </span>
+        <span class="px-3 py-1 rounded-xl bg-emerald-950/80 border border-emerald-800/60 text-xs font-bold text-emerald-300">
+          Matched: {{ matched_rows|length if matched_rows is defined else (comparison_rows|selectattr('variance', 'equalto', 0)|list|length) }}
+        </span>
+        <span class="px-3 py-1 rounded-xl bg-amber-950/80 border border-amber-800/60 text-xs font-bold text-amber-300">
+          Short: {{ short_items|length if short_items is defined else (comparison_rows|selectattr('variance', 'lt', 0)|list|length) }}
+        </span>
+        <span class="px-3 py-1 rounded-xl bg-indigo-950/80 border border-indigo-800/60 text-xs font-bold text-indigo-300">
+          Over: {{ over_items|length if over_items is defined else (comparison_rows|selectattr('variance', 'gt', 0)|list|length) }}
+        </span>
+      </div>
+    </div>
+
+    <!-- Analysis Grid: Short Products & Over Products -->
+    <div class="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 bg-slate-50/50">
+      
+      <!-- SHORT PRODUCTS CARD -->
+      <div class="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3">
+        <div class="flex items-center justify-between border-b border-amber-200/80 pb-3">
+          <div class="flex items-center gap-2">
+            <div class="h-8 w-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-sm">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </div>
+            <div>
+              <h4 class="text-sm font-bold text-amber-950">Short Products</h4>
+              <p class="text-[11px] text-amber-700 font-medium">Delivered quantity is less than expected RSO quantity</p>
+            </div>
+          </div>
+          <span class="px-2.5 py-1 rounded-full bg-amber-100 border border-amber-300 text-xs font-extrabold text-amber-900">
+            {{ short_items|length if short_items is defined else (comparison_rows|selectattr('variance', 'lt', 0)|list|length) }} Item(s)
+          </span>
+        </div>
+
+        {% set current_short_list = short_items if short_items is defined else (comparison_rows|selectattr('variance', 'lt', 0)|list) %}
+        {% if current_short_list %}
+        <div class="space-y-2 max-h-80 overflow-y-auto pr-1 recon-table-scroll">
+          {% for item in current_short_list %}
+          <div class="p-3 rounded-xl bg-white border border-amber-200/70 shadow-2xs flex items-center justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-bold text-slate-900 truncate">
+                  {{ item.rso_desc if item.rso_desc != '-' else item.receipt_desc }}
+                </span>
+                {% if item.rso_code != '-' or item.receipt_code != '-' %}
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 text-slate-600">
+                  {{ item.rso_code if item.rso_code != '-' else item.receipt_code }}
+                </span>
+                {% endif %}
+              </div>
+              <p class="text-[11px] text-slate-500 mt-0.5">
+                RSO Expected: <strong class="text-slate-700">{{ item.rso_qty }}</strong> | Receipt Received: <strong class="text-slate-700">{{ item.receipt_qty }}</strong>
+              </p>
+            </div>
+            <div class="text-right shrink-0">
+              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 text-xs font-black border border-amber-300">
+                Short {{ item.variance|abs }}
+              </span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="py-6 text-center text-xs text-amber-800/80 font-medium">
+          <svg class="mx-auto h-8 w-8 text-amber-400/80 mb-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          No short products found. All received quantities match or exceed RSO expectations!
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- OVER PRODUCTS CARD -->
+      <div class="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+        <div class="flex items-center justify-between border-b border-indigo-200/80 pb-3">
+          <div class="flex items-center gap-2">
+            <div class="h-8 w-8 rounded-lg bg-indigo-100 text-indigo-800 flex items-center justify-center font-bold text-sm">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </div>
+            <div>
+              <h4 class="text-sm font-bold text-indigo-950">Over Products</h4>
+              <p class="text-[11px] text-indigo-700 font-medium">Delivered quantity exceeds expected RSO quantity</p>
+            </div>
+          </div>
+          <span class="px-2.5 py-1 rounded-full bg-indigo-100 border border-indigo-300 text-xs font-extrabold text-indigo-900">
+            {{ over_items|length if over_items is defined else (comparison_rows|selectattr('variance', 'gt', 0)|list|length) }} Item(s)
+          </span>
+        </div>
+
+        {% set current_over_list = over_items if over_items is defined else (comparison_rows|selectattr('variance', 'gt', 0)|list) %}
+        {% if current_over_list %}
+        <div class="space-y-2 max-h-80 overflow-y-auto pr-1 recon-table-scroll">
+          {% for item in current_over_list %}
+          <div class="p-3 rounded-xl bg-white border border-indigo-200/70 shadow-2xs flex items-center justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-bold text-slate-900 truncate">
+                  {{ item.receipt_desc if item.receipt_desc != '-' else item.rso_desc }}
+                </span>
+                {% if item.receipt_code != '-' or item.rso_code != '-' %}
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 text-slate-600">
+                  {{ item.receipt_code if item.receipt_code != '-' else item.rso_code }}
+                </span>
+                {% endif %}
+              </div>
+              <p class="text-[11px] text-slate-500 mt-0.5">
+                RSO Expected: <strong class="text-slate-700">{{ item.rso_qty }}</strong> | Receipt Received: <strong class="text-slate-700">{{ item.receipt_qty }}</strong>
+              </p>
+            </div>
+            <div class="text-right shrink-0">
+              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-100 text-indigo-900 text-xs font-black border border-indigo-300">
+                +{{ item.variance }} Over
+              </span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="py-6 text-center text-xs text-indigo-800/80 font-medium">
+          <svg class="mx-auto h-8 w-8 text-indigo-400/80 mb-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          No surplus products. No items were delivered over RSO quantity!
+        </div>
+        {% endif %}
+      </div>
+
+    </div>
+
+    <!-- MATCHED PRODUCTS ROW FOOTER -->
+    {% set current_matched_list = matched_rows if matched_rows is defined else (comparison_rows|selectattr('variance', 'equalto', 0)|list) %}
+    <div class="px-6 py-4 bg-emerald-50/60 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div class="flex items-center gap-2">
+        <span class="h-6 w-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+          ✓
+        </span>
+        <span class="font-bold text-emerald-950">
+          Matched Items: <span class="text-emerald-700 font-extrabold">{{ current_matched_list|length }}</span> of {{ comparison_rows|length }} total audited items
+        </span>
+      </div>
+      <p class="text-[11px] text-emerald-800 font-medium">
+        All matched products have 100% agreement between RSO expected quantity and uploaded plant receipt Excel quantity.
+      </p>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- VALIDATION ERRORS ALERT BANNER -->
+  {% if date_errors_count > 0 %}
+  <div class="rounded-2xl border border-rose-300 bg-rose-50 p-5 shadow-xs flex items-start gap-4">
+    <div class="h-10 w-10 shrink-0 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center">
+      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </div>
+    <div class="space-y-1">
+      <h3 class="text-base font-bold text-rose-900">Reconciliation Validation Warning</h3>
+      <p class="text-xs text-rose-700 font-semibold">The uploaded receipt Excel file contains data that differs from the Delivery RSO records for {{ store.name }}:</p>
+      <ul class="list-disc list-inside text-xs font-semibold text-rose-800 space-y-1 pt-1">
+        {% if date_errors_count > 0 %}
+        <li><span class="font-bold uppercase text-rose-900">Date Mismatch ({{ date_errors_count }} item(s)):</span> Receipt date does not match selected report date ({{ selected_report_date }}).</li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const filterInput = document.getElementById('recon-search-input');
+    if (filterInput) {
+      filterInput.addEventListener('input', function() {
+        const query = this.value.toLowerCase().trim();
+        const rows = document.querySelectorAll('.recon-row');
+        rows.forEach(row => {
+          const text = row.textContent.toLowerCase();
+          row.style.display = text.includes(query) ? '' : 'none';
+        });
+      });
+    }
+
+    // Sync localStorage deleted rows strictly by dataset.receiptDesc (Exact match)
+    const reportDateInput = document.getElementById('recon_date');
+    const reportDate = reportDateInput ? reportDateInput.value : '';
+    const storageKey = 'recon_deleted_' + reportDate;
+    let deletedList = [];
+    try {
+      deletedList = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    } catch(e) {}
+
+    if (deletedList.length > 0) {
+      document.querySelectorAll('.recon-row').forEach(row => {
+        const recDesc = (row.dataset.receiptDesc || '').trim();
+        if (recDesc && deletedList.includes(recDesc)) {
+          row.remove();
+        }
+      });
+    }
+  });
+
+  function clearReconLocalStorage(dateStr) {
+    if (dateStr) {
+      localStorage.removeItem('recon_deleted_' + dateStr);
+    }
+  }
+
+  async function handleDeleteReconRow(btnEl, receiptDesc) {
+    const tr = btnEl.closest('tr');
+    const reportDateInput = document.getElementById('recon_date');
+    const reportDate = reportDateInput ? reportDateInput.value : '';
+
+    tr.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+    tr.style.opacity = '0';
+    tr.style.transform = 'translateX(-10px)';
+
+    setTimeout(() => {
+      tr.remove();
+    }, 250);
+
+    const storageKey = 'recon_deleted_' + reportDate;
+    let deletedList = [];
+    try {
+      deletedList = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    } catch(e) {}
+
+    if (receiptDesc && !deletedList.includes(receiptDesc)) {
+      deletedList.push(receiptDesc);
+    }
+    localStorage.setItem(storageKey, JSON.stringify(deletedList));
+
+    const formData = new FormData();
+    formData.append('report_date', reportDate);
+    formData.append('receipt_desc', receiptDesc || '');
+
+    try {
+      await fetch("{{ url_for('views.delete_delivery_recon_row') }}", {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      });
+    } catch (err) {
+      console.error('Delete row error:', err);
+    }
+  }
+
+  async function handleSilentManualLink(selectEl) {
+    const form = selectEl.closest('form');
+    if (!form || !selectEl.value) return;
+
+    const tr = selectEl.closest('tr');
+    const formData = new FormData(form);
+    const receiptDesc = formData.get('receipt_desc');
+    const selectedRsoId = formData.get('selected_rso_id');
+
+    selectEl.disabled = true;
+
+    try {
+      const response = await fetch("{{ url_for('views.manual_link_delivery_recon') }}", {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      });
+      const data = await response.json();
+      if (data.success) {
+        // Silently update table row in real-time without reloading page!
+        const recQtyCell = tr.querySelector('.rec-qty-cell');
+        const recQty = recQtyCell ? parseInt(recQtyCell.dataset.recQty || recQtyCell.textContent) || 0 : 0;
+        const newVariance = recQty - data.rso_qty;
+
+        // Replace RSO match cell with Code and Desc cells
+        const matchCell = tr.querySelector('.rso-match-cell');
+        if (matchCell && matchCell.parentNode) {
+          const parent = matchCell.parentNode;
+          const codeTd = document.createElement('td');
+          codeTd.className = 'px-4 py-2.5 text-xs font-mono text-slate-600 whitespace-nowrap rso-code-cell';
+          codeTd.textContent = data.rso_code || '-';
+
+          const descTd = document.createElement('td');
+          descTd.className = 'px-4 py-2.5 text-sm font-semibold text-slate-900 rso-desc-cell';
+          descTd.innerHTML = `
+            <div class="flex items-center justify-between gap-1.5">
+              <span>${data.rso_desc}</span>
+              <button type="button" onclick="handleSilentUnlink(this, '${receiptDesc.replace(/'/g, "\\'")}')" class="text-[10px] text-slate-400 hover:text-rose-600 font-bold hover:underline cursor-pointer" title="Unlink product">Change</button>
+            </div>
+          `;
+
+          parent.insertBefore(codeTd, matchCell);
+          parent.insertBefore(descTd, matchCell);
+          matchCell.remove();
+        }
+
+        const rsoQtyCell = tr.querySelector('.rso-qty-cell');
+        if (rsoQtyCell) {
+          rsoQtyCell.textContent = data.rso_qty;
+        }
+
+        // Update Variance cell
+        const varCell = tr.querySelector('.variance-cell');
+        if (varCell) {
+          if (newVariance === 0) {
+            varCell.innerHTML = `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-extrabold border border-emerald-200"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg> 0</span>`;
+          } else if (newVariance > 0) {
+            varCell.innerHTML = `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-extrabold border border-indigo-200">+${newVariance}</span>`;
+          } else {
+            varCell.innerHTML = `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 text-xs font-extrabold border border-rose-200">${newVariance}</span>`;
+          }
+        }
+
+        // Hide/Remove this selected RSO option from all other remaining dropdowns on the page!
+        if (selectedRsoId) {
+          document.querySelectorAll('select[name="selected_rso_id"]').forEach(s => {
+            const opt = s.querySelector(`option[value="${selectedRsoId}"]`);
+            if (opt) opt.remove();
+          });
+        }
+      } else {
+        selectEl.disabled = false;
+      }
+    } catch (err) {
+      console.error('Silent manual link error:', err);
+      selectEl.disabled = false;
+    }
+  }
+
+  async function handleSilentUnlink(btnEl, receiptDesc) {
+    const tr = btnEl.closest('tr');
+    const reportDateInput = document.getElementById('recon_date');
+    const reportDate = reportDateInput ? reportDateInput.value : '';
+
+    const formData = new FormData();
+    formData.append('report_date', reportDate);
+    formData.append('receipt_desc', receiptDesc);
+    formData.append('selected_rso_id', '');
+
+    btnEl.disabled = true;
+
+    try {
+      const response = await fetch("{{ url_for('views.manual_link_delivery_recon') }}", {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      });
+      const data = await response.json();
+      if (data.success) {
+        // Silently restore row to dropdown state without reloading page
+        const codeTd = tr.querySelector('.rso-code-cell');
+        const descTd = tr.querySelector('.rso-desc-cell');
+
+        if (codeTd && descTd && codeTd.parentNode) {
+          const parent = codeTd.parentNode;
+          const matchTd = document.createElement('td');
+          matchTd.colSpan = 2;
+          matchTd.className = 'px-3 py-2 text-xs rso-match-cell';
+
+          const form = document.createElement('form');
+          form.method = 'POST';
+          form.action = "{{ url_for('views.manual_link_delivery_recon') }}";
+          form.className = 'w-full';
+
+          const inputDate = document.createElement('input');
+          inputDate.type = 'hidden';
+          inputDate.name = 'report_date';
+          inputDate.value = reportDate;
+
+          const inputDesc = document.createElement('input');
+          inputDesc.type = 'hidden';
+          inputDesc.name = 'receipt_desc';
+          inputDesc.value = receiptDesc;
+
+          const select = document.createElement('select');
+          select.name = 'selected_rso_id';
+          select.onchange = function() { handleSilentManualLink(this); };
+          select.className = 'w-full text-xs font-semibold text-indigo-700 bg-indigo-50/90 border border-indigo-200 rounded-lg px-2.5 py-1.5 outline-none cursor-pointer hover:border-indigo-400 focus:ring-2 focus:ring-indigo-100';
+
+          const optDefault = document.createElement('option');
+          optDefault.value = '';
+          optDefault.textContent = '+ Match with RSO Product...';
+          select.appendChild(optDefault);
+
+          // Copy current options from any existing select
+          const existingSelect = document.querySelector('select[name="selected_rso_id"]');
+          if (existingSelect) {
+            Array.from(existingSelect.options).forEach(opt => {
+              if (opt.value) {
+                select.appendChild(opt.cloneNode(true));
+              }
+            });
+          }
+
+          // Restore unlinked RSO item back into options across all dropdowns
+          if (data.unlinked_rso && data.unlinked_rso.id) {
+            const unlinkedId = String(data.unlinked_rso.id);
+            const unlinkedText = `${data.unlinked_rso.product_code && data.unlinked_rso.product_code !== '-' ? data.unlinked_rso.product_code + ' ' : ''}${data.unlinked_rso.product_name} (Qty: ${data.unlinked_rso.quantity})`;
+
+            if (!select.querySelector(`option[value="${unlinkedId}"]`)) {
+              const newOpt = document.createElement('option');
+              newOpt.value = unlinkedId;
+              newOpt.textContent = unlinkedText;
+              select.appendChild(newOpt);
+            }
+
+            // Restore in all other selects
+            document.querySelectorAll('select[name="selected_rso_id"]').forEach(s => {
+              if (!s.querySelector(`option[value="${unlinkedId}"]`)) {
+                const newOpt = document.createElement('option');
+                newOpt.value = unlinkedId;
+                newOpt.textContent = unlinkedText;
+                s.appendChild(newOpt);
+              }
+            });
+          }
+
+          form.appendChild(inputDate);
+          form.appendChild(inputDesc);
+          form.appendChild(select);
+          matchTd.appendChild(form);
+
+          parent.insertBefore(matchTd, codeTd);
+          codeTd.remove();
+          descTd.remove();
+        }
+
+        // Reset RSO Qty to 0
+        const rsoQtyCell = tr.querySelector('.rso-qty-cell');
+        if (rsoQtyCell) {
+          rsoQtyCell.textContent = '0';
+        }
+
+        // Reset Variance
+        const recQtyCell = tr.querySelector('.rec-qty-cell');
+        const recQty = recQtyCell ? parseInt(recQtyCell.dataset.recQty || recQtyCell.textContent) || 0 : 0;
+
+        const varCell = tr.querySelector('.variance-cell');
+        if (varCell) {
+          if (recQty > 0) {
+            varCell.innerHTML = `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-extrabold border border-indigo-200">+${recQty}</span>`;
+          } else {
+            varCell.innerHTML = `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 text-xs font-extrabold border border-rose-200">${recQty}</span>`;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Silent unlink error:', err);
+      btnEl.disabled = false;
+    }
+  }
+
+  async function handleSaveReconciliation(btn) {
+    if (btn.disabled || btn.dataset.saving === 'true') return;
+
+    btn.dataset.saving = 'true';
+    btn.disabled = true;
+    const oldHtml = btn.innerHTML;
+    btn.innerHTML = `
+      <svg class="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+      Saving...
+    `;
+
+    const reportDateInput = document.getElementById('recon_date');
+    const reportDate = reportDateInput ? reportDateInput.value : '{{ selected_report_date }}';
+
+    const formData = new FormData();
+    formData.append('report_date', reportDate);
+
+    try {
+      const response = await fetch("{{ url_for('views.save_delivery_recon') }}", {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      });
+      const data = await response.json();
+
+      if (data.success) {
+        btn.className = "w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-xs bg-emerald-800 text-emerald-100 opacity-90 cursor-not-allowed";
+        btn.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+          Reconciled
+        `;
+        btn.disabled = true;
+
+        const clearForm = document.getElementById('clear-upload-form');
+        if (clearForm) {
+          clearForm.remove();
+        }
+
+        const exportContainer = document.getElementById('export-excel-container');
+        if (exportContainer) {
+          const exportUrl = `{{ url_for('views.export_delivery_recon_excel') }}?date=${encodeURIComponent(reportDate)}&store_id={{ store.id }}`;
+          exportContainer.innerHTML = `
+            <a id="export-excel-btn" href="${exportUrl}"
+               class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+               title="Download Delivery Reconciliation Excel">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export Excel
+            </a>
+          `;
+        }
+
+        if (typeof showToast === 'function') {
+          showToast('Delivery Reconciliation saved to database successfully!', 'success');
+        } else {
+          alert('Delivery Reconciliation saved to database successfully!');
+        }
+      } else {
+        btn.disabled = false;
+        btn.dataset.saving = 'false';
+        btn.innerHTML = oldHtml;
+        alert(data.message || 'Error saving reconciliation.');
+      }
+    } catch(err) {
+      btn.disabled = false;
+      btn.dataset.saving = 'false';
+      btn.innerHTML = oldHtml;
+      alert('Network error while saving reconciliation.');
+    }
+  }
+</script>
+{% endblock %}

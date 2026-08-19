@@ -22,6 +22,7 @@ from .models import (
     SupplyItem,
     SupplyRequest,
     SupplyRequestItem,
+    DeliveryReconciliation,
 )
 from . import db
 from .audit import log_audit_event
@@ -2350,6 +2351,105 @@ def _read_uploaded_excel(uploaded_file, upload_label):
         raise ValueError(
             'Unable to read this Excel file. Please re-save it as .xlsx from Excel and upload again.'
         ) from exc
+
+
+def _parse_delivery_receipt_excel(uploaded_file, upload_label="Delivery Receipt"):
+    import pandas as pd
+    df = _read_uploaded_excel(uploaded_file, upload_label)
+    if df is None or df.empty:
+        raise ValueError("The uploaded Excel file is empty.")
+
+    target_keys = {
+        'date': ['date', 'report date', 'delivery date', 'txn date'],
+        'invoice_no': ['invoice no.', 'invoice no', 'invoice', 'inv no', 'inv_no', 'invoice_no'],
+        'store': ['store', 'store name', 'outlet', 'branch'],
+        'cus_po': ['cus po', 'cus_po', 'customer po', 'po no', 'po', 'rso no', 'rso_no', 'rso'],
+        'item_code': ['item code', 'item_code', 'product code', 'code', 'sku'],
+        'item_description': ['item description', 'item_description', 'description', 'product name', 'product_name', 'item name'],
+        'quantity': ['quantity', 'qty', 'delivered qty', 'received qty', 'pcs'],
+        'amount': ['amount', 'total amount', 'total', 'net amount', 'price', 'val', 'cost']
+    }
+
+    header_idx = None
+    col_mapping = {}
+
+    for row_i in range(min(30, df.shape[0])):
+        row_vals = [str(val).strip().lower() if pd.notna(val) else '' for val in df.iloc[row_i].values]
+        matched = {}
+        for key, aliases in target_keys.items():
+            for col_i, val_str in enumerate(row_vals):
+                if any(alias == val_str or alias in val_str for alias in aliases):
+                    if key not in matched:
+                        matched[key] = col_i
+        if len(matched) >= 2 and ('cus_po' in matched or 'item_description' in matched or 'item_code' in matched):
+            header_idx = row_i
+            col_mapping = matched
+            break
+
+    if header_idx is None:
+        header_idx = 0
+        first_row_vals = [str(val).strip().lower() if pd.notna(val) else '' for val in df.iloc[0].values]
+        for key, aliases in target_keys.items():
+            for col_i, val_str in enumerate(first_row_vals):
+                if any(alias in val_str for alias in aliases):
+                    if key not in col_mapping:
+                        col_mapping[key] = col_i
+
+    data_rows = df.iloc[header_idx + 1:]
+    parsed_items = []
+    for _, row in data_rows.iterrows():
+        raw_date = row.iloc[col_mapping['date']] if 'date' in col_mapping and col_mapping['date'] < len(row) else None
+        raw_invoice = row.iloc[col_mapping['invoice_no']] if 'invoice_no' in col_mapping and col_mapping['invoice_no'] < len(row) else None
+        raw_store = row.iloc[col_mapping['store']] if 'store' in col_mapping and col_mapping['store'] < len(row) else None
+        raw_cus_po = row.iloc[col_mapping['cus_po']] if 'cus_po' in col_mapping and col_mapping['cus_po'] < len(row) else None
+        raw_code = row.iloc[col_mapping['item_code']] if 'item_code' in col_mapping and col_mapping['item_code'] < len(row) else None
+        raw_desc = row.iloc[col_mapping['item_description']] if 'item_description' in col_mapping and col_mapping['item_description'] < len(row) else None
+        raw_qty = row.iloc[col_mapping['quantity']] if 'quantity' in col_mapping and col_mapping['quantity'] < len(row) else None
+        raw_amt = row.iloc[col_mapping['amount']] if 'amount' in col_mapping and col_mapping['amount'] < len(row) else None
+
+        desc_str = str(raw_desc).strip() if pd.notna(raw_desc) else ''
+        code_str = str(raw_code).strip() if pd.notna(raw_code) else ''
+        cus_po_str = str(raw_cus_po).strip() if pd.notna(raw_cus_po) else ''
+        invoice_str = str(raw_invoice).strip() if pd.notna(raw_invoice) else ''
+        store_str = str(raw_store).strip() if pd.notna(raw_store) else ''
+
+        if not desc_str and not code_str and not cus_po_str:
+            continue
+
+        try:
+            qty_val = int(float(str(raw_qty).replace(',', ''))) if pd.notna(raw_qty) else 0
+        except (ValueError, TypeError):
+            qty_val = 0
+
+        try:
+            amt_val = float(str(raw_amt).replace(',', '').replace('$', '').replace('₱', '')) if pd.notna(raw_amt) else 0.0
+        except (ValueError, TypeError):
+            amt_val = 0.0
+
+        date_str = ''
+        if pd.notna(raw_date):
+            if isinstance(raw_date, (datetime, date)):
+                date_str = raw_date.strftime('%Y-%m-%d')
+            else:
+                d_str = str(raw_date).strip().split(' ')[0]
+                try:
+                    dt = pd.to_datetime(d_str)
+                    date_str = dt.strftime('%Y-%m-%d')
+                except Exception:
+                    date_str = d_str
+
+        parsed_items.append({
+            'date': date_str,
+            'invoice_no': invoice_str,
+            'store': store_str,
+            'cus_po': cus_po_str,
+            'item_code': code_str,
+            'item_description': desc_str,
+            'quantity': qty_val,
+            'amount': round(amt_val, 2),
+        })
+
+    return parsed_items
 
 
 _POS_HEADER_KEYWORDS = {
@@ -5026,6 +5126,1024 @@ def store_manager_delivery():
             .all()
         ),
     )
+
+
+def _clean_match_key(val):
+    if not val:
+        return ""
+    return re.sub(r'[^a-z0-9]', '', str(val).lower())
+
+
+def _normalize_tokens(val):
+    if not val:
+        return set()
+    abbrev_map = {
+        'choco': 'chocolate',
+        'signiture': 'signature',
+        'sign': 'signature',
+        'ck': 'cake',
+        'hlf': 'half',
+        'whl': 'whole',
+        'roll': 'roll',
+        'bc': 'buttercream',
+        'lg': 'large',
+        'sm': 'small',
+    }
+    tokens = set()
+    words = re.findall(r'[a-z0-9]+', str(val).lower())
+    for w in words:
+        w_norm = abbrev_map.get(w, w)
+        tokens.add(w_norm)
+    return tokens
+
+
+def _token_similarity_score(set1, set2):
+    if not set1 or not set2:
+        return 0.0
+    intersection = set1.intersection(set2)
+    union = set1.union(set2)
+    return len(intersection) / len(union) if union else 0.0
+
+
+def _enrich_rso_items_with_product_code(items_list):
+    result = []
+    for it in items_list:
+        p_name = it.product_name if hasattr(it, 'product_name') else (it.get('product_name') if isinstance(it, dict) else '')
+        code = '-'
+        if p_name:
+            pm = ProductMaster.query.filter(db.func.lower(ProductMaster.description) == p_name.strip().lower()).first()
+            if pm and pm.code:
+                code = pm.code
+        result.append({'product_code': code})
+    return result
+
+
+# Delivery Recon Routes for Inventory Staff and Store Users
+@views.route('/store-manager/delivery-recon')
+@views.route('/inventory/delivery-recon')
+@login_required
+def inventory_delivery_recon():
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        flash('Access denied. Only authorized personnel can access Delivery Recon.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    today_date = date.today()
+    selected_date = _parse_iso_date(request.args.get('date')) or today_date
+    if selected_date > today_date:
+        selected_date = today_date
+
+    selected_report_date = selected_date.strftime('%Y-%m-%d')
+
+    saved_deliveries = (
+        RsoDelivery.query
+        .filter_by(store_id=store.id, report_date=selected_date)
+        .order_by(RsoDelivery.id.asc())
+        .all()
+    )
+
+    draft_items = []
+    if not saved_deliveries:
+        for src in ('delivery', 'bulk'):
+            d_items = _get_rso_draft(store.id, selected_date, src)
+            if d_items:
+                _, clean_d_items = _split_rso_meta_and_items(d_items)
+                draft_items.extend(clean_d_items)
+
+    rso_items = []
+    if saved_deliveries:
+        enriched = _enrich_rso_items_with_product_code(saved_deliveries)
+        for idx, raw_item in enumerate(saved_deliveries):
+            enrich_dict = enriched[idx] if idx < len(enriched) else {}
+            qty_recv = raw_item.received_quantity if raw_item.received_quantity is not None else raw_item.quantity
+            rso_items.append({
+                'id': raw_item.id,
+                'uid': f"saved_{raw_item.id}",
+                'product_code': enrich_dict.get('product_code') or '-',
+                'product_name': raw_item.product_name,
+                'rso_no': raw_item.rso_no or ('Manual Entry' if raw_item.upload_source == 'delivery_recon' else 'Direct Entry'),
+                'quantity': raw_item.quantity,
+                'quantity_received': qty_recv,
+                'is_manual': bool(raw_item.manual_note or (raw_item.rso_no or '').strip().lower() == 'manual entry' or raw_item.upload_source == 'delivery_recon'),
+                'manual_note': raw_item.manual_note,
+                'upload_source': raw_item.upload_source or 'delivery',
+            })
+    elif draft_items:
+        enriched = _enrich_rso_items_with_product_code(draft_items)
+        for idx, enrich_dict in enumerate(enriched):
+            qty_recv = enrich_dict.get('received_quantity') if enrich_dict.get('received_quantity') is not None else enrich_dict.get('quantity', 0)
+            p_name = enrich_dict.get('product_name', '')
+            rso_items.append({
+                'id': None,
+                'uid': f"draft_{idx}_{p_name}",
+                'product_code': enrich_dict.get('product_code') or '-',
+                'product_name': p_name,
+                'rso_no': enrich_dict.get('rso_no') or 'Draft Entry',
+                'quantity': enrich_dict.get('quantity', 0),
+                'quantity_received': qty_recv,
+                'is_manual': bool(enrich_dict.get('is_manual') or str(enrich_dict.get('rso_no') or '').strip().lower() == 'manual entry'),
+                'manual_note': enrich_dict.get('manual_note'),
+                'upload_source': enrich_dict.get('upload_source', 'draft'),
+            })
+
+    session_preview = session.get('delivery_recon_receipt_preview') or {}
+    receipt_filename = ''
+    receipt_items = []
+    if session_preview and session_preview.get('store_id') == store.id and session_preview.get('date') == selected_report_date:
+        receipt_filename = session_preview.get('filename', '')
+        receipt_items = session_preview.get('items', [])
+        deleted_rows = set(session.get('delivery_recon_deleted_rows') or [])
+        if deleted_rows and receipt_items:
+            receipt_items = [
+                rec for rec in receipt_items
+                if str(rec.get('item_description') or '').strip() not in deleted_rows
+            ]
+
+    rso_numbers_set = {
+        str(item['rso_no']).strip().upper()
+        for item in rso_items
+        if item.get('rso_no') and str(item['rso_no']).strip().upper() not in ('-', 'MANUAL ENTRY', 'DIRECT ENTRY')
+    }
+
+    comparison_rows = []
+    rso_used_uids = set()
+    date_errors_count = 0
+    cus_po_errors_count = 0
+    qty_mismatch_count = 0
+    matched_count = 0
+    manual_links = session.get('delivery_recon_manual_links') or {}
+
+    if receipt_items:
+        for rec in receipt_items:
+            rec_po = str(rec.get('cus_po') or '').strip().upper()
+            rec_desc_raw = str(rec.get('item_description') or '').strip()
+            rec_code_raw = str(rec.get('item_code') or '').strip()
+            rec_date = rec.get('date') or selected_report_date
+            rec_qty = rec.get('quantity', 0)
+
+            rec_clean_desc = _clean_match_key(rec_desc_raw)
+            rec_clean_code = _clean_match_key(rec_code_raw)
+            rec_tokens = _normalize_tokens(rec_desc_raw)
+
+            matched_rso = None
+            is_manually_linked = False
+
+            # Check Manual Link Override first!
+            manual_target = manual_links.get(rec_desc_raw) or manual_links.get(rec_code_raw)
+            if manual_target:
+                target_str = str(manual_target).strip()
+                for r_item in rso_items:
+                    if (str(r_item.get('id')) == target_str or
+                        str(r_item.get('uid')) == target_str or
+                        str(r_item.get('product_code')) == target_str or
+                        str(r_item.get('product_name')).strip() == target_str):
+                        matched_rso = r_item
+                        is_manually_linked = True
+                        break
+
+            # Pass 1: Try Code match on unused RSO items
+            if not matched_rso and rec_clean_code:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_code_clean = _clean_match_key(r_item.get('product_code'))
+                        if r_code_clean and r_code_clean == rec_clean_code:
+                            matched_rso = r_item
+                            break
+
+            # Pass 2: Try Description match on unused RSO items (Clean normalized string)
+            if not matched_rso and rec_clean_desc:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_desc_clean = _clean_match_key(r_item.get('product_name'))
+                        if r_desc_clean and r_desc_clean == rec_clean_desc:
+                            matched_rso = r_item
+                            break
+
+            # Pass 3: Try Description substring match on unused RSO items
+            if not matched_rso and rec_clean_desc and len(rec_clean_desc) >= 4:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_desc_clean = _clean_match_key(r_item.get('product_name'))
+                        if r_desc_clean and (r_desc_clean in rec_clean_desc or rec_clean_desc in r_desc_clean):
+                            matched_rso = r_item
+                            break
+
+            # Pass 4: Try Normalized Token Set exact match
+            if not matched_rso and rec_tokens:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_tokens = _normalize_tokens(r_item.get('product_name'))
+                        if r_tokens and r_tokens == rec_tokens:
+                            matched_rso = r_item
+                            break
+
+            # Pass 5: Try Fuzzy Token Similarity match (Jaccard similarity >= 0.65)
+            if not matched_rso and rec_tokens:
+                best_score = 0.0
+                best_rso = None
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_tokens = _normalize_tokens(r_item.get('product_name'))
+                        score = _token_similarity_score(rec_tokens, r_tokens)
+                        if score >= 0.65 and score > best_score:
+                            best_score = score
+                            best_rso = r_item
+                if best_rso:
+                    matched_rso = best_rso
+
+            if matched_rso:
+                rso_used_uids.add(matched_rso['uid'])
+
+            rso_qty = matched_rso['quantity'] if matched_rso else 0
+            rso_no_display = matched_rso['rso_no'] if matched_rso and matched_rso.get('rso_no') and matched_rso['rso_no'] not in ('-', 'MANUAL ENTRY') else (rec_po if rec_po else '-')
+            variance = rec_qty - rso_qty
+
+            date_error = bool(rec_date and rec_date != selected_report_date)
+            rso_error = False
+
+            if date_error:
+                date_errors_count += 1
+                status = 'Date Mismatch'
+                status_badge = 'danger'
+                status_desc = f"Receipt date ({rec_date}) does not match selected date ({selected_report_date})"
+            elif variance != 0:
+                qty_mismatch_count += 1
+                status = 'Qty Mismatch'
+                status_badge = 'amber'
+                status_desc = f"Short by {abs(variance)}" if variance < 0 else f"Over by {variance}"
+            else:
+                matched_count += 1
+                status = 'Match'
+                status_badge = 'success'
+                status_desc = 'RSO & Receipt Match'
+
+            display_code = rec_code_raw
+            if not display_code or display_code == '-':
+                display_code = (matched_rso.get('product_code') if matched_rso else '-') or '-'
+
+            comparison_rows.append({
+                'rso_code': matched_rso.get('product_code') if matched_rso and matched_rso.get('product_code') else '-',
+                'rso_desc': matched_rso.get('product_name') if matched_rso and matched_rso.get('product_name') else '-',
+                'rso_qty': rso_qty,
+                'receipt_code': rec_code_raw if rec_code_raw else '-',
+                'receipt_desc': rec_desc_raw if rec_desc_raw else '-',
+                'receipt_qty': rec_qty,
+                'rso_no': rso_no_display,
+                'receipt_date': rec_date,
+                'receipt_invoice_no': rec.get('invoice_no') or '-',
+                'receipt_store': rec.get('store') or '-',
+                'receipt_cus_po': rec_po if rec_po else rso_no_display,
+                'receipt_amount': rec.get('amount', 0.0),
+                'variance': variance,
+                'status': status,
+                'status_badge': status_badge,
+                'status_desc': status_desc,
+                'date_error': date_error,
+                'rso_error': False,
+                'has_error': date_error or (variance != 0),
+                'is_manually_linked': is_manually_linked,
+            })
+
+        # Add leftover unused RSO items (recorded in RSO but missing from uploaded receipt)
+        for r_item in rso_items:
+            if r_item['uid'] not in rso_used_uids:
+                r_qty = r_item.get('quantity', 0)
+                r_po = r_item.get('rso_no') or '-'
+                qty_mismatch_count += 1
+                comparison_rows.append({
+                    'rso_code': r_item.get('product_code') or '-',
+                    'rso_desc': r_item.get('product_name') or '-',
+                    'rso_qty': r_qty,
+                    'receipt_code': '-',
+                    'receipt_desc': '-',
+                    'receipt_qty': 0,
+                    'rso_no': r_po,
+                    'receipt_date': selected_report_date,
+                    'receipt_invoice_no': '-',
+                    'receipt_store': '-',
+                    'receipt_cus_po': '-',
+                    'receipt_amount': 0.0,
+                    'variance': -r_qty,
+                    'status': 'Missing Receipt',
+                    'status_badge': 'amber',
+                    'status_desc': f"Recorded in RSO (Qty: {r_qty}) but missing from uploaded receipt",
+                    'date_error': False,
+                    'rso_error': False,
+                    'has_error': True,
+                    'is_manually_linked': False,
+                })
+
+    total_items_count = len(rso_items)
+    total_qty_rso = sum(item['quantity'] for item in rso_items)
+    total_qty_receipt = sum(rec['quantity'] for rec in receipt_items) if receipt_items else 0
+    added_products_count = sum(1 for item in rso_items if item['is_manual'])
+
+    manual_products = ProductMaster.query.order_by(ProductMaster.description.asc()).all()
+
+    inventory_staff_stores = []
+    if role == 'Inventory Staff':
+        assigned_ids = _inventory_staff_assigned_store_ids()
+        inventory_staff_stores = Store.query.filter(Store.id.in_(assigned_ids)).order_by(Store.name.asc()).all() if assigned_ids else []
+
+    rso_numbers_display = ", ".join(sorted(rso_numbers_set)) if rso_numbers_set else "-"
+    receipt_pos = {str(rec.get('cus_po')).strip() for rec in receipt_items if rec.get('cus_po') and str(rec.get('cus_po')).strip() not in ('-', 'None')}
+    receipt_rso_no_display = ", ".join(sorted(receipt_pos)) if receipt_pos else "-"
+
+    unmatched_rso_items = [item for item in rso_items if item['uid'] not in rso_used_uids]
+
+    short_items = [r for r in comparison_rows if r.get('variance', 0) < 0]
+    over_items = [r for r in comparison_rows if r.get('variance', 0) > 0]
+    matched_rows = [r for r in comparison_rows if r.get('variance', 0) == 0 and not r.get('date_error')]
+
+    existing_recon = DeliveryReconciliation.query.filter_by(
+        store_id=store.id,
+        reconciliation_date=selected_date
+    ).first()
+    is_reconciled = bool(existing_recon)
+
+    return render_template(
+        'store_manager/delivery_recon.html',
+        user=current_user,
+        store=store,
+        today=today_date.strftime('%Y-%m-%d'),
+        selected_report_date=selected_report_date,
+        rso_items=rso_items,
+        unmatched_rso_items=unmatched_rso_items,
+        receipt_items=receipt_items,
+        receipt_filename=receipt_filename,
+        comparison_rows=comparison_rows,
+        short_items=short_items,
+        over_items=over_items,
+        matched_rows=matched_rows,
+        total_items_count=total_items_count,
+        total_qty_rso=total_qty_rso,
+        total_qty_receipt=total_qty_receipt,
+        matched_count=len(matched_rows),
+        date_errors_count=date_errors_count,
+        cus_po_errors_count=cus_po_errors_count,
+        qty_mismatch_count=qty_mismatch_count,
+        added_products_count=added_products_count,
+        manual_products=manual_products,
+        inventory_staff_stores=inventory_staff_stores,
+        inventory_staff_selected_store_id=store.id,
+        rso_numbers_display=rso_numbers_display,
+        receipt_rso_no_display=receipt_rso_no_display,
+        is_reconciled=is_reconciled,
+        existing_recon=existing_recon,
+    )
+
+
+@views.route('/store-manager/delivery-recon/upload-receipt', methods=['POST'])
+@views.route('/inventory/delivery-recon/upload-receipt', methods=['POST'])
+@views.route('/inventory/delivery-recon/recon', methods=['POST'])
+@login_required
+def upload_delivery_receipt():
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date_str = (request.form.get('report_date') or '').strip()
+    report_date = _parse_iso_date(report_date_str) or date.today()
+    selected_report_date = report_date.strftime('%Y-%m-%d')
+
+    uploaded_file = request.files.get('receipt_file') or request.files.get('recon_file')
+    if not uploaded_file or not (uploaded_file.filename or '').strip():
+        flash('Please select a Delivery Receipt Excel file to upload.', category='error')
+        return redirect(url_for('views.inventory_delivery_recon', date=selected_report_date, store_id=store.id))
+
+    try:
+        parsed_items = _parse_delivery_receipt_excel(uploaded_file, "Delivery Receipt")
+        if not parsed_items:
+            flash('No valid data rows found in the uploaded Excel file.', category='error')
+            return redirect(url_for('views.inventory_delivery_recon', date=selected_report_date, store_id=store.id))
+
+        saved_deliveries = (
+            RsoDelivery.query
+            .filter_by(store_id=store.id, report_date=report_date)
+            .all()
+        )
+        invalid_dates = set()
+        for item in parsed_items:
+            rec_date = (item.get('date') or '').strip()
+            if rec_date and rec_date != selected_report_date:
+                invalid_dates.add(rec_date)
+
+        session['delivery_recon_receipt_preview'] = {
+            'store_id': store.id,
+            'date': selected_report_date,
+            'filename': uploaded_file.filename,
+            'items': parsed_items,
+        }
+
+        if invalid_dates:
+            flash(
+                f'Warning: Uploaded receipt contains date(s) ({", ".join(sorted(invalid_dates))}) '
+                f'that differ from report date ({selected_report_date}).',
+                category='warning'
+            )
+
+        flash(f'Successfully loaded {len(parsed_items)} rows from {uploaded_file.filename} for Reconciliation.', category='success')
+
+    except Exception as exc:
+        flash(f'Error reading Excel file: {str(exc)}', category='error')
+
+    return redirect(url_for('views.inventory_delivery_recon', date=selected_report_date, store_id=store.id))
+
+
+@views.route('/store-manager/delivery-recon/save', methods=['POST'])
+@views.route('/inventory/delivery-recon/save', methods=['POST'])
+@login_required
+def save_delivery_recon():
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+            return jsonify({'success': False, 'message': 'Access denied.'}), 403
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+            return jsonify({'success': False, 'message': 'Store assignment missing.'}), 400
+        flash('You are not assigned to any store.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date_str = (request.form.get('report_date') or '').strip()
+    if not report_date_str and request.is_json and request.json:
+        report_date_str = str(request.json.get('report_date') or '').strip()
+    report_date = _parse_iso_date(report_date_str) or date.today()
+    selected_report_date = report_date.strftime('%Y-%m-%d')
+
+    saved_deliveries = (
+        RsoDelivery.query
+        .filter_by(store_id=store.id, report_date=report_date)
+        .order_by(RsoDelivery.id.asc())
+        .all()
+    )
+
+    rso_items = []
+    if saved_deliveries:
+        enriched = _enrich_rso_items_with_product_code(saved_deliveries)
+        for idx, raw_item in enumerate(saved_deliveries):
+            enrich_dict = enriched[idx] if idx < len(enriched) else {}
+            qty_recv = raw_item.received_quantity if raw_item.received_quantity is not None else raw_item.quantity
+            rso_items.append({
+                'id': raw_item.id,
+                'uid': f"saved_{raw_item.id}",
+                'product_code': enrich_dict.get('product_code') or '-',
+                'product_name': raw_item.product_name,
+                'rso_no': raw_item.rso_no or 'Direct Entry',
+                'quantity': raw_item.quantity,
+                'quantity_received': qty_recv,
+                'is_manual': bool(raw_item.manual_note),
+                'manual_note': raw_item.manual_note,
+                'upload_source': raw_item.upload_source or 'delivery',
+            })
+
+    session_preview = session.get('delivery_recon_receipt_preview') or {}
+    receipt_filename = ''
+    receipt_items = []
+    if session_preview and session_preview.get('store_id') == store.id and session_preview.get('date') == selected_report_date:
+        receipt_filename = session_preview.get('filename', '')
+        receipt_items = session_preview.get('items', [])
+        deleted_rows = set(session.get('delivery_recon_deleted_rows') or [])
+        if deleted_rows and receipt_items:
+            receipt_items = [
+                rec for rec in receipt_items
+                if str(rec.get('item_description') or '').strip() not in deleted_rows
+            ]
+
+    rso_used_uids = set()
+    comparison_rows = []
+    manual_links = session.get('delivery_recon_manual_links') or {}
+
+    if receipt_items:
+        for rec in receipt_items:
+            rec_po = str(rec.get('cus_po') or '').strip().upper()
+            rec_desc_raw = str(rec.get('item_description') or '').strip()
+            rec_code_raw = str(rec.get('item_code') or '').strip()
+            rec_date = rec.get('date') or selected_report_date
+            rec_qty = rec.get('quantity', 0)
+
+            rec_clean_desc = _clean_match_key(rec_desc_raw)
+            rec_clean_code = _clean_match_key(rec_code_raw)
+            rec_tokens = _normalize_tokens(rec_desc_raw)
+
+            matched_rso = None
+            manual_target = manual_links.get(rec_desc_raw) or manual_links.get(rec_code_raw)
+            if manual_target:
+                target_str = str(manual_target).strip()
+                for r_item in rso_items:
+                    if (str(r_item.get('id')) == target_str or
+                        str(r_item.get('uid')) == target_str or
+                        str(r_item.get('product_code')) == target_str or
+                        str(r_item.get('product_name')).strip() == target_str):
+                        matched_rso = r_item
+                        break
+
+            if not matched_rso and rec_clean_code:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_code_clean = _clean_match_key(r_item.get('product_code'))
+                        if r_code_clean and r_code_clean == rec_clean_code:
+                            matched_rso = r_item
+                            break
+
+            if not matched_rso and rec_clean_desc:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_desc_clean = _clean_match_key(r_item.get('product_name'))
+                        if r_desc_clean and r_desc_clean == rec_clean_desc:
+                            matched_rso = r_item
+                            break
+
+            if not matched_rso and rec_clean_desc and len(rec_clean_desc) >= 4:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_desc_clean = _clean_match_key(r_item.get('product_name'))
+                        if r_desc_clean and (r_desc_clean in rec_clean_desc or rec_clean_desc in r_desc_clean):
+                            matched_rso = r_item
+                            break
+
+            if not matched_rso and rec_tokens:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_tokens = _normalize_tokens(r_item.get('product_name'))
+                        if r_tokens and r_tokens == rec_tokens:
+                            matched_rso = r_item
+                            break
+
+            if not matched_rso and rec_tokens:
+                best_score = 0.0
+                best_rso = None
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_tokens = _normalize_tokens(r_item.get('product_name'))
+                        score = _token_similarity_score(rec_tokens, r_tokens)
+                        if score >= 0.65 and score > best_score:
+                            best_score = score
+                            best_rso = r_item
+                if best_rso:
+                    matched_rso = best_rso
+
+            if matched_rso:
+                rso_used_uids.add(matched_rso['uid'])
+
+            rso_qty = matched_rso['quantity'] if matched_rso else 0
+            variance = rec_qty - rso_qty
+            date_error = bool(rec_date and rec_date != selected_report_date)
+
+            if date_error:
+                status = 'Date Mismatch'
+            elif variance != 0:
+                status = 'Qty Mismatch'
+            else:
+                status = 'Match'
+
+            comparison_rows.append({
+                'rso_code': matched_rso.get('product_code') if matched_rso and matched_rso.get('product_code') else '-',
+                'rso_desc': matched_rso.get('product_name') if matched_rso and matched_rso.get('product_name') else '-',
+                'rso_qty': rso_qty,
+                'receipt_code': rec_code_raw if rec_code_raw else '-',
+                'receipt_desc': rec_desc_raw if rec_desc_raw else '-',
+                'receipt_qty': rec_qty,
+                'receipt_cus_po': rec_po if rec_po else '-',
+                'variance': variance,
+                'status': status,
+            })
+
+        for r_item in rso_items:
+            if r_item['uid'] not in rso_used_uids:
+                r_qty = r_item.get('quantity', 0)
+                comparison_rows.append({
+                    'rso_code': r_item.get('product_code') or '-',
+                    'rso_desc': r_item.get('product_name') or '-',
+                    'rso_qty': r_qty,
+                    'receipt_code': '-',
+                    'receipt_desc': '-',
+                    'receipt_qty': 0,
+                    'receipt_cus_po': '-',
+                    'variance': -r_qty,
+                    'status': 'Missing Receipt',
+                })
+    else:
+        for r_item in rso_items:
+            r_qty = r_item.get('quantity', 0)
+            comparison_rows.append({
+                'rso_code': r_item.get('product_code') or '-',
+                'rso_desc': r_item.get('product_name') or '-',
+                'rso_qty': r_qty,
+                'receipt_code': '-',
+                'receipt_desc': '-',
+                'receipt_qty': 0,
+                'receipt_cus_po': '-',
+                'variance': -r_qty,
+                'status': 'RSO Only',
+            })
+
+    short_items = [r for r in comparison_rows if r.get('variance', 0) < 0]
+    over_items = [r for r in comparison_rows if r.get('variance', 0) > 0]
+    matched_rows = [r for r in comparison_rows if r.get('variance', 0) == 0 and not r.get('date_error')]
+
+    try:
+        recon_record = DeliveryReconciliation.query.filter_by(
+            store_id=store.id,
+            reconciliation_date=report_date
+        ).first()
+
+        if not recon_record:
+            recon_record = DeliveryReconciliation(
+                store_id=store.id,
+                reconciliation_date=report_date,
+                reconciled_by=current_user.id
+            )
+
+        recon_record.receipt_filename = receipt_filename or 'Delivery_Reconciliation'
+        recon_record.total_items = len(comparison_rows)
+        recon_record.matched_count = len(matched_rows)
+        recon_record.short_count = len(short_items)
+        recon_record.over_count = len(over_items)
+        recon_record.status = 'Reconciled'
+        recon_record.items_json = json.dumps(comparison_rows)
+        recon_record.reconciled_by = current_user.id
+
+        db.session.add(recon_record)
+        db.session.commit()
+
+        flash('Delivery Reconciliation saved to database successfully!', category='success')
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+            return jsonify({
+                'success': True,
+                'message': 'Delivery Reconciliation saved to database successfully!',
+                'is_reconciled': True
+            })
+
+    except Exception as exc:
+        db.session.rollback()
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+            return jsonify({'success': False, 'message': f'Unable to save reconciliation: {str(exc)}'}), 500
+        flash(f'Unable to save reconciliation: {str(exc)}', category='error')
+
+    return redirect(url_for('views.inventory_delivery_recon', date=selected_report_date, store_id=store.id))
+
+
+@views.route('/store-manager/delivery-recon/export-excel')
+@views.route('/inventory/delivery-recon/export-excel')
+@login_required
+def export_delivery_recon_excel():
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('Store assignment missing.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date_str = (request.args.get('date') or '').strip()
+    report_date = _parse_iso_date(report_date_str) or date.today()
+    selected_report_date = report_date.strftime('%Y-%m-%d')
+
+    recon_record = DeliveryReconciliation.query.filter_by(
+        store_id=store.id,
+        reconciliation_date=report_date
+    ).first()
+
+    if not recon_record:
+        flash('Export Excel is only available for reconciled dates. Please reconcile first.', category='warning')
+        return redirect(url_for('views.inventory_delivery_recon', date=selected_report_date, store_id=store.id))
+
+    items_list = []
+    if recon_record.items_json:
+        try:
+            items_list = json.loads(recon_record.items_json)
+        except Exception:
+            items_list = []
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Delivery Reconciliation"
+    ws.views.sheetView[0].showGridLines = True
+
+    title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
+    meta_label_font = Font(name="Calibri", size=10, bold=True, color="334155")
+    meta_val_font = Font(name="Calibri", size=10, color="0F172A")
+    header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+
+    rso_fill = PatternFill(start_color="4338CA", end_color="4338CA", fill_type="solid")
+    receipt_fill = PatternFill(start_color="047857", end_color="047857", fill_type="solid")
+    audit_fill = PatternFill(start_color="334155", end_color="334155", fill_type="solid")
+    sub_header_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+
+    ws.append(["DELIVERY RECONCILIATION REPORT"])
+    ws.cell(row=1, column=1).font = title_font
+
+    ws.append([f"Store: {store.name} | Date: {selected_report_date} | Status: Reconciled"])
+    ws.cell(row=2, column=1).font = sub_font
+    ws.append([])
+
+    ws.append(["Total Items", "Matched Items", "Short Items", "Over Items", "Reconciled At"])
+    for col in range(1, 6):
+        c = ws.cell(row=4, column=col)
+        c.font = meta_label_font
+        c.fill = sub_header_fill
+
+    reconciled_time_str = recon_record.reconciled_at.strftime('%Y-%m-%d %H:%M') if recon_record.reconciled_at else selected_report_date
+    ws.append([recon_record.total_items, recon_record.matched_count, recon_record.short_count, recon_record.over_count, reconciled_time_str])
+    for col in range(1, 6):
+        ws.cell(row=5, column=col).font = meta_val_font
+
+    ws.append([])
+
+    ws.cell(row=7, column=1, value="Delivery RSO Records").fill = rso_fill
+    ws.cell(row=7, column=1).font = header_font
+    ws.merge_cells(start_row=7, start_column=1, end_row=7, end_column=3)
+
+    ws.cell(row=7, column=4, value="Delivery Receipt Plant Excel").fill = receipt_fill
+    ws.cell(row=7, column=4).font = header_font
+    ws.merge_cells(start_row=7, start_column=4, end_row=7, end_column=7)
+
+    ws.cell(row=7, column=8, value="Audit Result").fill = audit_fill
+    ws.cell(row=7, column=8).font = header_font
+    ws.merge_cells(start_row=7, start_column=8, end_row=7, end_column=9)
+
+    headers = [
+        "RSO Item Code", "RSO Description", "RSO Qty",
+        "Receipt Cus PO", "Receipt Item Code", "Receipt Description", "Receipt Qty",
+        "Variance", "Status"
+    ]
+    ws.append(headers)
+    for col in range(1, 10):
+        c = ws.cell(row=8, column=col)
+        c.font = Font(name="Calibri", size=10, bold=True, color="1E293B")
+        c.fill = sub_header_fill
+
+    for row in items_list:
+        ws.append([
+            row.get('rso_code', '-'),
+            row.get('rso_desc', '-'),
+            row.get('rso_qty', 0),
+            row.get('receipt_cus_po', '-'),
+            row.get('receipt_code', '-'),
+            row.get('receipt_desc', '-'),
+            row.get('receipt_qty', 0),
+            row.get('variance', 0),
+            row.get('status', 'Match')
+        ])
+
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = col[0].column_letter
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"Delivery_Reconciliation_{store.name.replace(' ', '_')}_{selected_report_date}.xlsx"
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@views.route('/store-manager/delivery-recon/clear-receipt', methods=['POST'])
+@views.route('/inventory/delivery-recon/clear-receipt', methods=['POST'])
+@login_required
+def clear_delivery_receipt():
+    session.pop('delivery_recon_receipt_preview', None)
+    session.pop('delivery_recon_manual_links', None)
+    session.pop('delivery_recon_deleted_rows', None)
+    store = _resolve_store_for_store_scope_user()
+    report_date_str = (request.form.get('report_date') or '').strip()
+    return redirect(url_for('views.inventory_delivery_recon', date=report_date_str, store_id=store.id if store else None))
+
+
+@views.route('/store-manager/delivery-recon/delete-row', methods=['POST'])
+@views.route('/inventory/delivery-recon/delete-row', methods=['POST'])
+@login_required
+def delete_delivery_recon_row():
+    store = _resolve_store_for_store_scope_user()
+    report_date_str = (request.form.get('report_date') or '').strip()
+    receipt_desc = (request.form.get('receipt_desc') or '').strip()
+
+    deleted_rows = session.get('delivery_recon_deleted_rows') or []
+    if receipt_desc and receipt_desc not in deleted_rows:
+        deleted_rows.append(receipt_desc)
+    session['delivery_recon_deleted_rows'] = deleted_rows
+
+    manual_links = session.get('delivery_recon_manual_links') or {}
+    if receipt_desc in manual_links:
+        manual_links.pop(receipt_desc, None)
+    session['delivery_recon_manual_links'] = manual_links
+
+    session_preview = session.get('delivery_recon_receipt_preview')
+    if session_preview and session_preview.get('items'):
+        session_preview['items'] = [
+            rec for rec in session_preview['items']
+            if str(rec.get('item_description') or '').strip() != receipt_desc
+        ]
+        session['delivery_recon_receipt_preview'] = session_preview
+
+    session.modified = True
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+        return jsonify({'success': True})
+
+    return redirect(url_for('views.inventory_delivery_recon', date=report_date_str, store_id=store.id if store else None))
+
+
+@views.route('/store-manager/delivery-recon/manual-link', methods=['POST'])
+@views.route('/inventory/delivery-recon/manual-link', methods=['POST'])
+@login_required
+def manual_link_delivery_recon():
+    store = _resolve_store_for_store_scope_user()
+    report_date_str = (request.form.get('report_date') or '').strip()
+    receipt_desc = (request.form.get('receipt_desc') or '').strip()
+    selected_rso_id = (request.form.get('selected_rso_id') or '').strip()
+
+    manual_links = session.get('delivery_recon_manual_links') or {}
+    previous_link_id = manual_links.get(receipt_desc)
+
+    if receipt_desc:
+        if selected_rso_id:
+            manual_links[receipt_desc] = selected_rso_id
+        else:
+            manual_links.pop(receipt_desc, None)
+        session['delivery_recon_manual_links'] = manual_links
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+        report_date = _parse_iso_date(report_date_str) or date.today()
+        matched_rso = None
+        if selected_rso_id and store:
+            if selected_rso_id.isdigit():
+                r_record = RsoDelivery.query.get(int(selected_rso_id))
+                if r_record:
+                    p_code = '-'
+                    if r_record.product_name:
+                        pm = ProductMaster.query.filter_by(description=r_record.product_name).first()
+                        if pm and pm.code:
+                            p_code = pm.code
+                    matched_rso = {
+                        'id': r_record.id,
+                        'product_code': p_code,
+                        'product_name': r_record.product_name,
+                        'quantity': r_record.quantity,
+                    }
+
+        rso_code = matched_rso.get('product_code') if matched_rso and matched_rso.get('product_code') else '-'
+        rso_desc = matched_rso.get('product_name') if matched_rso and matched_rso.get('product_name') else '-'
+        rso_qty = matched_rso.get('quantity', 0) if matched_rso else 0
+
+        prev_rso = None
+        if not selected_rso_id and previous_link_id and str(previous_link_id).isdigit():
+            r_prev = RsoDelivery.query.get(int(previous_link_id))
+            if r_prev:
+                p_code = '-'
+                if r_prev.product_name:
+                    pm = ProductMaster.query.filter_by(description=r_prev.product_name).first()
+                    if pm and pm.code:
+                        p_code = pm.code
+                prev_rso = {
+                    'id': r_prev.id,
+                    'product_code': p_code,
+                    'product_name': r_prev.product_name,
+                    'quantity': r_prev.quantity,
+                }
+
+        return jsonify({
+            'success': True,
+            'rso_id': selected_rso_id,
+            'rso_code': rso_code,
+            'rso_desc': rso_desc,
+            'rso_qty': rso_qty,
+            'is_manually_linked': bool(matched_rso),
+            'unlinked_rso': prev_rso
+        })
+
+    return redirect(url_for('views.inventory_delivery_recon', date=report_date_str, store_id=store.id if store else None))
+
+
+@views.route('/store-manager/delivery-recon/add-product', methods=['POST'])
+@views.route('/inventory/delivery-recon/add-product', methods=['POST'])
+@login_required
+def add_delivery_recon_product():
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date_str = (request.form.get('report_date') or '').strip()
+    report_date = _parse_iso_date(report_date_str) or date.today()
+
+    product_id = request.form.get('product_id', type=int)
+    quantity = request.form.get('quantity', type=int)
+    manual_note = (request.form.get('manual_note') or '').strip()
+
+    product = ProductMaster.query.get(product_id) if product_id else None
+    if not product:
+        flash('Please select a valid product.', category='error')
+        return redirect(url_for('views.inventory_delivery_recon', date=report_date.strftime('%Y-%m-%d'), store_id=store.id))
+
+    if quantity is None or quantity <= 0:
+        flash('Received quantity must be greater than zero.', category='error')
+        return redirect(url_for('views.inventory_delivery_recon', date=report_date.strftime('%Y-%m-%d'), store_id=store.id))
+
+    try:
+        new_delivery = RsoDelivery(
+            store_id=store.id,
+            report_date=report_date,
+            rso_no='Manual Entry',
+            product_name=product.description,
+            quantity=quantity,
+            received_quantity=quantity,
+            uploaded_by=current_user.id,
+            upload_source='delivery_recon',
+            manual_note=manual_note or 'Added product (Delivery Recon)'
+        )
+        db.session.add(new_delivery)
+
+        inventory = DailyEndingInventory.query.filter_by(store_id=store.id, inventory_date=report_date).first()
+        if inventory:
+            inv_item = DailyEndingInventoryItem.query.filter_by(daily_ending_inventory_id=inventory.id, product_id=product.id).first()
+            if inv_item:
+                inv_item.delivery_qty = (inv_item.delivery_qty or 0) + quantity
+            else:
+                inv_item = DailyEndingInventoryItem(
+                    daily_ending_inventory_id=inventory.id,
+                    product_id=product.id,
+                    delivery_qty=quantity
+                )
+                db.session.add(inv_item)
+
+        db.session.commit()
+        flash(f'Successfully added {quantity} x {product.description} to Delivery Recon.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Unable to add product: {str(exc)}', category='error')
+
+    return redirect(url_for('views.inventory_delivery_recon', date=report_date.strftime('%Y-%m-%d'), store_id=store.id))
+
+
+@views.route('/store-manager/delivery-recon/<int:delivery_id>/delete', methods=['POST'])
+@views.route('/inventory/delivery-recon/<int:delivery_id>/delete', methods=['POST'])
+@login_required
+def delete_delivery_recon_product(delivery_id):
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    delivery_item = RsoDelivery.query.get_or_404(delivery_id)
+    store_id = delivery_item.store_id
+    report_date = delivery_item.report_date
+    qty_to_remove = delivery_item.received_quantity if delivery_item.received_quantity is not None else delivery_item.quantity
+
+    try:
+        product = ProductMaster.query.filter_by(description=delivery_item.product_name).first()
+        if product:
+            inventory = DailyEndingInventory.query.filter_by(store_id=store_id, inventory_date=report_date).first()
+            if inventory:
+                inv_item = DailyEndingInventoryItem.query.filter_by(daily_ending_inventory_id=inventory.id, product_id=product.id).first()
+                if inv_item and inv_item.delivery_qty:
+                    inv_item.delivery_qty = max(0, (inv_item.delivery_qty or 0) - qty_to_remove)
+
+        db.session.delete(delivery_item)
+        db.session.commit()
+        flash(f'Removed {delivery_item.product_name} from Delivery Recon.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Unable to delete entry: {str(exc)}', category='error')
+
+    return redirect(url_for('views.inventory_delivery_recon', date=report_date.strftime('%Y-%m-%d'), store_id=store_id))
+def inventory_staff_delivery_reconciliation_recon():
+    return redirect(url_for('views.inventory_delivery_recon'))
 
 
 @views.route('/store-manager/delivery/add-product', methods=['POST'])
