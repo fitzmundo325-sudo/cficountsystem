@@ -4945,6 +4945,7 @@ def store_manager_pos_sold():
         pos_sold_items=pos_sold_items,
         pos_sold_source=pos_sold_source,
         pos_sold_locked=pos_sold_locked,
+        pos_sold_day_finalized=_is_operational_day_finalized(store.id, selected_date),
         missing_dates=missing_dates,
         next_missing_date=next_missing_date,
         show_pos_flow_guide=show_pos_flow_guide,
@@ -7095,6 +7096,95 @@ def clear_pos_sold_review_data():
     except Exception as exc:
         db.session.rollback()
         flash(f'Error clearing extracted data: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/daily-report/pos-sold/delete-all', methods=['POST'])
+@login_required
+def delete_all_pos_sold_data():
+    """Delete all saved POS Sold data and clear reflected inventory sold data"""
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+
+        if _is_operational_day_finalized(store.id, report_date):
+            flash(
+                f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
+                'POS Sold can no longer be deleted. Contact an Admin to unfinalize the day.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        report = DailyReport.query.filter_by(
+            store_id=store.id,
+            report_date=report_date
+        ).first()
+        pos_items = (
+            PosSold.query.filter_by(daily_report_id=report.id).all()
+            if report else []
+        )
+        staging = _get_pos_sold_staging(store.id, report_date)
+        draft_items = _get_pos_sold_draft(store.id, report_date)
+
+        if not pos_items and not staging and not draft_items:
+            flash('No POS Sold data found to delete for this date.', category='info')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        deleted_count = len(pos_items)
+        total_quantity = sum(int(item.quantity or 0) for item in pos_items)
+
+        for item in pos_items:
+            db.session.delete(item)
+
+        if report:
+            report.pos_gross_sales = 0.0
+            report.pos_net_sales = 0.0
+            report.pos_tc = 0
+            report.pos_motif_breakdown_json = '[]'
+
+        if staging:
+            db.session.delete(staging)
+        if draft_items:
+            _pop_pos_sold_draft(store.id, report_date)
+
+        _reconcile_pos_sold_quantities_to_inventory(store.id, report_date, {})
+
+        if report:
+            from .admin import _delete_empty_pending_report
+            _delete_empty_pending_report(report)
+
+        log_audit_event(
+            action='report.pos_sold.delete_all',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store manager deleted all POS Sold records and cleared reflected inventory data.',
+            details={
+                'store_id': store.id,
+                'report_date': report_date.strftime('%Y-%m-%d'),
+                'pos_records_deleted': deleted_count,
+                'total_quantity': total_quantity,
+            },
+        )
+
+        db.session.commit()
+        flash(
+            f'✓ Deleted {deleted_count} POS Sold record(s). Cleared Sold data from InvenSync.',
+            category='success'
+        )
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error deleting POS Sold data: {str(exc)}', category='error')
 
     return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
 
