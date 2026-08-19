@@ -1,0 +1,328 @@
+{% extends "base_headless.html" %}
+{% block title %}Clusters{% endblock %}
+
+{% block content %}
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Clusters</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <button id="openModalBtn" class="hidden flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 active:scale-95">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 5v14" />
+        <path d="M5 12h14" />
+      </svg>
+      <span>New Cluster</span>
+    </button>
+  </div>
+</header>
+
+<!-- Content -->
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <!-- Page Header -->
+  <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Clusters</h1>
+      <p id="page-subtitle" class="mt-1 text-slate-600"></p>
+    </div>
+
+    <!-- Search -->
+    <div class="w-full sm:w-72">
+      <div class="relative">
+        <input
+          type="text"
+          id="search-input"
+          placeholder="Search clusters..."
+          class="block w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+        >
+        <div class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Clusters Grid -->
+  <div id="clusters-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <!-- JS rendered -->
+  </div>
+
+  <!-- Empty State -->
+  <div id="clusters-empty" class="hidden">
+    <div class="text-center py-12 bg-white rounded-2xl border border-slate-200">
+      <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-slate-300 mb-4">
+        <rect width="7" height="9" x="3" y="3" rx="1"/>
+        <rect width="7" height="5" x="14" y="3" rx="1"/>
+        <rect width="7" height="9" x="14" y="12" rx="1"/>
+        <rect width="7" height="5" x="3" y="16" rx="1"/>
+      </svg>
+      <p class="text-slate-400 text-sm">No clusters found. Create one to get started!</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- Cluster Card Template -->
+<template id="tmpl-cluster-card">
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-300 overflow-hidden">
+    <!-- Card Header -->
+    <div class="bg-gradient-to-br from-slate-800 to-slate-900 px-6 py-4">
+      <div class="flex items-center justify-between">
+        <div class="w-12 h-12 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="7" height="9" x="3" y="3" rx="1"/>
+            <rect width="7" height="5" x="14" y="3" rx="1"/>
+            <rect width="7" height="9" x="14" y="12" rx="1"/>
+            <rect width="7" height="5" x="3" y="16" rx="1"/>
+          </svg>
+        </div>
+        <div class="flex items-center gap-2">
+          <span data-cell="store-count" class="text-white text-xs font-medium px-2 py-1 bg-white/10 rounded-lg"></span>
+          <a data-cell="view-data-link"
+             class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            View Data
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card Body -->
+    <div class="px-6 py-4 space-y-3">
+      <div>
+        <h3 data-cell="name" class="text-lg font-bold text-slate-900 truncate"></h3>
+        <p data-cell="description" class="text-sm text-slate-500 truncate"></p>
+      </div>
+
+      <!-- Manager Info -->
+      <div class="flex items-center gap-3 pt-2 border-t border-slate-100">
+        <div data-cell="manager-avatar" class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold text-xs"></div>
+        <div class="flex-1 min-w-0">
+          <p class="text-xs text-slate-400">Cluster Manager</p>
+          <p data-cell="manager-name" class="text-sm font-semibold text-slate-900 truncate"></p>
+        </div>
+      </div>
+
+      <!-- Date Added -->
+      <div data-cell="date-added" class="text-xs text-slate-400"></div>
+    </div>
+
+    <!-- Card Actions -->
+	<div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-2">
+	  <a data-cell="manage-link" class="flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition"></a>
+
+	  <button data-cell="edit-btn" class="p-2 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition">
+		<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+		  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+		  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+		</svg>
+	  </button>
+
+	  <button data-cell="delete-btn" class="p-2 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition">
+		<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+		  <path d="M3 6h18"/>
+		  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+		  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+		</svg>
+	  </button>
+	</div>
+  </div>
+</template>
+
+<!-- New Cluster Modal -->
+<div id="clusterModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <!-- Backdrop -->
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+
+  <!-- Modal Container -->
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-xl font-bold text-slate-900">Add New Cluster</h3>
+          <p class="text-sm text-slate-500 mt-1">Create a new cluster and assign a manager</p>
+        </div>
+        <button data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="px-6 py-5 space-y-4">
+
+        <!-- Cluster Name -->
+        <div>
+          <label for="cluster-name" class="block text-sm font-semibold text-slate-700 mb-2">
+            Cluster Name <span class="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            id="cluster-name"
+            placeholder="e.g., North Region, Downtown Area"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300"
+          >
+        </div>
+
+        <!-- Description -->
+        <div>
+          <label for="cluster-description" class="block text-sm font-semibold text-slate-700 mb-2">
+            Description
+          </label>
+          <textarea
+            id="cluster-description"
+            rows="2"
+            placeholder="Brief description of this cluster"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300 resize-none"
+          ></textarea>
+        </div>
+
+        <!-- Cluster Manager -->
+        <div>
+          <label for="cluster-manager" class="block text-sm font-semibold text-slate-700 mb-2">
+            Cluster Manager
+          </label>
+          <select
+            id="cluster-manager"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300"
+          >
+            <option value="">Select a manager (optional)</option>
+          </select>
+          <p class="text-xs text-slate-500 mt-1">Only users with "Cluster Manager" role are shown</p>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+        <button
+          type="button"
+          data-modal-close
+          class="px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-200 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95"
+        >
+          Cancel
+        </button>
+        <button
+          id="submitClusterBtn"
+          type="button"
+          class="px-4 py-2.5 text-sm font-medium bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all duration-200 shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/40 hover:scale-105 active:scale-95"
+        >
+          Create Cluster
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+<!-- Edit Cluster Modal -->
+<div id="editClusterModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-xl font-bold text-slate-900">Edit Cluster</h3>
+          <p class="text-sm text-slate-500 mt-1">Update cluster details</p>
+        </div>
+        <button data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+            <path d="M18 6 6 18"/>
+            <path d="m6 6 12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="px-6 py-5 space-y-4">
+
+        <div>
+          <label for="edit-cluster-name" class="block text-sm font-semibold text-slate-700 mb-2">
+            Cluster Name <span class="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            id="edit-cluster-name"
+            placeholder="e.g., North Region, Downtown Area"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300"
+          >
+        </div>
+
+        <div>
+          <label for="edit-cluster-description" class="block text-sm font-semibold text-slate-700 mb-2">
+            Description
+          </label>
+          <textarea
+            id="edit-cluster-description"
+            rows="2"
+            placeholder="Brief description of this cluster"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300 resize-none"
+          ></textarea>
+        </div>
+
+        <div>
+          <label for="edit-cluster-manager" class="block text-sm font-semibold text-slate-700 mb-2">
+            Cluster Manager
+          </label>
+          <select
+            id="edit-cluster-manager"
+            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 hover:border-slate-300"
+          >
+            <option value="">Select a manager (optional)</option>
+          </select>
+          <p class="text-xs text-slate-500 mt-1">Only users with "Cluster Manager" role are shown</p>
+        </div>
+
+      </div>
+
+      <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+        <button
+          type="button"
+          data-modal-close
+          class="px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-200 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95"
+        >
+          Cancel
+        </button>
+        <button
+          id="editClusterBtn"
+          type="button"
+          class="px-4 py-2.5 text-sm font-medium bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all duration-200 shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/40 hover:scale-105 active:scale-95"
+        >
+          Save Changes
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script defer src="{{ url_for('static', filename='js/handles/cluster_listings_admin_handles.js') }}"></script>
+
+{% endblock %}
