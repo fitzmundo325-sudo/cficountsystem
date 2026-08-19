@@ -161,7 +161,7 @@
         <span class="nav-label whitespace-nowrap truncate">Users</span>
       </a>
 
-      <a href="/admin/clusters"
+      <a onclick="showClusterPageAdmin(this)" 
         class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
           {% if '/admin/clusters' in request.path %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
         data-tooltip="Clusters">
