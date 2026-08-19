@@ -10764,6 +10764,15 @@ def product_masterlist_v2():
     page = 'product_masterlist'
 
     return render_template("admin/product_masterlist_v2.html", user=current_user, page=page)
+     
+
+
+#v2 of the clusters page 
+@views.route('/admin/clusters_v2', methods=['GET', 'POST'])
+def clusters_v2_():
+    page = 'clusters'
+
+    return render_template("admin/clusters_v2.html", user=current_user, page=page)
         
 
 
