@@ -447,6 +447,7 @@ def create_app():
         MaintenanceMode,
         DailyEndingInventory,
         DailyEndingInventoryItem,
+        DeliveryReconciliation,
     )
 
     with app.app_context():

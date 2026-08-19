@@ -31,6 +31,15 @@
     body {
       margin: 0;
       padding: 0;
+      -ms-overflow-style: none !important;
+      scrollbar-width: none !important;
+    }
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar,
+    #main-content::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
     }
 
     #sidebar nav.custom-scrollbar {
@@ -172,7 +181,8 @@
     {% set is_home_active = current_path == '/' %}
     {% set is_daily_report_active = current_path == '/store-manager/daily-report' %}
     {% set is_pos_sold_active = current_path.startswith('/store-manager/daily-report/pos-sold') %}
-    {% set is_delivery_active = current_path.startswith('/store-manager/delivery') %}
+    {% set is_delivery_recon_active = current_path.startswith('/store-manager/delivery-recon') or current_path.startswith('/inventory/delivery-recon') %}
+    {% set is_delivery_active = current_path.startswith('/store-manager/delivery') and not is_delivery_recon_active %}
     {% set is_taf_active = current_path.startswith('/store-manager/transaction-activity-form') %}
     {% set is_trans_active = current_path == '/store-manager/trans' or current_path.startswith('/store-manager/trans/') %}
     {% set is_trans_out_active = current_path == '/store-manager/trans-out' or current_path.startswith('/store-manager/trans-out/') %}
@@ -340,6 +350,12 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
         </div>
         <span class="nav-label whitespace-nowrap truncate">Delivery</span>
+      </a>
+      <a href="/store-manager/delivery-recon{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_delivery_recon_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Delivery Recon">
+        <div class="shrink-0 {% if is_delivery_recon_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Delivery Recon</span>
       </a>
       <a href="/store-manager/supply-request{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/store-manager/supply-request') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Supply Request">
         <div class="shrink-0 {% if request.path.startswith('/store-manager/supply-request') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">

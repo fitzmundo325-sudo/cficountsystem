@@ -267,6 +267,30 @@ class RsoDeliveryDraft(db.Model):
     )
 
 
+class DeliveryReconciliation(db.Model):
+    __tablename__ = 'delivery_reconciliation'
+
+    id = db.Column(db.Integer, primary_key=True)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
+    reconciliation_date = db.Column(db.Date, nullable=False, index=True)
+    receipt_filename = db.Column(db.String(255), nullable=True)
+    total_items = db.Column(db.Integer, nullable=False, default=0)
+    matched_count = db.Column(db.Integer, nullable=False, default=0)
+    short_count = db.Column(db.Integer, nullable=False, default=0)
+    over_count = db.Column(db.Integer, nullable=False, default=0)
+    status = db.Column(db.String(50), nullable=False, default='Reconciled')
+    items_json = db.Column(db.Text, nullable=False, default='[]')
+    reconciled_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    reconciled_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    store = db.relationship('Store')
+    reconciler = db.relationship('User', foreign_keys=[reconciled_by])
+
+    __table_args__ = (
+        db.UniqueConstraint('store_id', 'reconciliation_date', name='uq_delivery_reconciliation_store_date'),
+    )
+
+
 class TafTransfer(db.Model):
     __tablename__ = 'taf_transfer'
     id = db.Column(db.Integer, primary_key=True)
