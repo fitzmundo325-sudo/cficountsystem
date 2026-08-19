@@ -155,62 +155,51 @@ body.modal-open #main-content {
     overflow: hidden !important;
 }
 
-/* Auto-hide scrollbars globally. JavaScript adds .scrollbar-active while scrolling. */
+/* Clean Scrollbars: Native scrollbars are hidden completely to prevent WebKit scrollbar gutter white space gaps */
 html,
 body,
-* {
-    /* scrollbar-color: transparent transparent; */
-    /* scrollbar-gutter: stable; */
-	
-	
-	/* This part is disabled because it is causing bug */
+#main-content,
+#general_container {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
 }
 
-html.scrollbar-active,
-body.scrollbar-active,
-.scrollbar-active {
-    scrollbar-color: rgba(100, 116, 139, 0.85) transparent;
-}
-
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#main-content::-webkit-scrollbar,
+#general_container::-webkit-scrollbar,
 ::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
 }
 
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-    background: transparent;
+/* Custom Floating Page Scrollbar Thumb (Matches Sidebar implementation, draggable & hover-persistent) */
+.page-scrollbar-thumb {
+    position: fixed;
+    right: 3px;
+    width: 7px;
+    min-height: 36px;
     border-radius: 999px;
-    transition: background-color 0.55s ease;
+    background: #64748b;
+    opacity: 0;
+    pointer-events: auto;
+    cursor: grab;
+    transition: opacity 0.4s ease, width 0.15s ease, background-color 0.2s ease;
+    z-index: 9999;
 }
 
-html.scrollbar-active::-webkit-scrollbar-thumb,
-body.scrollbar-active::-webkit-scrollbar-thumb,
-.scrollbar-active::-webkit-scrollbar-thumb {
-    background: rgba(100, 116, 139, 0.85);
+.page-scrollbar-thumb:hover,
+.page-scrollbar-thumb.is-hovered,
+.page-scrollbar-thumb.is-dragging {
+    opacity: 0.9 !important;
+    width: 9px;
+    background: #475569;
+    cursor: grabbing;
 }
 
-html.scrollbar-active::-webkit-scrollbar-thumb:hover,
-body.scrollbar-active::-webkit-scrollbar-thumb:hover,
-.scrollbar-active::-webkit-scrollbar-thumb:hover {
-    background: rgba(71, 85, 105, 0.95);
-}
-
-html:not(.scrollbar-active)::-webkit-scrollbar,
-body:not(.scrollbar-active)::-webkit-scrollbar,
-*:not(.scrollbar-active)::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-html.scrollbar-active::-webkit-scrollbar,
-body.scrollbar-active::-webkit-scrollbar,
-.scrollbar-active::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+.page-scrollbar-thumb.is-visible {
+    opacity: 0.85;
 }
 .custom-scrollbar::-webkit-scrollbar {
     width: 4px;
