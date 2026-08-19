@@ -406,6 +406,94 @@ def get_price_history_by_product_id():
 # Product Masterlist Section End
 # ================================
 
+  
+# ================================
+# Clusters Section Start
+# ================================
+@api_handles.route('/clusters_list_admin', methods=['POST','GET'])
+@login_required
+def list_clusters_admin():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        return jsonify({ 'type': 'error', 'message': 'Access denied.' }), 403
+
+    can_manage = current_user.role in ('Superadmin', 'Admin')
+
+    try:
+        current_page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        current_page = 1
+
+    per_page = post_per_page
+
+    query = Cluster.query.options(
+        selectinload(Cluster.stores),
+        selectinload(Cluster.manager)
+    )
+
+    # -- Search -----------------------------------------------
+    search = request.form.get('search')
+    if search:
+        pattern = f'%{search}%'
+        query = query.join(User, Cluster.manager_id == User.id, isouter=True).filter(
+            or_(
+                Cluster.name.ilike(pattern),
+                Cluster.description.ilike(pattern),
+                User.full_name.ilike(pattern),
+                User.username.ilike(pattern),
+            )
+        )
+
+    # -- Sorting ----------------------------------------------
+    sortby = request.form.get('sort')
+    order = request.form.get('order_by', 'asc').lower()
+
+    sortable_columns = {
+        'id':         Cluster.id,
+        'name':       Cluster.name,
+        'date_added': Cluster.date_added,
+    }
+
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(Cluster.id.asc())
+
+    # -- Pagination -------------------------------------------
+    pagination    = query.paginate(page=current_page, per_page=per_page, error_out=False)
+    results       = pagination.items
+    total_pages   = pagination.pages
+    total_results = pagination.total
+
+    # -- Serialize --------------------------------------------
+    data = []
+    for c in results:
+        data.append({
+            'id':              c.id,
+            'name':            c.name,
+            'description':     c.description,
+            'store_count':     len(c.stores),
+            'manager_name':    c.manager.full_name if c.manager else 'Unassigned',
+            'manager_initial': c.manager.username[0].upper() if c.manager else '?',
+            'date_added':      c.date_added.strftime('%b %d, %Y') if c.date_added else None,
+        })
+
+    return jsonify({
+        'type': 'success',
+        'data': {
+            'clusters':   data,
+            'can_manage': can_manage,
+        },
+        'pagination_data': {
+            'current_page':  current_page,
+            'total_pages':   total_pages,
+            'total_results': total_results,
+        }
+    })
+# ================================
+# Clusters Masterlist Section End
+# ================================
+
  
  
 # ================================
