@@ -626,3 +626,4 @@ function generatePagination(paginationData = undefined, callbackName , jumpNameC
 function childViewToggleSidebar(){
 	postMessageToParent("function:toggleSidebarCollapse");
 }
+
