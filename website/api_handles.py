@@ -490,6 +490,102 @@ def list_clusters_admin():
             'total_results': total_results,
         }
     })
+
+
+
+@api_handles.route('/clusters_create', methods=['POST', 'GET'])
+@login_required
+def clusters_create_admin():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({ 'type': 'error', 'message': 'Access denied.' }), 403
+
+    try:
+        body       = request.get_json()
+        name       = (body.get('name') or '').strip()
+        description = (body.get('description') or '').strip()
+        manager_id = body.get('manager_id')
+
+        if not name:
+            return jsonify({ 'type': 'error', 'message': 'Cluster name is required.' })
+
+        if Cluster.query.filter_by(name=name).first():
+            return jsonify({ 'type': 'error', 'message': f'Cluster "{name}" already exists.' })
+
+        new_cluster = Cluster(
+            name=name,
+            description=description,
+            manager_id=int(manager_id) if manager_id else None
+        )
+
+        db.session.add(new_cluster)
+        db.session.flush()
+
+        log_audit_event(
+            action='admin.cluster.create',
+            entity_type='Cluster',
+            entity_id=new_cluster.id,
+            reason='Cluster created by administrator.',
+            details={
+                'name':        new_cluster.name,
+                'description': new_cluster.description,
+                'manager_id':  new_cluster.manager_id,
+            },
+        )
+
+        db.session.commit()
+
+        return jsonify({ 'type': 'success', 'message': f'Cluster "{name}" created successfully.' })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({ 'type': 'error', 'message': f'Error creating cluster: {str(e)}.' })
+
+
+
+@api_handles.route('/clusters_delete', methods=['POST', 'GET'])
+@login_required
+def clusters_delete_admin():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({ 'type': 'error', 'message': 'Access denied.' }), 403
+
+    try:
+        body       = request.get_json()
+        cluster_id = body.get('id')
+
+        if not cluster_id:
+            return jsonify({ 'type': 'error', 'message': 'Cluster ID is required.' })
+
+        cluster = Cluster.query.get(cluster_id)
+
+        if not cluster:
+            return jsonify({ 'type': 'error', 'message': 'Cluster not found.' })
+
+        if cluster.stores:
+            return jsonify({ 'type': 'error', 'message': f'Cluster "{cluster.name}" still has {len(cluster.stores)} store(s). Remove all stores before deleting.' })
+
+        cluster_name = cluster.name
+
+        log_audit_event(
+            action='admin.cluster.delete',
+            entity_type='Cluster',
+            entity_id=cluster.id,
+            reason='Cluster deleted by administrator.',
+            details={
+                'name':        cluster.name,
+                'description': cluster.description,
+                'manager_id':  cluster.manager_id,
+            },
+        )
+
+        db.session.delete(cluster)
+        db.session.commit()
+
+        return jsonify({ 'type': 'success', 'message': f'Cluster "{cluster_name}" deleted successfully.' })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({ 'type': 'error', 'message': f'Error deleting cluster: {str(e)}.' })
+
 # ================================
 # Clusters Masterlist Section End
 # ================================
