@@ -473,6 +473,7 @@ def list_clusters_admin():
             'name':            c.name,
             'description':     c.description,
             'store_count':     len(c.stores),
+            'manager_id':      c.manager_id,
             'manager_name':    c.manager.full_name if c.manager else 'Unassigned',
             'manager_initial': c.manager.username[0].upper() if c.manager else '?',
             'date_added':      c.date_added.strftime('%b %d, %Y') if c.date_added else None,
@@ -542,6 +543,70 @@ def clusters_create_admin():
 
 
 
+@api_handles.route('/clusters_update', methods=['POST', 'GET'])
+@login_required
+def clusters_update_admin():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({ 'type': 'error', 'message': 'Access denied.' }), 403
+
+    try:
+        body        = request.get_json()
+        cluster_id  = body.get('id')
+        name        = (body.get('name') or '').strip()
+        description = (body.get('description') or '').strip()
+        manager_id  = body.get('manager_id')
+
+        if not cluster_id:
+            return jsonify({ 'type': 'error', 'message': 'Cluster ID is required.' })
+
+        if not name:
+            return jsonify({ 'type': 'error', 'message': 'Cluster name is required.' })
+
+        cluster = Cluster.query.get(cluster_id)
+
+        if not cluster:
+            return jsonify({ 'type': 'error', 'message': 'Cluster not found.' })
+
+        # Check name conflict against other clusters
+        existing = Cluster.query.filter_by(name=name).first()
+        if existing and existing.id != cluster.id:
+            return jsonify({ 'type': 'error', 'message': f'Cluster "{name}" already exists.' })
+
+        old_details = {
+            'name':        cluster.name,
+            'description': cluster.description,
+            'manager_id':  cluster.manager_id,
+        }
+
+        cluster.name        = name
+        cluster.description = description
+        cluster.manager_id  = int(manager_id) if manager_id else None
+
+        log_audit_event(
+            action='admin.cluster.update',
+            entity_type='Cluster',
+            entity_id=cluster.id,
+            reason='Cluster updated by administrator.',
+            details={
+                'before': old_details,
+                'after': {
+                    'name':        cluster.name,
+                    'description': cluster.description,
+                    'manager_id':  cluster.manager_id,
+                },
+            },
+        )
+
+        db.session.commit()
+
+        return jsonify({ 'type': 'success', 'message': f'Cluster "{name}" updated successfully.' })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({ 'type': 'error', 'message': f'Error updating cluster: {str(e)}.' })
+        
+
+
 @api_handles.route('/clusters_delete', methods=['POST', 'GET'])
 @login_required
 def clusters_delete_admin():
@@ -585,6 +650,31 @@ def clusters_delete_admin():
     except Exception as e:
         db.session.rollback()
         return jsonify({ 'type': 'error', 'message': f'Error deleting cluster: {str(e)}.' })
+
+
+
+@api_handles.route('/clusters_managers', methods=['POST', 'GET'])
+@login_required
+def clusters_managers_admin():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({ 'type': 'error', 'message': 'Access denied.' }), 403
+
+    try:
+        managers = User.query.filter_by(role='Cluster Manager').all()
+
+        data = [
+            {
+                'id':        m.id,
+                'full_name': m.full_name,
+                'username':  m.username,
+            }
+            for m in managers
+        ]
+
+        return jsonify({ 'type': 'success', 'data': data })
+
+    except Exception as e:
+        return jsonify({ 'type': 'error', 'message': f'Error loading managers: {str(e)}.' })
 
 # ================================
 # Clusters Masterlist Section End

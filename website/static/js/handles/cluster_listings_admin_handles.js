@@ -70,20 +70,21 @@ return card;
 }
 
 function renderClusters(data) {
-let grid  = document.getElementById('clusters-grid');
-let empty = document.getElementById('clusters-empty');
+	let grid  = document.getElementById('clusters-grid');
+	let empty = document.getElementById('clusters-empty');
 
-grid.innerHTML = '';
+	grid.innerHTML = '';
 
-if (!data.length) {
-  empty.classList.remove('hidden');
-  return;
-}
+	if (!data.length) {
+	  empty.classList.remove('hidden');
+	  return;
+	}
 
-empty.classList.add('hidden');
-data.forEach(function(cluster) {
-  grid.appendChild(buildClusterCard(cluster));
-});
+	empty.classList.add('hidden');
+	
+	data.forEach(function(cluster) {
+	  grid.appendChild(buildClusterCard(cluster));
+	});
 }
 
 // -----------------------------------------------
@@ -244,9 +245,11 @@ function openEditClusterModal(cluster) {
   document.getElementById('edit-cluster-name').value        = cluster.name || '';
   document.getElementById('edit-cluster-description').value = cluster.description || '';
   document.getElementById('edit-cluster-manager').value     = cluster.manager_id || '';
+  
   document.getElementById('editClusterBtn').dataset.clusterId = cluster.id;
   editClusterModal.open();
 }
+
 
 function submitEditCluster() {
   let name        = document.getElementById('edit-cluster-name');
