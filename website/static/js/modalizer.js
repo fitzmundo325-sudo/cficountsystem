@@ -1,4 +1,4 @@
-// Modalizer JS by Atomtech v1.3
+// Modalizer JS by Atomtech v1.3.1
 
 // left: 37, up: 38, right: 39, down: 40,
 // spacebar: 32, pageup: 33, pagedown: 34, end: 35, home: 36
@@ -59,7 +59,6 @@ function open_modal(link, custom_class=undefined, targetElm=undefined, dialog=fa
 		return console.warn("Modalizer not allowed inside iframe window");
 	}
 	let modal_iframe_con
-	
 	
 	
 	if(dialog){
@@ -416,6 +415,23 @@ try{
 }catch(e){
 	//--
 }
+
+
+
+//Auto click a Button/Link when ?m=page is found on the url Link
+try {
+    if (getparam("m")) {
+        _("_" + getparam("m").toLowerCase()).click();
+    }
+} catch (e) {
+    console.warn("'m' param was present, but failed to call function-click on an element with id: " + "_" + getparam("m").toLowerCase());
+
+    // Remove the 'm' param from the URL without reloading the page
+    const url = new URL(window.location.href);
+    url.searchParams.delete("m");
+    window.history.replaceState(null, "", url.toString());
+}
+
 
 
 // Override default refresh behaviors (F5, Ctrl+R)
