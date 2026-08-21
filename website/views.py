@@ -11986,6 +11986,17 @@ def clusters_v2_():
 
 
 
+#v2 of the storeds page 
+@views.route('/admin/stores_v2', methods=['GET', 'POST'])
+def stores_v2_():
+    page = 'clusters'
+
+    return render_template("admin/stores_v2.html", user=current_user, page=page)
+        
+
+
+
+
 
 # ================================================
 # Supply Requests (store side)

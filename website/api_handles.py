@@ -683,6 +683,135 @@ def clusters_managers_admin():
  
  
 # ================================
+# Stores Section Start
+# ================================
+@api_handles.route('/stores', methods=['POST', 'GET'])
+@login_required
+def api_stores_list():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Cluster Manager'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    can_manage = current_user.role in ('Superadmin', 'Admin')
+
+    try:
+        current_page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        current_page = 1
+
+    per_page = post_per_page
+
+    query = Store.query.options(
+        selectinload(Store.manager),
+        selectinload(Store.cluster)
+    )
+
+    # -- Search -----------------------------------------------
+    search = request.form.get('search') or request.args.get('search')
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                Store.name.ilike(pattern),
+                Store.address.ilike(pattern),
+            )
+        )
+
+    # -- Sorting ----------------------------------------------
+    sortby = request.form.get('sort') or request.args.get('sort')
+    order  = (request.form.get('order_by') or request.args.get('order_by') or 'asc').lower()
+
+    sortable_columns = {
+        'id':         Store.id,
+        'name':       Store.name,
+        'address':    Store.address,
+        'date_added': Store.date_added,
+    }
+
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(Store.id.asc())
+
+    # -- Pagination -------------------------------------------
+    pagination    = query.paginate(page=current_page, per_page=per_page, error_out=False)
+    results       = pagination.items
+    total_pages   = pagination.pages
+    total_results = pagination.total
+
+    # -- Serialize --------------------------------------------
+    data = []
+    for s in results:
+        data.append({
+            'id':               s.id,
+            'name':             s.name,
+            'address':          s.address,
+            'is_one_year_already': s.is_one_year_already,
+            'manager_id':       s.manager_id,
+            'manager_name':     s.manager.full_name if s.manager else None,
+            'manager_username': s.manager.username if s.manager else None,
+            'cluster_name':     s.cluster.name if s.cluster else None,
+            'date_added':       s.date_added.strftime('%b %d, %Y') if s.date_added else None,
+        })
+
+    return jsonify({
+        'type': 'success',
+        'data': {
+            'stores':     data,
+            'can_manage': can_manage,
+        },
+        'pagination_data': {
+            'current_page':  current_page,
+            'total_pages':   total_pages,
+            'total_results': total_results,
+        }
+    })
+
+
+
+
+@api_handles.route('/stores_managers_available', methods=['GET', 'POST'])
+@login_required
+def api_stores_managers_available():
+    from .views import _apply_store_scope_filter
+    all_stores = Store.query.all()
+    scoped_stores = _apply_store_scope_filter(all_stores, request)
+    assigned_manager_ids = [s.manager_id for s in scoped_stores if s.manager_id]
+    available_managers = User.query.filter(
+        User.role == 'Store Manager',
+        ~User.id.in_(assigned_manager_ids)
+    ).all()
+    return jsonify({
+        'type': 'success',
+        'data': [
+            {'id': m.id, 'full_name': m.full_name, 'username': m.username}
+            for m in available_managers
+        ]
+    })
+    
+    
+    
+
+@api_handles.route('/managers_all', methods=['GET', 'POST'])
+@login_required
+def api_stores_managers_all():
+    all_managers = User.query.filter(User.role == 'Store Manager').all()
+    return jsonify({
+        'type': 'success',
+        'data': [
+            {'id': m.id, 'full_name': m.full_name, 'username': m.username}
+            for m in all_managers
+        ]
+    })
+ 
+ 
+ 
+# ================================
+# Stores Section End
+# ================================
+ 
+ 
+# ================================
 # Users Section Start
 # ================================
 @api_handles.route('/users', methods=['POST', 'GET'])
