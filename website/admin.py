@@ -3120,6 +3120,8 @@ def stores():
         User.role == 'Store Manager',
         ~User.id.in_(assigned_manager_ids)
     ).all()
+    
+    
     # Get all store managers for the edit modal dropdown
     all_managers = User.query.filter(User.role == 'Store Manager').all()
     return render_template('admin/stores.html', user=current_user, stores=stores, managers=available_managers, all_managers=all_managers)
