@@ -3980,6 +3980,10 @@ def update_target():
 @admin.route('/admin/product-masterlist')
 @login_required
 def product_masterlist():
+    
+    #Testing the new Product Master List Engine v2
+    return redirect(url_for('views.v2_main', m='product_masterlist'))
+    
     if current_user.role not in ('Superadmin', 'Admin'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
