@@ -806,6 +806,190 @@ def api_stores_managers_all():
  
  
  
+
+@api_handles.route('/stores/create', methods=['POST'])
+@login_required
+def api_stores_create():
+    try:
+        data       = request.get_json()
+        name       = (data.get('name') or '').strip()
+        address    = (data.get('address') or '').strip()
+        manager_id = data.get('manager_id') or None
+        is_one_year_already = data.get('is_one_year_already', '0') == '1'
+
+        if not name or not address:
+            return jsonify({'type': 'error', 'message': 'Store name and address are required.'}), 400
+
+        if Store.query.filter_by(name=name).first():
+            return jsonify({'type': 'error', 'message': 'A store with this name already exists.'}), 400
+
+        new_store = Store(
+            name=name,
+            address=address,
+            is_one_year_already=is_one_year_already,
+            manager_id=int(manager_id) if manager_id else None
+        )
+        db.session.add(new_store)
+        db.session.flush()
+        log_audit_event(
+            action='admin.store.create',
+            entity_type='Store',
+            entity_id=new_store.id,
+            reason='Store created by administrator.',
+            details={
+                'name':                new_store.name,
+                'address':             new_store.address,
+                'store_group':         new_store.store_group,
+                'is_one_year_already': new_store.is_one_year_already,
+                'manager_id':          new_store.manager_id,
+            },
+        )
+        db.session.commit()
+        return jsonify({'type': 'success', 'message': f'Store "{name}" created successfully.'})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Error creating store: {str(e)}'}), 500
+ 
+
+
+@api_handles.route('/stores/<int:store_id>/assign-manager', methods=['POST'])
+@login_required
+def api_stores_assign_manager(store_id):
+    try:
+        store = Store.query.get_or_404(store_id)
+        data = request.get_json()
+        manager_id = data.get('manager_id')
+        previous_manager_id = store.manager_id
+
+        if not manager_id:
+            return jsonify({'type': 'error', 'message': 'Please select a manager.'}), 400
+
+        manager = User.query.get(int(manager_id))
+        if not manager or manager.role != 'Store Manager':
+            return jsonify({'type': 'error', 'message': 'Invalid manager selection.'}), 400
+
+        existing_store = Store.query.filter_by(manager_id=int(manager_id)).first()
+        if existing_store and existing_store.id != store_id:
+            return jsonify({'type': 'error', 'message': f'Manager {manager.full_name} is already assigned to {existing_store.name}.'}), 400
+
+        store.manager_id = int(manager_id)
+        log_audit_event(
+            action='admin.store.assign_manager',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store manager reassigned.',
+            details={
+                'store_name':          store.name,
+                'previous_manager_id': previous_manager_id,
+                'new_manager_id':      store.manager_id,
+            },
+        )
+        db.session.commit()
+        return jsonify({'type': 'success', 'message': f'Manager "{manager.full_name}" assigned to "{store.name}" successfully.'})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Error assigning manager: {str(e)}'}), 500
+
+
+@api_handles.route('/stores/<int:store_id>/update', methods=['POST'])
+@login_required
+def api_stores_update(store_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied. Only Admins and Superadmins can update stores.'}), 403
+
+    try:
+        store = Store.query.get_or_404(store_id)
+        data  = request.get_json()
+
+        previous_state = {
+            'name':                store.name,
+            'address':             store.address,
+            'is_one_year_already': store.is_one_year_already,
+            'manager_id':          store.manager_id,
+        }
+
+        name                = (data.get('name') or '').strip()
+        address             = (data.get('address') or '').strip()
+        is_one_year_already = data.get('is_one_year_already', '0') == '1'
+        manager_id_raw      = (data.get('manager_id') or '')
+
+        if not name or not address:
+            return jsonify({'type': 'error', 'message': 'Store name and address are required.'}), 400
+
+        if name != store.name:
+            existing = Store.query.filter(Store.name == name, Store.id != store_id).first()
+            if existing:
+                return jsonify({'type': 'error', 'message': 'A store with this name already exists.'}), 400
+
+        new_manager_id = None
+        if manager_id_raw:
+            new_manager_id = int(manager_id_raw)
+            manager = User.query.get(new_manager_id)
+            if not manager or manager.role != 'Store Manager':
+                return jsonify({'type': 'error', 'message': 'Invalid manager selection.'}), 400
+
+            existing_store = Store.query.filter_by(manager_id=new_manager_id).first()
+            if existing_store and existing_store.id != store_id:
+                return jsonify({'type': 'error', 'message': f'Manager {manager.full_name} is already assigned to {existing_store.name}.'}), 400
+
+        store.name                = name
+        store.address             = address
+        store.is_one_year_already = is_one_year_already
+        store.manager_id          = new_manager_id
+
+        log_audit_event(
+            action='admin.store.update',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store updated by administrator.',
+            details={
+                'before': previous_state,
+                'after': {
+                    'name':                store.name,
+                    'address':             store.address,
+                    'is_one_year_already': store.is_one_year_already,
+                    'manager_id':          store.manager_id,
+                },
+            },
+        )
+        db.session.commit()
+        return jsonify({'type': 'success', 'message': f'Store "{name}" updated successfully.'})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Error updating store: {str(e)}'}), 500
+
+
+@api_handles.route('/stores/<int:store_id>/delete', methods=['POST'])
+@login_required
+def api_stores_delete(store_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied. Only Admins and Superadmins can delete stores.'}), 403
+
+    try:
+        store = Store.query.get_or_404(store_id)
+        store_snapshot = {
+            'name':       store.name,
+            'address':    store.address,
+            'manager_id': store.manager_id,
+        }
+        log_audit_event(
+            action='admin.store.delete',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store deleted by administrator.',
+            details=store_snapshot,
+        )
+        db.session.delete(store)
+        db.session.commit()
+        return jsonify({'type': 'success', 'message': f'Store "{store_snapshot["name"]}" deleted successfully.'})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Error deleting store: {str(e)}'}), 500
+ 
 # ================================
 # Stores Section End
 # ================================

@@ -15,13 +15,21 @@
 // --------------------------------------------------
 function activate(elm){
 	let parent_elm = elm.parentNode.parentNode;
-	let all_active = parent_elm.getElementsByClassName("active");
+	let all_active = parent_elm.getElementsByClassName("active_nav");
 
 	
 	for(each of all_active){
-		each.classList.remove("active");
+		each.classList.remove("active_nav");
 	}
-	elm.classList.add("active");
+	
+	
+	elm.classList.add("active_nav");
+	
+	let clickable_id = elm.getAttribute("id").replace(/^_/, '');
+	
+	let url = new URL(window.location.href);
+    url.searchParams.set('m', clickable_id);
+    history.pushState(null, '', url);
 	
 	
 };
@@ -65,6 +73,17 @@ function showClusterPageAdmin(elm){
 	hideDashboardContents(true);
 	
 
+	
+}
+
+
+function showStoresPageAdmin(elm){
+	activate(elm);
+
+	let page = open_modal("stores_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
 	
 }
 

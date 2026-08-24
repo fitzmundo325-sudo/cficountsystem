@@ -220,20 +220,39 @@ loadFormData();
 loadStores();
 }
 
-function submitNewStore() {
-let name    = document.getElementById('new_name').value.trim();
-let address = document.getElementById('new_address').value.trim();
-if (!name || !address) {
-  toast.error('Please fill in all required fields!');
-  return;
-}
-let isOneYear  = document.querySelector('input[name="new_is_one_year"]:checked').value;
-let managerId  = document.getElementById('new_manager_id').value;
 
-qBuilder.sendQuery('/apis/stores/create', onStoreCreated, {
-  method: 'POST',
-  body: JSON.stringify({ name, address, manager_id: managerId || null, is_one_year_already: isOneYear }),
-});
+
+function submitNewStore() {
+    let name    = document.getElementById('new_name').value.trim();
+    let address = document.getElementById('new_address').value.trim();
+    if (!name || !address) {
+        toast.error('Please fill in all required fields!');
+        return;
+    }
+    let isOneYear = document.querySelector('input[name="new_is_one_year"]:checked').value;
+    let managerId = document.getElementById('new_manager_id').value;
+
+    fetch('/apis/stores/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name:                name,
+            address:             address,
+            manager_id:          managerId || null,
+            is_one_year_already: isOneYear,
+        })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+        if (res.type !== 'success') { toast.error(res.message); return; }
+        toast.success(res.message);
+        storeModal.close();
+        document.getElementById('new_name').value    = '';
+        document.getElementById('new_address').value = '';
+        document.querySelector('input[name="new_is_one_year"][value="0"]').checked = true;
+        populateManagerDropdowns();
+        loadStores();
+    });
 }
 
 // -----------------------------------------------------------------------
@@ -262,21 +281,37 @@ loadFormData();
 loadStores();
 }
 
-function submitEditStore() {
-let name    = document.getElementById('edit_name').value.trim();
-let address = document.getElementById('edit_address').value.trim();
-if (!name || !address) {
-  toast.error('Please fill in all required fields!');
-  return;
-}
-let isOneYear = document.querySelector('input[name="edit_is_one_year"]:checked').value;
-let managerId = document.getElementById('edit_manager_id').value;
 
-qBuilder.sendQuery(`/apis/stores/${activeStoreId}/update`, onStoreUpdated, {
-  method: 'POST',
-  body: JSON.stringify({ name, address, manager_id: managerId || null, is_one_year_already: isOneYear }),
-});
+
+function submitEditStore() {
+    let name    = document.getElementById('edit_name').value.trim();
+    let address = document.getElementById('edit_address').value.trim();
+    if (!name || !address) { toast.error('Please fill in all required fields!'); return; }
+
+    let isOneYear = document.querySelector('input[name="edit_is_one_year"]:checked').value;
+    let managerId = document.getElementById('edit_manager_id').value;
+
+    fetch(`/apis/stores/${activeStoreId}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name:                name,
+            address:             address,
+            manager_id:          managerId || null,
+            is_one_year_already: isOneYear,
+        })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+        if (res.type !== 'success') { toast.error(res.message); return; }
+        toast.success(res.message);
+        editStoreModal.close();
+        populateManagerDropdowns();
+        loadStores();
+    });
 }
+
+
 
 // -----------------------------------------------------------------------
 // Assign manager
@@ -296,40 +331,78 @@ loadFormData();
 loadStores();
 }
 
-function submitAssignManager() {
-let managerId = document.getElementById('assign_manager_id').value;
-if (!managerId) { toast.error('Please select a manager.'); return; }
 
-qBuilder.sendQuery(`/apis/stores/${activeStoreId}/assign-manager`, onManagerAssigned, {
-  method: 'POST',
-  body: JSON.stringify({ manager_id: managerId }),
-});
+function submitAssignManager() {
+    let managerId = document.getElementById('assign_manager_id').value;
+    if (!managerId) { toast.error('Please select a manager.'); return; }
+
+    fetch(`/apis/stores/${activeStoreId}/assign-manager`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manager_id: managerId })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+        if (res.type !== 'success') { toast.error(res.message); return; }
+        toast.success(res.message);
+        assignManagerModal.close();
+        populateManagerDropdowns();
+        loadStores();
+    });
 }
 
 // -----------------------------------------------------------------------
 // Delete store
 // -----------------------------------------------------------------------
 
-function onStoreDeleted(data) {
-if (data.type !== 'success') { toast.error(data.message); return; }
-toast.success(data.message);
-loadFormData();
-loadStores();
-}
-
 function deleteStore(storeId, storeName) {
-showConfirmationModal(
-  `Delete "${storeName}"?`,
-  'This action cannot be undone.',
-  function() {
-	qBuilder.sendQuery(`/apis/stores/${storeId}/delete`, onStoreDeleted, {
-	  method: 'POST',
-	  body: JSON.stringify({}),
-	});
-  }
-);
+    let doDelete = function() {
+        fetch(`/apis/stores/${storeId}/delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+            if (res.type === 'success') {
+                toast.success(res.message);
+                populateManagerDropdowns();
+                loadStores();
+            } else {
+                toast.error(res.message || 'Failed to delete store.');
+            }
+        })
+        .catch(function() { toast.error('Error deleting store. Please try again.'); });
+    };
+
+    if (typeof showConfirmationModal === 'function') {
+        showConfirmationModal({
+            title:       'Delete Store',
+            message:     `Are you sure you want to delete "${storeName}"? This action cannot be undone.`,
+            confirmText: 'Yes, Delete',
+            cancelText:  'Cancel',
+            onConfirm:   doDelete,
+        });
+    } else {
+        if (confirm(`Are you sure you want to delete "${storeName}"? This action cannot be undone.`)) {
+            doDelete();
+        }
+    }
 }
 
+function doDeleteStore(storeId, storeName) {
+    fetch(`/apis/stores/${storeId}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+        if (res.type !== 'success') { toast.error(res.message); return; }
+        toast.success(res.message);
+        populateManagerDropdowns();
+        loadStores();
+    });
+}
 // -----------------------------------------------------------------------
 // Event listeners
 // -----------------------------------------------------------------------
