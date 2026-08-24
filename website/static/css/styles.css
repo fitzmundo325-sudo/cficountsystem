@@ -345,6 +345,16 @@ body::-webkit-scrollbar,
     opacity: 1;
 }
 
+.active_nav{
+    --tw-bg-opacity: 1;
+    background-color: rgb(30 41 59 / var(--tw-bg-opacity, 1));
+}
+
+
+.nav-item{
+	cursor:pointer;
+}
+
 /* Modal shake animation */
 @keyframes shake {
     0%, 100% { transform: translateX(0); }
