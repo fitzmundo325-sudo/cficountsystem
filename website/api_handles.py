@@ -174,18 +174,18 @@ def add_product_master():
         data = request.get_json()
 
         # Validate required fields
-        for field in ('code', 'description', 'category', 'tp', 'sp_p', 'sp_np'):
+        for field in ('description', 'category'):
             if not data.get(field):
                 return {'type': 'error', 'message': f'Missing required field: {field}'}, 400
 
         # Check if code already exists
-        existing = ProductMaster.query.filter_by(code=int(data['code'])).first()
+        existing = ProductMaster.query.filter_by(code=(data['code'])).first()
         if existing:
             return {'type': 'error', 'message': 'Product with this code already exists.'}, 400
 
         # Create new product
         product = ProductMaster(
-            code        = int(data['code']),
+            code        = data['code'],
             description = data['description'].strip(),
             category    = data['category'].strip(),
             sub_category= data.get('sub_category', '').strip() or None,
@@ -239,12 +239,12 @@ def update_product_master(product_id):
             return {'type': 'error', 'message': 'Product not found.'}, 404
 
         # Validate required fields
-        for field in ('code', 'description', 'category', 'tp', 'sp_p', 'sp_np'):
+        for field in ('code', 'description', 'category'):
             if not data.get(field):
                 return {'type': 'error', 'message': f'Missing required field: {field}'}, 400
 
         # Check code uniqueness against other products
-        code = int(data['code'])
+        code = (data['code'])
         existing = ProductMaster.query.filter(
             ProductMaster.code == code,
             ProductMaster.id != product_id
