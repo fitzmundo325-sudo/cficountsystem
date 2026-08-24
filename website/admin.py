@@ -1,4 +1,4 @@
-from flask import Blueprint, redirect, render_template, request, url_for, flash, jsonify
+from flask import Blueprint, redirect, render_template, request, url_for, flash, jsonify, session
 from .models import (
     User,
     Store,
@@ -6377,3 +6377,18 @@ def admin_delete_supply_item(item_id):
     db.session.delete(item)
     db.session.commit()
     return jsonify({'success': True, 'message': f'Supply item "{item_name}" deleted.'})
+
+
+
+
+
+@admin.route('/admin/set_theme', methods=['POST'])
+def themes():
+    theme = request.form.get("theme")
+
+    if 'theme' not in session:
+        session['theme'] = theme
+
+    session['theme'] = theme
+
+    return theme
