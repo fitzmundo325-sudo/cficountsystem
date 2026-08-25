@@ -348,6 +348,8 @@ body::-webkit-scrollbar,
 .active_nav{
     --tw-bg-opacity: 1;
     background-color: rgb(30 41 59 / var(--tw-bg-opacity, 1));
+	position:sticky;
+	top:2px;
 }
 
 
