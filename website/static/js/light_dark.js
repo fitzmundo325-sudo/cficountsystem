@@ -156,3 +156,43 @@ function monitorThemeChange(){
 window.setInterval(monitorThemeChange, 1300);
 
 
+//Extra for old v1 systemLanguage
+
+function setAdminTheme(dark) {
+  document.documentElement.classList.toggle('admin-dark', dark);
+
+  const themeColor = document.querySelector('meta[name="theme-color"]');
+  if (themeColor) themeColor.content = dark ? '#020617' : '#0f172a';
+
+  const button = document.getElementById('admin-theme-toggle');
+  if (button) {
+	button.querySelector('[data-admin-theme-sun]').classList.toggle('hidden', dark);
+	button.querySelector('[data-admin-theme-moon]').classList.toggle('hidden', !dark);
+	button.querySelector('[data-admin-theme-label]').textContent = dark ? 'Light Theme' : 'Dark Theme';
+	button.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+  }
+
+  if (document.querySelector('.admin-dashboard-surface canvas')) {
+	setTimeout(() => window.location.reload(), 80);
+  }
+}
+
+
+function watchAdminTheme(intervalMs = 500) {
+	let last = localStorage.getItem('adminTheme');
+
+	const id = setInterval(() => {
+	const current = localStorage.getItem('adminTheme');
+	if (current !== last) {
+	  last = current;
+	  setAdminTheme(current === 'dark');
+	}
+	}, intervalMs);
+
+	// Return cleanup, should noshi-sama wish to stop watching
+	return () => clearInterval(id);
+}
+
+
+
+let stopWatching = watchAdminTheme(700);
