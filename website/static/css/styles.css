@@ -345,6 +345,37 @@ body::-webkit-scrollbar,
     opacity: 1;
 }
 
+
+.sidebar-collapsed > div > .v2#toggle-desktop{
+	margin-left:30px;	
+	
+}
+
+
+
+.sidebar-collapsed > nav > .store-scope-section > div > button{
+	/* min-width:230px; */
+	display:none;
+}
+
+.sidebar-collapsed > nav > .store-scope-section > div > button.bg-indigo-500{
+	/* min-width:230px; */
+	display:initial;
+	min-width:30px;
+	overflow:hidden;
+	font-size: 0;
+}
+
+
+.sidebar-collapsed > nav > .store-scope-section > div > button.bg-indigo-500::first-letter {
+    font-size: 0.75rem; /* Restore size for first letter only */
+    font-weight: 600;
+	line-height:25px;
+	
+	
+}
+
+
 .active_nav{
     --tw-bg-opacity: 1;
     background-color: rgb(30 41 59 / var(--tw-bg-opacity, 1));
