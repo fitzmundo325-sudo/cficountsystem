@@ -3615,6 +3615,10 @@ def assign_manager(cluster_id):
 @admin.route('/admin/targets')
 @login_required
 def targets():
+    
+    #Testing the new Store Targets Engine v2
+    return redirect(url_for('views.v2_main', m='store_targets'))
+    
     if current_user.role not in ('Superadmin', 'General Manager'):
         flash('Access denied. Only Superadmins and General Managers can access this page.', category='error')
         return redirect(url_for('views.home'))
