@@ -690,21 +690,22 @@ def clusters_managers_admin():
 def api_stores_list():
     if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Cluster Manager'):
         return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
-
     can_manage = current_user.role in ('Superadmin', 'Admin')
-
     try:
         current_page = int(request.form.get('page') or request.args.get('page') or 1)
     except (ValueError, TypeError):
         current_page = 1
-
     per_page = post_per_page
-
     query = Store.query.options(
         selectinload(Store.manager),
         selectinload(Store.cluster)
     )
-
+    # -- Scope filter -----------------------------------------
+    store_scope = request.form.get('store_scope') or request.args.get('store_scope')
+    if store_scope == 'starlink':
+        query = query.filter(Store.name.ilike('%starlink%'))
+    else:
+        query = query.filter(~Store.name.ilike('%starlink%'))
     # -- Search -----------------------------------------------
     search = request.form.get('search') or request.args.get('search')
     if search:
@@ -715,45 +716,39 @@ def api_stores_list():
                 Store.address.ilike(pattern),
             )
         )
-
     # -- Sorting ----------------------------------------------
     sortby = request.form.get('sort') or request.args.get('sort')
     order  = (request.form.get('order_by') or request.args.get('order_by') or 'asc').lower()
-
     sortable_columns = {
         'id':         Store.id,
         'name':       Store.name,
         'address':    Store.address,
         'date_added': Store.date_added,
     }
-
     if sortby in sortable_columns:
         sort_col = sortable_columns[sortby]
         query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
     else:
         query = query.order_by(Store.id.asc())
-
     # -- Pagination -------------------------------------------
     pagination    = query.paginate(page=current_page, per_page=per_page, error_out=False)
     results       = pagination.items
     total_pages   = pagination.pages
     total_results = pagination.total
-
     # -- Serialize --------------------------------------------
     data = []
     for s in results:
         data.append({
-            'id':               s.id,
-            'name':             s.name,
-            'address':          s.address,
+            'id':                  s.id,
+            'name':                s.name,
+            'address':             s.address,
             'is_one_year_already': s.is_one_year_already,
-            'manager_id':       s.manager_id,
-            'manager_name':     s.manager.full_name if s.manager else None,
-            'manager_username': s.manager.username if s.manager else None,
-            'cluster_name':     s.cluster.name if s.cluster else None,
-            'date_added':       s.date_added.strftime('%b %d, %Y') if s.date_added else None,
+            'manager_id':          s.manager_id,
+            'manager_name':        s.manager.full_name if s.manager else None,
+            'manager_username':    s.manager.username if s.manager else None,
+            'cluster_name':        s.cluster.name if s.cluster else None,
+            'date_added':          s.date_added.strftime('%b %d, %Y') if s.date_added else None,
         })
-
     return jsonify({
         'type': 'success',
         'data': {
@@ -766,8 +761,6 @@ def api_stores_list():
             'total_results': total_results,
         }
     })
-
-
 
 
 @api_handles.route('/stores_managers_available', methods=['GET', 'POST'])

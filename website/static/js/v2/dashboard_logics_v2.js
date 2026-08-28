@@ -90,6 +90,9 @@
           let scope = (this.getAttribute('data-scope') || 'official').toLowerCase();
           document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${60*60*24*365}; samesite=lax`;
           updateStyles(scope);
+		  
+		  localStorage.setItem("storeScope",scope);
+		  
           let url = new URL(window.location.href);
           if (url.searchParams.has('store_id')) {
             url.searchParams.delete('store_id');
@@ -98,7 +101,10 @@
           if (typeof window.reloadDashboard === 'function') {
             window.reloadDashboard(true);
           } else {
-            window.location.reload();
+            // window.location.reload();
+			
+			localStorage.setItem("hasStoreScopeChanges","true");
+			
           }
         });
       });

@@ -242,8 +242,8 @@ const qBuilder = {
 // misc codes
 
 let firstLoad = true;
-function monitorChanges(key="shouldReload",loader=undefined){
-	let timer_c = setInterval(check, 2000);
+function monitorChanges(key="shouldReload",loader=undefined, custom_counter=2000){
+	let timer_c = setInterval(check, custom_counter);
 	function check(){
 		if(firstLoad){
 			firstLoad = false;
