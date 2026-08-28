@@ -9,6 +9,8 @@ let storeModal         = new Modal('storeModal');
 let assignManagerModal = new Modal('assignManagerModal');
 let editStoreModal     = new Modal('editStoreModal');
 
+let storeScope = "";
+
 // -----------------------------------------------------------------------
 // Form data loader
 // -----------------------------------------------------------------------
@@ -68,7 +70,18 @@ function loadStores() {
     qBuilder.sort     = currentSort;
     qBuilder.order_by = currentDir;
     loadOnTableSpinner();
-    qBuilder.sendQuery(process);
+	
+	storeScope = localStorage.getItem("storeScope");
+	
+	if(!storeScope){
+		storeScope = "official";
+	}
+	
+	let params = [
+		{"name": "store_scope","value":storeScope}
+	];
+	
+    qBuilder.sendQuery(process, undefined, params);
     function process(data) {
         clearTableSpinner();
         let res = JSON.parse(data.responseText);
@@ -507,6 +520,21 @@ function jumpToPage(page_n){
 	page = page_n;
 	qBuilder.page = page;
 	delayedQuerry();
+}
+
+
+
+//Extra Changes Monitor
+monitorChanges("hasStoreScopeChanges", handleStoreScopeChanges, 1000);
+let hasFirstOpen = true;
+
+function handleStoreScopeChanges(){
+	loadStores();
+	console.log("Store Scope changes");
+	if(hasFirstOpen){
+		return hasFirstOpen = false;
+	}
+	toast.info("Store View Changed to "+ storeScope);
 }
 
 
