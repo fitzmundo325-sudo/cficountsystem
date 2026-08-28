@@ -96,7 +96,7 @@ if (!window.__sidebar_initialized) {
             if (!sidebar || !mainContent) return;
             sidebar.classList.toggle('sidebar-collapsed');
             
-			console.log(toggleDesktop);
+			// console.log(toggleDesktop);
 			
             if (sidebar.classList.contains('sidebar-collapsed')) {
                 mainContent.style.marginLeft = '80px';

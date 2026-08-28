@@ -1,0 +1,243 @@
+{% extends "base_headless.html" %}
+
+{% block title %}Store Targets{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* -----------------------------------
+   * Target Sheet - Spin Button Strip
+   * ----------------------------------- */
+  .target-sheet-input::-webkit-outer-spin-button,
+  .target-sheet-input::-webkit-inner-spin-button {
+    margin: 0;
+    -webkit-appearance: none;
+  }
+  .target-sheet-input {
+    -moz-appearance: textfield;
+  }
+
+  /* -----------------------------------
+   * Target Sheet - Selection States
+   * ----------------------------------- */
+  .target-sheet-input.is-selected {
+    border-color: #6366f1;
+    background: #eef2ff;
+    box-shadow: inset 0 0 0 1px #6366f1;
+  }
+  .target-sheet-input.is-range-selected {
+    border-color: #818cf8;
+    background: #eef2ff;
+  }
+  .target-sheet-cell.is-selected,
+  .target-sheet-cell.is-range-selected {
+    background: #eef2ff;
+  }
+  .target-sheet-header.is-selected {
+    background: #e0e7ff;
+    color: #3730a3;
+  }
+
+  /* -----------------------------------
+   * Target Sheet - Dark Mode
+   * ----------------------------------- */
+  html.admin-dark .target-sheet-input.is-selected {
+    border-color: #a78bfa !important;
+    background: rgba(124, 58, 237, 0.28) !important;
+    color: #f8fafc !important;
+    box-shadow: inset 0 0 0 1px #a78bfa, 0 0 0 1px rgba(167, 139, 250, 0.25) !important;
+  }
+  html.admin-dark .target-sheet-input.is-range-selected {
+    border-color: #818cf8 !important;
+    background: rgba(79, 70, 229, 0.22) !important;
+    color: #f8fafc !important;
+  }
+  html.admin-dark .target-sheet-cell.is-selected {
+    background: rgba(124, 58, 237, 0.42) !important;
+    box-shadow: inset 0 0 0 1px #a78bfa !important;
+  }
+  html.admin-dark .target-sheet-cell.is-range-selected {
+    background: rgba(79, 70, 229, 0.3) !important;
+    box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.75) !important;
+  }
+  html.admin-dark .target-sheet-header.is-selected {
+    background: #312e81 !important;
+    color: #e0e7ff !important;
+    box-shadow: inset 0 0 0 1px #818cf8 !important;
+  }
+  html.admin-dark .target-sheet-row:has(.target-sheet-input.is-selected),
+  html.admin-dark .target-sheet-row:has(.target-sheet-input.is-range-selected) {
+    background: rgba(30, 41, 59, 0.95) !important;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()" >
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="4" x2="20" y1="12" y2="12"/>
+        <line x1="4" x2="20" y1="6" y2="6"/>
+        <line x1="4" x2="20" y1="18" y2="18"/>
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Admin</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Store Targets</span>
+    </nav>
+  </div>
+  <div class="flex items-center gap-4">
+    <button class="p-2 text-slate-400 hover:text-slate-600 relative rounded-full hover:bg-slate-100 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+      </svg>
+      <span class="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+    </button>
+    <a href="/logout" class="hidden sm:flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-red-700 transition-all shadow-lg shadow-red-600/10 active:scale-95">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+        <polyline points="16 17 21 12 16 7"/>
+        <line x1="21" y1="12" x2="9" y2="12"/>
+      </svg>
+      <span>Logout</span>
+    </a>
+  </div>
+</header>
+
+<!-- Main Content -->
+<div class="p-6 md:p-8 bg-slate-50 min-h-screen">
+
+  <!-- Page Header -->
+  <div class="mb-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">Store Targets</h1>
+        <p class="text-sm text-slate-600 mt-1">View and edit target data by cluster and store</p>
+      </div>
+    </div>
+
+    <!-- Filter Card -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+      <div class="flex flex-col md:flex-row gap-3">
+
+        <div class="flex-1">
+          <label class="block text-xs font-medium text-slate-700 mb-1.5">Select Cluster</label>
+          <select id="cluster-select" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+            <option value="">-- All Clusters --</option>
+          </select>
+        </div>
+
+        <div class="flex-1">
+          <label class="block text-xs font-medium text-slate-700 mb-1.5">Select Store</label>
+          <select id="store-select" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+            <option value="">-- Choose a Store --</option>
+          </select>
+        </div>
+
+        <div class="flex-1">
+          <label class="block text-xs font-medium text-slate-700 mb-1.5">Select Month</label>
+          <input type="month" id="target-month-select" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+        </div>
+
+        <div class="flex items-end">
+          <button id="save-targets-btn" type="button" class="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+            Save
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Target Sheet Panel -->
+  <div id="target-sheet-panel" class="hidden mb-6 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+
+    <!-- Sheet Header -->
+    <div class="px-6 py-4 border-b border-slate-200 bg-slate-50">
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 id="sheet-store-name" class="text-lg font-bold text-slate-900"></h2>
+          <p id="sheet-subtitle" class="text-xs text-slate-600 mt-1"></p>
+        </div>
+        <div class="flex items-center gap-2 self-start md:self-auto">
+          <a id="view-cluster-data-btn" href="#" class="hidden rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100">
+            View Cluster Data
+          </a>
+          <span class="px-1 text-xs font-semibold text-slate-700">Use Ctrl + Z to Undo</span>
+          <button type="button" id="clear-selected-target-cell" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100">
+            Clear Selected
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sheet Loading -->
+    <div id="sheet-loading" class="hidden px-6 py-10 text-center text-sm text-slate-400">Loading target data...</div>
+
+    <!-- Sheet Table -->
+    <div id="sheet-table-wrap" class="overflow-x-auto">
+      <table class="w-full border-collapse text-sm">
+        <thead class="bg-slate-100 border-b border-slate-300">
+          <tr>
+            <th data-all-header tabindex="0" class="target-sheet-header w-48 cursor-pointer border-r border-slate-300 px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select all target cells">Date</th>
+            <th data-col-header="0" tabindex="0" class="target-sheet-header cursor-pointer border-r border-slate-300 px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select TARGET (NET) column">TARGET (NET)</th>
+            <th data-col-header="1" tabindex="0" class="target-sheet-header cursor-pointer border-r border-slate-300 px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select LAST YEAR (NET) column">LAST YEAR (NET)</th>
+            <th data-col-header="2" tabindex="0" class="target-sheet-header cursor-pointer px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select GBI TARGET column">GBI TARGET</th>
+          </tr>
+        </thead>
+        <tbody id="sheet-tbody" class="divide-y divide-slate-200 bg-white"></tbody>
+      </table>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- Template: Target Sheet Row -->
+<template id="tmpl-target-row">
+  <tr class="target-sheet-row hover:bg-slate-50">
+    <td data-cell="date-header" tabindex="0" class="target-sheet-header cursor-pointer border-r border-slate-200 px-4 py-2 font-medium text-slate-800" title="Select this row">
+      <input type="hidden" data-cell="date-hidden">
+      <span data-cell="date-label"></span>
+    </td>
+    <td class="target-sheet-cell border-r border-slate-200 px-2 py-1">
+      <input type="number" min="0" step="0.01" data-col="0" data-cell="target-net"
+        class="target-sheet-input w-full rounded-md border border-transparent bg-transparent px-3 py-2 text-right text-sm font-semibold text-slate-900 outline-none hover:border-slate-300 focus:border-indigo-500 focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-100">
+    </td>
+    <td class="target-sheet-cell border-r border-slate-200 px-2 py-1">
+      <input type="number" min="0" step="0.01" data-col="1" data-cell="last-year-net"
+        class="target-sheet-input w-full rounded-md border border-transparent bg-transparent px-3 py-2 text-right text-sm text-slate-800 outline-none hover:border-slate-300 focus:border-indigo-500 focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-100">
+    </td>
+    <td class="target-sheet-cell px-2 py-1">
+      <input type="number" min="0" step="0.01" data-col="2" data-cell="gbi-target"
+        class="target-sheet-input w-full rounded-md border border-transparent bg-transparent px-3 py-2 text-right text-sm text-slate-800 outline-none hover:border-slate-300 focus:border-indigo-500 focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-100">
+    </td>
+  </tr>
+</template>
+
+<!-- Template: Cluster/Store Option -->
+<template id="tmpl-option">
+  <option data-cell="option"></option>
+</template>
+
+
+
+
+<!-- Jinja Declarations -->
+
+
+<script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+
+<script defer src="{{ url_for('static', filename='js/handles/store_targets_admin_handles.js') }}"></script>
+
+<script>
+  let PAGE_CLUSTERS = {{ clusters_json | tojson }};
+  let PAGE_STORES   = {{ stores_json | tojson }};
+</script>
+
+
+{% endblock %}

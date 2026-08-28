@@ -16,8 +16,8 @@ manila_tz = pytz.timezone("Asia/Manila")
 from dotenv import load_dotenv
 
 from . import db
-from datetime import datetime, timedelta
-from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store
+from datetime import datetime, date, timedelta
+from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget
 from .admin import log_audit_event
 
 plt = ""  # empty this var when on live website
@@ -992,6 +992,177 @@ def api_stores_delete(store_id):
  
 # ================================
 # Stores Section End
+# ================================
+  
+  
+  
+# ================================
+# Stores Targets Section Start
+# ================================
+  
+@api_handles.route('/targets/sheet', methods=['GET', 'POST'])
+@login_required
+def targets_sheet():
+    if current_user.role not in ('Superadmin', 'General Manager'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    try:
+        store_id = request.form.get('store_id') or request.args.get('store_id')
+        month    = (request.form.get('month') or request.args.get('month') or '').strip()
+
+        if not store_id:
+            return jsonify({'type': 'error', 'message': 'No store selected.'}), 400
+
+        store = Store.query.get(int(store_id))
+        if not store:
+            return jsonify({'type': 'error', 'message': 'Store not found.'}), 404
+
+        try:
+            month_start = datetime.strptime(month, '%Y-%m').date().replace(day=1)
+        except ValueError:
+            month_start = date.today().replace(day=1)
+
+        next_month = (
+            date(month_start.year + 1, 1, 1)
+            if month_start.month == 12
+            else date(month_start.year, month_start.month + 1, 1)
+        )
+
+        targets = StoreTarget.query.filter(
+            StoreTarget.store_id == int(store_id),
+            StoreTarget.target_date >= month_start,
+            StoreTarget.target_date < next_month,
+        ).all()
+
+        target_by_date = {t.target_date: t for t in targets}
+
+        rows = []
+        current_date = month_start
+        while current_date < next_month:
+            t = target_by_date.get(current_date)
+            rows.append({
+                'date':          current_date.strftime('%Y-%m-%d'),
+                'date_label':    current_date.strftime('%b %d, %Y'),
+                'target_net':    float(t.target_net    or 0) if t else 0.0,
+                'last_year_net': float(t.last_year_net or 0) if t else 0.0,
+                'gbi_target':    float(t.gbi_target    or 0) if t else 0.0,
+            })
+            current_date += timedelta(days=1)
+
+        cluster_data_url = None
+        if store.cluster_id:
+            cluster_data_url = url_for(
+                'views.cluster_manager_cluster_data',
+                cluster_id=store.cluster_id,
+                store_id=store_id,
+                month=f'{month_start.month:02d}',
+                year=str(month_start.year),
+            )
+
+        return jsonify({
+            'type':             'success',
+            'rows':             rows,
+            'cluster_data_url': cluster_data_url,
+        })
+
+    except Exception as e:
+        return jsonify({'type': 'error', 'message': str(e)})
+  
+  
+@api_handles.route('/targets/save', methods=['POST'])
+@login_required
+def targets_save():
+    if current_user.role not in ('Superadmin', 'General Manager'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    try:
+        store_id       = request.form.get('store_id', type=int)
+        cluster_id     = request.form.get('cluster_id', type=int)
+        selected_month = (request.form.get('target_month') or '').strip()
+
+        if not store_id:
+            return jsonify({'type': 'error', 'message': 'Please select a store.'}), 400
+
+        store = Store.query.get(store_id)
+        if not store:
+            return jsonify({'type': 'error', 'message': 'Store not found.'}), 404
+
+        if not cluster_id:
+            cluster_id = store.cluster_id
+
+        try:
+            month_start = datetime.strptime(selected_month, '%Y-%m').date().replace(day=1)
+        except ValueError:
+            return jsonify({'type': 'error', 'message': 'Invalid month format.'}), 400
+
+        next_month = (
+            date(month_start.year + 1, 1, 1)
+            if month_start.month == 12
+            else date(month_start.year, month_start.month + 1, 1)
+        )
+
+        existing_targets = {
+            t.target_date: t
+            for t in StoreTarget.query.filter(
+                StoreTarget.store_id == store_id,
+                StoreTarget.target_date >= month_start,
+                StoreTarget.target_date < next_month,
+            ).all()
+        }
+
+        date_values       = request.form.getlist('target_date[]')
+        target_net_values = request.form.getlist('target_net[]')
+        last_year_values  = request.form.getlist('last_year_net[]')
+        gbi_target_values = request.form.getlist('gbi_target[]')
+
+        saved_count = 0
+        for idx, raw_date in enumerate(date_values):
+            try:
+                target_date = datetime.strptime(str(raw_date or '').strip(), '%Y-%m-%d').date()
+            except ValueError:
+                continue
+
+            if target_date < month_start or target_date >= next_month:
+                continue
+
+            target = existing_targets.get(target_date)
+            if not target:
+                target = StoreTarget(
+                    store_id=store_id,
+                    target_date=target_date,
+                    uploaded_by=current_user.id,
+                )
+                db.session.add(target)
+
+            target.target_net    = float(target_net_values[idx])    if idx < len(target_net_values)    and target_net_values[idx]    else 0.0
+            target.last_year_net = float(last_year_values[idx])     if idx < len(last_year_values)     and last_year_values[idx]     else 0.0
+            target.gbi_target    = float(gbi_target_values[idx])    if idx < len(gbi_target_values)    and gbi_target_values[idx]    else 0.0
+            saved_count += 1
+
+        log_audit_event(
+            action='admin.targets.month_save',
+            entity_type='StoreTarget',
+            entity_id=store_id,
+            reason='Monthly store targets saved from grid.',
+            details={
+                'store_id':      store_id,
+                'target_month':  selected_month,
+                'records_saved': saved_count,
+            },
+        )
+        db.session.commit()
+
+        return jsonify({
+            'type':    'success',
+            'message': f'Saved {saved_count} target rows for {selected_month}. Cluster Data will reflect TARGET (NET), LAST YEAR (NET), and GBI TARGET for {store.name}.',
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': str(e)}), 500 
+  
+# ================================
+# Stores Targets Section End
 # ================================
  
  

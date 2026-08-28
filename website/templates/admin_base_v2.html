@@ -193,7 +193,8 @@
         <span class="nav-label whitespace-nowrap truncate">Stores</span>
       </a>
 
-      <a href="/admin/targets"
+
+      <a onclick="showStoresTargetPageAdmin(this)" id="_store_targets"
         class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
           {% if request.path.startswith('/admin/targets') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
         data-tooltip="Store Targets">

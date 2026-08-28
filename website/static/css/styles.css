@@ -1,3 +1,16 @@
+/* View Transition - for already supported browsers */
+@view-transition {
+  navigation: auto;
+}
+
+
+::view-transition-group(root){
+	animation-duration:0.3s;
+}
+
+/* View Transition End */
+
+
   @font-face {
     font-family: 'Comfortaa';
     font-style: normal;

@@ -11989,12 +11989,28 @@ def clusters_v2_():
 #v2 of the storeds page 
 @views.route('/admin/stores_v2', methods=['GET', 'POST'])
 def stores_v2_():
-    page = 'clusters'
+    page = 'stores'
 
     return render_template("admin/stores_v2.html", user=current_user, page=page)
         
 
 
+
+#v2 of the store Targets
+@views.route('/admin/targets_v2', methods=['GET', 'POST'])
+def store_targets_v2_():
+    clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    stores   = Store.query.order_by(Store.name.asc()).all()
+
+    clusters_json = [{'id': c.id, 'name': c.name} for c in clusters]
+    stores_json   = [{'id': s.id, 'name': s.name, 'cluster_id': s.cluster_id} for s in stores]
+
+    return render_template(
+        "admin/targets_v2.html",
+        user=current_user,
+        clusters_json=clusters_json,
+        stores_json=stores_json,
+    )
 
 
 
