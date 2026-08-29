@@ -12014,6 +12014,17 @@ def store_targets_v2_():
 
 
 
+#v2 of the supply page 
+@views.route('/admin/supply_v2', methods=['GET', 'POST'])
+def supply_v2_():
+    page = 'supply'
+    active_tab = (request.args.get('tab') or 'requests').strip()
+    if active_tab not in ('requests', 'items'):
+        active_tab = 'requests'
+        
+    return render_template("admin/supply_management_v2.html", user=current_user, page=page, active_tab=active_tab)      
+
+
 # ================================================
 # Supply Requests (store side)
 # ================================================
