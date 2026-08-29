@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 from . import db
 from datetime import datetime, date, timedelta
-from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget
+from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem
 from .admin import log_audit_event
 
 plt = ""  # empty this var when on live website
@@ -1156,6 +1156,165 @@ def targets_save():
   
 # ================================
 # Stores Targets Section End
+# ================================
+   
+# ================================
+# Supply Request Section End
+# ================================
+# ================================================
+# Supply Requests - List
+# ================================================
+@api_handles.route('/supply_requests', methods=['GET', 'POST'])
+@login_required
+def api_supply_requests():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    try:
+        page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        page = 1
+
+    status  = (request.form.get('status')  or request.args.get('status')  or '').strip()
+    search  = (request.form.get('search')  or request.args.get('search')  or '').strip()
+    per_page = 25
+
+    query = SupplyRequest.query.options(
+        selectinload(SupplyRequest.items),
+        selectinload(SupplyRequest.requester),
+        selectinload(SupplyRequest.approver),
+        selectinload(SupplyRequest.rejecter),
+    )
+
+    if status in ('Pending', 'Approved', 'Rejected'):
+        query = query.filter(SupplyRequest.status == status)
+
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                SupplyRequest.request_no.ilike(pattern),
+                SupplyRequest.store_name.ilike(pattern),
+            )
+        )
+
+    query = query.order_by(SupplyRequest.created_at.desc(), SupplyRequest.id.desc())
+    paginated = query.paginate(page=page, per_page=per_page, error_out=False)
+    pending_count = SupplyRequest.query.filter_by(status='Pending').count()
+
+    def fmt_dt(dt):
+        return dt.strftime('%b %d, %Y %I:%M %p') if dt else None
+
+    data = []
+    for req in paginated.items:
+        data.append({
+            'id':          req.id,
+            'request_no':  req.request_no,
+            'created_at':  fmt_dt(req.created_at),
+            'store_name':  req.store_name or (req.store.name if req.store else None),
+            'request_type': req.request_type,
+            'requester':   req.requester.username if req.requester else None,
+            'remarks':     req.remarks,
+            'status':      req.status,
+            'approver':    req.approver.username if req.approver else None,
+            'approved_at': fmt_dt(req.approved_at),
+            'rejecter':    req.rejecter.username if req.rejecter else None,
+            'rejected_at': fmt_dt(req.rejected_at),
+            'item_count':  len(req.items),
+            'items': [
+                {
+                    'item_name': line.item_name,
+                    'category':  line.category,
+                    'quantity':  line.quantity,
+                }
+                for line in req.items
+            ],
+        })
+
+    pagination_data = {
+        'current_page': paginated.page,
+        'total_pages':  paginated.pages,
+        'total_items':  paginated.total,
+        'start_index':  (paginated.page - 1) * per_page + 1 if paginated.total else 0,
+        'end_index':    min(paginated.page * per_page, paginated.total),
+    }
+
+    return jsonify({
+        'type':            'success',
+        'data':            data,
+        'pagination_data': pagination_data,
+        'pending_count':   pending_count,
+    })
+
+
+# ================================================
+# Supply Items - List
+# ================================================
+@api_handles.route('/supply_items', methods=['GET', 'POST'])
+@login_required
+def api_supply_items():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    try:
+        page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        page = 1
+
+    category = (request.form.get('category') or request.args.get('category') or '').strip()
+    search   = (request.form.get('search')   or request.args.get('search')   or '').strip()
+    per_page = 25
+
+    query = SupplyItem.query
+
+    if category:
+        query = query.filter(SupplyItem.category == category)
+
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                SupplyItem.item_name.ilike(pattern),
+                SupplyItem.category.ilike(pattern),
+            )
+        )
+
+    query = query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc())
+    paginated = query.paginate(page=page, per_page=per_page, error_out=False)
+
+    categories = [
+        c[0] for c in
+        db.session.query(SupplyItem.category).distinct().order_by(SupplyItem.category.asc()).all()
+    ]
+
+    data = []
+    for item in paginated.items:
+        data.append({
+            'id':              item.id,
+            'item_name':       item.item_name,
+            'category':        item.category,
+            'available_stock': item.available_stock,
+        })
+
+    pagination_data = {
+        'current_page': paginated.page,
+        'total_pages':  paginated.pages,
+        'total_items':  paginated.total,
+        'start_index':  (paginated.page - 1) * per_page + 1 if paginated.total else 0,
+        'end_index':    min(paginated.page * per_page, paginated.total),
+    }
+
+    return jsonify({
+        'type':            'success',
+        'data':            data,
+        'pagination_data': pagination_data,
+        'categories':      categories,
+    })
+   
+   
+   
+# ================================
+# Supply Request Section End
 # ================================
  
  
