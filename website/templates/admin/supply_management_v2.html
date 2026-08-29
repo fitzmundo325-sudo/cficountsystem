@@ -1,0 +1,777 @@
+{% extends "base_headless.html" %}
+{% block title %}Supply Management{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="4" x2="20" y1="12" y2="12"/>
+        <line x1="4" x2="20" y1="6" y2="6"/>
+        <line x1="4" x2="20" y1="18" y2="18"/>
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Admin</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Supply Management</span>
+    </nav>
+  </div>
+  <div class="text-sm font-semibold text-slate-700">
+    Pending: <span id="pending-count-badge" class="text-amber-600">—</span>
+  </div>
+</header>
+
+<div class="p-6 md:p-8 bg-slate-50 min-h-screen space-y-6">
+
+  <!-- Tab switcher -->
+  <div class="flex items-center gap-1.5 bg-white rounded-xl shadow-sm border border-slate-200 p-1.5 w-fit">
+    <button id="tab-btn-requests" onclick="switchTab('requests')" class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M12 10v6"/></svg>
+      Supply Requests
+    </button>
+    <button id="tab-btn-items" onclick="switchTab('items')" class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+      Supply Items
+    </button>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- TAB: REQUESTS                                                -->
+  <!-- ============================================================ -->
+  <div id="tab-panel-requests" class="space-y-6">
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h1 class="text-lg font-bold text-slate-900">Supply Requests</h1>
+          <p class="text-xs text-slate-500 mt-1">Requests submitted by stores. Approving decrements the supply item stock.</p>
+        </div>
+        <div class="flex flex-wrap gap-2 items-center">
+          <select id="sr-status-filter" class="px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+            <option value="">All Statuses</option>
+            <option value="Pending">Pending</option>
+            <option value="Approved">Approved</option>
+            <option value="Rejected">Rejected</option>
+          </select>
+          <input id="sr-search" type="text" placeholder="Search request no or store" class="px-3 py-2 text-sm border border-slate-300 rounded-lg w-56 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+          <button onclick="srDoSearch()" class="px-4 py-2 bg-slate-700 text-white text-sm rounded-lg hover:bg-slate-800 transition-colors">Search</button>
+          <button onclick="srClearFilters()" class="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-100 transition-colors">Clear</button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <thead class="bg-slate-50 border-b border-slate-200">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Request No</th>
+              <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Date</th>
+              <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Store</th>
+              <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Requested By</th>
+              <th class="px-6 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider">Items</th>
+              <th class="px-6 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider">Status</th>
+              <th class="px-6 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="sr-table-body" class="divide-y divide-slate-100">
+            <tr id="sr-loading-row">
+              <td colspan="7" class="px-6 py-8 text-sm text-slate-400 text-center">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Requests pagination -->
+      <div id="sr-pagination" class="px-6 py-3 border-t border-slate-200 flex items-center justify-between gap-2 text-xs text-slate-500">
+        <span id="sr-pagination-info"></span>
+        <div id="sr-pagination-pages" class="flex gap-1 overflow-x-auto" style="scrollbar-width:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- TAB: ITEMS                                                   -->
+  <!-- ============================================================ -->
+  <div id="tab-panel-items" class="space-y-6 hidden">
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h1 class="text-lg font-bold text-slate-900">Supply Items Masterlist</h1>
+          <p class="text-xs text-slate-500 mt-1">Manage supply items and available stock. Stock is decremented when a request is approved.</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <select id="si-category-filter" class="px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+            <option value="">All Categories</option>
+          </select>
+          <input id="si-search" type="text" placeholder="Search item name" class="px-3 py-2 text-sm border border-slate-300 rounded-lg w-52 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+          <button onclick="siDoSearch()" class="px-4 py-2 bg-slate-700 text-white text-sm rounded-lg hover:bg-slate-800 transition-colors">Search</button>
+          <button onclick="openItemModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg font-semibold hover:bg-indigo-700 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg>
+            Add Item
+          </button>
+          <button onclick="siClearFilters()" class="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-100 transition-colors">Clear</button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <thead class="bg-slate-50 border-b border-slate-200">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Item</th>
+              <th class="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Category</th>
+              <th class="px-6 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">Available Stock</th>
+              <th class="px-6 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="si-table-body" class="divide-y divide-slate-100">
+            <tr id="si-loading-row">
+              <td colspan="4" class="px-6 py-8 text-sm text-slate-400 text-center">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Items pagination -->
+      <div id="si-pagination" class="px-6 py-3 border-t border-slate-200 flex items-center justify-between gap-2 text-xs text-slate-500">
+        <span id="si-pagination-info"></span>
+        <div id="si-pagination-pages" class="flex gap-1 overflow-x-auto" style="scrollbar-width:none"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- TEMPLATES                                                    -->
+<!-- ============================================================ -->
+
+<!-- Supply Request row -->
+<template id="tmpl-sr-row">
+  <tr class="hover:bg-slate-50 transition-colors" data-cell="row">
+    <td class="px-6 py-3 text-sm text-slate-900 font-semibold whitespace-nowrap" data-cell="request_no"></td>
+    <td class="px-6 py-3 text-xs text-slate-500 whitespace-nowrap" data-cell="created_at"></td>
+    <td class="px-6 py-3 text-sm text-slate-800 whitespace-nowrap" data-cell="store_name"></td>
+    <td class="px-6 py-3 text-sm text-slate-700" data-cell="requester"></td>
+    <td class="px-6 py-3 text-sm text-slate-900 text-center font-semibold">
+      <button class="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 transition-colors" data-cell="toggle-btn" title="View items">
+        <span data-cell="item_count"></span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-cell="toggle-icon"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </td>
+    <td class="px-6 py-3 text-center" data-cell="status_cell"></td>
+    <td class="px-6 py-3">
+      <div class="flex items-center justify-center gap-2" data-cell="actions"></div>
+    </td>
+  </tr>
+</template>
+
+<!-- Supply Request detail row -->
+<template id="tmpl-sr-detail">
+  <tr class="sr-detail-row hidden bg-slate-50/70">
+    <td colspan="7" class="px-6 py-3">
+      <p class="text-xs text-slate-500 mb-2" data-cell="remarks"></p>
+      <table class="min-w-full">
+        <thead>
+          <tr>
+            <th class="px-3 py-1.5 text-left text-[11px] font-semibold text-slate-500 uppercase">Item</th>
+            <th class="px-3 py-1.5 text-left text-[11px] font-semibold text-slate-500 uppercase">Category</th>
+            <th class="px-3 py-1.5 text-right text-[11px] font-semibold text-slate-500 uppercase">Qty</th>
+          </tr>
+        </thead>
+        <tbody data-cell="items_body" class="divide-y divide-slate-100"></tbody>
+      </table>
+      <p class="text-xs text-slate-500 mt-2" data-cell="approver_line"></p>
+    </td>
+  </tr>
+</template>
+
+<!-- Supply Request detail line item -->
+<template id="tmpl-sr-line">
+  <tr>
+    <td class="px-3 py-1.5 text-sm text-slate-700" data-cell="item_name"></td>
+    <td class="px-3 py-1.5 text-sm text-slate-500" data-cell="category"></td>
+    <td class="px-3 py-1.5 text-sm text-slate-700 text-right font-semibold" data-cell="quantity"></td>
+  </tr>
+</template>
+
+<!-- Supply Item row -->
+<template id="tmpl-si-row">
+  <tr class="hover:bg-slate-50 transition-colors">
+    <td class="px-6 py-3 text-sm text-slate-900 font-semibold" data-cell="item_name"></td>
+    <td class="px-6 py-3 text-sm text-slate-700" data-cell="category"></td>
+    <td class="px-6 py-3 text-right" data-cell="stock_cell"></td>
+    <td class="px-6 py-3">
+      <div class="flex items-center justify-center gap-2">
+        <button type="button" class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-colors" data-cell="edit-btn" title="Edit Item" aria-label="Edit Item">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+        </button>
+        <button type="button" class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-rose-100 text-rose-700 hover:bg-rose-200 transition-colors" data-cell="delete-btn" title="Delete Item" aria-label="Delete Item">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+        </button>
+      </div>
+    </td>
+  </tr>
+</template>
+
+<!-- Pagination button -->
+<template id="tmpl-page-btn">
+  <button class="px-2.5 py-1 rounded-md text-xs font-medium border transition-colors" data-cell="btn"></button>
+</template>
+
+<!-- ============================================================ -->
+<!-- MODALS                                                       -->
+<!-- ============================================================ -->
+
+<!-- SR action modal (approve/reject/delete confirm + error) -->
+<div id="sr-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4">
+  <div class="absolute inset-0 bg-slate-900/50" onclick="closeSrModal()"></div>
+  <div class="relative bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+      <h3 id="sr-modal-title" class="text-sm font-bold text-slate-900"></h3>
+      <button onclick="closeSrModal()" class="text-slate-400 hover:text-slate-600 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="px-5 py-4">
+      <p id="sr-modal-message" class="text-sm text-slate-700"></p>
+      <ul id="sr-modal-insufficient" class="mt-3 space-y-1 hidden"></ul>
+    </div>
+    <div class="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+      <button onclick="closeSrModal()" class="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-100 transition-colors">Close</button>
+      <button id="sr-modal-confirm" class="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-colors">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Supply Item add/edit modal -->
+<div id="si-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4">
+  <div class="absolute inset-0 bg-slate-900/50" onclick="closeItemModal()"></div>
+  <div class="relative bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+      <h3 id="si-modal-title" class="text-sm font-bold text-slate-900"></h3>
+      <button onclick="closeItemModal()" class="text-slate-400 hover:text-slate-600 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="px-5 py-4 space-y-3">
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">Category</label>
+        <input id="si-category" type="text" maxlength="100" placeholder="e.g. STORE SUPPLIES" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">Item Name</label>
+        <input id="si-name" type="text" maxlength="255" placeholder="e.g. Ballpen Black" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">Available Stock</label>
+        <input id="si-stock" type="number" min="0" value="0" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+      </div>
+      <p id="si-modal-error" class="hidden text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-md px-3 py-2"></p>
+    </div>
+    <div class="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+      <button onclick="closeItemModal()" class="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-100 transition-colors">Cancel</button>
+      <button id="si-save" class="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-colors">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCRIPTS                                                      -->
+<!-- ============================================================ -->
+
+<script>
+let activeTab = 'requests';
+
+// - Tab switching -----------------------------------------------
+function switchTab(tab) {
+  activeTab = tab;
+  let reqPanel = document.getElementById('tab-panel-requests');
+  let itmPanel = document.getElementById('tab-panel-items');
+  let reqBtn   = document.getElementById('tab-btn-requests');
+  let itmBtn   = document.getElementById('tab-btn-items');
+
+  let activeClass   = 'bg-slate-900 text-white shadow-sm';
+  let inactiveClass = 'text-slate-600 hover:bg-slate-100';
+
+  if (tab === 'items') {
+    itmPanel.classList.remove('hidden');
+    reqPanel.classList.add('hidden');
+    itmBtn.className  = itmBtn.className.replace(/bg-slate-900.*?shadow-sm|text-slate-600 hover:bg-slate-100/, '').trim() + ' ' + activeClass;
+    reqBtn.className  = reqBtn.className.replace(/bg-slate-900.*?shadow-sm|text-slate-600 hover:bg-slate-100/, '').trim() + ' ' + inactiveClass;
+    if (!siLoaded) { siLoaded = true; loadSupplyItems(); }
+  } else {
+    reqPanel.classList.remove('hidden');
+    itmPanel.classList.add('hidden');
+    reqBtn.className  = reqBtn.className.replace(/bg-slate-900.*?shadow-sm|text-slate-600 hover:bg-slate-100/, '').trim() + ' ' + activeClass;
+    itmBtn.className  = itmBtn.className.replace(/bg-slate-900.*?shadow-sm|text-slate-600 hover:bg-slate-100/, '').trim() + ' ' + inactiveClass;
+  }
+}
+</script>
+
+<script>
+// - Supply Requests --------------------------------------------
+let srPage = 1;
+let srLoaded = false;
+let siLoaded = false;
+
+function srDoSearch() {
+  srPage = 1;
+  loadSupplyRequests();
+}
+
+function srClearFilters() {
+  document.getElementById('sr-status-filter').value = '';
+  document.getElementById('sr-search').value = '';
+  srPage = 1;
+  loadSupplyRequests();
+}
+
+function loadSupplyRequests() {
+  let body = document.getElementById('sr-table-body');
+  body.innerHTML = '<tr><td colspan="7" class="px-6 py-8 text-sm text-slate-400 text-center">Loading...</td></tr>';
+
+  let params = {
+    page: srPage,
+    status: document.getElementById('sr-status-filter').value,
+    search: document.getElementById('sr-search').value
+  };
+
+  sendQuery('/api/supply_requests', renderSupplyRequests, params, function() {
+    body.innerHTML = '<tr><td colspan="7" class="px-6 py-8 text-sm text-rose-500 text-center">Failed to load requests.</td></tr>';
+  });
+}
+
+function renderSupplyRequests(data) {
+  let body = document.getElementById('sr-table-body');
+  body.innerHTML = '';
+
+  if (data.pending_count !== undefined) {
+    document.getElementById('pending-count-badge').textContent = data.pending_count;
+  }
+
+  let requests = data.data || [];
+
+  if (!requests.length) {
+    body.innerHTML = '<tr><td colspan="7" class="px-6 py-8 text-sm text-slate-500 text-center">No supply requests match your filters.</td></tr>';
+    renderSrPagination(data.pagination_data);
+    return;
+  }
+
+  let tmplRow    = document.getElementById('tmpl-sr-row');
+  let tmplDetail = document.getElementById('tmpl-sr-detail');
+  let tmplLine   = document.getElementById('tmpl-sr-line');
+
+  requests.forEach(function(req) {
+    // - Main row
+    let row = tmplRow.content.cloneNode(true).querySelector('tr');
+
+    row.querySelector('[data-cell="request_no"]').textContent = req.request_no;
+    row.querySelector('[data-cell="created_at"]').textContent = req.created_at || '-';
+
+    // Store name + TAF badge
+    let storeCell = row.querySelector('[data-cell="store_name"]');
+    storeCell.textContent = req.store_name || '-';
+    if (req.request_type === 'taf') {
+      let badge = document.createElement('span');
+      badge.className = 'ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-violet-100 text-violet-700';
+      badge.title = 'Submitted from the TAF page';
+      badge.textContent = 'Via TAF';
+      storeCell.appendChild(badge);
+    }
+
+    row.querySelector('[data-cell="requester"]').textContent = req.requester || '-';
+    row.querySelector('[data-cell="item_count"]').textContent = req.item_count ?? 0;
+
+    // Status badge
+    let statusCell = row.querySelector('[data-cell="status_cell"]');
+    let statusMap = {
+      'Pending':  'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700',
+      'Approved': 'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700',
+      'Rejected': 'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-700',
+    };
+    let badge = document.createElement('span');
+    badge.className = statusMap[req.status] || statusMap['Pending'];
+    badge.textContent = req.status;
+    statusCell.appendChild(badge);
+
+    // Actions
+    let actionsDiv = row.querySelector('[data-cell="actions"]');
+    if (req.status === 'Pending') {
+      let approveBtn = buildActionBtn('emerald', svgCheck(), 'Approve');
+      approveBtn.addEventListener('click', function() { approveRequest(req.id, req.request_no); });
+      let rejectBtn  = buildActionBtn('rose', svgX(), 'Reject');
+      rejectBtn.addEventListener('click', function() { rejectRequest(req.id, req.request_no); });
+      actionsDiv.appendChild(approveBtn);
+      actionsDiv.appendChild(rejectBtn);
+    }
+    let deleteBtn = buildActionBtn('rose', svgTrash(), 'Delete');
+    deleteBtn.addEventListener('click', function() { deleteRequest(req.id, req.request_no); });
+    actionsDiv.appendChild(deleteBtn);
+
+    body.appendChild(row);
+
+    // - Detail row
+    let detail = tmplDetail.content.cloneNode(true).querySelector('tr');
+
+    let remarksEl = detail.querySelector('[data-cell="remarks"]');
+    if (req.remarks) { remarksEl.textContent = 'Remarks: ' + req.remarks; }
+    else { remarksEl.remove(); }
+
+    let itemsBody = detail.querySelector('[data-cell="items_body"]');
+    (req.items || []).forEach(function(line) {
+      let lineRow = tmplLine.content.cloneNode(true).querySelector('tr');
+      lineRow.querySelector('[data-cell="item_name"]').textContent = line.item_name;
+      lineRow.querySelector('[data-cell="category"]').textContent  = line.category || '-';
+      lineRow.querySelector('[data-cell="quantity"]').textContent  = line.quantity;
+      itemsBody.appendChild(lineRow);
+    });
+
+    let approverLine = detail.querySelector('[data-cell="approver_line"]');
+    if (req.status === 'Approved' && req.approver) {
+      approverLine.textContent = 'Approved by ' + req.approver + (req.approved_at ? ' on ' + req.approved_at : '');
+    } else if (req.status === 'Rejected' && req.rejecter) {
+      approverLine.textContent = 'Rejected by ' + req.rejecter + (req.rejected_at ? ' on ' + req.rejected_at : '');
+    } else {
+      approverLine.remove();
+    }
+
+    // Toggle logic
+    let toggleBtn  = row.querySelector('[data-cell="toggle-btn"]');
+    let toggleIcon = row.querySelector('[data-cell="toggle-icon"]');
+    toggleBtn.addEventListener('click', function() {
+      detail.classList.toggle('hidden');
+      let open = !detail.classList.contains('hidden');
+      toggleIcon.innerHTML = open ? '<polyline points="18 15 12 9 6 15"/>' : '<polyline points="6 9 12 15 18 9"/>';
+    });
+
+    body.appendChild(detail);
+  });
+
+  renderSrPagination(data.pagination_data);
+}
+
+function renderSrPagination(pg) {
+  if (!pg) return;
+  document.getElementById('sr-pagination-info').textContent =
+    'Showing ' + pg.start_index + '–' + pg.end_index + ' of ' + pg.total_items;
+  let container = document.getElementById('sr-pagination-pages');
+  container.innerHTML = '';
+  for (let i = 1; i <= pg.total_pages; i++) {
+    let node = document.getElementById('tmpl-page-btn').content.cloneNode(true).querySelector('button');
+    node.textContent = i;
+    node.className += i === pg.current_page
+      ? ' bg-slate-900 text-white border-slate-900'
+      : ' bg-white text-slate-600 border-slate-300 hover:bg-slate-50';
+    node.addEventListener('click', (function(page) {
+      return function() { srPage = page; loadSupplyRequests(); };
+    })(i));
+    container.appendChild(node);
+  }
+}
+</script>
+
+<script>
+// - Supply Items -----------------------------------------------
+let siPage = 1;
+
+function siDoSearch() {
+  siPage = 1;
+  loadSupplyItems();
+}
+
+function siClearFilters() {
+  document.getElementById('si-category-filter').value = '';
+  document.getElementById('si-search').value = '';
+  siPage = 1;
+  loadSupplyItems();
+}
+
+function loadSupplyItems() {
+  let body = document.getElementById('si-table-body');
+  body.innerHTML = '<tr><td colspan="4" class="px-6 py-8 text-sm text-slate-400 text-center">Loading...</td></tr>';
+
+  let params = {
+    page: siPage,
+    category: document.getElementById('si-category-filter').value,
+    search: document.getElementById('si-search').value
+  };
+
+  sendQuery('/api/supply_items', renderSupplyItems, params, function() {
+    body.innerHTML = '<tr><td colspan="4" class="px-6 py-8 text-sm text-rose-500 text-center">Failed to load items.</td></tr>';
+  });
+}
+
+function renderSupplyItems(data) {
+  let body = document.getElementById('si-table-body');
+  body.innerHTML = '';
+
+  // Populate categories dropdown if provided
+  if (data.categories) {
+    let sel = document.getElementById('si-category-filter');
+    let currentVal = sel.value;
+    sel.innerHTML = '<option value="">All Categories</option>';
+    data.categories.forEach(function(cat) {
+      let opt = document.createElement('option');
+      opt.value = cat;
+      opt.textContent = cat;
+      if (cat === currentVal) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  let items = data.data || [];
+
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="4" class="px-6 py-8 text-sm text-slate-500 text-center">No supply items match your filters.</td></tr>';
+    renderSiPagination(data.pagination_data);
+    return;
+  }
+
+  let tmpl = document.getElementById('tmpl-si-row');
+
+  items.forEach(function(item) {
+    let row = tmpl.content.cloneNode(true).querySelector('tr');
+    row.querySelector('[data-cell="item_name"]').textContent = item.item_name;
+    row.querySelector('[data-cell="category"]').textContent  = item.category;
+
+    let stockCell = row.querySelector('[data-cell="stock_cell"]');
+    let stockBadge = document.createElement('span');
+    stockBadge.textContent = item.available_stock;
+    if (item.available_stock <= 0) {
+      stockBadge.className = 'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-700';
+    } else if (item.available_stock < 10) {
+      stockBadge.className = 'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700';
+    } else {
+      stockBadge.className = 'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700';
+    }
+    stockCell.appendChild(stockBadge);
+
+    let editBtn = row.querySelector('[data-cell="edit-btn"]');
+    editBtn.addEventListener('click', function() {
+      editItem(item.id, item.category, item.item_name, item.available_stock);
+    });
+
+    let deleteBtn = row.querySelector('[data-cell="delete-btn"]');
+    deleteBtn.addEventListener('click', function() {
+      deleteItem(item.id, item.item_name);
+    });
+
+    body.appendChild(row);
+  });
+
+  renderSiPagination(data.pagination_data);
+}
+
+function renderSiPagination(pg) {
+  if (!pg) return;
+  document.getElementById('si-pagination-info').textContent =
+    'Showing ' + pg.start_index + '–' + pg.end_index + ' of ' + pg.total_items;
+  let container = document.getElementById('si-pagination-pages');
+  container.innerHTML = '';
+  for (let i = 1; i <= pg.total_pages; i++) {
+    let node = document.getElementById('tmpl-page-btn').content.cloneNode(true).querySelector('button');
+    node.textContent = i;
+    node.className += i === pg.current_page
+      ? ' bg-slate-900 text-white border-slate-900'
+      : ' bg-white text-slate-600 border-slate-300 hover:bg-slate-50';
+    node.addEventListener('click', (function(page) {
+      return function() { siPage = page; loadSupplyItems(); };
+    })(i));
+    container.appendChild(node);
+  }
+}
+</script>
+
+<script>
+// - SR modal / confirm -----------------------------------------
+let srPendingAction = null;
+
+function openSrModal(title, message) {
+  document.getElementById('sr-modal-title').textContent = title;
+  document.getElementById('sr-modal-message').textContent = message;
+  document.getElementById('sr-modal-insufficient').classList.add('hidden');
+  document.getElementById('sr-modal-insufficient').innerHTML = '';
+  document.getElementById('sr-modal').classList.remove('hidden');
+  document.getElementById('sr-modal').classList.add('flex');
+}
+
+function closeSrModal() {
+  document.getElementById('sr-modal').classList.add('hidden');
+  document.getElementById('sr-modal').classList.remove('flex');
+  srPendingAction = null;
+  document.getElementById('sr-modal-confirm').classList.remove('hidden');
+}
+
+function showInsufficient(items) {
+  let list = document.getElementById('sr-modal-insufficient');
+  list.innerHTML = items.map(function(i) {
+    return '<li class="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-md px-3 py-2">' +
+      i.item_name + ' — requested ' + i.requested + ', available ' + i.available + '</li>';
+  }).join('');
+  list.classList.remove('hidden');
+}
+
+function confirmThen(fn, message, title) {
+  openSrModal(title || 'Confirm Action', message);
+  let confirmBtn = document.getElementById('sr-modal-confirm');
+  confirmBtn.classList.remove('hidden');
+  confirmBtn.onclick = async function() {
+    this.disabled = true;
+    await fn();
+    this.disabled = false;
+    closeSrModal();
+  };
+}
+
+function approveRequest(id, requestNo) {
+  confirmThen(async function() {
+    let res  = await fetch('/admin/supply-request/' + id + '/approve', { method: 'POST' });
+    let data = await res.json();
+    if (data.success) { loadSupplyRequests(); }
+    else {
+      openSrModal('Approval Blocked', data.error || 'Failed to approve.');
+      if (data.insufficient_items && data.insufficient_items.length) showInsufficient(data.insufficient_items);
+      document.getElementById('sr-modal-confirm').classList.add('hidden');
+    }
+  }, 'Approve request ' + requestNo + '? Stock will be deducted from supply items.', 'Approve Supply Request');
+}
+
+function rejectRequest(id, requestNo) {
+  confirmThen(async function() {
+    let res  = await fetch('/admin/supply-request/' + id + '/reject', { method: 'POST' });
+    let data = await res.json();
+    if (data.success) { loadSupplyRequests(); }
+    else { openSrModal('Error', data.error || 'Failed to reject.'); }
+  }, 'Reject request ' + requestNo + '?', 'Reject Supply Request');
+}
+
+function deleteRequest(id, requestNo) {
+  confirmThen(async function() {
+    let res  = await fetch('/admin/supply-request/' + id + '/delete', { method: 'POST' });
+    let data = await res.json();
+    if (data.success) { loadSupplyRequests(); }
+    else { openSrModal('Error', data.error || 'Failed to delete.'); }
+  }, 'Delete request ' + requestNo + '? This cannot be undone.', 'Delete Supply Request');
+}
+</script>
+
+<script>
+// - Supply Item modal ------------------------------------------
+let siEditId = null;
+
+function openItemModal() {
+  siEditId = null;
+  document.getElementById('si-modal-title').textContent = 'Add Supply Item';
+  document.getElementById('si-category').value = '';
+  document.getElementById('si-name').value = '';
+  document.getElementById('si-stock').value = '0';
+  document.getElementById('si-modal-error').classList.add('hidden');
+  document.getElementById('si-modal').classList.remove('hidden');
+  document.getElementById('si-modal').classList.add('flex');
+  document.getElementById('si-name').focus();
+}
+
+function editItem(id, category, itemName, stock) {
+  siEditId = id;
+  document.getElementById('si-modal-title').textContent = 'Edit Supply Item';
+  document.getElementById('si-category').value  = category || '';
+  document.getElementById('si-name').value       = itemName || '';
+  document.getElementById('si-stock').value      = stock ?? 0;
+  document.getElementById('si-modal-error').classList.add('hidden');
+  document.getElementById('si-modal').classList.remove('hidden');
+  document.getElementById('si-modal').classList.add('flex');
+}
+
+function closeItemModal() {
+  document.getElementById('si-modal').classList.add('hidden');
+  document.getElementById('si-modal').classList.remove('flex');
+  siEditId = null;
+}
+
+function showItemError(message) {
+  let el = document.getElementById('si-modal-error');
+  el.textContent = message;
+  el.classList.remove('hidden');
+}
+
+async function saveItem() {
+  let payload = {
+    category:        document.getElementById('si-category').value.trim(),
+    item_name:       document.getElementById('si-name').value.trim(),
+    available_stock: parseInt(document.getElementById('si-stock').value, 10) || 0
+  };
+  let url     = siEditId ? '/admin/supply-items/' + siEditId + '/update' : '/admin/supply-items/create';
+  let saveBtn = document.getElementById('si-save');
+  saveBtn.disabled = true;
+  try {
+    let res  = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    let data = await res.json();
+    if (data.success) {
+      closeItemModal();
+      loadSupplyItems();
+    } else {
+      showItemError(data.error || 'Failed to save item.');
+    }
+  } catch (err) {
+    showItemError('Network error while saving.');
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+function deleteItem(id, name) {
+  if (typeof showConfirmationModal !== 'undefined') {
+    showConfirmationModal('Delete Supply Item', 'Delete "' + name + '"? This cannot be undone.', function() {
+      fetch('/admin/supply-items/' + id + '/delete', { method: 'POST' })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.success) { loadSupplyItems(); }
+          else { alert(data.error || 'Failed to delete.'); }
+        })
+        .catch(function() { alert('Network error while deleting.'); });
+    });
+  } else {
+    if (!confirm('Delete supply item "' + name + '"? This cannot be undone.')) return;
+    fetch('/admin/supply-items/' + id + '/delete', { method: 'POST' })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        if (data.success) { loadSupplyItems(); }
+        else { alert(data.error || 'Failed to delete.'); }
+      })
+      .catch(function() { alert('Network error while deleting.'); });
+  }
+}
+
+document.getElementById('si-save').addEventListener('click', saveItem);
+</script>
+
+<script>
+// - SVG helpers ------------------------------------------------
+function svgCheck() {
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+}
+function svgX() {
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+}
+function svgTrash() {
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
+}
+
+function buildActionBtn(color, svgHtml, label) {
+  let btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'inline-flex items-center justify-center w-8 h-8 rounded-lg bg-' + color + '-100 text-' + color + '-700 hover:bg-' + color + '-200 transition-colors';
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  btn.innerHTML = svgHtml;
+  return btn;
+}
+
+// - Init -------------------------------------------------------
+switchTab('requests');
+loadSupplyRequests();
+</script>
+{% endblock %}
