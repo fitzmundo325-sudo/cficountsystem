@@ -1158,12 +1158,13 @@ def targets_save():
 # Stores Targets Section End
 # ================================
    
+   
+   
 # ================================
-# Supply Request Section End
+# Supply Request Section Start
 # ================================
-# ================================================
+
 # Supply Requests - List
-# ================================================
 @api_handles.route('/supply_requests', methods=['GET', 'POST'])
 @login_required
 def api_supply_requests():
@@ -1177,8 +1178,14 @@ def api_supply_requests():
 
     status  = (request.form.get('status')  or request.args.get('status')  or '').strip()
     search  = (request.form.get('search')  or request.args.get('search')  or '').strip()
-    per_page = 25
-
+    per_page = post_per_page
+    
+    if status == "all":
+        status = False
+    
+    
+    print(search)
+    
     query = SupplyRequest.query.options(
         selectinload(SupplyRequest.items),
         selectinload(SupplyRequest.requester),
@@ -1232,11 +1239,9 @@ def api_supply_requests():
         })
 
     pagination_data = {
-        'current_page': paginated.page,
-        'total_pages':  paginated.pages,
-        'total_items':  paginated.total,
-        'start_index':  (paginated.page - 1) * per_page + 1 if paginated.total else 0,
-        'end_index':    min(paginated.page * per_page, paginated.total),
+        'current_page':  paginated.page,
+        'total_pages':   paginated.pages,
+        'total_results': paginated.total,
     }
 
     return jsonify({
@@ -1262,9 +1267,14 @@ def api_supply_items():
         page = 1
 
     category = (request.form.get('category') or request.args.get('category') or '').strip()
-    search   = (request.form.get('search')   or request.args.get('search')   or '').strip()
-    per_page = 25
+    search   = (request.form.get('search')   or request.args.get('search')   or '')
+    per_page = post_per_page
+    
+    if category == "all":
+        category = None
+        
 
+    
     query = SupplyItem.query
 
     if category:
@@ -1297,13 +1307,11 @@ def api_supply_items():
         })
 
     pagination_data = {
-        'current_page': paginated.page,
-        'total_pages':  paginated.pages,
-        'total_items':  paginated.total,
-        'start_index':  (paginated.page - 1) * per_page + 1 if paginated.total else 0,
-        'end_index':    min(paginated.page * per_page, paginated.total),
+        'current_page':  paginated.page,
+        'total_pages':   paginated.pages,
+        'total_results': paginated.total,
     }
-
+    
     return jsonify({
         'type':            'success',
         'data':            data,
