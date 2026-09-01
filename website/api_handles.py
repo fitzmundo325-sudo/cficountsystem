@@ -1164,7 +1164,221 @@ def targets_save():
 # Supply Request Section Start
 # ================================
 
+
+# ================================================
+# Supply Items - List
+
+@api_handles.route('/supply_items', methods=['GET', 'POST'])
+@login_required
+def api_supply_items():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    try:
+        page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        page = 1
+
+    category = (request.form.get('category') or request.args.get('category') or '').strip()
+    search   = (request.form.get('search')   or request.args.get('search')   or '').strip()
+    per_page = post_per_page
+
+    if category == 'all':
+        category = None
+
+    query = SupplyItem.query
+
+    if category:
+        query = query.filter(SupplyItem.category == category)
+
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                SupplyItem.item_name.ilike(pattern),
+                SupplyItem.category.ilike(pattern),
+            )
+        )
+
+    # -- Sorting ----------------------------------------------
+    sortby = (request.form.get('sort') or request.args.get('sort') or '').strip()
+    order  = (request.form.get('order_by') or request.args.get('order_by') or 'asc').lower()
+    sortable_columns = {
+        'item_name':       SupplyItem.item_name,
+        'category':        SupplyItem.category,
+        'available_stock': SupplyItem.available_stock,
+    }
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc())
+
+    # -- Pagination -------------------------------------------
+    paginated = query.paginate(page=page, per_page=per_page, error_out=False)
+
+    categories = [
+        c[0] for c in
+        db.session.query(SupplyItem.category).distinct().order_by(SupplyItem.category.asc()).all()
+    ]
+
+    data = []
+    for item in paginated.items:
+        data.append({
+            'id':              item.id,
+            'item_name':       item.item_name,
+            'category':        item.category,
+            'available_stock': item.available_stock,
+        })
+
+    return jsonify({
+        'type': 'success',
+        'data': data,
+        'pagination_data': {
+            'current_page':  paginated.page,
+            'total_pages':   paginated.pages,
+            'total_results': paginated.total,
+        },
+        'categories': categories,
+    })
+   
+
+# ================================================
+# Supply Item - Create
+
+@api_handles.route('/supply_items/create', methods=['POST'])
+@login_required
+def api_create_supply_item():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    data = request.get_json() or {}
+    category  = str(data.get('category')  or '').strip()[:100]
+    item_name = str(data.get('item_name') or '').strip()[:255]
+    try:
+        available_stock = max(0, int(data.get('available_stock') or 0))
+    except (TypeError, ValueError):
+        available_stock = 0
+
+    if not category or not item_name:
+        return jsonify({'type': 'error', 'message': 'Category and item name are required.'})
+
+    existing = SupplyItem.query.filter(
+        SupplyItem.category  == category,
+        SupplyItem.item_name == item_name,
+    ).first()
+    if existing:
+        return jsonify({'type': 'error', 'message': 'An item with this name already exists in this category.'})
+
+    item = SupplyItem(category=category, item_name=item_name, available_stock=available_stock)
+    db.session.add(item)
+    try:
+        db.session.flush()
+        log_audit_event(
+            action='admin.supply_item.create',
+            entity_type='SupplyItem',
+            entity_id=item.id,
+            reason=f'Admin created supply item {item_name}',
+            details={'category': category, 'item_name': item_name, 'available_stock': available_stock},
+        )
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': 'Failed to create item.'})
+
+    return jsonify({'type': 'success', 'message': f'Supply item "{item_name}" created.', 'id': item.id})
+
+
+# ================================================
+# Supply Item - Update
+
+@api_handles.route('/supply_items/<int:item_id>/update', methods=['POST'])
+@login_required
+def api_update_supply_item(item_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    item = SupplyItem.query.get_or_404(item_id)
+    data = request.get_json() or {}
+    category  = str(data.get('category')  or '').strip()[:100]
+    item_name = str(data.get('item_name') or '').strip()[:255]
+    try:
+        available_stock = max(0, int(data.get('available_stock') or 0))
+    except (TypeError, ValueError):
+        available_stock = 0
+
+    if not category or not item_name:
+        return jsonify({'type': 'error', 'message': 'Category and item name are required.'}), 400
+
+    duplicate = SupplyItem.query.filter(
+        SupplyItem.category  == category,
+        SupplyItem.item_name == item_name,
+        SupplyItem.id        != item.id,
+    ).first()
+    if duplicate:
+        return jsonify({'type': 'error', 'message': 'An item with this name already exists in this category.'}), 400
+
+    old_stock      = item.available_stock
+    item.category  = category
+    item.item_name = item_name
+    item.available_stock = available_stock
+
+    try:
+        log_audit_event(
+            action='admin.supply_item.update',
+            entity_type='SupplyItem',
+            entity_id=item.id,
+            reason=f'Admin updated supply item {item_name}',
+            details={
+                'category':  category,
+                'item_name': item_name,
+                'old_stock': old_stock,
+                'new_stock': available_stock,
+            },
+        )
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': 'Failed to update item.'}), 500
+
+    return jsonify({'type': 'success', 'message': f'Supply item "{item_name}" updated.'})
+
+
+
+# ================================================
+# Supply Item - Delete
+@api_handles.route('/supply_items/<int:item_id>/delete', methods=['POST'])
+@login_required
+def api_delete_supply_item(item_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    item = SupplyItem.query.get_or_404(item_id)
+    item_name = item.item_name
+    category  = item.category
+
+    try:
+        SupplyRequestItem.query.filter_by(supply_item_id=item.id).update({'supply_item_id': None})
+        log_audit_event(
+            action='admin.supply_item.delete',
+            entity_type='SupplyItem',
+            entity_id=item.id,
+            reason=f'Admin deleted supply item {item_name}',
+            details={'category': category, 'item_name': item_name},
+        )
+        db.session.delete(item)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': 'Failed to delete item.'}), 500
+
+    return jsonify({'type': 'success', 'message': f'Supply item "{item_name}" deleted.'})
+
+
+
+# ================================================
 # Supply Requests - List
+
 @api_handles.route('/supply_requests', methods=['GET', 'POST'])
 @login_required
 def api_supply_requests():
@@ -1176,16 +1390,10 @@ def api_supply_requests():
     except (ValueError, TypeError):
         page = 1
 
-    status  = (request.form.get('status')  or request.args.get('status')  or '').strip()
-    search  = (request.form.get('search')  or request.args.get('search')  or '').strip()
+    status  = (request.form.get('status') or request.args.get('status') or '').strip()
+    search  = (request.form.get('search') or request.args.get('search') or '').strip()
     per_page = post_per_page
-    
-    if status == "all":
-        status = False
-    
-    
-    print(search)
-    
+
     query = SupplyRequest.query.options(
         selectinload(SupplyRequest.items),
         selectinload(SupplyRequest.requester),
@@ -1205,8 +1413,23 @@ def api_supply_requests():
             )
         )
 
-    query = query.order_by(SupplyRequest.created_at.desc(), SupplyRequest.id.desc())
-    paginated = query.paginate(page=page, per_page=per_page, error_out=False)
+    # -- Sorting ----------------------------------------------
+    sortby = (request.form.get('sort') or request.args.get('sort') or '').strip()
+    order  = (request.form.get('order_by') or request.args.get('order_by') or 'desc').lower()
+    sortable_columns = {
+        'request_no': SupplyRequest.request_no,
+        'store_name': SupplyRequest.store_name,
+        'status':     SupplyRequest.status,
+        'created_at': SupplyRequest.created_at,
+    }
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(SupplyRequest.created_at.desc(), SupplyRequest.id.desc())
+
+    # -- Pagination -------------------------------------------
+    paginated     = query.paginate(page=page, per_page=per_page, error_out=False)
     pending_count = SupplyRequest.query.filter_by(status='Pending').count()
 
     def fmt_dt(dt):
@@ -1215,19 +1438,19 @@ def api_supply_requests():
     data = []
     for req in paginated.items:
         data.append({
-            'id':          req.id,
-            'request_no':  req.request_no,
-            'created_at':  fmt_dt(req.created_at),
-            'store_name':  req.store_name or (req.store.name if req.store else None),
+            'id':           req.id,
+            'request_no':   req.request_no,
+            'created_at':   fmt_dt(req.created_at),
+            'store_name':   req.store_name or (req.store.name if req.store else None),
             'request_type': req.request_type,
-            'requester':   req.requester.username if req.requester else None,
-            'remarks':     req.remarks,
-            'status':      req.status,
-            'approver':    req.approver.username if req.approver else None,
-            'approved_at': fmt_dt(req.approved_at),
-            'rejecter':    req.rejecter.username if req.rejecter else None,
-            'rejected_at': fmt_dt(req.rejected_at),
-            'item_count':  len(req.items),
+            'requester':    req.requester.username if req.requester else None,
+            'remarks':      req.remarks,
+            'status':       req.status,
+            'approver':     req.approver.username if req.approver else None,
+            'approved_at':  fmt_dt(req.approved_at),
+            'rejecter':     req.rejecter.username if req.rejecter else None,
+            'rejected_at':  fmt_dt(req.rejected_at),
+            'item_count':   len(req.items),
             'items': [
                 {
                     'item_name': line.item_name,
@@ -1238,87 +1461,150 @@ def api_supply_requests():
             ],
         })
 
-    pagination_data = {
-        'current_page':  paginated.page,
-        'total_pages':   paginated.pages,
-        'total_results': paginated.total,
-    }
-
     return jsonify({
-        'type':            'success',
-        'data':            data,
-        'pagination_data': pagination_data,
-        'pending_count':   pending_count,
+        'type':          'success',
+        'data':          data,
+        'pending_count': pending_count,
+        'pagination_data': {
+            'current_page':  paginated.page,
+            'total_pages':   paginated.pages,
+            'total_results': paginated.total,
+        },
     })
 
 
 # ================================================
-# Supply Items - List
-# ================================================
-@api_handles.route('/supply_items', methods=['GET', 'POST'])
+# Supply Request - Approve
+
+@api_handles.route('/supply_requests/<int:request_id>/approve', methods=['POST'])
 @login_required
-def api_supply_items():
+def api_approve_supply_request(request_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'})
+
+    supply_request = SupplyRequest.query.options(selectinload(SupplyRequest.items)).get_or_404(request_id)
+    if supply_request.status != 'Pending':
+        return jsonify({'type': 'error', 'message': f'This request is already {supply_request.status.lower()}.'})
+
+    insufficient = []
+    for line in supply_request.items:
+        if not line.supply_item_id:
+            continue
+        item = SupplyItem.query.get(line.supply_item_id)
+        if item and item.available_stock < line.quantity:
+            insufficient.append({
+                'item_name': line.item_name,
+                'requested': line.quantity,
+                'available': item.available_stock,
+            })
+
+    if insufficient:
+        return jsonify({
+            'type':               'error',
+            'message':            'Insufficient stock. Update the supply item stock first.',
+            'insufficient_items': insufficient,
+        })
+
+    try:
+        for line in supply_request.items:
+            if line.supply_item_id:
+                item = SupplyItem.query.get(line.supply_item_id)
+                if item:
+                    item.available_stock = max(0, item.available_stock - line.quantity)
+
+        supply_request.status      = 'Approved'
+        supply_request.approved_by = current_user.id
+        supply_request.approved_at = func.now()
+
+        log_audit_event(
+            action='admin.supply_request.approve',
+            entity_type='SupplyRequest',
+            entity_id=supply_request.id,
+            reason=f'Admin approved supply request {supply_request.request_no}',
+            details={
+                'request_no': supply_request.request_no,
+                'store_id':   supply_request.store_id,
+                'store_name': supply_request.store_name,
+                'items':      len(supply_request.items),
+            },
+        )
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Failed to approve request: {str(e)}'}), 500
+
+    return jsonify({'type': 'success', 'message': f'Supply request {supply_request.request_no} approved. Stock updated.'})
+
+
+# ================================================
+# Supply Request - Reject
+
+@api_handles.route('/supply_requests/<int:request_id>/reject', methods=['POST'])
+@login_required
+def api_reject_supply_request(request_id):
     if current_user.role not in ('Superadmin', 'Admin'):
         return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
 
+    supply_request = SupplyRequest.query.get_or_404(request_id)
+    if supply_request.status != 'Pending':
+        return jsonify({'type': 'error', 'message': f'This request is already {supply_request.status.lower()}.'}), 400
+
     try:
-        page = int(request.form.get('page') or request.args.get('page') or 1)
-    except (ValueError, TypeError):
-        page = 1
+        supply_request.status      = 'Rejected'
+        supply_request.rejected_by = current_user.id
+        supply_request.rejected_at = func.now()
 
-    category = (request.form.get('category') or request.args.get('category') or '').strip()
-    search   = (request.form.get('search')   or request.args.get('search')   or '')
-    per_page = post_per_page
-    
-    if category == "all":
-        category = None
-        
-
-    
-    query = SupplyItem.query
-
-    if category:
-        query = query.filter(SupplyItem.category == category)
-
-    if search:
-        pattern = f'%{search}%'
-        query = query.filter(
-            or_(
-                SupplyItem.item_name.ilike(pattern),
-                SupplyItem.category.ilike(pattern),
-            )
+        log_audit_event(
+            action='admin.supply_request.reject',
+            entity_type='SupplyRequest',
+            entity_id=supply_request.id,
+            reason=f'Admin rejected supply request {supply_request.request_no}',
+            details={
+                'request_no': supply_request.request_no,
+                'store_id':   supply_request.store_id,
+                'store_name': supply_request.store_name,
+            },
         )
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Failed to reject request: {str(e)}'}), 500
 
-    query = query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc())
-    paginated = query.paginate(page=page, per_page=per_page, error_out=False)
+    return jsonify({'type': 'success', 'message': f'Supply request {supply_request.request_no} rejected.'})
 
-    categories = [
-        c[0] for c in
-        db.session.query(SupplyItem.category).distinct().order_by(SupplyItem.category.asc()).all()
-    ]
 
-    data = []
-    for item in paginated.items:
-        data.append({
-            'id':              item.id,
-            'item_name':       item.item_name,
-            'category':        item.category,
-            'available_stock': item.available_stock,
-        })
+# ================================================
+# Supply Request - Delete
 
-    pagination_data = {
-        'current_page':  paginated.page,
-        'total_pages':   paginated.pages,
-        'total_results': paginated.total,
-    }
-    
-    return jsonify({
-        'type':            'success',
-        'data':            data,
-        'pagination_data': pagination_data,
-        'categories':      categories,
-    })
-   
+@api_handles.route('/supply_requests/<int:request_id>/delete', methods=['POST'])
+@login_required
+def api_delete_supply_request(request_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    supply_request = SupplyRequest.query.get_or_404(request_id)
+    request_no     = supply_request.request_no
+
+    try:
+        log_audit_event(
+            action='admin.supply_request.delete',
+            entity_type='SupplyRequest',
+            entity_id=supply_request.id,
+            reason=f'Admin deleted supply request {request_no}',
+            details={
+                'request_no': request_no,
+                'store_id':   supply_request.store_id,
+                'store_name': supply_request.store_name,
+                'status':     supply_request.status,
+            },
+        )
+        db.session.delete(supply_request)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Failed to delete request: {str(e)}'}), 500
+
+    return jsonify({'type': 'success', 'message': f'Supply request {request_no} deleted.'})
    
    
 # ================================
