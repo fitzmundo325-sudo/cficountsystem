@@ -1,6 +1,6 @@
 const CACHE_NAME = 'idashboard-pwa-v3';
 const STATIC_ASSETS = [
-  '/static/css/styles.css',
+  // '/static/css/styles.css',
   '/static/js/modal.js',
   '/static/js/toast.js',
   '/static/js/sidebar.js',
