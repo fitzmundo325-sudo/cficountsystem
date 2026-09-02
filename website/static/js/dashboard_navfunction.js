@@ -101,6 +101,16 @@ function showStoresTargetPageAdmin(elm){
 
 
 
+function showSupplyMangPageAdmin(elm){
+	activate(elm);
+
+	let page = open_modal("supply_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
 
 
 
