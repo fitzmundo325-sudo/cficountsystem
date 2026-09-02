@@ -231,6 +231,20 @@ function jumpToPage(page_n){
 
 
 
+//If a search term is recorded, we then pass it to our search box
+function searchQ(){
+	let sterm = localStorage.getItem("search_term");
+	
+	if(sterm){
+		_("product-live-search").value = sterm;
+		delayedQuerry();
+	}
+
+}
+
+searchQ();
+
+
 // Utilities End
 
 
