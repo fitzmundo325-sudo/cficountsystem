@@ -29,6 +29,15 @@ function activate(elm){
 	
 	let url = new URL(window.location.href);
     url.searchParams.set('m', clickable_id);
+    
+	
+	if(getparam("q")){
+		localStorage.setItem("search_term",getparam("q"));
+	}else{
+		localStorage.removetItem("search_term");
+	}
+	
+	
     history.pushState(null, '', url);
 	
 	
