@@ -34,7 +34,7 @@ function activate(elm){
 	if(getparam("q")){
 		localStorage.setItem("search_term",getparam("q"));
 	}else{
-		localStorage.removetItem("search_term");
+		localStorage.removeItem("search_term");
 	}
 	
 	
