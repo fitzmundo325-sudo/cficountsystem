@@ -223,7 +223,7 @@
       </a>
 
 
-      <a href="/admin/supply"
+      <a onclick="showSupplyMangPageAdmin(this)" id="_supply_v2"
         class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
           {% if request.path.startswith('/admin/supply') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
         data-tooltip="Supply Management">
