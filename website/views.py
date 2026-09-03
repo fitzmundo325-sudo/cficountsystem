@@ -3650,48 +3650,107 @@ def _extract_rso_items_from_excel(uploaded_file):
     df = _read_uploaded_excel(uploaded_file, 'RSO')
 
     if df.empty or df.shape[0] < 1 or df.shape[1] < 1:
-        raise ValueError('Excel file is empty. RSO No must be in cell A1.')
+        raise ValueError('Excel file is empty. Please upload a valid RSO Excel file.')
 
-    rso_no_cell = df.iat[0, 0]
-    rso_no = '' if pd.isna(rso_no_cell) else str(rso_no_cell).strip()
+    # 1. Extract RSO No from cell A1 or search top cells for RSO number pattern
+    rso_no = ''
+    first_cell = df.iat[0, 0] if not pd.isna(df.iat[0, 0]) else ''
+    first_cell_str = str(first_cell).strip()
+
+    rso_pattern = re.compile(r'rso\s*(?:number|no\.?|#)?\s*[:\-\s]*(?:rso\s*[:\-\s]*)?([a-z0-9\-_]+)', re.IGNORECASE)
+    rso_match = rso_pattern.search(first_cell_str)
+    if rso_match:
+        rso_no = rso_match.group(1).strip()
+    elif first_cell_str and not any(kw in first_cell_str.lower() for kw in ['product', 'item', 'description', 'qty', 'quantity', 'code']):
+        rso_no = first_cell_str
+
     if not rso_no:
-        raise ValueError('RSO No is required in cell A1.')
+        for r_idx in range(min(5, df.shape[0])):
+            for c_idx in range(min(5, df.shape[1])):
+                val = df.iat[r_idx, c_idx]
+                if pd.isna(val):
+                    continue
+                v_str = str(val).strip()
+                match = rso_pattern.search(v_str)
+                if match:
+                    rso_no = match.group(1).strip()
+                    break
+            if rso_no:
+                break
+
+    if not rso_no:
+        rso_no = 'RSO-DELIVERY'
+
+    # 2. Flexible column detection for Product Name and Quantity
+    prod_col = None
+    qty_col = None
+    header_row_idx = None
+
+    prod_keywords = ['product name', 'product_name', 'product', 'description', 'item description', 'item name', 'item', 'particulars', 'material description']
+    qty_keywords = ['quantity', 'qty', 'qty.', 'received qty', 'received', 'del qty', 'delivery qty', 'ordered qty', 'order qty', 'total qty', 'del_qty', 'pcs', 'count']
+
+    for r_idx in range(min(10, df.shape[0])):
+        row_vals = [str(df.iat[r_idx, c_idx]).strip().lower() if not pd.isna(df.iat[r_idx, c_idx]) else '' for c_idx in range(df.shape[1])]
+        
+        found_prod = None
+        found_qty = None
+
+        for c_idx, cell in enumerate(row_vals):
+            if not cell:
+                continue
+            if found_prod is None and any(kw == cell or cell.startswith(kw) for kw in prod_keywords):
+                found_prod = c_idx
+            if found_qty is None and any(kw == cell or cell.startswith(kw) for kw in qty_keywords):
+                found_qty = c_idx
+
+        if found_prod is not None and found_qty is not None:
+            prod_col = found_prod
+            qty_col = found_qty
+            header_row_idx = r_idx
+            break
+
+    # If no explicit header row detected, fall back to column index defaults
+    if prod_col is None or qty_col is None:
+        if df.shape[1] >= 4:
+            prod_col = prod_col if prod_col is not None else 2
+            qty_col = qty_col if qty_col is not None else 3
+            header_row_idx = 0 if header_row_idx is None else header_row_idx
+        elif df.shape[1] == 3:
+            prod_col = prod_col if prod_col is not None else 1
+            qty_col = qty_col if qty_col is not None else 2
+            header_row_idx = 0 if header_row_idx is None else header_row_idx
+        elif df.shape[1] == 2:
+            prod_col = prod_col if prod_col is not None else 0
+            qty_col = qty_col if qty_col is not None else 1
+            header_row_idx = 0 if header_row_idx is None else header_row_idx
+
+    start_row = (header_row_idx + 1) if header_row_idx is not None else 1
 
     aggregated_items = OrderedDict()
-    row_errors = []
 
-    # Keep backward compatibility for templates that still include product rows
-    # in columns C and D starting at row 2.
-    if df.shape[0] >= 2 and df.shape[1] >= 4:
-        product_qty_rows = df.iloc[1:, [2, 3]]
+    for r_idx in range(start_row, df.shape[0]):
+        prod_cell = df.iat[r_idx, prod_col] if prod_col is not None and prod_col < df.shape[1] and not pd.isna(df.iat[r_idx, prod_col]) else ''
+        qty_cell = df.iat[r_idx, qty_col] if qty_col is not None and qty_col < df.shape[1] and not pd.isna(df.iat[r_idx, qty_col]) else None
 
-        for row_index, row in product_qty_rows.iterrows():
-            row_number = int(row_index) + 1
-            product_cell = row.iloc[0]
-            quantity_cell = row.iloc[1]
+        product_name = str(prod_cell).strip()
+        has_qty_content = qty_cell is not None and str(qty_cell).strip() != ''
+        quantity = _normalize_pos_quantity(qty_cell)
 
-            product_name = '' if pd.isna(product_cell) else str(product_cell).strip()
-            has_qty_content = not pd.isna(quantity_cell) and str(quantity_cell).strip() != ''
-            quantity = _normalize_pos_quantity(quantity_cell)
+        if not product_name and not has_qty_content:
+            continue
 
-            if not product_name and not has_qty_content:
-                continue
-            if not product_name:
-                row_errors.append(f'Row {row_number}: missing product name in column C.')
-                continue
-            if quantity is None:
-                row_errors.append(f'Row {row_number}: invalid quantity for "{product_name}" in column D.')
-                continue
+        lower_prod = product_name.lower()
+        if any(hdr in lower_prod for hdr in ['product name', 'item description', 'total', 'grand total', 'subtotal', 'rso no']):
+            continue
 
-            if product_name not in aggregated_items:
-                aggregated_items[product_name] = {'quantity': 0}
-            aggregated_items[product_name]['quantity'] = int(aggregated_items[product_name]['quantity'] or 0) + quantity
+        if not product_name:
+            continue
+        if quantity is None:
+            continue
 
-    if row_errors:
-        preview_errors = '; '.join(row_errors[:5])
-        if len(row_errors) > 5:
-            preview_errors += f'; and {len(row_errors) - 5} more row issue(s)'
-        raise ValueError(f'RSO upload failed validation: {preview_errors}.')
+        if product_name not in aggregated_items:
+            aggregated_items[product_name] = {'quantity': 0}
+        aggregated_items[product_name]['quantity'] = int(aggregated_items[product_name]['quantity'] or 0) + quantity
 
     items = _sanitize_rso_items([
         {
@@ -3701,8 +3760,6 @@ def _extract_rso_items_from_excel(uploaded_file):
         for product_name, item_values in aggregated_items.items()
     ])
 
-    # Keep RSO No as metadata row in draft payload so it can still be shown
-    # even when there are no product rows in C/D.
     rso_no_item = {'product_name': f'RSO No: {rso_no}', 'quantity': 1}
     if not items:
         items = [rso_no_item]
@@ -3794,6 +3851,7 @@ def _enrich_rso_items_with_product_code(rso_items):
                 'rso_no': getattr(item, 'rso_no', None),
                 'is_manual': str(getattr(item, 'rso_no', '') or '').strip().lower() == 'manual entry',
                 'manual_note': getattr(item, 'manual_note', None),
+                'upload_source': getattr(item, 'upload_source', None) or 'delivery',
             }
             enriched_items.append(enriched_item)
     
@@ -5166,17 +5224,7 @@ def _token_similarity_score(set1, set2):
     return len(intersection) / len(union) if union else 0.0
 
 
-def _enrich_rso_items_with_product_code(items_list):
-    result = []
-    for it in items_list:
-        p_name = it.product_name if hasattr(it, 'product_name') else (it.get('product_name') if isinstance(it, dict) else '')
-        code = '-'
-        if p_name:
-            pm = ProductMaster.query.filter(db.func.lower(ProductMaster.description) == p_name.strip().lower()).first()
-            if pm and pm.code:
-                code = pm.code
-        result.append({'product_code': code})
-    return result
+
 
 
 # Delivery Recon Routes for Inventory Staff and Store Users
