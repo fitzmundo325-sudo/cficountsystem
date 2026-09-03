@@ -122,6 +122,16 @@ function showSupplyMangPageAdmin(elm){
 
 
 
+function showSysAlayzerPageAdmin(elm){
+	activate(elm);
+
+	let page = open_modal("system_analyzer", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
 
 // Administration Section END
 // ====================================
