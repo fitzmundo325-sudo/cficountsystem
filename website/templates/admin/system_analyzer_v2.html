@@ -1,0 +1,307 @@
+{% extends "base_headless.html" %}
+{% block title %}System Analyzer{% endblock %}
+
+{% block content %}
+<script>
+  let systemAnalyzerApiUrl = "{{ url_for('api_handles.get_system_analyzer_data') }}";
+  let linkProductApiUrl = "{{ url_for('api_handles.link_system_analyzer_product') }}";
+  let masterlistBaseUrl = "{{ url_for('admin.product_masterlist') }}";
+</script>
+
+<style>
+  html.admin-dark #upload-details-modal [data-upload-modal-card] {
+    background: #0f172a;
+    border-color: #334155;
+  }
+
+  html.admin-dark #upload-details-modal [data-upload-modal-header] {
+    background: #164e63;
+    border-color: #0e7490;
+  }
+
+  html.admin-dark #upload-details-title {
+    color: #f8fafc;
+  }
+
+  html.admin-dark #upload-details-subtitle,
+  html.admin-dark #upload-details-close {
+    color: #bae6fd;
+  }
+
+  html.admin-dark #upload-details-close:hover {
+    color: #ffffff;
+  }
+
+  html.admin-dark #upload-details-body {
+    background: #0f172a;
+    color: #e2e8f0;
+  }
+</style>
+
+<header class="sticky top-0 z-20 bg-white/85 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="4" x2="20" y1="12" y2="12"></line>
+        <line x1="4" x2="20" y1="6" y2="6"></line>
+        <line x1="4" x2="20" y1="18" y2="18"></line>
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span>Admin</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">System Analyzer</span>
+    </nav>
+  </div>
+  <a href="{{ url_for('admin.product_masterlist') }}" class="text-xs font-semibold text-slate-600 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors">Open Masterlist</a>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">System Analyzer</h1>
+      <p class="text-slate-600 mt-1">Detect POS Sold and RSO Delivery items that are not yet in Product Masterlist.</p>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-[auto_auto_auto] gap-2 items-end">
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Start Date</label>
+        <input id="analyzer-start-date" type="date" class="px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">End Date</label>
+        <input id="analyzer-end-date" type="date" class="px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+      </div>
+      <button id="analyzer-analyze-btn" type="button" class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors">Analyze</button>
+    </div>
+  </section>
+
+  <!-- ----------------------------------------------------------------- -->
+  <!-- Unmatched POS Products                                            -->
+  <!-- ----------------------------------------------------------------- -->
+  <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+      <div>
+        <h2 class="text-lg font-bold text-slate-900">Unmatched POS Products</h2>
+        <p id="pos-date-range-label" class="text-xs text-slate-500"></p>
+      </div>
+      <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+        <input id="pos-product-search" type="text" placeholder="Search unmatched POS products" class="w-full sm:w-72 px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+      </div>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Product Code</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Product Name</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Qty</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Net Sales</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Stores</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Entries</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Latest Date</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Action</th>
+          </tr>
+        </thead>
+        <tbody id="pos-table-body" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+
+    <div id="pos-pagination" class="px-5 py-3 border-t border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hidden">
+      <p id="pos-pagination-summary" class="text-xs text-slate-500"></p>
+      <div class="flex items-center gap-2">
+        <button id="pos-prev-page" type="button" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Previous</button>
+        <div id="pos-page-numbers" class="flex items-center gap-1"></div>
+        <button id="pos-next-page" type="button" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ----------------------------------------------------------------- -->
+  <!-- Unmatched RSO Products                                            -->
+  <!-- ----------------------------------------------------------------- -->
+  <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-200 bg-sky-50 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+      <div>
+        <h2 class="text-lg font-bold text-slate-900">Unmatched RSO Products</h2>
+        <p id="rso-date-range-label" class="text-xs text-slate-500"></p>
+      </div>
+      <input id="rso-product-search" type="text" placeholder="Search unmatched RSO products" class="w-full sm:w-72 px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Product Code</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Product Name</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">RSO Qty</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Received</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Stores</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Entries</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Latest Date</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Action</th>
+          </tr>
+        </thead>
+        <tbody id="rso-table-body" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+    <div id="rso-pagination" class="px-5 py-3 border-t border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hidden">
+      <p id="rso-pagination-summary" class="text-xs text-slate-500"></p>
+      <div class="flex items-center gap-2">
+        <button id="rso-prev-page" type="button" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Previous</button>
+        <div id="rso-page-numbers" class="flex items-center gap-1"></div>
+        <button id="rso-next-page" type="button" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ----------------------------------------------------------------- -->
+<!-- Row templates                                                      -->
+<!-- ----------------------------------------------------------------- -->
+<template id="pos-row-template">
+  <tr class="analyzer-pos-row hover:bg-slate-50 transition-colors">
+    <td class="px-4 py-3 text-sm font-semibold text-slate-700" data-cell="product_code"></td>
+    <td class="px-4 py-3 text-sm text-slate-900 font-semibold" data-cell="product_name"></td>
+    <td class="px-4 py-3 text-sm text-slate-800 text-right" data-cell="total_qty"></td>
+    <td class="px-4 py-3 text-sm text-slate-800 text-right" data-cell="total_net_sales"></td>
+    <td class="px-4 py-3 text-sm text-slate-800 text-right" data-cell="store_count"></td>
+    <td class="px-4 py-3 text-sm text-slate-800 text-right" data-cell="entry_count"></td>
+    <td class="px-4 py-3 text-sm text-slate-700" data-cell="latest_report_date"></td>
+    <td class="px-4 py-3 text-sm whitespace-nowrap">
+      <button type="button" class="open-upload-modal inline-flex items-center justify-center w-8 h-8 rounded-md bg-sky-100 text-sky-700 hover:bg-sky-200 transition-colors" data-source="pos" title="View Upload Stores" aria-label="View Upload Stores">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 21h18"></path>
+          <path d="M5 21V7l8-4v18"></path>
+          <path d="M19 21V11l-6-4"></path>
+        </svg>
+      </button>
+      <button type="button" class="open-link-modal ml-1 inline-flex items-center justify-center w-8 h-8 rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors" title="Link to Master" aria-label="Link to Master">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 1 0-7.07-7.07L11 4" />
+          <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 1 0 7.07 7.07L13 20" />
+        </svg>
+      </button>
+      <a class="search-masterlist-link inline-flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-colors ml-1" title="Search Masterlist" aria-label="Search Masterlist">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"></circle>
+          <path d="m21 21-4.3-4.3"></path>
+        </svg>
+      </a>
+    </td>
+  </tr>
+</template>
+
+<template id="rso-row-template">
+  <tr class="analyzer-rso-row hover:bg-slate-50 transition-colors">
+    <td class="px-4 py-3 text-sm font-semibold text-slate-700" data-cell="product_code"></td>
+    <td class="px-4 py-3 text-sm font-semibold text-slate-900" data-cell="product_name"></td>
+    <td class="px-4 py-3 text-sm text-right" data-cell="total_qty"></td>
+    <td class="px-4 py-3 text-sm text-right" data-cell="total_received_qty"></td>
+    <td class="px-4 py-3 text-sm text-right" data-cell="store_count"></td>
+    <td class="px-4 py-3 text-sm text-right" data-cell="entry_count"></td>
+    <td class="px-4 py-3 text-sm text-slate-700" data-cell="latest_report_date"></td>
+    <td class="px-4 py-3 text-sm whitespace-nowrap">
+      <button type="button" class="open-upload-modal inline-flex items-center justify-center w-8 h-8 rounded-md bg-sky-100 text-sky-700 hover:bg-sky-200 transition-colors" data-source="rso" title="View Upload Stores" aria-label="View Upload Stores">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 21h18"></path>
+          <path d="M5 21V7l8-4v18"></path>
+          <path d="M19 21V11l-6-4"></path>
+        </svg>
+      </button>
+      <button type="button" class="open-link-modal ml-1 inline-flex items-center justify-center w-8 h-8 rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors" title="Link to Master" aria-label="Link to Master">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 1 0-7.07-7.07L11 4" />
+          <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 1 0 7.07 7.07L13 20" />
+        </svg>
+      </button>
+      <a class="search-masterlist-link inline-flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-colors ml-1" title="Search Masterlist" aria-label="Search Masterlist">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"></circle>
+          <path d="m21 21-4.3-4.3"></path>
+        </svg>
+      </a>
+    </td>
+  </tr>
+</template>
+
+<!-- ----------------------------------------------------------------- -->
+<!-- Upload Details Modal                                               -->
+<!-- ----------------------------------------------------------------- -->
+<div id="upload-details-modal" class="fixed inset-0 z-50 hidden">
+  <div id="upload-details-backdrop" class="absolute inset-0 bg-black/40"></div>
+  <div id="upload-details-positioner" class="relative z-10 h-full w-full flex items-center justify-center p-4">
+    <div data-upload-modal-card class="w-full max-w-5xl rounded-2xl border border-sky-200 bg-white shadow-xl overflow-hidden">
+      <div data-upload-modal-header class="px-5 py-4 bg-sky-50 border-b border-sky-200 flex items-center justify-between gap-3">
+        <div>
+          <h2 id="upload-details-title" class="text-sm md:text-base font-bold text-sky-950">Upload Details</h2>
+          <p id="upload-details-subtitle" class="text-xs text-sky-800 mt-1">Store upload source and timestamp details.</p>
+        </div>
+        <button type="button" id="upload-details-close" class="text-sky-700 hover:text-sky-900 text-sm font-semibold">Close</button>
+      </div>
+      <div id="upload-details-body" class="max-h-[70vh] overflow-y-auto p-5"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ----------------------------------------------------------------- -->
+<!-- Link Product Modal                                                 -->
+<!-- ----------------------------------------------------------------- -->
+<div id="link-product-modal" class="fixed inset-0 z-50 hidden">
+  <div id="link-product-backdrop" class="absolute inset-0 bg-black/40"></div>
+  <div class="relative z-10 h-full w-full flex items-center justify-center p-4">
+    <div class="w-full max-w-2xl rounded-2xl border border-amber-300 bg-white shadow-xl">
+      <div class="px-5 py-4 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="text-sm md:text-base font-bold text-amber-900">Link Detected Name To Master Product</h2>
+          <p class="text-xs text-amber-800 mt-1">Use this when a POS or RSO item name differs from its master product.</p>
+        </div>
+        <button type="button" id="link-product-close-x" class="text-amber-700 hover:text-amber-900 text-sm font-semibold">Close</button>
+      </div>
+      <form id="link-product-form" class="px-5 py-4 space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Detected Product Name</label>
+          <input
+            id="link-alias-name"
+            type="text"
+            name="alias_name"
+            placeholder="example: siopai asado"
+            required
+            class="w-full px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+          >
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Master Product Name</label>
+          <input
+            type="text"
+            name="master_product_name"
+            list="master-product-options"
+            placeholder="example: chicken asado siopao"
+            required
+            class="w-full px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+          >
+          <datalist id="master-product-options"></datalist>
+        </div>
+        <div class="pt-1 flex items-center justify-end gap-2">
+          <button type="button" id="link-product-cancel" class="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-sm rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
+          <button type="submit" class="px-4 py-2 bg-amber-600 text-white text-sm rounded-lg font-medium hover:bg-amber-700 transition-colors">Link Product</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+
+
+<script defer src="{{ url_for('static', filename='js/handles/system_analyzer_admin_handles.js') }}"></script>
+
+<script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+
+
+<script>
+
+</script>
+{% endblock %}
+
+
+
