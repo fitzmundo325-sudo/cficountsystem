@@ -15,9 +15,10 @@ from werkzeug.utils import secure_filename
 manila_tz = pytz.timezone("Asia/Manila")
 from dotenv import load_dotenv
 
-from . import db
+from . import db, cache
 from datetime import datetime, date, timedelta
-from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem
+from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery
+
 from .admin import log_audit_event
 
 plt = ""  # empty this var when on live website
@@ -47,6 +48,63 @@ def _can_manage_users():
     return hasattr(current_user, 'role') and current_user.role in ('Superadmin', 'Admin', 'General Manager')
 
 
+# Utilities ==========================================================
+
+def _is_grand_total_product_name(product_name):
+    normalized = re.sub(r'[^a-z0-9]+', '', str(product_name or '').strip().lower())
+    return normalized.startswith('grandtotal')
+
+
+
+def _normalize_product_text(value):
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+
+def _build_name_variants(normalized_name):
+    variants = {normalized_name}
+    if normalized_name.endswith('ies') and len(normalized_name) > 5:
+        variants.add(normalized_name[:-3] + 'y')
+    if normalized_name.endswith('es') and len(normalized_name) > 4:
+        variants.add(normalized_name[:-2])
+    if normalized_name.endswith('s') and len(normalized_name) > 3:
+        variants.add(normalized_name[:-1])
+    return {item for item in variants if item}
+
+
+
+@cache.memoize(timeout=300)
+def _get_product_alias_lookup():
+    rows = (
+        db.session.query(ProductAlias.normalized_alias, ProductMaster.description)
+        .join(ProductMaster, ProductMaster.id == ProductAlias.product_master_id)
+        .all()
+    )
+    return {
+        str(normalized_alias or '').strip(): (description or '').strip()
+        for normalized_alias, description in rows
+        if str(normalized_alias or '').strip() and (description or '').strip()
+    }
+
+
+# Lightweight cached access to product master rows for fast category resolution
+_cached_master_rows = None
+def _cached_product_masters():
+    global _cached_master_rows
+    if _cached_master_rows is None:
+        product_masters = (
+            ProductMaster.query
+            .with_entities(ProductMaster.description, ProductMaster.category)
+            .all()
+        )
+        _cached_master_rows = [
+            (
+                _normalize_product_text(description),
+                (description or '').strip(),
+                (category or '').strip() or 'Uncategorized',
+            )
+            for description, category in product_masters
+        ]
+    return _cached_master_rows
 
 # ================================
 # Product Masterlist Section Start
@@ -1609,6 +1667,454 @@ def api_delete_supply_request(request_id):
    
 # ================================
 # Supply Request Section End
+# ================================
+    
+    
+# ================================
+# System Analyzer Section Start
+# ================================
+
+
+@api_handles.route('/system_analyzer', methods=['GET'])
+@login_required
+def get_system_analyzer_data():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    today = datetime.today().date()
+    default_start = today.replace(day=1)
+    start_date_raw = (request.args.get('start_date') or '').strip()
+    end_date_raw = (request.args.get('end_date') or '').strip()
+
+    def _parse_iso_date(raw_value, fallback):
+        if not raw_value:
+            return fallback
+        try:
+            return datetime.strptime(raw_value, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            return fallback
+
+    start_date = _parse_iso_date(start_date_raw, default_start)
+    end_date = _parse_iso_date(end_date_raw, today)
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    master_products = ProductMaster.query.with_entities(ProductMaster.code, ProductMaster.description).all()
+    master_descriptions = [(description,) for _, description in master_products]
+    normalized_master_codes = {
+        re.sub(r'[^a-z0-9]', '', str(code).strip().lower())
+        for code, _ in master_products
+        if str(code or '').strip()
+    }
+    normalized_master_names = {
+        _normalize_product_text(description)
+        for (description,) in master_descriptions
+        if _normalize_product_text(description)
+    }
+    master_name_options = sorted({
+        (description or '').strip()
+        for (description,) in master_descriptions
+        if (description or '').strip()
+    })
+
+    master_match_names = set()
+    for master_name in normalized_master_names:
+        master_match_names.update(_build_name_variants(master_name))
+    master_match_names_list = list(master_match_names)
+    match_result_cache = {}
+    alias_lookup = _get_product_alias_lookup()
+
+    def _extract_product_code(product_text):
+        text_value = str(product_text or '').strip()
+        if not text_value:
+            return ''
+        compact_value = re.sub(r'[^a-z0-9]', '', text_value.lower())
+        if compact_value in normalized_master_codes:
+            return compact_value
+        leading_code = re.match(r'^\s*([a-z0-9][a-z0-9._-]{2,})\b', text_value, re.IGNORECASE)
+        if leading_code and re.search(r'\d', leading_code.group(1)):
+            candidate = re.sub(r'[^a-z0-9]', '', leading_code.group(1).lower())
+            return candidate
+        return ''
+
+    def _matches_master_code(product_text):
+        detected_code = _extract_product_code(product_text)
+        return bool(detected_code and detected_code in normalized_master_codes)
+
+    def _matches_master_name_exact(product_text):
+        normalized_name = _normalize_product_text(product_text)
+        if not normalized_name:
+            return False
+        return any(variant in master_match_names for variant in _build_name_variants(normalized_name))
+
+    pos_rows = (
+        db.session.query(
+            PosSold.product_name,
+            func.sum(PosSold.quantity).label('total_qty'),
+            func.sum(PosSold.gross_sales).label('total_gross_sales'),
+            func.sum(PosSold.net_sales).label('total_net_sales'),
+            func.count(PosSold.id).label('entry_count'),
+            func.count(func.distinct(DailyReport.store_id)).label('store_count'),
+            func.max(DailyReport.report_date).label('latest_report_date'),
+        )
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= end_date,
+        )
+        .group_by(PosSold.product_name)
+        .all()
+    )
+
+    price_timeline_rows = (
+        db.session.query(
+            PosSold.product_name,
+            DailyReport.report_date.label('report_date'),
+            func.sum(PosSold.quantity).label('daily_qty'),
+            func.sum(PosSold.gross_sales).label('daily_gross_sales'),
+        )
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= end_date,
+        )
+        .group_by(PosSold.product_name, DailyReport.report_date)
+        .order_by(DailyReport.report_date.asc())
+        .all()
+    )
+
+    price_timeline_by_product = {}
+    for row in price_timeline_rows:
+        product_name = (row.product_name or '').strip()
+        if not product_name:
+            continue
+        daily_qty = float(row.daily_qty or 0.0)
+        if daily_qty <= 0:
+            continue
+        daily_gross_sales = float(row.daily_gross_sales or 0.0)
+        unit_price = daily_gross_sales / daily_qty
+
+        bucket = price_timeline_by_product.setdefault(product_name, [])
+        bucket.append({
+            'date': row.report_date,
+            'unit_price': unit_price,
+        })
+
+    unmatched_items = []
+    total_unique_pos_products = 0
+    matched_unique_products = 0
+    unmatched_total_qty = 0
+    unmatched_total_net_sales = 0.0
+
+    for row in pos_rows:
+        product_name = (row.product_name or '').strip()
+        if not product_name or _is_grand_total_product_name(product_name):
+            continue
+
+        normalized_name = _normalize_product_text(product_name)
+        if not normalized_name:
+            continue
+
+        total_unique_pos_products += 1
+        aliased_master_name = alias_lookup.get(normalized_name)
+        canonical_name = aliased_master_name or product_name
+        is_in_master = (
+            bool(aliased_master_name)
+            or _matches_master_code(product_name)
+            or _matches_master_name_exact(canonical_name)
+        )
+        if is_in_master:
+            matched_unique_products += 1
+            continue
+
+        total_qty = int(row.total_qty or 0)
+        total_gross_sales = float(row.total_gross_sales or 0.0)
+        total_net_sales = float(row.total_net_sales or 0.0)
+        unmatched_total_qty += total_qty
+        unmatched_total_net_sales += total_net_sales
+
+        avg_unit_price = None
+        if total_qty > 0:
+            avg_unit_price = total_gross_sales / float(total_qty)
+
+        price_change_amount = None
+        price_change_percent = None
+        price_points = price_timeline_by_product.get(product_name, [])
+        if len(price_points) >= 2:
+            start_unit_price = float(price_points[0]['unit_price'])
+            end_unit_price = float(price_points[-1]['unit_price'])
+            price_change_amount = end_unit_price - start_unit_price
+            if start_unit_price != 0:
+                price_change_percent = (price_change_amount / start_unit_price) * 100.0
+
+        unmatched_items.append({
+            'product_name': product_name,
+            'product_code': _extract_product_code(product_name),
+            'total_qty': total_qty,
+            'total_gross_sales': total_gross_sales,
+            'total_net_sales': total_net_sales,
+            'avg_unit_price': avg_unit_price,
+            'unit_price_change': price_change_amount,
+            'unit_price_change_pct': price_change_percent,
+            'entry_count': int(row.entry_count or 0),
+            'store_count': int(row.store_count or 0),
+            'latest_report_date': row.latest_report_date.strftime('%Y-%m-%d') if row.latest_report_date else None,
+        })
+
+    unmatched_items = sorted(
+        unmatched_items,
+        key=lambda item: (item.get('latest_report_date') or '', int(item.get('total_qty', 0) or 0)),
+        reverse=True,
+    )
+
+    rso_rows = (
+        db.session.query(
+            RsoDelivery.product_name,
+            func.sum(RsoDelivery.quantity).label('total_qty'),
+            func.sum(func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity)).label('total_received_qty'),
+            func.count(RsoDelivery.id).label('entry_count'),
+            func.count(func.distinct(RsoDelivery.store_id)).label('store_count'),
+            func.max(RsoDelivery.report_date).label('latest_report_date'),
+        )
+        .filter(
+            RsoDelivery.report_date >= start_date,
+            RsoDelivery.report_date <= end_date,
+        )
+        .group_by(RsoDelivery.product_name)
+        .all()
+    )
+
+    unmatched_rso_items = []
+    total_unique_rso_products = 0
+    matched_unique_rso_products = 0
+    unmatched_rso_total_qty = 0
+    for row in rso_rows:
+        product_name = (row.product_name or '').strip()
+        normalized_name = _normalize_product_text(product_name)
+        if not normalized_name:
+            continue
+        total_unique_rso_products += 1
+        aliased_master_name = alias_lookup.get(normalized_name)
+        canonical_name = aliased_master_name or product_name
+        is_in_master = (
+            bool(aliased_master_name)
+            or _matches_master_code(product_name)
+            or _matches_master_name_exact(canonical_name)
+        )
+        if is_in_master:
+            matched_unique_rso_products += 1
+            continue
+
+        total_qty = int(row.total_qty or 0)
+        unmatched_rso_total_qty += total_qty
+        unmatched_rso_items.append({
+            'product_name': product_name,
+            'product_code': _extract_product_code(product_name),
+            'total_qty': total_qty,
+            'total_received_qty': int(row.total_received_qty or 0),
+            'entry_count': int(row.entry_count or 0),
+            'store_count': int(row.store_count or 0),
+            'latest_report_date': row.latest_report_date.strftime('%Y-%m-%d') if row.latest_report_date else None,
+        })
+
+    unmatched_rso_items.sort(
+        key=lambda item: (item.get('latest_report_date') or '', int(item.get('total_qty', 0) or 0)),
+        reverse=True,
+    )
+
+    pos_upload_details = {}
+    unmatched_pos_names = [item['product_name'] for item in unmatched_items if item.get('product_name')]
+    if unmatched_pos_names:
+        pos_upload_rows = (
+            db.session.query(
+                PosSold.product_name,
+                Store.name.label('store_name'),
+                DailyReport.report_date.label('report_date'),
+                func.count(PosSold.id).label('entry_count'),
+                func.sum(PosSold.quantity).label('total_qty'),
+                func.sum(PosSold.net_sales).label('total_net_sales'),
+                func.max(PosSold.uploaded_at).label('latest_uploaded_at'),
+                func.max(User.username).label('uploaded_by'),
+            )
+            .select_from(PosSold)
+            .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+            .join(Store, Store.id == DailyReport.store_id)
+            .outerjoin(User, User.id == DailyReport.submitted_by)
+            .filter(
+                DailyReport.report_date >= start_date,
+                DailyReport.report_date <= end_date,
+                PosSold.product_name.in_(unmatched_pos_names),
+            )
+            .group_by(PosSold.product_name, Store.id, Store.name, DailyReport.report_date)
+            .order_by(func.max(PosSold.uploaded_at).desc(), DailyReport.report_date.desc(), Store.name.asc())
+            .all()
+        )
+        for row in pos_upload_rows:
+            pos_upload_details.setdefault(row.product_name, []).append({
+                'store_name': row.store_name or '-',
+                'report_date': row.report_date.strftime('%Y-%m-%d') if row.report_date else '-',
+                'entry_count': int(row.entry_count or 0),
+                'total_qty': int(row.total_qty or 0),
+                'total_net_sales': float(row.total_net_sales or 0.0),
+                'uploaded_by': row.uploaded_by or '-',
+                'latest_uploaded_at': row.latest_uploaded_at.strftime('%Y-%m-%d %H:%M') if row.latest_uploaded_at else '-',
+            })
+
+    rso_upload_details = {}
+    unmatched_rso_names = [item['product_name'] for item in unmatched_rso_items if item.get('product_name')]
+    if unmatched_rso_names:
+        rso_upload_rows = (
+            db.session.query(
+                RsoDelivery.product_name,
+                Store.name.label('store_name'),
+                RsoDelivery.report_date.label('report_date'),
+                RsoDelivery.upload_source.label('upload_source'),
+                func.count(RsoDelivery.id).label('entry_count'),
+                func.sum(RsoDelivery.quantity).label('total_qty'),
+                func.sum(func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity)).label('total_received_qty'),
+                func.max(RsoDelivery.uploaded_at).label('latest_uploaded_at'),
+                func.max(User.username).label('uploaded_by'),
+            )
+            .select_from(RsoDelivery)
+            .join(Store, Store.id == RsoDelivery.store_id)
+            .outerjoin(User, User.id == RsoDelivery.uploaded_by)
+            .filter(
+                RsoDelivery.report_date >= start_date,
+                RsoDelivery.report_date <= end_date,
+                RsoDelivery.product_name.in_(unmatched_rso_names),
+            )
+            .group_by(RsoDelivery.product_name, Store.id, Store.name, RsoDelivery.report_date, RsoDelivery.upload_source)
+            .order_by(func.max(RsoDelivery.uploaded_at).desc(), RsoDelivery.report_date.desc(), Store.name.asc())
+            .all()
+        )
+        for row in rso_upload_rows:
+            rso_upload_details.setdefault(row.product_name, []).append({
+                'store_name': row.store_name or '-',
+                'report_date': row.report_date.strftime('%Y-%m-%d') if row.report_date else '-',
+                'upload_source': 'Bulk Order' if row.upload_source == 'bulk' else 'Delivery RSO',
+                'entry_count': int(row.entry_count or 0),
+                'total_qty': int(row.total_qty or 0),
+                'total_received_qty': int(row.total_received_qty or 0),
+                'uploaded_by': row.uploaded_by or '-',
+                'latest_uploaded_at': row.latest_uploaded_at.strftime('%Y-%m-%d %H:%M') if row.latest_uploaded_at else '-',
+            })
+
+    return jsonify({
+        'type': 'success',
+        'message': 'System analyzer data loaded.',
+        'data': {
+            'start_date': start_date.strftime('%Y-%m-%d'),
+            'end_date': end_date.strftime('%Y-%m-%d'),
+            'master_name_options': master_name_options,
+            'unmatched_items': unmatched_items,
+            'unmatched_rso_items': unmatched_rso_items,
+            'pos_upload_details': pos_upload_details,
+            'rso_upload_details': rso_upload_details,
+            'summary': {
+                'total_unique_pos_products': total_unique_pos_products,
+                'matched_unique_products': matched_unique_products,
+                'unmatched_unique_products': len(unmatched_items),
+                'unmatched_total_qty': unmatched_total_qty,
+                'unmatched_total_net_sales': unmatched_total_net_sales,
+                'total_unique_rso_products': total_unique_rso_products,
+                'matched_unique_rso_products': matched_unique_rso_products,
+                'unmatched_unique_rso_products': len(unmatched_rso_items),
+                'unmatched_rso_total_qty': unmatched_rso_total_qty,
+            },
+        },
+    })
+
+
+@api_handles.route('/system_analyzer/link_product', methods=['POST'])
+@login_required
+def link_system_analyzer_product():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    payload = request.get_json() or {}
+    alias_name = (payload.get('alias_name') or '').strip()
+    master_product_name = (payload.get('master_product_name') or '').strip()
+
+    if not alias_name or not master_product_name:
+        return jsonify({'type': 'error', 'message': 'Please provide the detected product name and master product name.'}), 400
+
+    normalized_alias = _normalize_product_text(alias_name)
+    normalized_target = _normalize_product_text(master_product_name)
+    if not normalized_alias or not normalized_target:
+        return jsonify({'type': 'error', 'message': 'Invalid product names for linking.'}), 400
+
+    product_masters = ProductMaster.query.with_entities(ProductMaster.id, ProductMaster.description).all()
+    best_match = None
+    best_score = 0.0
+    for master_id, master_description in product_masters:
+        normalized_master = _normalize_product_text(master_description)
+        if not normalized_master:
+            continue
+        if normalized_master == normalized_target:
+            best_match = (master_id, master_description)
+            best_score = 1.0
+            break
+        score = SequenceMatcher(None, normalized_target, normalized_master).ratio()
+        if score > best_score:
+            best_score = score
+            best_match = (master_id, master_description)
+
+    if not best_match or best_score < 0.80:
+        return jsonify({'type': 'error', 'message': 'Master product not found. Please type a valid masterlist product name.'}), 400
+
+    linked_master_id, linked_master_name = best_match
+    try:
+        existing_alias = ProductAlias.query.filter_by(normalized_alias=normalized_alias).first()
+        if existing_alias:
+            previous_master_id = existing_alias.product_master_id
+            existing_alias.alias_name = alias_name
+            existing_alias.product_master_id = int(linked_master_id)
+            existing_alias.created_by = current_user.id
+            action = 'updated'
+        else:
+            previous_master_id = None
+            db.session.add(
+                ProductAlias(
+                    alias_name=alias_name,
+                    normalized_alias=normalized_alias,
+                    product_master_id=int(linked_master_id),
+                    created_by=current_user.id,
+                )
+            )
+            action = 'created'
+
+        log_audit_event(
+            action='admin.product_alias.link',
+            entity_type='ProductAlias',
+            entity_id=normalized_alias,
+            reason='Linked detected product name to product masterlist.',
+            details={
+                'alias_name': alias_name,
+                'normalized_alias': normalized_alias,
+                'master_product_id': int(linked_master_id),
+                'master_product_name': linked_master_name,
+                'previous_master_id': previous_master_id,
+                'action': action,
+            },
+        )
+        db.session.commit()
+        return jsonify({
+            'type': 'success',
+            'message': f'Linked "{alias_name}" to "{linked_master_name}". POS and RSO matching will now use the master product.',
+            'data': {
+                'alias_name': alias_name,
+                'master_product_name': linked_master_name,
+                'action': action,
+            },
+        })
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Error linking product alias: {str(exc)}'}), 500
+
+
+
+# ================================
+# System Analyzer Section End
 # ================================
  
  

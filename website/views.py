@@ -12371,6 +12371,20 @@ def supply_v2_():
     return render_template("admin/supply_management_v2.html", user=current_user, page=page, active_tab=active_tab)      
 
 
+
+
+@views.route('/admin/system_analyzer', methods=['GET'])
+@login_required
+def system_analyzer_v2():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    page = 'system_analyzer'
+    return render_template("admin/system_analyzer_v2.html", user=current_user, page=page)
+    
+    
+
 # ================================================
 # Supply Requests (store side)
 # ================================================
