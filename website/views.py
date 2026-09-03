@@ -3611,6 +3611,7 @@ def _sanitize_rso_items(items):
             continue
         item_rso_no = str(item.get('rso_no', '') or '').strip()
         item_source = str(item.get('upload_source', '') or '').strip()
+        product_code = str(item.get('product_code', '') or '').strip()
 
         quantity = _normalize_pos_quantity(item.get('quantity'))
         if quantity is None or quantity <= 0:
@@ -3622,7 +3623,11 @@ def _sanitize_rso_items(items):
                 'quantity': 0,
                 'received_quantity': 0,
                 'has_received_quantity': False,
+                'product_code': product_code or None,
             }
+        elif product_code and not aggregated_items[item_key].get('product_code'):
+            aggregated_items[item_key]['product_code'] = product_code
+
         aggregated_items[item_key]['quantity'] = int(aggregated_items[item_key]['quantity'] or 0) + quantity
         raw_received_quantity = item.get('received_quantity')
         if raw_received_quantity is not None and str(raw_received_quantity).strip() != '':
@@ -3634,6 +3639,7 @@ def _sanitize_rso_items(items):
     return [
         {
             'product_name': item_key[2],
+            'product_code': item_values.get('product_code') or None,
             'rso_no': item_key[0] or None,
             'upload_source': item_key[1] or None,
             'quantity': int(item_values.get('quantity', 0) or 0),
@@ -3681,48 +3687,89 @@ def _extract_rso_items_from_excel(uploaded_file):
     if not rso_no:
         rso_no = 'RSO-DELIVERY'
 
-    # 2. Flexible column detection for Product Name and Quantity
+    # 2. Flexible column detection for Product Code, Product Name, and Quantity
     prod_col = None
     qty_col = None
+    code_col = None
     header_row_idx = None
 
-    prod_keywords = ['product name', 'product_name', 'product', 'description', 'item description', 'item name', 'item', 'particulars', 'material description']
+    prod_keywords = ['product name', 'product_name', 'item name', 'item_name', 'product description', 'item description', 'description', 'desc', 'particulars', 'material description', 'product']
     qty_keywords = ['quantity', 'qty', 'qty.', 'received qty', 'received', 'del qty', 'delivery qty', 'ordered qty', 'order qty', 'total qty', 'del_qty', 'pcs', 'count']
+    code_keywords = ['product code', 'product_code', 'item code', 'item_code', 'code', 'sku', 'mat. no.', 'mat no', 'mat_no', 'item_no', 'item no']
 
     for r_idx in range(min(10, df.shape[0])):
         row_vals = [str(df.iat[r_idx, c_idx]).strip().lower() if not pd.isna(df.iat[r_idx, c_idx]) else '' for c_idx in range(df.shape[1])]
         
         found_prod = None
         found_qty = None
+        found_code = None
 
         for c_idx, cell in enumerate(row_vals):
             if not cell:
                 continue
-            if found_prod is None and any(kw == cell or cell.startswith(kw) for kw in prod_keywords):
-                found_prod = c_idx
+
+            is_code_cell = any(kw == cell or cell.startswith(kw) for kw in code_keywords) or ('code' in cell and 'name' not in cell) or ('sku' in cell)
+            if found_code is None and is_code_cell:
+                found_code = c_idx
+
             if found_qty is None and any(kw == cell or cell.startswith(kw) for kw in qty_keywords):
                 found_qty = c_idx
 
-        if found_prod is not None and found_qty is not None:
-            prod_col = found_prod
-            qty_col = found_qty
-            header_row_idx = r_idx
-            break
+            if found_prod is None and not is_code_cell:
+                if any(kw == cell or (cell.startswith(kw) and 'code' not in cell and 'sku' not in cell) for kw in prod_keywords):
+                    found_prod = c_idx
 
-    # If no explicit header row detected, fall back to column index defaults
+        if found_prod is not None or found_qty is not None or found_code is not None:
+            prod_col = found_prod if found_prod is not None else prod_col
+            qty_col = found_qty if found_qty is not None else qty_col
+            code_col = found_code if found_code is not None else code_col
+            header_row_idx = r_idx
+            if prod_col is not None and qty_col is not None:
+                break
+
+    # If header match didn't find both prod_col and qty_col, inspect row data values
     if prod_col is None or qty_col is None:
-        if df.shape[1] >= 4:
-            prod_col = prod_col if prod_col is not None else 2
-            qty_col = qty_col if qty_col is not None else 3
-            header_row_idx = 0 if header_row_idx is None else header_row_idx
-        elif df.shape[1] == 3:
-            prod_col = prod_col if prod_col is not None else 1
-            qty_col = qty_col if qty_col is not None else 2
-            header_row_idx = 0 if header_row_idx is None else header_row_idx
-        elif df.shape[1] == 2:
-            prod_col = prod_col if prod_col is not None else 0
-            qty_col = qty_col if qty_col is not None else 1
-            header_row_idx = 0 if header_row_idx is None else header_row_idx
+        start_search_row = (header_row_idx + 1) if header_row_idx is not None else 1
+        col_text_counts = {c: 0 for c in range(df.shape[1])}
+        col_num_counts = {c: 0 for c in range(df.shape[1])}
+
+        for r_idx in range(start_search_row, min(start_search_row + 30, df.shape[0])):
+            for c_idx in range(df.shape[1]):
+                val = df.iat[r_idx, c_idx]
+                if pd.isna(val):
+                    continue
+                v_str = str(val).strip()
+                if not v_str:
+                    continue
+                num = _normalize_pos_quantity(val)
+                if num is not None and num >= 0:
+                    col_num_counts[c_idx] += 1
+                elif len(v_str) > 1 and not v_str.isdigit():
+                    col_text_counts[c_idx] += 1
+
+        if prod_col is None:
+            if df.shape[1] >= 3 and col_text_counts.get(2, 0) > 0:
+                prod_col = 2
+            elif col_text_counts:
+                text_candidates = [(c, cnt) for c, cnt in col_text_counts.items() if c != code_col]
+                prod_col = max(text_candidates, key=lambda x: x[1])[0] if text_candidates else 2
+            else:
+                prod_col = 2 if df.shape[1] >= 3 else 0
+
+        if qty_col is None:
+            num_candidates = [(c, cnt) for c, cnt in col_num_counts.items() if c != prod_col and c != code_col]
+            if num_candidates:
+                qty_col = max(num_candidates, key=lambda x: x[1])[0]
+            else:
+                qty_col = 3 if df.shape[1] >= 4 else (1 if prod_col != 1 else 2)
+
+    # Final fallback guarantees: Column C (index 2) for Product Name, Column D (index 3) for Quantity
+    if prod_col is None:
+        prod_col = 2 if df.shape[1] >= 3 else 0
+    if qty_col is None:
+        qty_col = 3 if df.shape[1] >= 4 else (1 if prod_col != 1 else 2)
+    if code_col is None and df.shape[1] >= 3 and prod_col != 1 and qty_col != 1:
+        code_col = 1  # Column B is Product Code
 
     start_row = (header_row_idx + 1) if header_row_idx is not None else 1
 
@@ -3731,8 +3778,10 @@ def _extract_rso_items_from_excel(uploaded_file):
     for r_idx in range(start_row, df.shape[0]):
         prod_cell = df.iat[r_idx, prod_col] if prod_col is not None and prod_col < df.shape[1] and not pd.isna(df.iat[r_idx, prod_col]) else ''
         qty_cell = df.iat[r_idx, qty_col] if qty_col is not None and qty_col < df.shape[1] and not pd.isna(df.iat[r_idx, qty_col]) else None
+        code_cell = df.iat[r_idx, code_col] if code_col is not None and code_col < df.shape[1] and not pd.isna(df.iat[r_idx, code_col]) else ''
 
         product_name = str(prod_cell).strip()
+        product_code = str(code_cell).strip()
         has_qty_content = qty_cell is not None and str(qty_cell).strip() != ''
         quantity = _normalize_pos_quantity(qty_cell)
 
@@ -3748,16 +3797,18 @@ def _extract_rso_items_from_excel(uploaded_file):
         if quantity is None:
             continue
 
-        if product_name not in aggregated_items:
-            aggregated_items[product_name] = {'quantity': 0}
-        aggregated_items[product_name]['quantity'] = int(aggregated_items[product_name]['quantity'] or 0) + quantity
+        item_key = (product_name, product_code)
+        if item_key not in aggregated_items:
+            aggregated_items[item_key] = {'quantity': 0, 'product_code': product_code or None}
+        aggregated_items[item_key]['quantity'] = int(aggregated_items[item_key]['quantity'] or 0) + quantity
 
     items = _sanitize_rso_items([
         {
-            'product_name': product_name,
+            'product_name': item_key[0],
+            'product_code': item_key[1] or None,
             'quantity': item_values.get('quantity', 0),
         }
-        for product_name, item_values in aggregated_items.items()
+        for item_key, item_values in aggregated_items.items()
     ])
 
     rso_no_item = {'product_name': f'RSO No: {rso_no}', 'quantity': 1}
