@@ -8913,11 +8913,12 @@ def cluster_manager_raw_data():
 @login_required
 def cluster_manager_cluster_data():
     role = (current_user.role or '').strip()
-    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
-        flash('Access denied. Only Cluster Managers, Admins, and General Managers can access this page.', category='error')
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'):
+        flash('Access denied. Only Cluster Managers, Area Managers, Admins, and General Managers can access this page.', category='error')
         return redirect(url_for('views.home'))
 
     from .models import Cluster
+    from .views import _get_area_manager_cluster_ids
     cluster = None
 
     if role == 'Cluster Manager':
@@ -8926,6 +8927,17 @@ def cluster_manager_cluster_data():
         if not cluster:
             flash('You are not assigned to any cluster yet.', category='error')
             return redirect(url_for('views.home'))
+    elif role == 'Area Manager':
+        # Area Managers can only access clusters they are assigned to.
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view data.', category='error')
+            return redirect(url_for('admin.clusters'))
+        if cluster_id not in allowed_cluster_ids:
+            flash('Access denied. You are not assigned to this cluster.', category='error')
+            return redirect(url_for('views.home'))
+        cluster = Cluster.query.get_or_404(cluster_id)
     else:
         # Admin/Superadmin/General Manager can open any cluster via query param.
         cluster_id = request.args.get('cluster_id', type=int)
@@ -9074,8 +9086,8 @@ def cluster_manager_cluster_data():
                          cluster=cluster, 
                          team_name=_get_team_name(cluster),
                          stores=stores,
-                         force_cluster_sidebar=(role in ('Admin', 'Superadmin', 'General Manager')),
-                         cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin', 'General Manager') else '',
+                         force_cluster_sidebar=(role in ('Admin', 'Superadmin', 'General Manager', 'Area Manager')),
+                         cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin', 'General Manager', 'Area Manager') else '',
                          cluster_sidebar_stores=cluster_sidebar_stores,
                          current_month=current_month,
                          current_year=current_year,
@@ -9090,9 +9102,319 @@ def cluster_manager_cluster_data():
                          approved_reports_count=approved_reports_count,
                          pos_modal_payload=pos_modal_payload,
                          summary=summary,
-                         today_day=today.day,
-                         today_month=today.month,
-                         today_year=today.year)
+today_day=today.day,
+                          today_month=today.month,
+                          today_year=today.year)
+
+
+@views.route('/cluster-manager/cluster-data/export-excel')
+@login_required
+def cluster_manager_cluster_data_export_excel():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Cluster, Store
+    from .views import _get_area_manager_cluster_ids
+    cluster = None
+
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            flash('You are not assigned to any cluster yet.', category='error')
+            return redirect(url_for('views.home'))
+    elif role == 'Area Manager':
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view data.', category='error')
+            return redirect(url_for('admin.clusters'))
+        if cluster_id not in allowed_cluster_ids:
+            flash('Access denied. You are not assigned to this cluster.', category='error')
+            return redirect(url_for('views.home'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view data.', category='error')
+            return redirect(url_for('admin.clusters'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    # Get stores in this cluster
+    stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    stores = _apply_store_scope_filter(stores, request)
+
+    # Get current month and year (or from query params)
+    from datetime import datetime as dt
+    today = date.today()
+    current_month = request.args.get('month', today.strftime('%m'))
+    current_year = request.args.get('year', str(today.year))
+    store_filter = request.args.get('store_id', '')
+    export_type = request.args.get('export_type', 'current')
+
+    # Fetch daily reports for the selected month/year
+    from calendar import monthrange
+    import calendar
+
+    # Get all store IDs in this cluster
+    cluster_store_ids = [s.id for s in stores]
+    store_ids = list(cluster_store_ids)
+
+    # Filter by specific store if selected (only for 'current' export type)
+    if export_type == 'current' and store_filter:
+        try:
+            selected_store_id = int(store_filter)
+        except (TypeError, ValueError):
+            flash('Invalid store selection.', category='error')
+            return redirect(url_for('views.cluster_manager_cluster_data', cluster_id=cluster.id, month=current_month, year=current_year))
+        if selected_store_id in cluster_store_ids:
+            store_ids = [selected_store_id]
+        else:
+            flash('Selected store does not belong to this cluster.', category='error')
+            return redirect(url_for('views.cluster_manager_cluster_data', cluster_id=cluster.id, month=current_month, year=current_year))
+    # For 'all' export type, use all stores in cluster (store_ids already set to all cluster stores)
+
+    # Build date range for the month
+    year_int = int(current_year)
+    month_int = int(current_month)
+    _, num_days = monthrange(year_int, month_int)
+
+    # Fetch all reports for this month
+    from datetime import datetime
+    start_date = datetime(year_int, month_int, 1).date()
+    end_date = datetime(year_int, month_int, num_days).date()
+
+    # Match Raw Data logic: include all report statuses for the selected scope.
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_ending_inventory_from_invensync(reports)
+    _apply_taf_wastage_amounts(reports)
+    consolidated_reports = _consolidate_cluster_reports_by_date(reports)
+
+    # Fetch store targets for the selected month
+    from .models import StoreTarget
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+
+    # Organize targets by date (same shape as raw-data flow).
+    targets_by_date = {}
+    for target in targets:
+        date_key = target.target_date.strftime('%Y-%m-%d')
+        if date_key not in targets_by_date:
+            targets_by_date[date_key] = []
+        targets_by_date[date_key].append(target)
+
+    daily_targets = _aggregate_targets_by_day(targets)
+    acc_daily_targets = _build_acc_targets_by_day(year_int, month_int, daily_targets)
+    acc_daily_sales = _build_acc_sales_by_day(year_int, month_int, consolidated_reports)
+    mtd_metrics_by_day = _build_mtd_metrics_by_day(year_int, month_int, acc_daily_sales, acc_daily_targets)
+    _attach_report_calc_fields(
+        consolidated_reports,
+        daily_targets,
+        prioritize_pending=True,
+        acc_targets_by_day=acc_daily_targets,
+        acc_sales_by_day=acc_daily_sales
+    )
+    summary = _build_cluster_manager_summary(consolidated_reports, targets)
+
+    # Organize reports by date
+    reports_by_date = _group_reports_by_date(consolidated_reports)
+
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cluster Data Export"
+
+    title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
+    header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
+    data_font = Font(name="Calibri", size=10, color="0F172A")
+    green_font = Font(name="Calibri", size=10, color="059669", bold=True)
+    red_font = Font(name="Calibri", size=10, color="DC2626", bold=True)
+    amber_font = Font(name="Calibri", size=10, color="B45309", bold=True)
+    number_format = '#,##0.00'
+    pct_format = '0.00%'
+
+    # Title
+    ws.append(["CLUSTER DATA EXPORT"])
+    ws.cell(row=1, column=1).font = title_font
+
+    # Meta info
+    month_names_full = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+    ws.append([f"Cluster: {cluster.name} | Month: {month_names_full[month_int]} {year_int} | Store Scope: {request.cookies.get('store_scope', 'official').capitalize()}"])
+    ws.cell(row=2, column=1).font = sub_font
+    ws.append([])
+
+    # Headers
+    headers = [
+        'Date', 'Store', 'Gross Sales', 'C.I', 'Total Gross Sales',
+        'Target (Net)', 'Last Year (Net)', 'vs. Tgt %', 'Net Sales',
+        'Acc Net Sales', 'Acc Target Net', 'Acc LY Net', 'MTD vs. Tgt %',
+        'MTD vs. LY %', 'GBI Target', 'GBI Acc', 'AR %', 'vs. LY %',
+        'TC', 'AC'
+    ]
+    ws.append(headers)
+    for col in range(1, len(headers) + 1):
+        c = ws.cell(row=4, column=col)
+        c.font = header_font
+        c.fill = header_fill
+
+    # Data rows
+    month_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    for day in range(1, num_days + 1):
+        date_str = f"{year_int}-{month_int:02d}-{day:02d}"
+        day_reports = reports_by_date.get(date_str, [])
+        
+        if day_reports:
+            for report in day_reports:
+                store_name = stores[0].name if len(stores) == 1 else (next((s.name for s in stores if s.id == report.store_id), f'Store {report.store_id}'))
+                vs_tgt = report.calc.vs_tgt
+                mtd_vs_tgt = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_tgt')
+                mtd_vs_ly = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_ly')
+                
+                row_data = [
+                    f"{month_names[month_int]} {day:02d}, {year_int}",
+                    store_name,
+                    float(report.pos_gross_sales or 0),
+                    float(report.ci_regular_gross_sales or 0),
+                    float(report.calc.total_gross_sales or 0),
+                    float(daily_targets.get(date_str, {}).get('target_net', 0)),
+                    float(daily_targets.get(date_str, {}).get('last_year_net', 0)),
+                    vs_tgt / 100 if vs_tgt is not None else None,
+                    float(report.calc.net_sales or 0),
+                    float(acc_daily_sales.get(date_str, {}).get('net_sales', 0)),
+                    float(acc_daily_targets.get(date_str, {}).get('target_net', 0)),
+                    float(acc_daily_targets.get(date_str, {}).get('last_year_net', 0)),
+                    (mtd_vs_tgt / 100) if mtd_vs_tgt is not None else None,
+                    (mtd_vs_ly / 100) if mtd_vs_ly is not None else None,
+                    float(daily_targets.get(date_str, {}).get('gbi_target', 0)),
+                    float(acc_daily_targets.get(date_str, {}).get('gbi_target', 0)),
+                    float(report.calc.ar or 0) / 100 if report.calc.ar is not None else None,
+                    float(report.calc.vs_ly or 0) / 100 if report.calc.vs_ly is not None else None,
+                    report.calc.tc_total,
+                    float(report.calc.ac or 0),
+                ]
+                ws.append(row_data)
+                row_num = ws.max_row
+                # Format numbers
+                for col_idx in [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 20]:
+                    cell = ws.cell(row=row_num, column=col_idx)
+                    cell.number_format = number_format
+                for col_idx in [8, 13, 14, 17, 18]:
+                    cell = ws.cell(row=row_num, column=col_idx)
+                    if cell.value is not None:
+                        cell.number_format = pct_format
+                # Color coding for vs_tgt
+                vs_tgt_cell = ws.cell(row=row_num, column=8)
+                if vs_tgt_cell.value is not None:
+                    vs_tgt_cell.font = green_font if vs_tgt_cell.value >= 0 else red_font
+        elif day <= today.day and (year_int != today.year or month_int != today.month or day <= today.day):
+            # Missing report row
+            store_name = stores[0].name if len(stores) == 1 else 'All Stores'
+            row_data = [
+                f"{month_names[month_int]} {day:02d}, {year_int}",
+                store_name,
+                0, 0, 0,
+                float(daily_targets.get(date_str, {}).get('target_net', 0)),
+                float(daily_targets.get(date_str, {}).get('last_year_net', 0)),
+                None,
+                0,
+                float(acc_daily_sales.get(date_str, {}).get('net_sales', 0)),
+                float(acc_daily_targets.get(date_str, {}).get('target_net', 0)),
+                float(acc_daily_targets.get(date_str, {}).get('last_year_net', 0)),
+                (mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_tgt') / 100) if mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_tgt') is not None else None,
+                (mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_ly') / 100) if mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_ly') is not None else None,
+                float(daily_targets.get(date_str, {}).get('gbi_target', 0)),
+                float(acc_daily_targets.get(date_str, {}).get('gbi_target', 0)),
+                None,
+                None,
+                0,
+                0,
+            ]
+            ws.append(row_data)
+            row_num = ws.max_row
+            for col_idx in [3, 4, 5, 6, 7, 9, 10, 11, 12, 15, 16, 20]:
+                cell = ws.cell(row=row_num, column=col_idx)
+                cell.number_format = number_format
+            for col_idx in [8, 13, 14, 17, 18]:
+                cell = ws.cell(row=row_num, column=col_idx)
+                if cell.value is not None:
+                    cell.number_format = pct_format
+
+    # Summary row
+    ws.append([])
+    ws.append(["SUMMARY / TOTALS"])
+    summary_row = ws.max_row
+    ws.cell(row=summary_row, column=1).font = Font(name="Calibri", size=10, bold=True, color="1E293B")
+    
+    summary_data = [
+        '', 'TOTAL / AVG',
+        float(summary.sales.gross_sales),
+        float(summary.sales.ci_sales),
+        float(summary.sales.total_gross_sales),
+        float(summary.sales.target_net),
+        float(summary.sales.last_year_net),
+        float(summary.sales.vs_tgt_percent) / 100,
+        float(summary.sales.net_sales),
+        float(summary.sales.acc_net_sales),
+        float(summary.sales.acc_target_net),
+        float(summary.sales.acc_ly_net),
+        float(summary.sales.mtd_vs_tgt_percent) / 100,
+        float(summary.sales.mtd_vs_ly_percent) / 100,
+        float(summary.sales.gbi_target),
+        float(summary.sales.acc_gbi),
+        float(summary.sales.ar_percent) / 100,
+        float(summary.sales.vs_ly_percent) / 100,
+        float(summary.sales.tc),
+        float(summary.sales.ac),
+    ]
+    ws.append(summary_data)
+    for col_idx in [3, 4, 5, 6, 7, 9, 10, 11, 12, 15, 16, 20]:
+        cell = ws.cell(row=ws.max_row, column=col_idx)
+        cell.number_format = number_format
+    for col_idx in [8, 13, 14, 17, 18]:
+        cell = ws.cell(row=ws.max_row, column=col_idx)
+        if cell.value is not None:
+            cell.number_format = pct_format
+
+    # Auto-fit columns
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 30)
+        ws.column_dimensions[column].width = adjusted_width
+
+    # Save to BytesIO
+    from io import BytesIO
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    # Generate filename
+    filename = f"Cluster_Data_{cluster.name}_{month_names_full[month_int]}_{year_int}.xlsx"
+
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 
 @views.route('/cluster-manager/oracle')
@@ -9162,17 +9484,29 @@ def cluster_manager_invensync():
     """Cluster Manager view for Invensync ending inventory from assigned stores only"""
     from datetime import date as _date
     role = (current_user.role or '').strip()
-    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
     from .models import Cluster, Store
+    from .views import _get_area_manager_cluster_ids
     cluster = None
     if role == 'Cluster Manager':
         cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
         if not cluster:
             flash('You are not assigned to any cluster yet.', category='error')
             return redirect(url_for('views.home'))
+    elif role == 'Area Manager':
+        # Area Managers can only access clusters they are assigned to.
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view Invensync.', category='error')
+            return redirect(url_for('admin.clusters'))
+        if cluster_id not in allowed_cluster_ids:
+            flash('Access denied. You are not assigned to this cluster.', category='error')
+            return redirect(url_for('views.home'))
+        cluster = Cluster.query.get_or_404(cluster_id)
     else:
         cluster_id = request.args.get('cluster_id', type=int)
         if not cluster_id:
@@ -9352,11 +9686,12 @@ def cluster_manager_save_store_buffers():
 @login_required
 def cluster_manager_cluster_sbase():
     role = (current_user.role or '').strip()
-    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
-        flash('Access denied. Only Cluster Managers and Admins can access this page.', category='error')
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'):
+        flash('Access denied. Only Cluster Managers, Area Managers, Admins, and General Managers can access this page.', category='error')
         return redirect(url_for('views.home'))
 
     from .models import Cluster
+    from .views import _get_area_manager_cluster_ids
     cluster = None
 
     if role == 'Cluster Manager':
@@ -9365,6 +9700,17 @@ def cluster_manager_cluster_sbase():
         if not cluster:
             flash('You are not assigned to any cluster yet.', category='error')
             return redirect(url_for('views.home'))
+    elif role == 'Area Manager':
+        # Area Managers can only access clusters they are assigned to.
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view data.', category='error')
+            return redirect(url_for('admin.clusters'))
+        if cluster_id not in allowed_cluster_ids:
+            flash('Access denied. You are not assigned to this cluster.', category='error')
+            return redirect(url_for('views.home'))
+        cluster = Cluster.query.get_or_404(cluster_id)
     else:
         # Admin/Superadmin/General Manager can open any cluster via query param.
         cluster_id = request.args.get('cluster_id', type=int)

@@ -14,7 +14,7 @@
       </svg>
     </button>
 
-    {% if user and user.role in ['Superadmin', 'General Manager'] and force_cluster_sidebar|default(false) %}
+{% if user and user.role in ['Superadmin', 'General Manager', 'Area Manager'] and force_cluster_sidebar|default(false) %}
     <a href="/admin/clusters" class="hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold shadow-md shadow-amber-500/30 hover:bg-amber-600 transition-colors">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="m15 18-6-6 6-6"></path>
@@ -30,19 +30,19 @@
     </nav>
   </div>
 
-  <div class="flex items-center gap-4">
-    <div class="text-sm font-medium text-slate-600">
-      <span class="text-slate-900">{{ cluster.name }}</span>
+<div class="flex items-center gap-4">
+      <div class="text-sm font-medium text-slate-600">
+        <span class="text-slate-900">{{ cluster.name }}</span>
+      </div>
+      <button type="button" id="openExportClusterDataModal" class="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-emerald-700 transition-all shadow-lg">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        <span>Export Excel</span>
+      </button>
     </div>
-    <button class="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-emerald-700 transition-all shadow-lg">
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-        <polyline points="7 10 12 15 17 10"/>
-        <line x1="12" y1="15" x2="12" y2="3"/>
-      </svg>
-      <span>Export Excel</span>
-    </button>
-  </div>
 </header>
 
 <!-- Content -->
@@ -50,7 +50,7 @@
 
   <!-- Filters -->
   <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-    <form method="GET" class="flex flex-col sm:flex-row gap-2">
+    <form method="GET" class="flex flex-col sm:flex-row gap-2" data-no-spinner="true">
       <select name="store_id" class="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
         <option value="">All Stores</option>
         {% for store in stores %}
@@ -1220,6 +1220,93 @@ window.clusterDataConfig = {
 };
 </script>
 <script src="{{ url_for('static', filename='js/cluster_data.js') }}"></script>
+
+<!-- Export Cluster Data Modal -->
+<div id="exportClusterDataModal" class="fixed inset-0 z-50 hidden overflow-y-auto">
+  <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm" data-modal-backdrop></div>
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl" data-modal-content>
+      <div class="border-b border-slate-200 px-6 py-4">
+        <h3 class="text-xl font-bold text-slate-900">Export Cluster Data</h3>
+        <p class="mt-1 text-sm text-slate-500">Choose what data to export for the selected cluster</p>
+      </div>
+      <form id="exportClusterDataForm" method="GET" action="{{ url_for('views.cluster_manager_cluster_data_export_excel') }}" class="space-y-4 px-6 py-5">
+        <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+        <input type="hidden" name="month" value="{{ current_month }}">
+        <input type="hidden" name="year" value="{{ current_year }}">
+        <input type="hidden" name="store_id" value="{{ store_filter }}">
+        
+        <!-- Export Type Radio Buttons -->
+        <div>
+          <label class="block text-sm font-semibold text-slate-700 mb-3">Export Type</label>
+          <div class="space-y-2">
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_type" value="current" checked class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">Current View</p><p class="text-xs text-slate-500">Export data for the current filtered view</p></div>
+            </label>
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_type" value="all" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">All Stores in Cluster</p><p class="text-xs text-slate-500">Export data for all stores in this cluster</p></div>
+            </label>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" data-modal-close class="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100">Cancel</button>
+          <button type="submit" class="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700">Export Excel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Export Cluster Data Modal
+  (function() {
+    const modal = document.getElementById('exportClusterDataModal');
+    const openBtn = document.getElementById('openExportClusterDataModal');
+    if (!modal || !openBtn) return;
+
+    // Initialize modal using existing Modal class
+    const exportModal = new Modal('exportClusterDataModal');
+    const form = document.getElementById('exportClusterDataForm');
+    const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+    const originalBtnHtml = submitBtn ? submitBtn.innerHTML : '';
+
+    // Reset button to original state
+    function resetSubmitBtn() {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnHtml;
+      }
+    }
+
+    // Open modal - reset button state
+    openBtn.addEventListener('click', () => {
+      resetSubmitBtn();
+      exportModal.open();
+    });
+
+    // Also reset when modal closes (in case it was closed without submit)
+    const originalClose = exportModal.close.bind(exportModal);
+    exportModal.close = function() {
+      originalClose();
+      resetSubmitBtn();
+    };
+
+    // Close modal on form submit - show downloading state, then close after delay
+    if (form) {
+      form.addEventListener('submit', () => {
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Downloading...';
+        }
+        // Close after download starts (1 second delay)
+        setTimeout(() => exportModal.close(), 1000);
+      });
+    }
+  })();
+</script>
 
 {% endblock %}
 

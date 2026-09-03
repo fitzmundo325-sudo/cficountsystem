@@ -1,4 +1,4 @@
-from flask import Blueprint, redirect, render_template, request, url_for, flash, jsonify, session
+from flask import Blueprint, redirect, render_template, request, url_for, flash, jsonify, session, send_file
 from .models import (
     User,
     Store,
@@ -39,7 +39,10 @@ import os
 import re
 import json
 import math
+import io
 from difflib import SequenceMatcher
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 
 
 admin = Blueprint('admin', __name__)
@@ -629,6 +632,267 @@ def pos_sold():
             'total_discount': total_discount,
             'total_net_sales': total_net_sales,
         },
+    )
+
+
+@admin.route('/admin/pos-sold/export-excel')
+@login_required
+def export_pos_sold_excel():
+    """Export POS Sold consolidated data to Excel - supports date range or all dates"""
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .views import _apply_store_scope_filter, _get_area_manager_cluster_ids
+
+    selected_cluster_id = request.args.get('cluster_id', type=int)
+    selected_store_id = request.args.get('store_id', type=int)
+    start_date_raw = (request.args.get('start_date') or '').strip()
+    end_date_raw = (request.args.get('end_date') or '').strip()
+    export_type = request.args.get('export_type', 'range')
+
+    if export_type not in ('range', 'all'):
+        export_type = 'range'
+
+    allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+
+    clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    if allowed_cluster_ids is not None:
+        clusters = [cluster for cluster in clusters if int(cluster.id) in allowed_cluster_ids]
+    cluster_lookup = {int(cluster.id): cluster for cluster in clusters}
+
+    stores = _apply_store_scope_filter(Store.query.order_by(Store.name.asc()).all(), request)
+    if allowed_cluster_ids is not None:
+        stores = [store for store in stores if int(store.cluster_id or 0) in allowed_cluster_ids]
+
+    def _parse_iso_date(value):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            return None
+
+    if not selected_cluster_id or (allowed_cluster_ids is not None and selected_cluster_id not in allowed_cluster_ids):
+        flash('Please select a valid cluster.', category='error')
+        return redirect(url_for('admin.pos_sold'))
+
+    start_date = _parse_iso_date(start_date_raw)
+    end_date = _parse_iso_date(end_date_raw)
+
+    if export_type == 'all':
+        # Get earliest and latest dates for the selected cluster/store
+        earliest_query = db.session.query(func.min(DailyReport.report_date)).join(Store).filter(
+            Store.cluster_id == selected_cluster_id
+        )
+        latest_query = db.session.query(func.max(DailyReport.report_date)).join(Store).filter(
+            Store.cluster_id == selected_cluster_id
+        )
+        if selected_store_id:
+            earliest_query = earliest_query.filter(Store.id == selected_store_id)
+            latest_query = latest_query.filter(Store.id == selected_store_id)
+        
+        earliest = earliest_query.scalar()
+        latest = latest_query.scalar()
+        
+        if earliest and latest:
+            start_date = earliest
+            end_date = latest
+        else:
+            start_date = end_date = date.today()
+    else:
+        # Default to month-to-date if not provided
+        if not start_date:
+            start_date = date.today().replace(day=1)
+        if not end_date:
+            end_date = date.today()
+        
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+
+    allowed_store_ids = {int(store.id) for store in stores if int(store.cluster_id or 0) == int(selected_cluster_id)}
+    if selected_store_id and selected_store_id not in allowed_store_ids:
+        flash('Selected store does not belong to the chosen cluster.', category='error')
+        return redirect(url_for('admin.pos_sold'))
+
+    from .admin import _get_product_alias_lookup, _normalize_product_text
+    alias_lookup = _get_product_alias_lookup()
+    master_rows = ProductMaster.query.with_entities(ProductMaster.description, ProductMaster.category).all()
+    master_category_by_normalized_name = {
+        _normalize_product_text(description): (category or '').strip() or 'Uncategorized'
+        for description, category in master_rows
+        if _normalize_product_text(description)
+    }
+
+    pos_query = (
+        db.session.query(
+            Store.id.label('store_id'),
+            Store.name.label('store_name'),
+            Cluster.name.label('cluster_name'),
+            PosSold.product_name.label('product_name'),
+            DailyReport.report_date.label('report_date'),
+            func.sum(PosSold.quantity).label('daily_qty'),
+            func.sum(PosSold.gross_sales).label('daily_gross_sales'),
+            func.sum(PosSold.discount).label('daily_discount'),
+            func.sum(PosSold.net_sales).label('daily_net_sales'),
+        )
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .join(Store, Store.id == DailyReport.store_id)
+        .outerjoin(Cluster, Cluster.id == Store.cluster_id)
+        .filter(
+            Store.cluster_id == selected_cluster_id,
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= end_date,
+        )
+    )
+
+    if selected_store_id:
+        pos_query = pos_query.filter(Store.id == selected_store_id)
+
+    pos_rows = (
+        pos_query
+        .group_by(Store.id, Store.name, Cluster.name, PosSold.product_name, DailyReport.report_date)
+        .order_by(Store.name.asc(), DailyReport.report_date.asc(), PosSold.product_name.asc())
+        .all()
+    )
+
+    consolidated_map = {}
+    for row in pos_rows:
+        raw_product_name = (row.product_name or '').strip() or 'Unnamed Product'
+        canonical_name = alias_lookup.get(_normalize_product_text(raw_product_name), raw_product_name)
+        canonical_name = (canonical_name or '').strip() or 'Unnamed Product'
+        store_id = int(row.store_id)
+
+        bucket_key = (store_id, canonical_name.lower())
+        if bucket_key not in consolidated_map:
+            consolidated_map[bucket_key] = {
+                'cluster_name': row.cluster_name or 'Unassigned',
+                'store_id': store_id,
+                'store_name': row.store_name or f'Store {row.store_id}',
+                'product_name': canonical_name,
+                'days_set': set(),
+                'quantity': 0,
+                'gross_sales': 0.0,
+                'discount': 0.0,
+                'net_sales': 0.0,
+            }
+
+        consolidated_map[bucket_key]['days_set'].add(
+            row.report_date.strftime('%Y-%m-%d') if row.report_date else ''
+        )
+        consolidated_map[bucket_key]['quantity'] += int(row.daily_qty or 0)
+        consolidated_map[bucket_key]['gross_sales'] += float(row.daily_gross_sales or 0.0)
+        consolidated_map[bucket_key]['discount'] += float(row.daily_discount or 0.0)
+        consolidated_map[bucket_key]['net_sales'] += float(row.daily_net_sales or 0.0)
+
+    table_rows = sorted(
+        [
+            {
+                'cluster_name': payload['cluster_name'],
+                'store_id': payload['store_id'],
+                'store_name': payload['store_name'],
+                'product_name': payload['product_name'],
+                'category': master_category_by_normalized_name.get(
+                    _normalize_product_text(payload['product_name']),
+                    'Uncategorized'
+                ),
+                'days_count': len([day for day in payload['days_set'] if day]),
+                'quantity': int(payload['quantity'] or 0),
+                'gross_sales': float(payload['gross_sales'] or 0.0),
+                'discount': float(payload['discount'] or 0.0),
+                'net_sales': float(payload['net_sales'] or 0.0),
+            }
+            for payload in consolidated_map.values()
+        ],
+        key=lambda item: (
+            (item.get('store_name') or '').lower(),
+            -int(item.get('quantity') or 0),
+            (item.get('product_name') or '').lower(),
+        ),
+    )
+
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "POS Sold Export"
+
+    title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
+    header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="4338CA", end_color="4338CA", fill_type="solid")
+    data_font = Font(name="Calibri", size=10, color="0F172A")
+    money_font = Font(name="Calibri", size=10, color="0F172A")
+
+    # Title
+    ws.append(["POS SOLD EXPORT"])
+    ws.cell(row=1, column=1).font = title_font
+
+    # Meta info
+    cluster_name = cluster_lookup.get(selected_cluster_id, Cluster(name='Unknown')).name
+    store_name = ''
+    if selected_store_id:
+        store = Store.query.get(selected_store_id)
+        store_name = f" | Store: {store.name}" if store else ''
+    
+    if export_type == 'all':
+        ws.append([f"Cluster: {cluster_name}{store_name} | All Available Dates"])
+    else:
+        ws.append([f"Cluster: {cluster_name}{store_name} | Date Range: {start_date} to {end_date}"])
+    ws.cell(row=2, column=1).font = sub_font
+    ws.append([])
+
+    # Headers
+    headers = ['Store', 'Product', 'Category', 'Days', 'Qty', 'Gross Sales', 'Discount', 'Net Sales']
+    ws.append(headers)
+    for col in range(1, 9):
+        c = ws.cell(row=4, column=col)
+        c.font = header_font
+        c.fill = header_fill
+
+    # Data rows
+    for row in table_rows:
+        ws.append([
+            row['store_name'],
+            row['product_name'],
+            row['category'],
+            row['days_count'],
+            row['quantity'],
+            row['gross_sales'],
+            row['discount'],
+            row['net_sales'],
+        ])
+        for col in range(1, 9):
+            c = ws.cell(row=ws.max_row, column=col)
+            c.font = data_font if col < 6 else money_font
+            if col >= 6:
+                c.number_format = '#,##0.00'
+
+    # Auto-adjust column widths
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 40)
+        ws.column_dimensions[column].width = adjusted_width
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    if export_type == 'all':
+        filename = f'POS_Sold_Export_{cluster_name}_All_Dates.xlsx'
+    else:
+        filename = f'POS_Sold_Export_{start_date}_to_{end_date}.xlsx'
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
 
@@ -1279,6 +1543,212 @@ def delivery():
             'total_qty': total_qty,
             'total_received_qty': total_received_qty,
         },
+    )
+
+
+@admin.route('/admin/delivery/export-excel')
+@login_required
+def export_delivery_excel():
+    """Export Delivery consolidated data to Excel - supports date range or all dates"""
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .views import _apply_store_scope_filter, _get_area_manager_cluster_ids
+
+    selected_cluster_id = request.args.get('cluster_id', type=int)
+    selected_store_id = request.args.get('store_id', type=int)
+    start_date_raw = (request.args.get('start_date') or '').strip()
+    end_date_raw = (request.args.get('end_date') or '').strip()
+    export_type = request.args.get('export_type', 'range')
+
+    if export_type not in ('range', 'all'):
+        export_type = 'range'
+
+    allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+
+    clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    if allowed_cluster_ids is not None:
+        clusters = [cluster for cluster in clusters if int(cluster.id) in allowed_cluster_ids]
+    cluster_lookup = {int(cluster.id): cluster for cluster in clusters}
+
+    stores = _apply_store_scope_filter(Store.query.order_by(Store.name.asc()).all(), request)
+    if allowed_cluster_ids is not None:
+        stores = [store for store in stores if int(store.cluster_id or 0) in allowed_cluster_ids]
+
+    def _parse_iso_date(value):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            return None
+
+    if not selected_cluster_id or (allowed_cluster_ids is not None and selected_cluster_id not in allowed_cluster_ids):
+        flash('Please select a valid cluster.', category='error')
+        return redirect(url_for('admin.delivery'))
+
+    start_date = _parse_iso_date(start_date_raw)
+    end_date = _parse_iso_date(end_date_raw)
+
+    if export_type == 'all':
+        # Get earliest and latest dates for the selected cluster/store
+        earliest_query = db.session.query(func.min(RsoDelivery.report_date)).join(Store).filter(
+            Store.cluster_id == selected_cluster_id
+        )
+        latest_query = db.session.query(func.max(RsoDelivery.report_date)).join(Store).filter(
+            Store.cluster_id == selected_cluster_id
+        )
+        if selected_store_id:
+            earliest_query = earliest_query.filter(Store.id == selected_store_id)
+            latest_query = latest_query.filter(Store.id == selected_store_id)
+        
+        earliest = earliest_query.scalar()
+        latest = latest_query.scalar()
+        
+        if earliest and latest:
+            start_date = earliest
+            end_date = latest
+        else:
+            start_date = end_date = date.today()
+    else:
+        # Default to month-to-date if not provided
+        if not start_date:
+            start_date = date.today().replace(day=1)
+        if not end_date:
+            end_date = date.today()
+        
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+
+    allowed_store_ids = {int(store.id) for store in stores if int(store.cluster_id or 0) == int(selected_cluster_id)}
+    if selected_store_id and selected_store_id not in allowed_store_ids:
+        flash('Selected store does not belong to the chosen cluster.', category='error')
+        return redirect(url_for('admin.delivery'))
+
+    delivery_query = (
+        db.session.query(
+            Store.id.label('store_id'),
+            Store.name.label('store_name'),
+            Cluster.name.label('cluster_name'),
+            RsoDelivery.product_name.label('product_name'),
+            RsoDelivery.report_date.label('report_date'),
+            RsoDelivery.upload_source.label('upload_source'),
+            func.count(RsoDelivery.id).label('entry_count'),
+            func.sum(RsoDelivery.quantity).label('total_qty'),
+            func.sum(func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity)).label('total_received_qty'),
+        )
+        .join(Store, Store.id == RsoDelivery.store_id)
+        .outerjoin(Cluster, Cluster.id == Store.cluster_id)
+        .filter(
+            Store.cluster_id == selected_cluster_id,
+            RsoDelivery.report_date >= start_date,
+            RsoDelivery.report_date <= end_date,
+        )
+    )
+    if selected_store_id:
+        delivery_query = delivery_query.filter(Store.id == selected_store_id)
+
+    delivery_rows = (
+        delivery_query
+        .group_by(Store.id, Store.name, Cluster.name, RsoDelivery.product_name, RsoDelivery.report_date, RsoDelivery.upload_source)
+        .order_by(Store.name.asc(), RsoDelivery.report_date.asc(), RsoDelivery.product_name.asc())
+        .all()
+    )
+
+    table_rows = [
+        {
+            'cluster_name': row.cluster_name or 'Unassigned',
+            'store_id': int(row.store_id),
+            'store_name': row.store_name or f'Store {row.store_id}',
+            'report_date': row.report_date,
+            'product_name': (row.product_name or '').strip() or 'Unnamed Product',
+            'upload_source': row.upload_source or 'delivery',
+            'entry_count': int(row.entry_count or 0),
+            'quantity': int(row.total_qty or 0),
+            'received_quantity': int(row.total_received_qty or 0),
+        }
+        for row in delivery_rows
+    ]
+
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Delivery Export"
+
+    title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
+    header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="047857", end_color="047857", fill_type="solid")
+    data_font = Font(name="Calibri", size=10, color="0F172A")
+
+    # Title
+    ws.append(["DELIVERY EXPORT"])
+    ws.cell(row=1, column=1).font = title_font
+
+    # Meta info
+    cluster_name = cluster_lookup.get(selected_cluster_id, Cluster(name='Unknown')).name
+    store_name = ''
+    if selected_store_id:
+        store = Store.query.get(selected_store_id)
+        store_name = f" | Store: {store.name}" if store else ''
+    
+    if export_type == 'all':
+        ws.append([f"Cluster: {cluster_name}{store_name} | All Available Dates"])
+    else:
+        ws.append([f"Cluster: {cluster_name}{store_name} | Date Range: {start_date} to {end_date}"])
+    ws.cell(row=2, column=1).font = sub_font
+    ws.append([])
+
+    # Headers
+    headers = ['Store', 'Date', 'Product', 'Source', 'Entries', 'Qty', 'Received Qty']
+    ws.append(headers)
+    for col in range(1, 8):
+        c = ws.cell(row=4, column=col)
+        c.font = header_font
+        c.fill = header_fill
+
+    # Data rows
+    for row in table_rows:
+        ws.append([
+            row['store_name'],
+            row['report_date'].strftime('%Y-%m-%d') if row['report_date'] else '',
+            row['product_name'],
+            row['upload_source'],
+            row['entry_count'],
+            row['quantity'],
+            row['received_quantity'],
+        ])
+        for col in range(1, 8):
+            c = ws.cell(row=ws.max_row, column=col)
+            c.font = data_font
+
+    # Auto-adjust column widths
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 40)
+        ws.column_dimensions[column].width = adjusted_width
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    if export_type == 'all':
+        filename = f'Delivery_Export_{cluster_name}_All_Dates.xlsx'
+    else:
+        filename = f'Delivery_Export_{start_date}_to_{end_date}.xlsx'
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
 
@@ -3339,13 +3809,19 @@ def delete_store(store_id):
 @admin.route('admin/clusters')
 @login_required
 def clusters():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Area Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
-    from .views import _apply_store_scope_filter
+    from .views import _apply_store_scope_filter, _get_area_manager_cluster_ids
 
-    clusters = Cluster.query.all()
+    # For Area Manager, filter clusters to only assigned ones
+    allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+    if allowed_cluster_ids is not None:
+        clusters = Cluster.query.filter(Cluster.id.in_(allowed_cluster_ids)).all()
+    else:
+        clusters = Cluster.query.all()
+    
     for cluster in clusters:
         cluster.stores = _apply_store_scope_filter(cluster.stores, request)
     # Get users with Cluster Manager role who are not already managing a cluster
@@ -5154,6 +5630,419 @@ def invensync():
         store_invensync_configs=config_data.get('store_configs', {}),
         config_fields=config_fields,
     )
+
+
+@admin.route('/admin/invensync/export-excel')
+@login_required
+def export_invensync_excel():
+    """Export InvenSync store summaries to Excel"""
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .views import (
+        _apply_store_scope_filter,
+        _get_area_manager_cluster_ids,
+        _get_invensync_data_state,
+        _get_latest_meaningful_invensync_by_store,
+        _get_user_presence_states,
+    )
+
+    # For Area Manager, filter by assigned clusters
+    allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+
+    # Get all stores
+    stores = Store.query.order_by(Store.name.asc()).all()
+    stores = _apply_store_scope_filter(stores, request)
+
+    if allowed_cluster_ids is not None:
+        stores = [store for store in stores if int(store.cluster_id or 0) in allowed_cluster_ids]
+
+    selected_date = date.today()
+    update_cutoff_date = selected_date - timedelta(days=1)
+    month_start = selected_date.replace(day=1)
+
+    inventory_by_store = _get_latest_meaningful_invensync_by_store(
+        [store.id for store in stores]
+    )
+    manager_presence = _get_user_presence_states(store.manager_id for store in stores)
+
+    # Build store summary data (same logic as main view)
+    store_summaries = []
+    for store in stores:
+        inventory = inventory_by_store.get(store.id)
+        data_state = _get_invensync_data_state(inventory)
+        update_status = _build_admin_invensync_update_status(store.id, month_start, update_cutoff_date)
+
+        store_summaries.append({
+            'store': store,
+            'inventory': inventory,
+            'has_data': data_state != 'empty',
+            'data_state': data_state,
+            'presence_state': manager_presence.get(store.manager_id, 'offline'),
+            'update_status': update_status,
+        })
+
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "InvenSync Export"
+
+    title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
+    header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
+    data_font = Font(name="Calibri", size=10, color="0F172A")
+    green_font = Font(name="Calibri", size=10, color="059669", bold=True)
+    amber_font = Font(name="Calibri", size=10, color="B45309", bold=True)
+    red_font = Font(name="Calibri", size=10, color="DC2626", bold=True)
+    blue_font = Font(name="Calibri", size=10, color="2563EB", bold=True)
+
+    # Title
+    ws.append(["INVEN SYNC STORE SUMMARY EXPORT"])
+    ws.cell(row=1, column=1).font = title_font
+
+    # Meta info
+    ws.append([f"As of: {selected_date.strftime('%B %d, %Y')} | Store Scope: {request.cookies.get('store_scope', 'official').capitalize()}"])
+    ws.cell(row=2, column=1).font = sub_font
+    ws.append([])
+
+    # Headers
+    headers = [
+        'Store ID', 'Store Name', 'Cluster', 'Inventory Date', 'Data State', 
+        'Manager Presence', 'Inventory Status', 'POS Sold Status', 'Delivery Status'
+    ]
+    ws.append(headers)
+    for col in range(1, 10):
+        c = ws.cell(row=4, column=col)
+        c.font = header_font
+        c.fill = header_fill
+
+    # Data rows
+    for summary in store_summaries:
+        store = summary['store']
+        inventory = summary['inventory']
+        data_state = summary['data_state']
+        presence_state = summary['presence_state']
+        update_status = summary['update_status']
+
+        inv_status = update_status['inventory']
+        pos_status = update_status['pos_sold']
+        del_status = update_status['delivery']
+
+        # Inventory status
+        if inv_status['is_up_to_date']:
+            inv_text = f"Up to date ({inv_status['latest_date'].strftime('%b %d, %Y') if inv_status['latest_date'] else 'N/A'})"
+        else:
+            inv_text = f"Missing ({inv_status['missing_count']} days)"
+
+        # POS Sold status
+        if pos_status['is_up_to_date']:
+            pos_text = f"Up to date ({pos_status['latest_date'].strftime('%b %d, %Y') if pos_status['latest_date'] else 'N/A'})"
+        else:
+            pos_text = f"Missing ({pos_status['missing_count']} days)"
+
+        # Delivery status
+        if del_status['is_up_to_date']:
+            del_text = f"Up to date ({del_status['latest_date'].strftime('%b %d, %Y') if del_status['latest_date'] else 'N/A'})"
+        else:
+            del_text = f"Missing ({del_status['missing_count']} days)"
+
+        cluster_name = store.cluster.name if store.cluster else 'Unassigned'
+
+        ws.append([
+            store.id,
+            store.name,
+            cluster_name,
+            inventory.inventory_date.strftime('%Y-%m-%d') if inventory and inventory.inventory_date else 'N/A',
+            data_state.capitalize(),
+            presence_state.capitalize(),
+            inv_text,
+            pos_text,
+            del_text,
+        ])
+
+        row_num = ws.max_row
+        # Color code data state
+        state_cell = ws.cell(row=row_num, column=5)
+        state_cell.font = data_font
+        if data_state == 'finalized':
+            state_cell.font = green_font
+        elif data_state == 'draft':
+            state_cell.font = amber_font
+        elif data_state == 'empty':
+            state_cell.font = red_font
+
+        # Color code presence
+        pres_cell = ws.cell(row=row_num, column=6)
+        pres_cell.font = data_font
+        if presence_state == 'active':
+            pres_cell.font = green_font
+        elif presence_state == 'online':
+            pres_cell.font = blue_font
+        elif presence_state == 'idle':
+            pres_cell.font = amber_font
+        elif presence_state == 'offline':
+            pres_cell.font = red_font
+
+    # Auto-adjust column widths
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 50)
+        ws.column_dimensions[column].width = adjusted_width
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f'InvenSync_Export_{selected_date.strftime("%Y-%m-%d")}.xlsx'
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
+@admin.route('/admin/invensync/export-excel/store/<int:store_id>')
+@login_required
+def export_invensync_store_excel(store_id):
+    """Export single store's InvenSync detail to Excel - supports single date, date range, or all dates"""
+    try:
+        if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+            flash('Access denied.', category='error')
+            return redirect(url_for('views.home'))
+
+        from .views import (
+            _apply_store_scope_filter,
+            _get_invensync_data_state,
+            _get_latest_meaningful_invensync_by_store,
+            _get_user_presence_states,
+            _get_area_manager_cluster_ids,
+        )
+        from flask import current_app
+
+        store = Store.query.get_or_404(store_id)
+
+        # For Area Manager, verify they have access to this store's cluster
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        if allowed_cluster_ids is not None:
+            if int(store.cluster_id or 0) not in allowed_cluster_ids:
+                flash('Access denied. You are not assigned to this store\'s cluster.', category='error')
+                return redirect(url_for('views.home'))
+
+        export_type = request.args.get('export_type', 'single')
+        if export_type not in ('single', 'range', 'all'):
+            export_type = 'single'
+
+        def _parse_iso_date(value):
+            if not value:
+                return None
+            try:
+                return datetime.strptime(value, '%Y-%m-%d').date()
+            except (TypeError, ValueError):
+                return None
+
+        today = date.today()
+        start_date = _parse_iso_date(request.args.get('start_date', ''))
+        end_date = _parse_iso_date(request.args.get('end_date', ''))
+        single_date = _parse_iso_date(request.args.get('date', ''))
+
+        if export_type == 'single':
+            if not single_date:
+                single_date = today
+            start_date = end_date = single_date
+        elif export_type == 'range':
+            if not start_date:
+                start_date = today.replace(day=1)
+            if not end_date:
+                end_date = today
+            if start_date > end_date:
+                start_date, end_date = end_date, start_date
+        else:  # 'all'
+            # Get earliest and latest inventory dates for this store
+            earliest = DailyEndingInventory.query.filter_by(store_id=store.id).order_by(DailyEndingInventory.inventory_date.asc()).first()
+            latest = DailyEndingInventory.query.filter_by(store_id=store.id).order_by(DailyEndingInventory.inventory_date.desc()).first()
+            if earliest and latest:
+                start_date = earliest.inventory_date
+                end_date = latest.inventory_date
+            else:
+                start_date = end_date = today
+
+        # Query inventories in the date range
+        inventories = DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store.id,
+            DailyEndingInventory.inventory_date >= start_date,
+            DailyEndingInventory.inventory_date <= end_date
+        ).order_by(DailyEndingInventory.inventory_date.asc()).all()
+
+        if not inventories:
+            flash(f'No InvenSync data found for {store.name} in the selected range', category='warning')
+            return redirect(url_for('admin.invensync'))
+
+        # Collect all items from all inventories, sorted by date then product
+        all_items = []
+        for inv in inventories:
+            items = DailyEndingInventoryItem.query.filter_by(inventory_id=inv.id).order_by(DailyEndingInventoryItem.product_description.asc()).all()
+            for item in items:
+                all_items.append({
+                    'inventory_date': inv.inventory_date,
+                    'item': item
+                })
+
+        config, config_data = _get_global_invensync_config()
+
+        # Create Excel workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = f"InvenSync {store.name}"
+
+        title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
+        sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
+        header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="047857", end_color="047857", fill_type="solid")
+        data_font = Font(name="Calibri", size=10, color="0F172A")
+        money_font = Font(name="Calibri", size=10, color="0F172A")
+        green_font = Font(name="Calibri", size=10, color="059669", bold=True)
+        red_font = Font(name="Calibri", size=10, color="DC2626", bold=True)
+
+        # Title
+        if export_type == 'single':
+            title_text = f"INVEN SYNC EXPORT - {store.name}"
+            meta_text = f"Date: {start_date.strftime('%B %d, %Y')} | Store: {store.name} (ID: {store.id}) | Cluster: {store.cluster.name if store.cluster else 'Unassigned'}"
+        elif export_type == 'range':
+            title_text = f"INVEN SYNC EXPORT - {store.name}"
+            meta_text = f"Date Range: {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')} | Store: {store.name} (ID: {store.id}) | Cluster: {store.cluster.name if store.cluster else 'Unassigned'}"
+        else:
+            title_text = f"INVEN SYNC EXPORT - {store.name} (ALL DATES)"
+            meta_text = f"All Available Dates | Store: {store.name} (ID: {store.id}) | Cluster: {store.cluster.name if store.cluster else 'Unassigned'}"
+
+        ws.append([title_text])
+        ws.cell(row=1, column=1).font = title_font
+
+        # Meta info
+        ws.append([meta_text])
+        ws.cell(row=2, column=1).font = sub_font
+        ws.append([])
+
+        # Headers - add Date column for range/all exports
+        if export_type in ('range', 'all'):
+            headers = [
+                'Date', 'Product Code', 'Product', 'Category',
+                'Beginning', 'Delivery', 'Trans-In', 'BO', 'Adv Del',
+                'Trans-Out', 'Waste Qty', 'Waste Amt', 'CSI', 'Sold',
+                'Ending D+5', 'Ending D+4', 'Ending D+3',
+                'Total Ending', 'Total Peso SRP', 'Theo Ending',
+                'Variance Qty', 'Variance Peso', 'Remarks'
+            ]
+        else:
+            headers = [
+                'Product Code', 'Product', 'Category',
+                'Beginning', 'Delivery', 'Trans-In', 'BO', 'Adv Del',
+                'Trans-Out', 'Waste Qty', 'Waste Amt', 'CSI', 'Sold',
+                'Ending D+5', 'Ending D+4', 'Ending D+3',
+                'Total Ending', 'Total Peso SRP', 'Theo Ending',
+                'Variance Qty', 'Variance Peso', 'Remarks'
+            ]
+        ws.append(headers)
+        for col in range(1, len(headers) + 1):
+            c = ws.cell(row=4, column=col)
+            c.font = header_font
+            c.fill = header_fill
+
+        # Data rows
+        has_date_col = export_type in ('range', 'all')
+        date_col_idx = 1 if has_date_col else 0
+        variance_col_idx = 20 if has_date_col else 19  # Variance Qty column index (0-based)
+
+        for entry in all_items:
+            inv_date = entry['inventory_date']
+            item = entry['item']
+            product = ProductMaster.query.get(item.product_master_id) if item.product_master_id else None
+            
+            row_data = []
+            if has_date_col:
+                row_data.append(inv_date.strftime('%Y-%m-%d'))
+            row_data.extend([
+                item.product_code or (product.code if product else ''),
+                item.product_description,
+                product.category if product else '',
+                item.beginning_qty,
+                item.delivery_qty,
+                item.trans_in_qty,
+                item.bo_qty,
+                item.adv_del_qty,
+                item.trans_out_qty,
+                item.wastage_qty,
+                item.wastage_amount,
+                item.csi_qty,
+                item.quantity_sold,
+                item.ending_d5_qty,
+                item.ending_d4_qty,
+                item.ending_d3_qty,
+                item.total_ending_qty,
+                item.total_peso_srp,
+                item.theo_ending_qty,
+                item.variance_qty,
+                item.variance_peso,
+                item.remarks or '',
+            ])
+            ws.append(row_data)
+            
+            row_num = ws.max_row
+            for col_idx in range(1, len(headers) + 1):
+                c = ws.cell(row=row_num, column=col_idx)
+                # Date column and first 3 cols are text, monetary cols >= 16 (or 17 with date) are money
+                money_start = 16 + date_col_idx
+                c.font = data_font if col_idx < money_start else money_font
+                if col_idx >= money_start:
+                    c.number_format = '#,##0.00'
+                # Color variance (Variance Qty)
+                if col_idx == variance_col_idx + 1:  # 1-based index
+                    if c.value is not None and c.value != 0:
+                        c.font = red_font if c.value < 0 else green_font
+
+        # Auto-adjust column widths
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 40)
+            ws.column_dimensions[column].width = adjusted_width
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        if export_type == 'single':
+            filename = f'InvenSync_{store.name}_{start_date.strftime("%Y-%m-%d")}.xlsx'
+        elif export_type == 'range':
+            filename = f'InvenSync_{store.name}_{start_date.strftime("%Y-%m-%d")}_to_{end_date.strftime("%Y-%m-%d")}.xlsx'
+        else:
+            filename = f'InvenSync_{store.name}_All_Dates.xlsx'
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+    except Exception as e:
+        import traceback
+        current_app.logger.error(f"Error in export_invensync_store_excel: {e}\n{traceback.format_exc()}")
+        flash(f'Error exporting data: {str(e)}', category='error')
+        return redirect(url_for('admin.invensync'))
 
 
 @admin.route('/admin/oracle')
