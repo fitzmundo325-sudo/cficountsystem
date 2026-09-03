@@ -132,12 +132,29 @@
     }
   }
 
+  function buildApiUrl() {
+    var search = window.location.search || '';
+    if (!search) return API_URL;
+    if (API_URL.indexOf('?') >= 0) {
+      var parts = API_URL.split('?');
+      var base = parts[0];
+      var searchParams = new URLSearchParams(search);
+      var apiParams = new URLSearchParams(parts[1]);
+      searchParams.forEach(function(val, key) {
+        apiParams.set(key, val);
+      });
+      return base + '?' + apiParams.toString();
+    }
+    return API_URL + search;
+  }
+
   function loadDashboardData(showLoading) {
     if (showLoading) {
       showDashboardSkeletons();
     }
 
-    fetch(API_URL, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+    var targetUrl = buildApiUrl();
+    fetch(targetUrl, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (d) { renderDashboard(d); })
       .catch(function (err) {
