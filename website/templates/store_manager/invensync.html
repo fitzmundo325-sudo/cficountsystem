@@ -331,6 +331,18 @@
       <span>Help</span>
     </button>
     {% endif %}
+
+    {% if current_user.role in ['Area Manager', 'Admin', 'Superadmin'] %}
+    <button id="openExportInvenSyncModal" type="button" class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 text-white px-3 py-2 text-xs font-semibold hover:bg-emerald-700 transition-colors shadow-sm" title="Export Store InvenSync to Excel">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+      <span>Export Excel</span>
+    </button>
+    {% endif %}
+
     <label for="selected_date" class="text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
       Date
     </label>
@@ -356,6 +368,64 @@
     </div>
   </div>
 </header>
+
+<!-- Export InvenSync Modal -->
+<div id="exportInvenSyncModal" class="fixed inset-0 z-[9999] hidden overflow-y-auto">
+  <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm" data-modal-backdrop></div>
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl" data-modal-content>
+      <div class="border-b border-slate-200 px-6 py-4">
+        <h3 class="text-xl font-bold text-slate-900">Export InvenSync Data</h3>
+        <p class="mt-1 text-sm text-slate-500">Choose what data to export for {{ store.name }}</p>
+      </div>
+      <form id="exportInvenSyncForm" method="GET" action="{{ url_for('admin.export_invensync_store_excel', store_id=store.id) }}" class="space-y-4 px-6 py-5">
+        <!-- Export Type Radio Buttons -->
+        <div>
+          <label class="block text-sm font-semibold text-slate-700 mb-3">Export Type</label>
+          <div class="space-y-2">
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_type" value="single" checked class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">Single Date</p><p class="text-xs text-slate-500">Export data for one specific date</p></div>
+            </label>
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_type" value="range" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">Date Range</p><p class="text-xs text-slate-500">Export data for a range of dates</p></div>
+            </label>
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_type" value="all" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">All Dates</p><p class="text-xs text-slate-500">Export all historical data for this store</p></div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Single Date Fields -->
+        <div id="singleDateFields">
+          <label for="export_single_date" class="mb-1 block text-sm font-semibold text-slate-700">Date</label>
+          <input type="date" id="export_single_date" name="date" value="{{ selected_date }}" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
+        </div>
+
+        <!-- Date Range Fields -->
+        <div id="rangeDateFields" class="hidden">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label for="export_start_date" class="mb-1 block text-sm font-semibold text-slate-700">Start Date</label>
+              <input type="date" id="export_start_date" name="start_date" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
+            </div>
+            <div>
+              <label for="export_end_date" class="mb-1 block text-sm font-semibold text-slate-700">End Date</label>
+              <input type="date" id="export_end_date" name="end_date" value="{{ selected_date }}" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" data-modal-close class="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100">Cancel</button>
+          <button type="submit" class="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700">Export Excel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 
 <!-- Content -->
 <div id="invensync-page-shell" class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-[2400px] w-full mx-auto space-y-6">
@@ -4489,6 +4559,64 @@ function closeInvensyncExportModal() {
 
   window.showTransTrace = showTransTrace;
   window.hideTransTrace = scheduleHide;
+})();
+
+// Export InvenSync Modal
+(function() {
+  const modal = document.getElementById('exportInvenSyncModal');
+  const openBtn = document.getElementById('openExportInvenSyncModal');
+  if (!modal || !openBtn) return;
+
+  // Initialize modal using existing Modal class
+  const exportModal = new Modal('exportInvenSyncModal');
+  const form = document.getElementById('exportInvenSyncForm');
+  const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+  const originalBtnHtml = submitBtn ? submitBtn.innerHTML : '';
+
+  // Reset button to original state
+  function resetSubmitBtn() {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = originalBtnHtml;
+    }
+  }
+
+  // Open modal - reset button state
+  openBtn.addEventListener('click', () => {
+    resetSubmitBtn();
+    exportModal.open();
+  });
+
+  // Also reset when modal closes (in case it was closed without submit)
+  const originalClose = exportModal.close.bind(exportModal);
+  exportModal.close = function() {
+    originalClose();
+    resetSubmitBtn();
+  };
+
+  // Toggle fields based on export_type radio selection
+  const radioButtons = modal.querySelectorAll('input[name="export_type"]');
+  const singleDateFields = modal.querySelector('#singleDateFields');
+  const rangeDateFields = modal.querySelector('#rangeDateFields');
+
+  radioButtons.forEach(radio => {
+    radio.addEventListener('change', function() {
+      singleDateFields.classList.toggle('hidden', this.value !== 'single');
+      rangeDateFields.classList.toggle('hidden', this.value !== 'range');
+    });
+  });
+
+  // Close modal on form submit - show downloading state, then close after delay
+  if (form) {
+    form.addEventListener('submit', () => {
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Downloading...';
+      }
+      // Close after download starts (1 second delay)
+      setTimeout(() => exportModal.close(), 1000);
+    });
+  }
 })();
 </script>
 {% endif %}

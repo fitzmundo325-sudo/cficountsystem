@@ -43,10 +43,11 @@
     if (!anchor) return;
 
     var href = anchor.getAttribute('href');
-    // Skip: empty, hash-only, external, javascript:, target=_blank, download
+    // Skip: empty, hash-only, external, javascript:, target=_blank, download, data-no-spinner
     if (!href || href === '#' || href.startsWith('#') || href.startsWith('javascript:')) return;
     if (anchor.target === '_blank') return;
     if (anchor.hasAttribute('download')) return;
+    if (anchor.hasAttribute('data-no-spinner')) return;
 
     try {
       var url = new URL(href, window.location.origin);
