@@ -1,13 +1,20 @@
 
 
 qBuilder.server_address = "../apis/product_masterlist";
-
 function loadAllItems(dataOnly=false){
 
 	qBuilder.search = _("product-live-search").value;
 	loadOnTableSpinner();
 	
 	// await sleep(100);
+	
+	if(qBuilder.search.length <= 0 && !firstLoad){
+		
+		let url = new URL(window.location.href);
+		url.searchParams.delete('q');
+		window.history.replaceState({}, '', url.toString());
+	}
+	
 	
 	qBuilder.sendQuery(process);
 	
@@ -23,7 +30,7 @@ function loadAllItems(dataOnly=false){
 			tableLoader(data);
 			genPages(data.responseText);
 			
-			
+			firstLoad = false;
 			
 	}
 }
@@ -234,9 +241,12 @@ function jumpToPage(page_n){
 //If a search term is recorded, we then pass it to our search box
 function searchQ(){
 	let sterm = localStorage.getItem("search_term");
-	
+	let qsterm = getparam("q");
 	if(sterm){
 		_("product-live-search").value = sterm;
+		delayedQuerry();
+	}else if(qsterm){
+		_("product-live-search").value = qsterm;
 		delayedQuerry();
 	}
 
