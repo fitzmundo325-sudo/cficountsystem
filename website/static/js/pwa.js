@@ -94,6 +94,9 @@
     });
 
     if ('serviceWorker' in navigator) {
+		
+		return;
+		
       navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {
         if (window.toast && typeof window.toast.show === 'function') {
           window.toast.show('Install support is not available in this browser session.', 'warning');
