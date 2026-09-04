@@ -12482,9 +12482,7 @@ def system_analyzer_v2():
     page = 'system_analyzer'
     return render_template("admin/system_analyzer_v2.html", user=current_user, page=page)
     
-    
-    
-        
+      
    
 #v2 of the Inv Sync 
 @views.route('/admin/invensync_v2', methods=['GET'])
