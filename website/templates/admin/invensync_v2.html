@@ -1,0 +1,573 @@
+{% extends "base_headless.html" %}
+
+{% block title %}Invensync - Admin Panel{% endblock %}
+
+{% block content %}
+
+<style>
+  html.admin-dark .invensync-update-status.is-current {
+    border-color: rgba(52, 211, 153, 0.35) !important;
+    background: rgba(6, 95, 70, 0.28) !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing {
+    border-color: rgba(251, 191, 36, 0.4) !important;
+    background: rgba(120, 53, 15, 0.28) !important;
+  }
+
+  html.admin-dark .invensync-update-status .status-pill {
+    background: rgba(15, 23, 42, 0.78) !important;
+    border-color: rgba(251, 191, 36, 0.42) !important;
+    color: #fde68a !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-current .status-title {
+    color: #6ee7b7 !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-current .status-copy {
+    color: #a7f3d0 !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing .status-title {
+    color: #fde68a !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing .status-copy {
+    color: #fcd34d !important;
+  }
+
+  .invensync-card-status-scroll {
+    overflow-y: hidden !important;
+    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-width: thin;
+  }
+
+  .invensync-store-card.is-scroll-active .invensync-card-status-scroll {
+    overflow-y: auto !important;
+  }
+
+  .invensync-card-status-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .invensync-card-status-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+  }
+  
+  
+  
+	  
+	  /* Page container */
+	html.admin-dark body,
+	html.admin-dark #main-content {
+	  background-color: #020617 !important;
+	  color: #e2e8f0;
+	}
+
+	/* Light surfaces used on this page: header, tab bar, cards, no-results box,
+	   config select box, table wrapper (bg-white / bg-white/80 / bg-slate-50 / bg-slate-100) */
+	html.admin-dark #main-content .bg-white,
+	html.admin-dark #main-content .bg-white\/80,
+	html.admin-dark #main-content .bg-slate-50,
+	html.admin-dark #main-content .bg-slate-100 {
+	  background-color: #0f172a !important;
+	}
+
+	/* Headings / body text */
+	html.admin-dark #main-content .text-slate-900,
+	html.admin-dark #main-content .text-slate-800 {
+	  color: #f8fafc !important;
+	}
+	html.admin-dark #main-content .text-slate-700,
+	html.admin-dark #main-content .text-slate-600,
+	html.admin-dark #main-content .text-slate-500,
+	html.admin-dark #main-content .text-slate-400 {
+	  color: #cbd5e1 !important;
+	}
+
+	/* Borders: cards, header, table wrappers, force-beginning/backfill boxes */
+	html.admin-dark #main-content .border-slate-100,
+	html.admin-dark #main-content .border-slate-200,
+	html.admin-dark #main-content .border-slate-300 {
+	  border-color: #334155 !important;
+	}
+
+	/* Search input, store select, store config select */
+	html.admin-dark #main-content input,
+	html.admin-dark #main-content select,
+	html.admin-dark #main-content textarea {
+	  background-color: #0f172a;
+	  border-color: #475569;
+	  color: #f8fafc;
+	}
+	html.admin-dark #main-content input::placeholder,
+	html.admin-dark #main-content textarea::placeholder {
+	  color: #64748b;
+	}
+
+	/* Slate buttons: active tab, Save Global Config, Save Store Config */
+	html.admin-dark #main-content button.bg-slate-900,
+	html.admin-dark #main-content button.bg-slate-800 {
+	  background-color: #334155 !important;
+	  border-color: #475569 !important;
+	  color: #f8fafc !important;
+	}
+	html.admin-dark #main-content button.hover\:bg-slate-800:hover {
+	  background-color: #475569 !important;
+	  color: #ffffff !important;
+	}
+
+	/* Slate buttons: inactive tab, tier-none/tier-premium inactive state */
+	html.admin-dark #main-content button.bg-slate-300,
+	html.admin-dark #main-content button.bg-slate-200,
+	html.admin-dark #main-content button.bg-slate-100 {
+	  background-color: #1e293b !important;
+	  border-color: #475569 !important;
+	  color: #e2e8f0 !important;
+	}
+	html.admin-dark #main-content button.hover\:bg-slate-300:hover,
+	html.admin-dark #main-content button.hover\:bg-slate-100:hover {
+	  background-color: #334155 !important;
+	  color: #f8fafc !important;
+	}
+
+	/* Tier: PREMIUM active button */
+	html.admin-dark #main-content button.bg-indigo-600 {
+	  background-color: #4f46e5 !important;
+	  border-color: #6366f1 !important;
+	  color: #ffffff !important;
+	}
+
+	/* Backfill POS Sold button */
+	html.admin-dark #main-content button.bg-blue-600 {
+	  background-color: #0284c7 !important;
+	  border-color: #38bdf8 !important;
+	  color: #ffffff !important;
+	}
+	html.admin-dark #main-content button.hover\:bg-blue-700:hover {
+	  background-color: #0ea5e9 !important;
+	  color: #ffffff !important;
+	}
+
+	/* Force Beginning Entry button, tier-none active button */
+	html.admin-dark #main-content button.bg-amber-600,
+	html.admin-dark #main-content button.bg-amber-500 {
+	  background-color: #b45309 !important;
+	  border-color: #f59e0b !important;
+	  color: #fff7ed !important;
+	}
+	html.admin-dark #main-content button.hover\:bg-amber-700:hover {
+	  background-color: #d97706 !important;
+	  color: #ffffff !important;
+	}
+
+	/* Disabled state: forceBeginningBtn, backfillPosSoldBtn, saveStoreConfigBtn while disabled */
+	html.admin-dark #main-content button:disabled {
+	  background-color: #475569 !important;
+	  border-color: #64748b !important;
+	  color: #cbd5e1 !important;
+	  opacity: 0.7;
+	}
+
+	/* Backfill POS Sold box */
+	html.admin-dark #main-content .bg-blue-50 {
+	  background-color: #0c4a6e !important;
+	  border-color: #0284c7 !important;
+	}
+	html.admin-dark #main-content .text-blue-900,
+	html.admin-dark #main-content .text-blue-800 {
+	  color: #7dd3fc !important;
+	}
+	html.admin-dark #main-content .border-blue-200 {
+	  border-color: #0284c7 !important;
+	}
+
+	/* Status "up to date" pill + status dot */
+	html.admin-dark #main-content .bg-emerald-50 {
+	  background-color: #064e3b !important;
+	  border-color: #059669 !important;
+	}
+	html.admin-dark #main-content .bg-emerald-500 {
+	  background-color: #047857 !important;
+	  border-color: #6ee7b7 !important;
+	  color: #ffffff !important;
+	}
+	html.admin-dark #main-content .text-emerald-700 {
+	  color: #6ee7b7 !important;
+	}
+	html.admin-dark #main-content .border-emerald-200 {
+	  border-color: #059669 !important;
+	}
+
+	/* Status "missing" pill + status dot, Force Beginning box, missing-date pills */
+	html.admin-dark #main-content .bg-amber-50 {
+	  background-color: #78350f !important;
+	  border-color: #d97706 !important;
+	}
+	html.admin-dark #main-content .bg-amber-200 {
+	  background-color: #92400e !important;
+	  border-color: #f59e0b !important;
+	  color: #ffffff !important;
+	}
+	html.admin-dark #main-content .bg-amber-500 {
+	  background-color: #b45309 !important;
+	  border-color: #fcd34d !important;
+	  color: #fff7ed !important;
+	}
+	html.admin-dark #main-content .text-amber-900,
+	html.admin-dark #main-content .text-amber-800,
+	html.admin-dark #main-content .text-amber-700 {
+	  color: #fcd34d !important;
+	}
+	html.admin-dark #main-content .border-amber-200,
+	html.admin-dark #main-content .border-amber-300 {
+	  border-color: #d97706 !important;
+	}
+
+	/* Card header badges: bg-white/10 (view details link, no-data badge, presence icon wrapper) */
+	html.admin-dark #main-content .bg-white\/10 {
+	  background-color: rgba(148, 163, 184, 0.12) !important;
+	}
+	html.admin-dark #main-content .border-white\/20 {
+	  border-color: rgba(203, 213, 225, 0.28) !important;
+	}
+
+	/* Global/Store Config checkbox tables */
+	html.admin-dark #main-content table {
+	  background-color: #0f172a !important;
+	  color: #e2e8f0;
+	}
+	html.admin-dark #main-content table thead,
+	html.admin-dark #main-content table thead tr,
+	html.admin-dark #main-content table th {
+	  background-color: #1e293b !important;
+	  border-color: #475569 !important;
+	  color: #f8fafc !important;
+	}
+	html.admin-dark #main-content table tbody,
+	html.admin-dark #main-content table tbody tr,
+	html.admin-dark #main-content table td {
+	  background-color: #0f172a !important;
+	  border-color: #334155 !important;
+	  color: #e2e8f0 !important;
+	}
+	html.admin-dark #main-content table tbody tr:hover td {
+	  background-color: #1e293b !important;
+	}
+	html.admin-dark #main-content table input,
+	html.admin-dark #main-content table select {
+	  background-color: #020617 !important;
+	  border-color: #475569 !important;
+	  color: #f8fafc !important;
+	}
+	html.admin-dark #main-content table [class*="divide-"] > :not([hidden]) ~ :not([hidden]) {
+	  border-color: #334155 !important;
+	}
+</style>
+
+<!-- Jinja declarations -->
+<script>
+let currentUserRole = {{ user.role|tojson }};
+let storePresenceUrl = {{ url_for('views.store_presence')|tojson }};
+let invenSyncDetailBaseUrl = {{ url_for('views.invensync')|tojson }};
+</script>
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between" onclick="childViewToggleSidebar()">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Invensync</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <div class="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 8v5l3 3"/>
+        <circle cx="12" cy="12" r="10"/>
+      </svg>
+      <span>Showing latest records</span>
+    </div>
+  </div>
+</header>
+
+<!-- Content -->
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <!-- Page Header -->
+  <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Invensync Dashboard</h1>
+      <p class="mt-1 text-slate-600">Latest ending inventory overview for all stores</p>
+    </div>
+  </section>
+
+  <!-- Tabs -->
+  <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+    <div class="flex flex-wrap gap-2">
+      <button id="summaryTabBtn" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none bg-slate-900 text-white" aria-pressed="true">
+        Summary
+      </button>
+      <button id="configTabBtn" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none bg-slate-100 text-slate-700" aria-pressed="false" style="display:none;">
+        Global Config
+      </button>
+      <button id="storeConfigTabBtn" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none bg-slate-100 text-slate-700" aria-pressed="false" style="display:none;">
+        Store Config
+      </button>
+    </div>
+  </div>
+
+  <!-- Summary Tab -->
+  <div id="summaryTab">
+    <div class="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <label for="invensyncStoreSearch" class="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Search Store</label>
+      <div class="relative max-w-xl">
+        <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="m21 21-4.3-4.3"/>
+        </svg>
+        <input id="invensyncStoreSearch" type="search" placeholder="Search store name or ID..." autocomplete="off" class="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm font-medium text-slate-800 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10">
+      </div>
+    </div>
+
+    <div id="invensyncStoreGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+
+    <div id="invensyncStoreNoResults" class="hidden text-center py-12 bg-white rounded-2xl border border-slate-200">
+      <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-slate-300 mb-4">
+        <circle cx="11" cy="11" r="8"/>
+        <path d="m21 21-4.3-4.3"/>
+      </svg>
+      <p class="text-slate-500 font-medium">No stores match your search.</p>
+    </div>
+
+    <div id="invensyncStoreLoading" class="text-center py-12 bg-white rounded-2xl border border-slate-200">
+      <p class="text-slate-500 font-medium">Loading stores...</p>
+    </div>
+  </div>
+
+  <!-- Global Config Tab -->
+  <div id="configTab" style="display:none;">
+    <div class="grid gap-4">
+      <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-4">
+        <div>
+          <h2 class="text-xl font-bold text-slate-900">Global Invensync Configuration</h2>
+          <p class="mt-0.5 text-sm text-slate-600">Applies to all stores unless overridden by a store-specific rule.</p>
+        </div>
+
+        <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <h3 class="text-sm font-semibold text-amber-900 uppercase tracking-wide">Force Beginning Entry</h3>
+          <p class="mt-1 text-xs text-amber-800">Temporarily re-enable the Beginning field for a store. Turns off automatically once Beginning is saved.</p>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <select id="forceBeginningStore" class="min-w-[240px] rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm text-slate-800">
+              <option value="">Select affected store</option>
+            </select>
+            <button type="button" id="forceBeginningBtn" class="rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 transition">
+              Force Beginning Entry
+            </button>
+          </div>
+          <div id="forceBeginningWaiting" class="mt-3 text-xs text-amber-900" style="display:none;">
+            Waiting for Beginning save:
+            <span id="forceBeginningWaitingList"></span>
+          </div>
+        </div>
+
+        <div class="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+          <h3 class="text-sm font-semibold text-blue-900 uppercase tracking-wide">Backfill POS Sold</h3>
+          <p class="mt-1 text-xs text-blue-800">Create missing <code>pos_sold</code> records from saved staging data. Use once after deployment to fix historical gaps where POS data was saved but never committed.</p>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <button type="button" id="backfillPosSoldBtn" class="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition">
+              Run Backfill
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+          <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">Hidden, Locked &amp; Editable Columns</h3>
+          <table class="w-full text-sm text-slate-700">
+            <thead>
+              <tr class="text-xs text-slate-500 uppercase">
+                <th class="text-left pb-2 font-semibold">Column</th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Hidden
+                  <button type="button" id="selectAllHiddenGlobalBtn" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Locked
+                  <button type="button" id="selectAllLockedGlobalBtn" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Editable
+                  <button type="button" id="selectAllEditableGlobalBtn" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+              </tr>
+            </thead>
+            <tbody id="globalConfigFieldsBody" class="divide-y divide-slate-200"></tbody>
+          </table>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3">
+          <button type="button" id="saveConfigBtn" class="px-5 py-3 rounded-2xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition">
+            Save Global Config
+          </button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Store Config Tab -->
+  <div id="storeConfigTab" style="display:none;">
+    <div class="grid gap-4">
+      <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">
+        <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">Store Invensync Configuration</h2>
+            <p class="mt-0.5 text-sm text-slate-600">Apply hidden, locked, and editable column rules to one selected store.</p>
+          </div>
+          <div class="w-full md:w-auto">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+              <select id="storeConfigSelect" class="w-full sm:w-[220px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-800">
+                <option value="">Select store</option>
+              </select>
+              <button type="button" id="saveStoreConfigBtn" class="w-full sm:w-[120px] rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold leading-tight text-white hover:bg-slate-800 transition" disabled>
+                Save Store Config
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-slate-50 rounded-xl border border-slate-200 p-3">
+          <table class="w-full text-sm text-slate-700">
+            <thead>
+              <tr class="text-xs text-slate-500 uppercase">
+                <th class="text-left pb-2 font-semibold">Column</th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Hidden
+                  <button type="button" id="selectAllHiddenStoreBtn" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Locked
+                  <button type="button" id="selectAllLockedStoreBtn" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Editable
+                  <button type="button" id="selectAllEditableStoreBtn" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+              </tr>
+            </thead>
+            <tbody id="storeConfigFieldsBody" class="divide-y divide-slate-200"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- Templates -->
+<template id="storeCardTemplate">
+  <div class="invensync-store-card flex h-[36rem] flex-col bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-300" data-cell="card">
+    <div class="shrink-0 bg-gradient-to-br from-slate-800 to-slate-900 px-6 py-4 rounded-t-2xl">
+      <div class="flex items-center justify-between">
+        <div class="flex min-w-0 flex-1 items-center gap-3">
+          <div class="invensync-presence-icon h-12 w-12 shrink-0 rounded-lg bg-white/10 backdrop-blur-sm flex items-center justify-center ring-2" data-cell="presence-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+              <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+              <path d="M2 7h20"/>
+            </svg>
+          </div>
+          <div class="min-w-0">
+            <h3 class="font-bold text-white leading-tight break-words text-base" data-cell="store-name"></h3>
+            <p class="text-xs text-slate-300 font-medium" data-cell="store-id"></p>
+          </div>
+        </div>
+        <a class="group ml-2 inline-flex shrink-0 items-center gap-1.5 text-white text-xs font-bold px-3 py-1.5 bg-white/10 rounded-lg ring-1 ring-white/10 hover:bg-white/20 transition-all" data-cell="view-details-link" style="display:none;">
+          <span>View Details</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:translate-x-0.5">
+            <path d="M5 12h14"/>
+            <path d="m12 5 7 7-7 7"/>
+          </svg>
+        </a>
+        <span class="ml-2 shrink-0 text-white text-xs font-semibold px-3 py-1.5 bg-white/10 rounded-lg ring-1 ring-white/10" data-cell="no-data-badge" style="display:none;">
+          <span class="inline-flex items-center gap-1.5">
+            <span class="h-2 w-2 rounded-full bg-slate-400"></span>
+            No Data
+          </span>
+        </span>
+      </div>
+    </div>
+
+    <div class="flex min-h-0 flex-1 flex-col px-6 py-4 space-y-3">
+      <div class="text-xs text-slate-500" data-cell="inventory-date-wrap" style="display:none;">
+        <span><span class="font-medium">Inventory Date:</span> <span data-cell="inventory-date"></span></span>
+      </div>
+      <div class="text-sm text-slate-600 py-2" data-cell="no-records" style="display:none;">
+        No invensync records available
+      </div>
+      <div class="invensync-card-status-scroll min-h-0 flex-1 space-y-2 pr-1" tabindex="-1" data-cell="status-scroll"></div>
+    </div>
+
+    <div class="shrink-0 px-6 py-3 bg-slate-50 border-t border-slate-200 space-y-3">
+      <div class="flex gap-2">
+        <button type="button" class="flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg transition" data-cell="tier-none-btn">NONE</button>
+        <button type="button" class="flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg transition" data-cell="tier-premium-btn">PREMIUM</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="statusPillTemplate">
+  <div class="invensync-update-status rounded-xl border px-3 py-2" data-cell="wrapper">
+    <div class="status-title flex items-center gap-2 text-sm font-semibold" data-cell="title-row">
+      <span class="inline-flex h-2.5 w-2.5 rounded-full" data-cell="dot"></span>
+      <span data-cell="title-text"></span>
+    </div>
+    <p class="status-copy mt-1 text-xs" data-cell="copy" style="display:none;"></p>
+    <div class="mt-2 flex flex-wrap gap-1.5" data-cell="pills" style="display:none;"></div>
+  </div>
+</template>
+
+<template id="configFieldRowTemplate">
+  <tr data-cell="row">
+    <td class="py-1.5" data-cell="label"></td>
+    <td class="text-center py-1.5"><input type="checkbox" class="hidden-column-checkbox" data-cell="hidden-checkbox"></td>
+    <td class="text-center py-1.5"><input type="checkbox" class="locked-column-checkbox" data-cell="locked-checkbox"></td>
+    <td class="text-center py-1.5"><input type="checkbox" class="editable-column-checkbox" data-cell="editable-checkbox"></td>
+  </tr>
+</template>
+
+<template id="storeConfigFieldRowTemplate">
+  <tr data-cell="row">
+    <td class="py-1.5" data-cell="label"></td>
+    <td class="text-center py-1.5"><input type="checkbox" class="store-hidden-column-checkbox" data-cell="hidden-checkbox"></td>
+    <td class="text-center py-1.5"><input type="checkbox" class="store-locked-column-checkbox" data-cell="locked-checkbox"></td>
+    <td class="text-center py-1.5"><input type="checkbox" class="store-editable-column-checkbox" data-cell="editable-checkbox"></td>
+  </tr>
+</template>
+
+<script>
+
+</script>
+
+
+
+
+<script defer src="{{ url_for('static', filename='js/handles/invsync_handles_admin_page.js') }}"></script>
+
+<script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+
+
+
+{% endblock %}

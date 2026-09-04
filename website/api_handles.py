@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 from . import db, cache
 from datetime import datetime, date, timedelta
-from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery
+from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig
 
 from .admin import log_audit_event
 
@@ -2117,6 +2117,760 @@ def link_system_analyzer_product():
 
 # ================================
 # System Analyzer Section End
+# ================================
+ 
+
+# ================================
+# Inv Sync Section Start
+# ================================
+
+
+def _serialize_update_status(status):
+    
+    if not status:
+        return None
+    latest_date = status.get('latest_date')
+    return {
+        'is_up_to_date': status.get('is_up_to_date', False),
+        'latest_date': latest_date.strftime('%b %d, %Y') if latest_date else None,
+        'missing_count': status.get('missing_count', 0),
+        'missing_dates': [
+            {'label': d.get('label') if isinstance(d, dict) else str(d)}
+            for d in (status.get('missing_dates') or [])
+        ],
+        'missing_ranges': [
+            {'label': r.get('label') if isinstance(r, dict) else str(r)}
+            for r in (status.get('missing_ranges') or [])
+        ],
+    }
+    
+
+
+def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return {
+            key: {
+                'is_up_to_date': False,
+                'missing_dates': [],
+                'missing_ranges': [],
+                'missing_count': 0,
+                'latest_date': None,
+            }
+            for key in ('inventory', 'pos_sold', 'delivery')
+        }
+
+    today = date.today()
+    previous_day_cutoff = min(cutoff_date, today - timedelta(days=1))
+    finalized_dates = {
+        row.inventory_date for row in DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= month_start,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).with_entities(DailyEndingInventory.inventory_date).all()
+        if row.inventory_date
+    }
+
+    pos_sold_dates = set()
+    delivery_dates = set()
+    if previous_day_cutoff >= month_start:
+        pos_sold_dates = {
+            row.report_date for row in (
+                db.session.query(DailyReport.report_date)
+                .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+                .filter(
+                    DailyReport.store_id == store_id,
+                    DailyReport.report_date >= month_start,
+                    DailyReport.report_date <= previous_day_cutoff,
+                )
+                .distinct()
+                .all()
+            )
+            if row.report_date
+        }
+        staged_pos_dates = {
+            row.report_date for row in PosSoldStaging.query.filter(
+                PosSoldStaging.store_id == store_id,
+                PosSoldStaging.report_date >= month_start,
+                PosSoldStaging.report_date <= previous_day_cutoff,
+            ).with_entities(PosSoldStaging.report_date).distinct().all()
+            if row.report_date
+        }
+        pos_sold_dates |= staged_pos_dates
+        inv_item_pos_dates = {
+            row.inventory_date for row in (
+                db.session.query(DailyEndingInventory.inventory_date)
+                .join(DailyEndingInventoryItem, DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id)
+                .filter(
+                    DailyEndingInventory.store_id == store_id,
+                    DailyEndingInventory.inventory_date >= month_start,
+                    DailyEndingInventory.inventory_date <= previous_day_cutoff,
+                    func.coalesce(DailyEndingInventoryItem.quantity_sold, 0) > 0,
+                )
+                .distinct()
+                .all()
+            )
+            if row.inventory_date
+        }
+        pos_sold_dates |= inv_item_pos_dates
+        delivery_dates = {
+            row.report_date for row in (
+                db.session.query(RsoDelivery.report_date)
+                .filter(
+                    RsoDelivery.store_id == store_id,
+                    RsoDelivery.report_date >= month_start,
+                    RsoDelivery.report_date <= previous_day_cutoff,
+                )
+                .distinct()
+                .all()
+            )
+            if row.report_date
+        }
+
+    inventory_status = _build_single_update_status(finalized_dates, today, month_start, cutoff_date, 'inventory')
+    pos_sold_status = _build_single_update_status(pos_sold_dates, today, month_start, previous_day_cutoff, 'pos_sold')
+    delivery_status = _build_single_update_status(delivery_dates, today, month_start, previous_day_cutoff, 'delivery')
+    return {
+        'inventory': inventory_status,
+        'pos_sold': pos_sold_status,
+        'delivery': delivery_status,
+    }
+
+
+def _build_single_update_status(dates_set, today, month_start, cutoff_date, label):
+    missing_date_values = []
+    missing_dates = []
+    cursor = month_start
+    while cursor <= cutoff_date:
+        if cursor == today:
+            cursor += timedelta(days=1)
+            continue
+        if cursor not in dates_set:
+            missing_date_values.append(cursor)
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+
+    def format_missing_range(start, end):
+        if start == end:
+            return f"{start.strftime('%b')} {start.day}, {start.year}"
+        if start.year == end.year and start.month == end.month:
+            return f"{start.strftime('%b')} {start.day}-{end.day}, {start.year}"
+        if start.year == end.year:
+            return f"{start.strftime('%b')} {start.day} - {end.strftime('%b')} {end.day}, {start.year}"
+        return f"{start.strftime('%b')} {start.day}, {start.year} - {end.strftime('%b')} {end.day}, {end.year}"
+
+    missing_ranges = []
+    if missing_date_values:
+        range_start = missing_date_values[0]
+        previous = missing_date_values[0]
+        for missing_date in missing_date_values[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            missing_ranges.append({
+                'start': range_start.strftime('%Y-%m-%d'),
+                'end': previous.strftime('%Y-%m-%d'),
+                'label': format_missing_range(range_start, previous),
+            })
+            range_start = missing_date
+            previous = missing_date
+        missing_ranges.append({
+            'start': range_start.strftime('%Y-%m-%d'),
+            'end': previous.strftime('%Y-%m-%d'),
+            'label': format_missing_range(range_start, previous),
+        })
+
+    latest_date = max(dates_set) if dates_set else None
+    return {
+        'is_up_to_date': len(missing_dates) == 0,
+        'missing_dates': missing_dates,
+        'missing_ranges': missing_ranges,
+        'missing_count': len(missing_dates),
+        'latest_date': latest_date,
+    }
+
+
+
+def _get_global_invensync_config():
+    config = GlobalInvenSyncConfig.query.first()
+    if not config:
+        default_data = {
+            'hidden_rows': [],
+            'hidden_columns': [],
+            'hidden_cells': [],
+            'locked_rows': [],
+            'locked_columns': [],
+            'locked_cells': [],
+            'editable_columns': [],
+            'force_beginning_store_ids': [],
+            'store_configs': {},
+            'admin_unlocks': {},
+        }
+        config = GlobalInvenSyncConfig(config_data=json.dumps(default_data))
+        db.session.add(config)
+        db.session.commit()
+
+    try:
+        config_data = json.loads(config.config_data or '{}')
+    except ValueError:
+        config_data = {
+            'hidden_rows': [],
+            'hidden_columns': [],
+            'hidden_cells': [],
+            'locked_rows': [],
+            'locked_columns': [],
+            'locked_cells': [],
+            'editable_columns': [],
+            'force_beginning_store_ids': [],
+            'store_configs': {},
+            'admin_unlocks': {},
+        }
+
+    if not isinstance(config_data.get('store_configs'), dict):
+        config_data['store_configs'] = {}
+    if not isinstance(config_data.get('admin_unlocks'), dict):
+        config_data['admin_unlocks'] = {}
+
+    return config, config_data
+
+
+@api_handles.route('/get_invensync_data', methods=['GET'])
+@login_required
+def get_invensync_data():
+    """Fetch all data needed to render the Invensync admin page (v2)."""
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    from .views import (
+        _apply_store_scope_filter,
+        _get_invensync_data_state,
+        _get_latest_meaningful_invensync_by_store,
+        _get_user_presence_states,
+    )
+
+    try:
+        selected_date = date.today()
+        update_cutoff_date = selected_date - timedelta(days=1)
+        month_start = selected_date.replace(day=1)
+
+        stores = Store.query.order_by(Store.name.asc()).all()
+        stores = _apply_store_scope_filter(stores, request)
+
+        inventory_by_store = _get_latest_meaningful_invensync_by_store(
+            [store.id for store in stores]
+        )
+        manager_presence = _get_user_presence_states(store.manager_id for store in stores)
+
+        store_summaries = []
+        for store in stores:
+            inventory = inventory_by_store.get(store.id)
+            data_state = _get_invensync_data_state(inventory)
+            update_status = _build_admin_invensync_update_status(store.id, month_start, update_cutoff_date)
+
+            store_summaries.append({
+                'store': {
+                    'id': store.id,
+                    'name': store.name,
+                    'manager_id': store.manager_id,
+                    'store_group': store.store_group,
+                },
+                'inventory': {
+                    'inventory_date': inventory.inventory_date.strftime('%b %d, %Y') if inventory and inventory.inventory_date else None,
+                } if inventory else None,
+                'has_data': data_state != 'empty',
+                'data_state': data_state,
+                'presence_state': manager_presence.get(store.manager_id, 'offline'),
+                'update_status': {
+                    'inventory': _serialize_update_status(update_status.get('inventory')),
+                    'pos_sold': _serialize_update_status(update_status.get('pos_sold')),
+                    'delivery': _serialize_update_status(update_status.get('delivery')),
+                },
+            })
+
+        config, config_data = _get_global_invensync_config()
+
+        config_fields = [
+            {'value': 'beginning_qty', 'label': 'Beg'},
+            {'value': 'delivery_qty', 'label': 'Delivery'},
+            {'value': 'trans_in_qty', 'label': 'Trans-In'},
+            {'value': 'bo_qty', 'label': 'BO'},
+            {'value': 'adv_del_qty', 'label': 'Booth Sales'},
+            {'value': 'trans_out_qty', 'label': 'Trans-Out'},
+            {'value': 'wastage_qty', 'label': 'Waste Qty'},
+            {'value': 'wastage_amount', 'label': 'Waste Amt'},
+            {'value': 'csi_qty', 'label': 'CSI'},
+            {'value': 'quantity_sold', 'label': 'Sold'},
+            {'value': 'ending_d5_qty', 'label': 'D+5'},
+            {'value': 'ending_d4_qty', 'label': 'D+4'},
+            {'value': 'ending_d3_qty', 'label': 'D+3'},
+            {'value': 'total_ending_qty', 'label': 'Total EI'},
+            {'value': 'total_peso_srp', 'label': 'Total Peso'},
+            {'value': 'theo_ending_qty', 'label': 'THEO'},
+            {'value': 'variance_qty', 'label': 'Var'},
+            {'value': 'variance_peso', 'label': 'Var Peso'},
+            {'value': 'remarks', 'label': 'Remarks'},
+        ]
+
+        return {
+            'type': 'success',
+            'stores': [{'id': s.id, 'name': s.name} for s in stores],
+            'store_summaries': store_summaries,
+            'selected_date': selected_date.strftime('%Y-%m-%d'),
+            'update_cutoff_date': update_cutoff_date.strftime('%Y-%m-%d'),
+            'today': date.today().strftime('%Y-%m-%d'),
+            'global_invensync_config': config_data,
+            'store_invensync_configs': config_data.get('store_configs', {}),
+            'config_fields': config_fields,
+        }
+    except Exception as e:
+        return {'type': 'error', 'message': str(e)} 
+
+
+
+@api_handles.route('/update_invensync_config', methods=['POST'])
+@login_required
+def update_invensync_config():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        config, existing_data = _get_global_invensync_config()
+
+        normalized_data = {
+            'hidden_rows': [str(item).strip() for item in data.get('hidden_rows', []) if str(item).strip()],
+            'hidden_columns': [str(item).strip() for item in data.get('hidden_columns', []) if str(item).strip()],
+            'hidden_cells': [str(item).strip() for item in data.get('hidden_cells', []) if str(item).strip()],
+            'locked_rows': [str(item).strip() for item in data.get('locked_rows', []) if str(item).strip()],
+            'locked_columns': [str(item).strip() for item in data.get('locked_columns', []) if str(item).strip()],
+            'locked_cells': [str(item).strip() for item in data.get('locked_cells', []) if str(item).strip()],
+            'editable_columns': [str(item).strip() for item in data.get('editable_columns', []) if str(item).strip()],
+            'force_beginning_store_ids': [
+                int(item)
+                for item in data.get('force_beginning_store_ids', existing_data.get('force_beginning_store_ids', []))
+                if str(item).isdigit()
+            ],
+            'store_configs': existing_data.get('store_configs', {}) if isinstance(existing_data.get('store_configs'), dict) else {},
+            'admin_unlocks': existing_data.get('admin_unlocks', {}) if isinstance(existing_data.get('admin_unlocks'), dict) else {},
+        }
+
+        config.config_data = json.dumps(normalized_data)
+        db.session.commit()
+
+        return {'type': 'success', 'message': 'Global Invensync settings updated.'}
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/update_store_invensync_config', methods=['POST'])
+@login_required
+def update_store_invensync_config():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        store_id = int(data.get('store_id', 0) or 0)
+        store = Store.query.get(store_id)
+        if not store:
+            return {'type': 'error', 'message': 'Store not found.'}
+
+        config, config_data = _get_global_invensync_config()
+        store_configs = config_data.get('store_configs', {})
+        if not isinstance(store_configs, dict):
+            store_configs = {}
+
+        store_configs[str(store_id)] = {
+            'hidden_columns': [str(item).strip() for item in data.get('hidden_columns', []) if str(item).strip()],
+            'locked_columns': [str(item).strip() for item in data.get('locked_columns', []) if str(item).strip()],
+            'editable_columns': [str(item).strip() for item in data.get('editable_columns', []) if str(item).strip()],
+        }
+
+        config_data['store_configs'] = store_configs
+        config.config_data = json.dumps(config_data)
+        db.session.commit()
+
+        return {'type': 'success', 'message': f'Invensync settings saved for {store.name}.'}
+    except (TypeError, ValueError):
+        return {'type': 'error', 'message': 'Select a valid store.'}
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/save_invensync_inventory_correction', methods=['POST'])
+@login_required
+def save_invensync_inventory_correction():
+    """Apply explicit, cell-level corrections without changing the day's lock state."""
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    editable_fields = {
+        'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
+        'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+        'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
+        'ending_d3_qty', 'remarks',
+    }
+    numeric_fields = editable_fields - {'remarks'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return {'type': 'error', 'message': 'Inventory not found.'}
+
+        changes = data.get('changes', [])
+        if not isinstance(changes, list) or not changes:
+            return {'type': 'error', 'message': 'No changes were submitted.'}
+
+        changed_items = {}
+        audit_changes = []
+        for change in changes:
+            field = str(change.get('field', '')).strip()
+            if field not in editable_fields:
+                return {'type': 'error', 'message': f'{field or "Unknown field"} cannot be edited.'}
+
+            item_id = int(change.get('item_id', 0) or 0)
+            item = DailyEndingInventoryItem.query.filter_by(
+                id=item_id,
+                inventory_id=inventory.id,
+            ).first()
+            if not item:
+                return {'type': 'error', 'message': 'An inventory item was not found.'}
+
+            old_value = getattr(item, field)
+            if field in numeric_fields:
+                raw_value = change.get('value', 0)
+                new_value = int(float(raw_value)) if str(raw_value).strip() else 0
+            else:
+                new_value = str(change.get('value', '') or '').strip()
+
+            if field == 'quantity_sold' and new_value in (None, 0):
+                new_value = None
+
+            setattr(item, field, new_value)
+            changed_items[item.id] = item
+            audit_changes.append({
+                'item_id': item.id,
+                'product': item.product_description,
+                'field': field,
+                'old': old_value,
+                'new': new_value,
+            })
+
+        from .views import _recalculate_inventory_item
+        for item in changed_items.values():
+            _recalculate_inventory_item(item)
+
+        # log_audit_event not available in api_handles — import separately if needed
+        # log_audit_event(
+        #     action='UPDATE',
+        #     entity_type='InvenSync Admin Correction',
+        #     entity_id=inventory.id,
+        #     details={
+        #         'store_id': inventory.store_id,
+        #         'inventory_date': str(inventory.inventory_date),
+        #         'changes': audit_changes,
+        #     },
+        # )
+        db.session.commit()
+        return {'type': 'success', 'message': f'{len(audit_changes)} inventory cell change(s) saved.'}
+    except (TypeError, ValueError):
+        db.session.rollback()
+        return {'type': 'error', 'message': 'Enter a valid whole number.'}
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/update_invensync_unlock_scope', methods=['POST'])
+@login_required
+def update_invensync_unlock_scope():
+    """Persist admin unlock/lock scope for a selected store/date inventory page."""
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        action = str(data.get('action') or '').strip().lower()
+        scope = str(data.get('scope') or '').strip().lower()
+        raw_cells = data.get('cells', [])
+
+        if action not in ('unlock', 'lock') or scope not in ('all', 'cells'):
+            return {'type': 'error', 'message': 'Invalid lock action.'}
+
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return {'type': 'error', 'message': 'Inventory not found.'}
+
+        allowed_fields = {
+            'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
+            'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+            'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
+            'ending_d3_qty', 'remarks',
+        }
+        valid_item_ids = {
+            int(item_id)
+            for item_id, in (
+                db.session.query(DailyEndingInventoryItem.id)
+                .filter(DailyEndingInventoryItem.inventory_id == inventory.id)
+                .all()
+            )
+        }
+
+        normalized_cells = []
+        if isinstance(raw_cells, list):
+            for cell in raw_cells:
+                if not isinstance(cell, dict):
+                    continue
+                item_id = int(cell.get('item_id', 0) or 0)
+                field = str(cell.get('field') or '').strip()
+                if item_id in valid_item_ids and field in allowed_fields:
+                    normalized_cells.append(f'{item_id}|{field}')
+
+        config, config_data = _get_global_invensync_config()
+        admin_unlocks = config_data.get('admin_unlocks', {})
+        if not isinstance(admin_unlocks, dict):
+            admin_unlocks = {}
+        store_key = str(inventory.store_id)
+        date_key = inventory.inventory_date.isoformat()
+        store_unlocks = admin_unlocks.get(store_key, {})
+        if not isinstance(store_unlocks, dict):
+            store_unlocks = {}
+        unlock_data = store_unlocks.get(date_key, {})
+        if not isinstance(unlock_data, dict):
+            unlock_data = {}
+
+        current_cells = {
+            str(item).strip()
+            for item in unlock_data.get('cells', [])
+            if str(item).strip()
+        }
+
+        if action == 'unlock' and scope == 'all':
+            unlock_data['all'] = True
+            unlock_data['cells'] = []
+        elif action == 'lock' and scope == 'all':
+            unlock_data = {}
+        elif action == 'unlock' and scope == 'cells':
+            if not normalized_cells:
+                return {'type': 'error', 'message': 'No valid cells selected.'}
+            current_cells.update(normalized_cells)
+            unlock_data['all'] = bool(unlock_data.get('all'))
+            unlock_data['cells'] = sorted(current_cells)
+        elif action == 'lock' and scope == 'cells':
+            current_cells.difference_update(normalized_cells)
+            unlock_data['all'] = bool(unlock_data.get('all'))
+            unlock_data['cells'] = sorted(current_cells)
+
+        if unlock_data.get('all') or unlock_data.get('cells'):
+            unlock_data['updated_by'] = current_user.id
+            unlock_data['updated_at'] = datetime.now().isoformat()
+            store_unlocks[date_key] = unlock_data
+            admin_unlocks[store_key] = store_unlocks
+        else:
+            store_unlocks.pop(date_key, None)
+            if store_unlocks:
+                admin_unlocks[store_key] = store_unlocks
+            else:
+                admin_unlocks.pop(store_key, None)
+
+        cutoff_date = (datetime.now() - timedelta(days=30)).date()
+        for s_key in list(admin_unlocks.keys()):
+            s_unlocks = admin_unlocks.get(s_key, {})
+            if not isinstance(s_unlocks, dict):
+                continue
+            for d_key in list(s_unlocks.keys()):
+                try:
+                    d = datetime.strptime(d_key, '%Y-%m-%d').date()
+                    if d < cutoff_date:
+                        del s_unlocks[d_key]
+                except (ValueError, TypeError):
+                    del s_unlocks[d_key]
+            if s_unlocks:
+                admin_unlocks[s_key] = s_unlocks
+            else:
+                admin_unlocks.pop(s_key, None)
+
+        config_data['admin_unlocks'] = admin_unlocks
+        config.config_data = json.dumps(config_data)
+        db.session.commit()
+
+        # log_audit_event not available in api_handles — import separately if needed
+        # log_audit_event(
+        #     action=f'admin.invensync.{action}_{scope}',
+        #     entity_type='DailyEndingInventory',
+        #     entity_id=inventory.id,
+        #     details={
+        #         'store_id': inventory.store_id,
+        #         'inventory_date': date_key,
+        #         'scope': scope,
+        #         'cell_count': len(normalized_cells),
+        #     },
+        #     commit=True,
+        # )
+
+        message = (
+            'All InvenSync cells are now unlocked for this store/date.'
+            if action == 'unlock' and scope == 'all'
+            else 'All InvenSync cells are now locked again for this store/date.'
+            if action == 'lock' and scope == 'all'
+            else f'{len(normalized_cells)} selected cell(s) {"unlocked" if action == "unlock" else "locked"} for this store/date.'
+        )
+        return {'type': 'success', 'message': message}
+    except (TypeError, ValueError):
+        return {'type': 'error', 'message': 'Invalid unlock request.'}
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/force_invensync_beginning', methods=['POST'])
+@login_required
+def force_invensync_beginning():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        store_id = int(data.get('store_id', 0) or 0)
+        store = Store.query.get(store_id)
+        if not store:
+            return {'type': 'error', 'message': 'Store not found.'}
+
+        config, config_data = _get_global_invensync_config()
+        forced_ids = {
+            int(item) for item in config_data.get('force_beginning_store_ids', [])
+            if str(item).isdigit()
+        }
+        forced_ids.add(store_id)
+        config_data['force_beginning_store_ids'] = sorted(forced_ids)
+        config.config_data = json.dumps(config_data)
+        db.session.commit()
+        return {
+            'type': 'success',
+            'message': f'Beginning entry enabled for {store.name}. It will turn off after Beginning is saved.',
+        }
+    except (TypeError, ValueError):
+        return {'type': 'error', 'message': 'Select a valid store.'}
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/backfill_pos_sold', methods=['POST'])
+@login_required
+def backfill_pos_sold():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        from .views import backfill_pos_sold_from_staging
+        result = backfill_pos_sold_from_staging(user_id=current_user.id)
+        db.session.commit()
+        return {
+            'type': 'success',
+            'message': (
+                f'Backfill complete. {result["created"]} date(s) had PosSold created from staging. '
+                f'{result["skipped"]} already had PosSold or had no data. '
+                f'{result["total_staging"]} total staging record(s) checked.'
+            ),
+        }
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/unfinalize_inventory', methods=['POST'])
+@login_required
+def unfinalize_inventory():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        if not inventory_id:
+            return {'type': 'error', 'message': 'Missing inventory_id.'}
+
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return {'type': 'error', 'message': 'Inventory record not found.'}
+        if not inventory.is_finalized:
+            return {'type': 'error', 'message': 'This inventory is not finalized.'}
+
+        inventory.is_finalized = False
+        inventory.finalized_at = None
+        inventory.finalized_by = None
+
+        config, config_data = _get_global_invensync_config()
+        admin_unlocks = config_data.get('admin_unlocks', {})
+        store_key = str(inventory.store_id)
+        date_key = inventory.inventory_date.isoformat() if hasattr(inventory.inventory_date, 'isoformat') else str(inventory.inventory_date)
+        if store_key in admin_unlocks and isinstance(admin_unlocks[store_key], dict):
+            admin_unlocks[store_key].pop(date_key, None)
+            if not admin_unlocks[store_key]:
+                del admin_unlocks[store_key]
+        config.config_data = json.dumps(config_data)
+
+        db.session.commit()
+        return {
+            'type': 'success',
+            'message': f'Inventory for {inventory.inventory_date.strftime("%b %d, %Y")} has been unfinalized. Store can now edit and save.',
+        }
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/update_store_pricing', methods=['POST'])
+@login_required
+def update_store_pricing():
+    """Update store pricing tier (premium/non_premium)"""
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        store_id = data.get('store_id')
+        tier = data.get('tier')
+
+        if not store_id or tier not in ('premium', 'non_premium'):
+            return {'type': 'error', 'message': 'Invalid data.'}
+
+        store = Store.query.get(store_id)
+        if not store:
+            return {'type': 'error', 'message': 'Store not found.'}
+
+        old_tier = store.store_group
+        store.store_group = tier
+        db.session.commit()
+
+        try:
+            from .views import log_audit_event
+            log_audit_event(
+                action='UPDATE_STORE_PRICING',
+                entity_type='Store',
+                entity_id=store.id,
+                details=f'Changed store "{store.name}" pricing tier from {old_tier} to {tier}',
+                actor_user=current_user.id
+            )
+        except Exception as audit_error:
+            print(f'Audit logging error: {audit_error}')
+
+        return {'type': 'success', 'message': f'Updated to {tier}'}
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Server error: {str(e)}'}
+
+# ================================
+# Inv Sync Section End
 # ================================
  
  

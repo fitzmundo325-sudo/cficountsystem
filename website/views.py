@@ -12483,6 +12483,18 @@ def system_analyzer_v2():
     return render_template("admin/system_analyzer_v2.html", user=current_user, page=page)
     
     
+    
+        
+   
+#v2 of the Inv Sync 
+@views.route('/admin/invensync_v2', methods=['GET'])
+@login_required
+def invensync_v2():
+
+
+    page = 'invensync'
+    return render_template("admin/invensync_v2.html", user=current_user, page=page)
+    
 
 # ================================================
 # Supply Requests (store side)
