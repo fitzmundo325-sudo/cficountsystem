@@ -247,6 +247,38 @@ def _ensure_taf_transfer_columns():
             conn.execute(
                 text("ALTER TABLE taf_transfer ADD COLUMN received_date DATE")
             )
+        if 'approved_by_name' not in existing_columns:
+            conn.execute(
+                text("ALTER TABLE taf_transfer ADD COLUMN approved_by_name VARCHAR(255)")
+            )
+        if 'received_by_name' not in existing_columns:
+            conn.execute(
+                text("ALTER TABLE taf_transfer ADD COLUMN received_by_name VARCHAR(255)")
+            )
+        if 'customer_name' not in existing_columns:
+            conn.execute(
+                text("ALTER TABLE taf_transfer ADD COLUMN customer_name VARCHAR(255)")
+            )
+        if 'charge_type' not in existing_columns:
+            conn.execute(
+                text("ALTER TABLE taf_transfer ADD COLUMN charge_type VARCHAR(50) DEFAULT 'Charge'")
+            )
+        if 'discount_percent' not in existing_columns:
+            conn.execute(
+                text("ALTER TABLE taf_transfer ADD COLUMN discount_percent FLOAT DEFAULT 0.0")
+            )
+        if 'net_total' not in existing_columns:
+            conn.execute(
+                text("ALTER TABLE taf_transfer ADD COLUMN net_total FLOAT DEFAULT 0.0")
+            )
+        if 'validated_by' not in existing_columns:
+            conn.execute(
+                text("ALTER TABLE taf_transfer ADD COLUMN validated_by INTEGER")
+            )
+        if 'validated_at' not in existing_columns:
+            conn.execute(
+                text("ALTER TABLE taf_transfer ADD COLUMN validated_at DATETIME")
+            )
         conn.execute(
             text(
                 "UPDATE taf_transfer SET status = 'Pending' "

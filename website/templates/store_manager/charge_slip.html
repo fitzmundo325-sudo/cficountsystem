@@ -1,0 +1,570 @@
+{% extends "base.html" %}
+{% block title %}Charge Slip - {{ store.name }}{% endblock %}
+
+{% block content %}
+<style>
+  /* Hide native Chrome, Safari, Edge, Opera number input arrows */
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  /* Hide native Firefox number input arrows */
+  input[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+</style>
+
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div class="flex items-center gap-3 sm:gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span>Store Manager</span>
+      <span class="mx-2">/</span>
+      <span>TransAct Form</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Charge Slip</span>
+    </nav>
+  </div>
+  <div class="flex flex-wrap items-center gap-3 sm:justify-end">
+    <div class="text-sm font-medium text-slate-600">
+      <span class="text-slate-900 font-semibold">{{ store.name }}</span>
+    </div>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  <!-- Charge Slip Section (Matching App Theme & Sharp Rectangular Borders) -->
+  <section class="rounded-none border border-slate-200 bg-white shadow-sm">
+    <!-- Form Navigation Tabs & View Mode Header -->
+    <div class="px-4 md:px-6 pt-3 pb-0 bg-slate-100/90 border-b border-slate-200 flex flex-wrap items-end justify-between gap-3">
+      <div class="flex items-center gap-2 -mb-px overflow-x-auto">
+        <a id="taf-tab-link" href="{{ url_for('views.store_manager_transaction_activity_form') }}" class="{% if loaded_slip %}hidden {% endif %}px-4 py-2.5 sm:px-5 sm:py-2.5 text-xs sm:text-sm font-bold text-slate-600 hover:text-slate-900 bg-slate-200/70 hover:bg-slate-300/80 border border-transparent rounded-t-lg transition-all flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+          </svg>
+          <span>Transaction Activity Form (TAF)</span>
+        </a>
+        <a href="{{ url_for('views.store_manager_charge_slip') }}" class="px-4 py-2.5 sm:px-5 sm:py-2.5 text-xs sm:text-sm font-extrabold text-slate-950 bg-amber-400 border border-amber-500 border-b-amber-400 rounded-t-lg shadow-xs flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-slate-950" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+            <line x1="7" y1="8" x2="17" y2="8"></line>
+            <line x1="7" y1="12" x2="17" y2="12"></line>
+            <line x1="7" y1="16" x2="13" y2="16"></line>
+          </svg>
+          <span>Charge Slip</span>
+        </a>
+      </div>
+      <div id="edit-mode-indicator" class="{% if not is_edit_mode %}hidden {% endif %}flex items-center gap-2 mb-2.5">
+        <span class="px-2.5 py-1 text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300 rounded-md">EDITING CHARGE SLIP (PENDING)</span>
+        <a href="{{ url_for('views.store_manager_charge_slip_history') }}" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors">Cancel Edit</a>
+      </div>
+      <div id="view-mode-indicator" class="{% if not is_view_only %}hidden {% endif %}flex items-center gap-2 mb-2.5">
+        <a id="view-edit-link" href="{% if loaded_slip %}{{ url_for('views.store_manager_charge_slip', edit_id=loaded_slip.id) }}{% else %}#{% endif %}" class="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-amber-900 bg-amber-100 border border-amber-300 rounded-md hover:bg-amber-200 transition-colors shadow-xs" title="Edit Charge Slip">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-amber-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+          </svg>
+          <span>Edit Charge Slip</span>
+        </a>
+      </div>
+    </div>
+
+    <form id="charge-slip-form" class="p-4 md:p-5 space-y-4" method="post">
+      <input type="hidden" name="edit_id" value="{{ loaded_slip.id if is_edit_mode and loaded_slip else '' }}">
+      <!-- Top Fields: Date, Control No, Name, Type -->
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+        <!-- Date -->
+        <div class="md:col-span-3">
+          <label for="taf_date" class="block text-xs font-semibold text-slate-700 mb-1">
+            Date <span class="text-rose-500">*</span>
+          </label>
+          <input id="taf_date" name="taf_date" type="date" value="{{ loaded_slip.transaction_date.strftime('%Y-%m-%d') if loaded_slip and loaded_slip.transaction_date else (selected_report_date if selected_report_date else today) }}" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-cyan-400 outline-none" required>
+        </div>
+
+        <!-- Control No. -->
+        <div class="md:col-span-3">
+          <label for="control_no" class="block text-xs font-semibold text-slate-700 mb-1">
+            Control No <span class="text-rose-500">*</span>
+          </label>
+          <input id="control_no" name="control_no" type="text" value="{{ loaded_slip.control_no if loaded_slip else '' }}" placeholder="Enter control number" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+        </div>
+
+        <!-- Name -->
+        <div class="md:col-span-4">
+          <label for="customer_name" class="block text-xs font-semibold text-slate-700 mb-1">
+            Name <span class="text-rose-500">*</span>
+          </label>
+          <input id="customer_name" name="customer_name" type="text" value="{{ loaded_slip.customer_name if loaded_slip and loaded_slip.customer_name else '' }}" placeholder="Enter recipient / employee name" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-800 focus:ring-2 focus:ring-cyan-400 outline-none" required>
+        </div>
+
+        <!-- Slip Type -->
+        {% set active_type = loaded_slip.charge_type if loaded_slip and loaded_slip.charge_type else 'Charge' %}
+        <div class="md:col-span-2">
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Type</label>
+          <div class="flex items-center gap-3 pt-1.5">
+            <label class="inline-flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-slate-800">
+              <input type="radio" name="charge_type" value="Charge" {% if active_type == 'Charge' %}checked{% endif %} class="w-4 h-4 text-cyan-600 focus:ring-cyan-400 border-slate-300">
+              <span>Charge</span>
+            </label>
+            <label class="inline-flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-slate-800">
+              <input type="radio" name="charge_type" value="Spoilage" {% if active_type == 'Spoilage' %}checked{% endif %} class="w-4 h-4 text-cyan-600 focus:ring-cyan-400 border-slate-300">
+              <span>Spoilage</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Items Table -->
+      <div class="rounded-lg border border-slate-200 overflow-hidden">
+        <div class="bg-slate-100 px-3 py-2 flex items-center justify-between border-b border-slate-200">
+          <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Particulars & Items</p>
+          <button id="add-cs-row-btn" type="button" class="{% if is_view_only %}hidden {% endif %}px-3 py-1.5 text-xs font-semibold bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors">
+            Add Row
+          </button>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-white">
+              <tr>
+                <th scope="col" class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Particulars (Item Name)</th>
+                <th scope="col" class="w-28 px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Unit</th>
+                <th scope="col" class="w-36 px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Price (₱)</th>
+                <th scope="col" class="w-40 px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Amount (₱)</th>
+                <th scope="col" class="w-16 px-3 py-2 text-center text-xs font-semibold text-slate-500 uppercase cs-action-col" {% if is_view_only %}style="display:none;"{% endif %}>Action</th>
+              </tr>
+            </thead>
+            <tbody id="cs-items-body" class="divide-y divide-slate-100 bg-white">
+              {% if loaded_slip_items %}
+                {% for item in loaded_slip_items %}
+                <tr class="cs-row hover:bg-slate-50 transition-colors">
+                  <td class="px-3 py-2">
+                    <input type="text" name="item_name[]" list="product-catalog-options" value="{{ item.item_name }}" placeholder="Select or type item name" class="cs-item-name w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-cyan-400 outline-none" required>
+                  </td>
+                  <td class="px-3 py-2">
+                    <input type="number" name="qty[]" min="1" step="1" value="{{ item.quantity }}" placeholder="1" class="cs-qty w-full px-3 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+                  </td>
+                  <td class="px-3 py-2">
+                    <input type="number" name="unit_cost[]" min="0" step="0.01" value="{{ '%.2f'|format(item.unit_cost or 0) }}" placeholder="0.00" class="cs-price w-full px-3 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+                  </td>
+                  <td class="px-3 py-2">
+                    <input type="number" name="line_total[]" readonly value="{{ '%.2f'|format(item.line_total or 0) }}" class="cs-amount w-full px-3 py-1.5 text-right bg-slate-100 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" tabIndex="-1">
+                  </td>
+                  <td class="px-3 py-2 text-center cs-action-col" {% if is_view_only %}style="display:none;"{% endif %}>
+                    <button type="button" class="remove-cs-row-btn p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors" title="Remove line">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>
+                  </td>
+                </tr>
+                {% endfor %}
+              {% else %}
+                <tr class="cs-row hover:bg-slate-50 transition-colors">
+                  <td class="px-3 py-2">
+                    <input type="text" name="item_name[]" list="product-catalog-options" placeholder="Select or type item name" class="cs-item-name w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-cyan-400 outline-none" required>
+                  </td>
+                  <td class="px-3 py-2">
+                    <input type="number" name="qty[]" min="1" step="1" value="1" placeholder="1" class="cs-qty w-full px-3 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+                  </td>
+                  <td class="px-3 py-2">
+                    <input type="number" name="unit_cost[]" min="0" step="0.01" value="0.00" placeholder="0.00" class="cs-price w-full px-3 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+                  </td>
+                  <td class="px-3 py-2">
+                    <input type="number" name="line_total[]" readonly value="0.00" class="cs-amount w-full px-3 py-1.5 text-right bg-slate-100 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" tabIndex="-1">
+                  </td>
+                  <td class="px-3 py-2 text-center cs-action-col">
+                    <button type="button" class="remove-cs-row-btn p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors" title="Remove line">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>
+                  </td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+
+        <datalist id="product-catalog-options">
+          {% for p_name in product_names %}
+          <option value="{{ p_name }}"></option>
+          {% endfor %}
+        </datalist>
+      </div>
+
+      <!-- Remarks, Discount Presets & Totals -->
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+        <!-- Remarks -->
+        <div class="md:col-span-6 space-y-2">
+          <label for="slip_remarks" class="block text-xs font-semibold text-slate-700">Remarks / Reason</label>
+          <textarea id="slip_remarks" name="remarks[]" rows="4" placeholder="Optional remarks or notes..." class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none resize-none">{{ loaded_slip.remarks if loaded_slip and loaded_slip.remarks else '' }}</textarea>
+        </div>
+
+        <!-- Totals & Presets -->
+        <div class="md:col-span-6 bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
+          <div class="flex items-center justify-between text-sm">
+            <span class="font-semibold text-slate-700">Total:</span>
+            <span id="cs-grand-total" class="text-base font-bold text-slate-900">₱0.00</span>
+          </div>
+
+          <!-- Discount & Quick Presets -->
+          <div class="space-y-2 pt-2 border-t border-slate-200">
+            <div class="flex items-center justify-between gap-2">
+              <label for="discount_percent" class="text-xs font-semibold text-slate-700">Less: Discount (%)</label>
+              <div class="flex items-center gap-1 w-28">
+                <input id="discount_percent" name="discount_percent" type="number" min="0" max="100" step="0.01" value="{{ '%.1f'|format(loaded_slip.discount_percent or 0) if loaded_slip else 0 }}" placeholder="0" class="w-full px-2.5 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-800 focus:ring-2 focus:ring-cyan-400 outline-none">
+                <span class="text-xs font-bold text-slate-600">%</span>
+              </div>
+            </div>
+
+            <!-- Quick Discount Presets: 5%, 10%, 15% -->
+            <div id="discount-presets-container" class="{% if is_view_only %}hidden {% endif %}flex items-center justify-end gap-1.5 pt-1">
+              <span class="text-xs text-slate-500 font-medium mr-1">Presets:</span>
+              <button type="button" data-discount="0" class="discount-preset-btn px-2.5 py-1 text-xs font-semibold rounded border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition-colors">0%</button>
+              <button type="button" data-discount="5" class="discount-preset-btn px-2.5 py-1 text-xs font-semibold rounded border border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50 transition-colors">5%</button>
+              <button type="button" data-discount="10" class="discount-preset-btn px-2.5 py-1 text-xs font-semibold rounded border border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50 transition-colors">10%</button>
+              <button type="button" data-discount="15" class="discount-preset-btn px-2.5 py-1 text-xs font-semibold rounded border border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50 transition-colors">15%</button>
+            </div>
+          </div>
+
+          <!-- Net Charges -->
+          <div class="flex items-center justify-between text-base pt-2 border-t border-slate-300">
+            <span class="font-bold text-slate-900">Net Charges:</span>
+            <span id="cs-net-charges" class="text-xl font-extrabold tracking-tight text-cyan-700">₱0.00</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Personnel / Signatures -->
+      <div class="border-t border-slate-200 pt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label for="prepared_by_name" class="block text-xs font-semibold text-slate-700 mb-1">
+            Prepared By <span class="text-rose-500">*</span>
+          </label>
+          <input id="prepared_by_name" name="prepared_by_name" type="text" value="{{ loaded_slip.prepared_by_name if loaded_slip and loaded_slip.prepared_by_name else (user.full_name if user.full_name else user.username) }}" placeholder="Prepared by name" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-800 focus:ring-2 focus:ring-cyan-400 outline-none" required>
+        </div>
+
+        <div>
+          <label for="approved_by_name" class="block text-xs font-semibold text-slate-700 mb-1">
+            Approved By <span class="text-rose-500">*</span>
+          </label>
+          <input id="approved_by_name" name="approved_by_name" type="text" value="{{ loaded_slip.approved_by_name if loaded_slip and loaded_slip.approved_by_name else '' }}" placeholder="Approved by name" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-800 focus:ring-2 focus:ring-cyan-400 outline-none" required>
+        </div>
+
+        <div>
+          <label for="received_by_name" class="block text-xs font-semibold text-slate-700 mb-1">
+            Received By <span class="text-rose-500">*</span>
+          </label>
+          <input id="received_by_name" name="received_by_name" type="text" value="{{ loaded_slip.received_by_name if loaded_slip and loaded_slip.received_by_name else '' }}" placeholder="Received by name" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-800 focus:ring-2 focus:ring-cyan-400 outline-none" required>
+        </div>
+      </div>
+
+      <!-- Submit Button -->
+      <div class="flex items-center justify-end gap-3 pt-2">
+        <button id="submit-cs-btn" type="submit" class="{% if is_view_only %}hidden {% endif %}px-5 py-2 text-sm font-semibold text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors shadow-sm">
+          {% if is_edit_mode %}Update Charge Slip{% else %}Save Charge Slip{% endif %}
+        </button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<!-- JavaScript for Dynamic Calculations & Presets -->
+<script>
+  const PRODUCT_PRICE_MAP = {{ (product_price_map or {}) | tojson | safe }};
+  const SLIP_ITEMS_MAP = {{ (slip_items_by_transfer or {}) | tojson | safe }};
+  const SLIP_DATA_MAP = {
+    {% for slip in recent_charge_slips %}
+    "{{ slip.id }}": {
+      id: {{ slip.id }},
+      control_no: {{ slip.control_no | tojson }},
+      date_iso: {{ (slip.transaction_date.strftime('%Y-%m-%d') if slip.transaction_date else '') | tojson }},
+      date: {{ (slip.transaction_date.strftime('%b %d, %Y') if slip.transaction_date else '') | tojson }},
+      name: {{ (slip.customer_name or '') | tojson }},
+      type: {{ (slip.charge_type or 'Charge') | tojson }},
+      grand_total: "₱{{ '%.2f'|format(slip.grand_total or 0) }}",
+      discount_raw: {{ slip.discount_percent or 0 }},
+      discount: "{{ '%.1f'|format(slip.discount_percent or 0) }}%",
+      net_total: "₱{{ '%.2f'|format(slip.net_total or 0) }}",
+      remarks: {{ (slip.remarks or '') | tojson }},
+      prepared_by: {{ (slip.prepared_by_name or '') | tojson }},
+      approved_by: {{ (slip.approved_by_name or '') | tojson }},
+      received_by: {{ (slip.received_by_name or '') | tojson }}
+    },
+    {% endfor %}
+  };
+
+  function setFormReadOnly(isReadOnly) {
+    const form = document.getElementById('charge-slip-form');
+    if (!form) return;
+
+    form.querySelectorAll('input, select, textarea').forEach(el => {
+      if (el.name !== 'csrf_token') {
+        el.disabled = isReadOnly;
+        if (isReadOnly) {
+          el.classList.add('bg-slate-100', 'cursor-not-allowed', 'text-slate-700');
+          el.classList.remove('bg-white');
+        } else {
+          el.classList.remove('bg-slate-100', 'cursor-not-allowed', 'text-slate-700');
+          if (!el.readOnly) el.classList.add('bg-white');
+        }
+      }
+    });
+
+    const addBtn = document.getElementById('add-cs-row-btn');
+    if (addBtn) addBtn.style.display = isReadOnly ? 'none' : '';
+
+    document.querySelectorAll('.cs-action-col, .remove-cs-row-btn').forEach(el => {
+      el.style.display = isReadOnly ? 'none' : '';
+    });
+
+    const presets = document.getElementById('discount-presets-container');
+    if (presets) presets.style.display = isReadOnly ? 'none' : '';
+
+    const submitBtn = document.getElementById('submit-cs-btn');
+    const newCsBtn = document.getElementById('new-cs-form-btn');
+    if (submitBtn) submitBtn.style.display = isReadOnly ? 'none' : '';
+    if (newCsBtn) newCsBtn.style.display = isReadOnly ? 'inline-flex' : 'none';
+
+    const tafTab = document.getElementById('taf-tab-link');
+    const viewIndicator = document.getElementById('view-mode-indicator');
+    const internalBadge = document.getElementById('internal-use-badge');
+    if (tafTab) tafTab.style.display = isReadOnly ? 'none' : '';
+    if (viewIndicator) viewIndicator.style.display = isReadOnly ? 'flex' : 'none';
+    if (internalBadge) internalBadge.style.display = isReadOnly ? 'none' : '';
+  }
+
+  function viewChargeSlipDetails(id) {
+    const slip = SLIP_DATA_MAP[id];
+    if (!slip) return;
+
+    if (document.getElementById('taf_date') && slip.date_iso) {
+      document.getElementById('taf_date').value = slip.date_iso;
+    }
+    if (document.getElementById('control_no')) {
+      document.getElementById('control_no').value = slip.control_no;
+    }
+    if (document.getElementById('customer_name')) {
+      document.getElementById('customer_name').value = slip.name;
+    }
+    const typeRadios = document.querySelectorAll('input[name="charge_type"]');
+    typeRadios.forEach(radio => {
+      radio.checked = (radio.value === slip.type);
+    });
+
+    if (document.getElementById('slip_remarks')) {
+      document.getElementById('slip_remarks').value = slip.remarks || '';
+    }
+
+    const itemsBody = document.getElementById('cs-items-body');
+    if (itemsBody) {
+      itemsBody.innerHTML = '';
+      const items = SLIP_ITEMS_MAP[id] || [];
+      if (items.length === 0) {
+        const defaultRow = document.createElement('tr');
+        defaultRow.className = 'cs-row hover:bg-slate-50 transition-colors';
+        defaultRow.innerHTML = `
+          <td class="px-3 py-2">
+            <input type="text" name="item_name[]" list="product-catalog-options" placeholder="Select or type item name" class="cs-item-name w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-cyan-400 outline-none" required>
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="qty[]" min="1" step="1" value="1" placeholder="1" class="cs-qty w-full px-3 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="unit_cost[]" min="0" step="0.01" value="0.00" placeholder="0.00" class="cs-price w-full px-3 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="line_total[]" readonly value="0.00" class="cs-amount w-full px-3 py-1.5 text-right bg-slate-100 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" tabIndex="-1">
+          </td>
+          <td class="px-3 py-2 text-center cs-action-col">
+            <button type="button" class="remove-cs-row-btn p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors" title="Remove line">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            </button>
+          </td>
+        `;
+        itemsBody.appendChild(defaultRow);
+      } else {
+        items.forEach(item => {
+          const tr = document.createElement('tr');
+          tr.className = 'cs-row hover:bg-slate-50 transition-colors';
+          tr.innerHTML = `
+            <td class="px-3 py-2">
+              <input type="text" name="item_name[]" list="product-catalog-options" value="${item.item_name}" placeholder="Select or type item name" class="cs-item-name w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-cyan-400 outline-none" required>
+            </td>
+            <td class="px-3 py-2">
+              <input type="number" name="qty[]" min="1" step="1" value="${item.qty}" placeholder="1" class="cs-qty w-full px-3 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+            </td>
+            <td class="px-3 py-2">
+              <input type="number" name="unit_cost[]" min="0" step="0.01" value="${item.unit_cost.toFixed(2)}" placeholder="0.00" class="cs-price w-full px-3 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+            </td>
+            <td class="px-3 py-2">
+              <input type="number" name="line_total[]" readonly value="${item.total_cost.toFixed(2)}" class="cs-amount w-full px-3 py-1.5 text-right bg-slate-100 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" tabIndex="-1">
+            </td>
+            <td class="px-3 py-2 text-center cs-action-col">
+              <button type="button" class="remove-cs-row-btn p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors" title="Remove line">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              </button>
+            </td>
+          `;
+          itemsBody.appendChild(tr);
+        });
+      }
+    }
+
+    if (document.getElementById('discount_percent')) {
+      document.getElementById('discount_percent').value = slip.discount_raw;
+    }
+    if (document.getElementById('prepared_by_name')) {
+      document.getElementById('prepared_by_name').value = slip.prepared_by;
+    }
+    if (document.getElementById('approved_by_name')) {
+      document.getElementById('approved_by_name').value = slip.approved_by;
+    }
+    if (document.getElementById('received_by_name')) {
+      document.getElementById('received_by_name').value = slip.received_by;
+    }
+
+    const editLink = document.getElementById('view-edit-link');
+    if (editLink) {
+      editLink.href = "{{ url_for('views.store_manager_charge_slip') }}?edit_id=" + id;
+    }
+
+    setFormReadOnly(true);
+
+    if (typeof window.rebindCsFormEvents === 'function') {
+      window.rebindCsFormEvents();
+    }
+
+    const formSection = document.getElementById('charge-slip-form');
+    if (formSection) {
+      formSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const itemsBody = document.getElementById('cs-items-body');
+    const addRowBtn = document.getElementById('add-cs-row-btn');
+    const grandTotalEl = document.getElementById('cs-grand-total');
+    const netChargesEl = document.getElementById('cs-net-charges');
+    const discountInput = document.getElementById('discount_percent');
+    const presetBtns = document.querySelectorAll('.discount-preset-btn');
+
+    function calculateTotals() {
+      let subtotal = 0;
+      const rows = itemsBody.querySelectorAll('tr.cs-row');
+
+      rows.forEach(row => {
+        const qtyInput = row.querySelector('.cs-qty');
+        const priceInput = row.querySelector('.cs-price');
+        const amountInput = row.querySelector('.cs-amount');
+
+        const qty = parseFloat(qtyInput?.value) || 0;
+        const price = parseFloat(priceInput?.value) || 0;
+        const amount = qty * price;
+
+        if (amountInput) {
+          amountInput.value = amount.toFixed(2);
+        }
+        subtotal += amount;
+      });
+
+      const discountPct = parseFloat(discountInput?.value) || 0;
+      const discountAmount = subtotal * (discountPct / 100);
+      const netCharges = subtotal - discountAmount;
+
+      if (grandTotalEl) grandTotalEl.textContent = `₱${subtotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      if (netChargesEl) netChargesEl.textContent = `₱${netCharges.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+
+    function attachRowEvents(row) {
+      const nameInput = row.querySelector('.cs-item-name');
+      const priceInput = row.querySelector('.cs-price');
+      const qtyInput = row.querySelector('.cs-qty');
+      const removeBtn = row.querySelector('.remove-cs-row-btn');
+
+      if (nameInput) {
+        nameInput.addEventListener('change', () => {
+          const selectedVal = nameInput.value.trim();
+          if (PRODUCT_PRICE_MAP.hasOwnProperty(selectedVal) && priceInput) {
+            priceInput.value = (PRODUCT_PRICE_MAP[selectedVal] || 0).toFixed(2);
+          }
+          calculateTotals();
+        });
+      }
+
+      if (qtyInput) qtyInput.addEventListener('input', calculateTotals);
+      if (priceInput) priceInput.addEventListener('input', calculateTotals);
+
+      if (removeBtn) {
+        removeBtn.addEventListener('click', () => {
+          const rowCount = itemsBody.querySelectorAll('tr.cs-row').length;
+          if (rowCount > 1) {
+            row.remove();
+            calculateTotals();
+          } else {
+            alert('At least one item line is required.');
+          }
+        });
+      }
+    }
+
+    itemsBody.querySelectorAll('tr.cs-row').forEach(attachRowEvents);
+
+    if (addRowBtn) {
+      addRowBtn.addEventListener('click', () => {
+        const newRow = document.createElement('tr');
+        newRow.className = 'cs-row hover:bg-slate-50 transition-colors';
+        newRow.innerHTML = `
+          <td class="px-3 py-2">
+            <input type="text" name="item_name[]" list="product-catalog-options" placeholder="Select or type item name" class="cs-item-name w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-cyan-400 outline-none" required>
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="qty[]" min="1" step="1" value="1" placeholder="1" class="cs-qty w-full px-3 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="unit_cost[]" min="0" step="0.01" value="0.00" placeholder="0.00" class="cs-price w-full px-3 py-1.5 text-right bg-white border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-cyan-400 outline-none" required>
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="line_total[]" readonly value="0.00" class="cs-amount w-full px-3 py-1.5 text-right bg-slate-100 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" tabIndex="-1">
+          </td>
+          <td class="px-3 py-2 text-center">
+            <button type="button" class="remove-cs-row-btn p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors" title="Remove line">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            </button>
+          </td>
+        `;
+        itemsBody.appendChild(newRow);
+        attachRowEvents(newRow);
+      });
+    }
+
+    if (discountInput) {
+      discountInput.addEventListener('input', calculateTotals);
+    }
+
+    presetBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const val = btn.getAttribute('data-discount');
+        if (discountInput && val !== null) {
+          discountInput.value = val;
+          calculateTotals();
+        }
+      });
+    });
+
+    calculateTotals();
+
+    if ({{ 'true' if is_view_only else 'false' }}) {
+      setFormReadOnly(true);
+    }
+  });
+</script>
+{% endblock %}

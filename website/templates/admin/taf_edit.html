@@ -1,37 +1,393 @@
 {% extends "admin_base.html" %}
-{% block title %}Edit TAF{% endblock %}
+{% block title %}Edit TAF & Charge Slip{% endblock %}
 {% block content %}
-<div class="max-w-6xl mx-auto p-6 md:p-8 space-y-6">
-  <div class="flex items-center justify-between gap-3">
-    <div><h1 class="text-3xl font-bold text-slate-900">Edit TAF</h1><p class="text-sm text-slate-500">{{ transfer.control_no }}</p></div>
-    <a href="{{ url_for('admin.admin_taf') }}" class="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">Back</a>
+<style>
+  /* Hide native Chrome, Safari, Edge, Opera number input arrows */
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  /* Hide native Firefox number input arrows */
+  input[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+</style>
+
+<div class="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+  <!-- Top Breadcrumb & Header Card -->
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+    <div class="space-y-1">
+      <nav class="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+        <a href="{{ url_for('admin.admin_taf') }}" class="hover:text-slate-900 transition-colors">TAF List</a>
+        <span>/</span>
+        <span class="text-slate-900">Edit Record</span>
+      </nav>
+      <div class="flex flex-wrap items-center gap-3">
+        <h1 class="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">
+          Edit {{ transfer.transaction_type or 'TAF' }}
+        </h1>
+        <span class="px-2.5 py-1 text-xs font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200 rounded-md">
+          #{{ transfer.control_no }}
+        </span>
+        <span class="px-2.5 py-1 text-xs font-bold rounded-md border 
+          {% if transfer.status == 'Received' %}bg-emerald-50 text-emerald-700 border-emerald-200
+          {% elif transfer.status and ('Short' in transfer.status or 'Over' in transfer.status) %}bg-amber-50 text-amber-700 border-amber-200
+          {% else %}bg-sky-50 text-sky-700 border-sky-200{% endif %}">
+          {{ transfer.status or 'Pending' }}
+        </span>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      {% if transfer.transaction_type == 'Charge Slip' %}
+      <a href="{{ url_for('admin.admin_charge_slips') }}" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors">
+        Back to Charge Slips
+      </a>
+      {% else %}
+      <a href="{{ url_for('admin.admin_taf') }}" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors">
+        Back to TAF List
+      </a>
+      {% endif %}
+    </div>
   </div>
-  <form method="POST" class="space-y-6">
-    <section class="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-2xl border border-slate-200 bg-white p-5">
-      <label class="text-sm font-semibold">Date<input type="date" name="transaction_date" required value="{{ transfer.transaction_date }}" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"></label>
-      <label class="text-sm font-semibold">Control No<input name="control_no" required value="{{ transfer.control_no }}" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"></label>
-      <label class="text-sm font-semibold">Type<select id="taf-transaction-type" name="transaction_type" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal">{% for option in ['Product Transfer','Wastage Transfer','EGI Plant Transfer','Supplies Request'] %}<option {% if transfer.transaction_type == option or (option == 'EGI Plant Transfer' and transfer.transaction_type == 'Supplies Transfer') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
-      <label class="text-sm font-semibold">From<input value="{{ transfer.transfer_from }}" readonly class="mt-1 w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 font-normal"></label>
-      <label class="text-sm font-semibold">To<select id="taf-transfer-to" name="transfer_to" required class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal">{% for store in stores %}<option value="{{ store.name }}" {% if transfer.transfer_to == store.name %}selected{% endif %}>{{ store.name }}</option>{% endfor %}</select></label>
-      <label class="text-sm font-semibold">Status<select name="status" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal">{% for option in ['Pending','Received','Received - Short','Received - Over','Received - Short/Over'] %}<option {% if transfer.status == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
-      <label class="text-sm font-semibold">Prepared By<input name="prepared_by_name" required value="{{ transfer.prepared_by_name }}" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"></label>
-      <label class="text-sm font-semibold">Received By<input name="received_by_name" value="{{ transfer.received_by_name or '' }}" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal"></label>
+
+  <form method="POST" id="taf-edit-form" class="space-y-6">
+    <!-- Header Form Card -->
+    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-5 py-4 bg-slate-50/80 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+          </svg>
+          <h2 class="text-base font-bold text-slate-900">Header & Reference Details</h2>
+        </div>
+        <div class="text-xs font-medium text-slate-500">
+          Store: <span class="font-bold text-slate-800">{{ transfer.transfer_from }}</span>
+        </div>
+      </div>
+
+      <div class="p-5 md:p-6 grid grid-cols-1 md:grid-cols-12 gap-4">
+        <!-- Date -->
+        <div class="md:col-span-3">
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Date <span class="text-rose-500">*</span>
+          </label>
+          <input type="date" name="transaction_date" required value="{{ transfer.transaction_date }}" 
+                 class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all">
+        </div>
+
+        <!-- Control No -->
+        <div class="md:col-span-3">
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Control No <span class="text-rose-500">*</span>
+          </label>
+          <input type="text" name="control_no" required value="{{ transfer.control_no }}" 
+                 class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all">
+        </div>
+
+        <!-- Transaction Type -->
+        <div class="md:col-span-3">
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Transaction Type <span class="text-rose-500">*</span>
+          </label>
+          <select id="taf-transaction-type" name="transaction_type" 
+                  class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all">
+            {% set type_options = ['Product Transfer','Wastage Transfer','EGI Plant Transfer','Supplies Request'] %}
+            {% if transfer.transaction_type == 'Charge Slip' %}
+              {% set type_options = ['Product Transfer','Wastage Transfer','EGI Plant Transfer','Supplies Request','Charge Slip'] %}
+            {% endif %}
+            {% for option in type_options %}
+              <option value="{{ option }}" {% if transfer.transaction_type == option or (option == 'EGI Plant Transfer' and transfer.transaction_type == 'Supplies Transfer') %}selected{% endif %}>
+                {{ option }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Status -->
+        <div class="md:col-span-3">
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Status <span class="text-rose-500">*</span>
+          </label>
+          <select name="status" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all">
+            {% for option in ['Pending','Received','Received - Short','Received - Over','Received - Short/Over'] %}
+              <option value="{{ option }}" {% if transfer.status == option %}selected{% endif %}>{{ option }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Transfer From (Store) -->
+        <div class="md:col-span-4">
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Transfer From (Store)
+          </label>
+          <input type="text" value="{{ transfer.transfer_from }}" readonly 
+                 class="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 cursor-not-allowed">
+        </div>
+
+        <!-- Transfer To (Conditional) -->
+        <div id="to-field-group" class="md:col-span-4">
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Transfer To
+          </label>
+          <select id="taf-transfer-to" name="transfer_to" 
+                  class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all">
+            {% for store in stores %}
+              <option value="{{ store.name }}" {% if transfer.transfer_to == store.name %}selected{% endif %}>{{ store.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Customer / Recipient Name (Charge Slip Conditional) -->
+        <div id="customer-name-group" class="md:col-span-5">
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Name / Recipient <span class="text-rose-500">*</span>
+          </label>
+          <input name="customer_name" value="{{ transfer.customer_name or '' }}" placeholder="Enter recipient / employee name" 
+                 class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all">
+        </div>
+
+        <!-- Charge Type (Charge Slip Conditional) -->
+        <div id="charge-type-group" class="md:col-span-3">
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Slip Type
+          </label>
+          <div class="flex items-center gap-4 pt-1.5">
+            <label class="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
+              <input type="radio" name="charge_type" value="Charge" {% if transfer.charge_type != 'Spoilage' %}checked{% endif %} class="w-4 h-4 text-amber-600 focus:ring-amber-400 border-slate-300">
+              <span>Charge</span>
+            </label>
+            <label class="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
+              <input type="radio" name="charge_type" value="Spoilage" {% if transfer.charge_type == 'Spoilage' %}checked{% endif %} class="w-4 h-4 text-amber-600 focus:ring-amber-400 border-slate-300">
+              <span>Spoilage</span>
+            </label>
+          </div>
+        </div>
+      </div>
     </section>
-    <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-      <div class="flex items-center justify-between p-4 border-b"><h2 class="font-bold">Items</h2><button type="button" id="add-item" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white">+ Add Item</button></div>
-      <div class="overflow-x-auto"><table class="min-w-full"><thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3 text-left">Item</th><th class="p-3">Cost</th><th class="p-3">Qty</th><th class="p-3">Received</th><th class="p-3 text-left">Remarks</th><th></th></tr></thead><tbody id="item-rows">
-      {% for item in transfer.items %}<tr class="border-t item-row"><td class="p-2"><input type="hidden" name="item_id[]" value="{{ item.id }}"><input name="item_name[]" required value="{{ item.item_name }}" class="w-64 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" step="0.01" min="0" name="unit_cost[]" value="{{ item.unit_cost }}" class="w-24 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" min="0" name="quantity[]" value="{{ item.quantity }}" class="w-20 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" min="0" name="received_quantity[]" value="{{ item.received_quantity if item.received_quantity is not none else '' }}" class="w-20 rounded border px-2 py-1.5"></td><td class="p-2"><input name="remarks[]" value="{{ item.remarks or '' }}" class="w-48 rounded border px-2 py-1.5"></td><td class="p-2"><button type="button" class="remove-item text-rose-600 font-bold">×</button></td></tr>{% endfor %}
-      </tbody></table></div>
+
+    <!-- Particulars & Items Section -->
+    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-5 py-3.5 bg-slate-100/90 border-b border-slate-200 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <p class="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Particulars & Items</p>
+        </div>
+        <button type="button" id="add-item-btn" 
+                class="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-lg shadow-xs transition-colors">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>Add Row</span>
+        </button>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-50">
+            <tr>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-extrabold text-slate-600 uppercase tracking-wider">Particulars (Item Name)</th>
+              <th scope="col" class="w-32 px-3 py-3 text-right text-xs font-extrabold text-slate-600 uppercase tracking-wider">Price (₱)</th>
+              <th scope="col" class="w-28 px-3 py-3 text-right text-xs font-extrabold text-slate-600 uppercase tracking-wider">Qty</th>
+              <th scope="col" class="w-28 px-3 py-3 text-right text-xs font-extrabold text-slate-600 uppercase tracking-wider received-qty-col">Received Qty</th>
+              <th scope="col" class="w-36 px-3 py-3 text-right text-xs font-extrabold text-slate-600 uppercase tracking-wider">Amount (₱)</th>
+              <th scope="col" class="px-3 py-3 text-left text-xs font-extrabold text-slate-600 uppercase tracking-wider">Remarks</th>
+              <th scope="col" class="w-16 px-3 py-3 text-center text-xs font-extrabold text-slate-600 uppercase tracking-wider">Action</th>
+            </tr>
+          </thead>
+          <tbody id="item-rows" class="divide-y divide-slate-100 bg-white">
+            {% for item in transfer.items %}
+            <tr class="item-row hover:bg-slate-50/80 transition-colors">
+              <td class="px-3 py-2.5">
+                <input type="hidden" name="item_id[]" value="{{ item.id }}">
+                <input type="text" name="item_name[]" required list="product-catalog-options" value="{{ item.item_name }}" 
+                       placeholder="Select or type item name"
+                       class="item-name-input w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:ring-2 focus:ring-amber-400 outline-none">
+              </td>
+              <td class="px-3 py-2.5">
+                <input type="number" step="0.01" min="0" name="unit_cost[]" value="{{ '%.2f'|format(item.unit_cost or 0) }}" 
+                       placeholder="0.00"
+                       class="item-cost-input w-full px-3 py-2 text-right bg-white border border-slate-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-amber-400 outline-none">
+              </td>
+              <td class="px-3 py-2.5">
+                <input type="number" min="0" step="1" name="quantity[]" value="{{ item.quantity or 0 }}" 
+                       placeholder="1"
+                       class="item-qty-input w-full px-3 py-2 text-right bg-white border border-slate-300 rounded-xl text-sm font-bold focus:ring-2 focus:ring-amber-400 outline-none">
+              </td>
+              <td class="px-3 py-2.5 received-qty-col">
+                <input type="number" min="0" step="1" name="received_quantity[]" value="{{ item.received_quantity if item.received_quantity is not none else '' }}" 
+                       placeholder="0"
+                       class="w-full px-3 py-2 text-right bg-white border border-slate-300 rounded-xl text-sm font-medium focus:ring-2 focus:ring-amber-400 outline-none">
+              </td>
+              <td class="px-3 py-2.5">
+                <input type="number" step="0.01" readonly value="{{ '%.2f'|format(item.line_total or 0) }}" 
+                       class="item-line-total w-full px-3 py-2 text-right bg-slate-100 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 outline-none" tabIndex="-1">
+              </td>
+              <td class="px-3 py-2.5">
+                <input type="text" name="remarks[]" value="{{ item.remarks or '' }}" placeholder="Optional notes"
+                       class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-normal focus:ring-2 focus:ring-amber-400 outline-none">
+              </td>
+              <td class="px-3 py-2.5 text-center">
+                <button type="button" class="remove-item p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Remove line">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                </button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <datalist id="product-catalog-options">
+        {% for p_name in product_names %}
+        <option value="{{ p_name }}"></option>
+        {% endfor %}
+      </datalist>
     </section>
-    <div class="flex justify-end"><button type="submit" class="rounded-xl bg-indigo-600 px-6 py-3 font-semibold text-white hover:bg-indigo-700">Save Changes</button></div>
+
+    <!-- Remarks, Discount Presets & Totals Card -->
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+      <!-- General Remarks -->
+      <div class="md:col-span-6 space-y-2">
+        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide">
+          Remarks / Additional Info
+        </label>
+        <p class="text-xs text-slate-500">Provide any context or notes regarding this edit for record keeping.</p>
+      </div>
+
+      <!-- Totals & Presets Box -->
+      <div class="md:col-span-6 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <!-- Subtotal / Grand Total -->
+        <div class="flex items-center justify-between text-sm">
+          <span class="font-bold text-slate-700">Subtotal / Total:</span>
+          <span id="cs-grand-total" class="text-lg font-extrabold text-slate-900">₱0.00</span>
+        </div>
+
+        <!-- Discount & Presets (Charge Slip Conditional) -->
+        <div id="discount-section" class="space-y-2 pt-3 border-t border-slate-200">
+          <div class="flex items-center justify-between gap-3">
+            <label for="discount_percent" class="text-xs font-bold text-slate-700 uppercase tracking-wide">
+              Less: Discount (%)
+            </label>
+            <div class="flex items-center gap-1.5 w-32">
+              <input id="discount_percent" name="discount_percent" type="number" min="0" max="100" step="0.01" 
+                     value="{{ '%.1f'|format(transfer.discount_percent or 0) }}" placeholder="0" 
+                     class="w-full px-3 py-1.5 text-right bg-white border border-slate-300 rounded-xl text-sm font-extrabold text-slate-900 focus:ring-2 focus:ring-amber-400 outline-none">
+              <span class="text-xs font-extrabold text-slate-600">%</span>
+            </div>
+          </div>
+
+          <!-- Presets: 0%, 5%, 10%, 15% -->
+          <div class="flex items-center justify-end gap-1.5 pt-1">
+            <span class="text-xs text-slate-500 font-semibold mr-1">Presets:</span>
+            <button type="button" data-discount="0" class="discount-preset-btn px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition-colors">0%</button>
+            <button type="button" data-discount="5" class="discount-preset-btn px-2.5 py-1 text-xs font-bold rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 transition-colors">5%</button>
+            <button type="button" data-discount="10" class="discount-preset-btn px-2.5 py-1 text-xs font-bold rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 transition-colors">10%</button>
+            <button type="button" data-discount="15" class="discount-preset-btn px-2.5 py-1 text-xs font-bold rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 transition-colors">15%</button>
+          </div>
+        </div>
+
+        <!-- Net Charges -->
+        <div id="net-charges-section" class="flex items-center justify-between text-base pt-3 border-t border-slate-300">
+          <span class="font-extrabold text-slate-900 uppercase tracking-wide text-xs">Net Total / Charges:</span>
+          <span id="cs-net-charges" class="text-2xl font-black tracking-tight text-amber-600">₱0.00</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Signatures & Personnel -->
+    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 md:p-6 space-y-4">
+      <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider border-b border-slate-200 pb-2">
+        Signatures & Sign-offs
+      </h3>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Prepared By <span class="text-rose-500">*</span>
+          </label>
+          <input name="prepared_by_name" required value="{{ transfer.prepared_by_name }}" 
+                 placeholder="Prepared by name"
+                 class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-400 outline-none">
+        </div>
+
+        <div id="approved-by-group">
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Approved By
+          </label>
+          <input name="approved_by_name" value="{{ transfer.approved_by_name or '' }}" 
+                 placeholder="Approved by name"
+                 class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-400 outline-none">
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+            Received By
+          </label>
+          <input name="received_by_name" value="{{ transfer.received_by_name or '' }}" 
+                 placeholder="Received by name"
+                 class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-400 outline-none">
+        </div>
+      </div>
+    </section>
+
+    <!-- Form Submit Actions -->
+    <div class="flex items-center justify-end gap-3 pt-2">
+      <a href="{{ url_for('admin.admin_taf') }}" class="px-5 py-2.5 text-sm font-bold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-xl transition-colors">
+        Cancel
+      </a>
+      <button type="submit" class="px-6 py-2.5 text-sm font-extrabold text-white bg-amber-500 hover:bg-amber-600 rounded-xl shadow-md transition-all flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+        <span>Save Changes</span>
+      </button>
+    </div>
   </form>
 </div>
-<template id="item-template"><tr class="border-t item-row"><td class="p-2"><input type="hidden" name="item_id[]"><input name="item_name[]" required class="w-64 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" step="0.01" min="0" name="unit_cost[]" value="0" class="w-24 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" min="0" name="quantity[]" value="0" class="w-20 rounded border px-2 py-1.5"></td><td class="p-2"><input type="number" min="0" name="received_quantity[]" class="w-20 rounded border px-2 py-1.5"></td><td class="p-2"><input name="remarks[]" class="w-48 rounded border px-2 py-1.5"></td><td class="p-2"><button type="button" class="remove-item text-rose-600 font-bold">×</button></td></tr></template>
+
+<!-- Template for adding new rows -->
+<template id="item-template">
+  <tr class="item-row hover:bg-slate-50/80 transition-colors">
+    <td class="px-3 py-2.5">
+      <input type="hidden" name="item_id[]" value="">
+      <input type="text" name="item_name[]" required list="product-catalog-options" placeholder="Select or type item name"
+             class="item-name-input w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:ring-2 focus:ring-amber-400 outline-none">
+    </td>
+    <td class="px-3 py-2.5">
+      <input type="number" step="0.01" min="0" name="unit_cost[]" value="0.00" placeholder="0.00"
+             class="item-cost-input w-full px-3 py-2 text-right bg-white border border-slate-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-amber-400 outline-none">
+    </td>
+    <td class="px-3 py-2.5">
+      <input type="number" min="0" step="1" name="quantity[]" value="1" placeholder="1"
+             class="item-qty-input w-full px-3 py-2 text-right bg-white border border-slate-300 rounded-xl text-sm font-bold focus:ring-2 focus:ring-amber-400 outline-none">
+    </td>
+    <td class="px-3 py-2.5 received-qty-col">
+      <input type="number" min="0" step="1" name="received_quantity[]" value="" placeholder="0"
+             class="w-full px-3 py-2 text-right bg-white border border-slate-300 rounded-xl text-sm font-medium focus:ring-2 focus:ring-amber-400 outline-none">
+    </td>
+    <td class="px-3 py-2.5">
+      <input type="number" step="0.01" readonly value="0.00" 
+             class="item-line-total w-full px-3 py-2 text-right bg-slate-100 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 outline-none" tabIndex="-1">
+    </td>
+    <td class="px-3 py-2.5">
+      <input type="text" name="remarks[]" value="" placeholder="Optional notes"
+             class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-normal focus:ring-2 focus:ring-amber-400 outline-none">
+    </td>
+    <td class="px-3 py-2.5 text-center">
+      <button type="button" class="remove-item p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Remove line">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+      </button>
+    </td>
+  </tr>
+</template>
+
 <script>
 const tafStoreOptions = {{ stores|map(attribute='name')|list|tojson }};
 const tafCurrentTransferTo = {{ transfer.transfer_to|tojson }};
+const productPriceMap = {{ (product_price_map or {})|tojson|safe }};
+
 const tafTypeSelect = document.getElementById('taf-transaction-type');
 const tafTransferToSelect = document.getElementById('taf-transfer-to');
+const discountPercentInput = document.getElementById('discount_percent');
 
 function setTransferToOptions(options, selectedValue) {
   if (!tafTransferToSelect) return;
@@ -45,20 +401,133 @@ function setTransferToOptions(options, selectedValue) {
   });
 }
 
-function syncTransferToOptions() {
+function syncTransferTypeFields() {
   const transactionType = tafTypeSelect?.value || '';
-  if (transactionType === 'Wastage Transfer') {
-    setTransferToOptions(['Main Office'], 'Main Office');
-  } else if (transactionType === 'EGI Plant Transfer' || transactionType === 'Supplies Transfer') {
-    setTransferToOptions(['EGI Plant'], 'EGI Plant');
+  const toGroup = document.getElementById('to-field-group');
+  const custGroup = document.getElementById('customer-name-group');
+  const chargeTypeGroup = document.getElementById('charge-type-group');
+  const discountSection = document.getElementById('discount-section');
+  const netChargesSection = document.getElementById('net-charges-section');
+  const approvedByGroup = document.getElementById('approved-by-group');
+  const receivedQtyCols = document.querySelectorAll('.received-qty-col');
+
+  if (transactionType === 'Charge Slip') {
+    if (toGroup) toGroup.style.display = 'none';
+    if (custGroup) custGroup.style.display = '';
+    if (chargeTypeGroup) chargeTypeGroup.style.display = '';
+    if (discountSection) discountSection.style.display = '';
+    if (netChargesSection) netChargesSection.style.display = '';
+    if (approvedByGroup) approvedByGroup.style.display = '';
+    receivedQtyCols.forEach(col => col.style.display = 'none');
   } else {
-    setTransferToOptions(tafStoreOptions, tafStoreOptions.includes(tafCurrentTransferTo) ? tafCurrentTransferTo : tafStoreOptions[0]);
+    if (toGroup) toGroup.style.display = '';
+    if (custGroup) custGroup.style.display = 'none';
+    if (chargeTypeGroup) chargeTypeGroup.style.display = 'none';
+    if (discountSection) discountSection.style.display = 'none';
+    if (netChargesSection) netChargesSection.style.display = 'none';
+    if (approvedByGroup) approvedByGroup.style.display = '';
+    receivedQtyCols.forEach(col => col.style.display = '');
+
+    if (transactionType === 'Wastage Transfer') {
+      setTransferToOptions(['Main Office'], 'Main Office');
+    } else if (transactionType === 'EGI Plant Transfer' || transactionType === 'Supplies Transfer') {
+      setTransferToOptions(['EGI Plant'], 'EGI Plant');
+    } else {
+      setTransferToOptions(tafStoreOptions, tafStoreOptions.includes(tafCurrentTransferTo) ? tafCurrentTransferTo : tafStoreOptions[0]);
+    }
+  }
+  recalculateTotals();
+}
+
+function recalculateTotals() {
+  const rows = document.querySelectorAll('#item-rows .item-row');
+  let grandTotal = 0;
+
+  rows.forEach(row => {
+    const costInput = row.querySelector('.item-cost-input');
+    const qtyInput = row.querySelector('.item-qty-input');
+    const lineTotalInput = row.querySelector('.item-line-total');
+
+    const cost = parseFloat(costInput?.value || 0) || 0;
+    const qty = parseInt(qtyInput?.value || 0, 10) || 0;
+    const lineTotal = cost * qty;
+
+    if (lineTotalInput) {
+      lineTotalInput.value = lineTotal.toFixed(2);
+    }
+    grandTotal += lineTotal;
+  });
+
+  const grandTotalEl = document.getElementById('cs-grand-total');
+  if (grandTotalEl) {
+    grandTotalEl.textContent = '₱' + grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  const discountPercent = parseFloat(discountPercentInput?.value || 0) || 0;
+  const discountAmount = grandTotal * (discountPercent / 100);
+  const netCharges = Math.max(0, grandTotal - discountAmount);
+
+  const netChargesEl = document.getElementById('cs-net-charges');
+  if (netChargesEl) {
+    netChargesEl.textContent = '₱' + netCharges.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 }
 
-document.getElementById('add-item').addEventListener('click', () => document.getElementById('item-rows').appendChild(document.getElementById('item-template').content.cloneNode(true)));
-document.getElementById('item-rows').addEventListener('click', e => { if (e.target.closest('.remove-item')) e.target.closest('tr').remove(); });
-tafTypeSelect?.addEventListener('change', syncTransferToOptions);
-syncTransferToOptions();
+// Add Item Row
+document.getElementById('add-item-btn')?.addEventListener('click', () => {
+  const template = document.getElementById('item-template');
+  const clone = template.content.cloneNode(true);
+  document.getElementById('item-rows').appendChild(clone);
+  syncTransferTypeFields();
+});
+
+// Event Delegation for Table Rows
+document.getElementById('item-rows')?.addEventListener('input', (e) => {
+  const target = e.target;
+
+  // Auto-price lookup when item name selected
+  if (target.classList.contains('item-name-input')) {
+    const selectedVal = target.value.trim();
+    const row = target.closest('tr');
+    const costInput = row?.querySelector('.item-cost-input');
+
+    if (selectedVal && productPriceMap.hasOwnProperty(selectedVal) && costInput) {
+      const suggestedPrice = productPriceMap[selectedVal] || 0;
+      if (!costInput.value || parseFloat(costInput.value) === 0) {
+        costInput.value = suggestedPrice.toFixed(2);
+      }
+    }
+  }
+
+  if (target.classList.contains('item-cost-input') || target.classList.contains('item-qty-input') || target.classList.contains('item-name-input')) {
+    recalculateTotals();
+  }
+});
+
+// Remove item row
+document.getElementById('item-rows')?.addEventListener('click', (e) => {
+  const removeBtn = e.target.closest('.remove-item');
+  if (removeBtn) {
+    removeBtn.closest('tr').remove();
+    recalculateTotals();
+  }
+});
+
+// Discount Presets
+document.querySelectorAll('.discount-preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const discountVal = btn.getAttribute('data-discount');
+    if (discountPercentInput && discountVal !== null) {
+      discountPercentInput.value = discountVal;
+      recalculateTotals();
+    }
+  });
+});
+
+discountPercentInput?.addEventListener('input', recalculateTotals);
+tafTypeSelect?.addEventListener('change', syncTransferTypeFields);
+
+// Initial call
+syncTransferTypeFields();
 </script>
 {% endblock %}

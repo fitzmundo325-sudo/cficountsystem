@@ -6597,7 +6597,9 @@ def admin_taf():
     transfer_query = TafTransfer.query.options(
         selectinload(TafTransfer.store),
         selectinload(TafTransfer.submitter)
-    ).outerjoin(Store, TafTransfer.store_id == Store.id)
+    ).outerjoin(Store, TafTransfer.store_id == Store.id).filter(
+        func.lower(func.trim(TafTransfer.transaction_type)) != 'charge slip'
+    )
 
     if search_query:
         like_query = f'%{search_query.lower()}%'
@@ -6633,10 +6635,19 @@ def admin_taf():
         TafTransfer.transaction_date.desc(),
         TafTransfer.id.desc()
     )
-    pagination = transfer_query.paginate(page=page, per_page=15, error_out=False)
+    pagination = transfer_query.paginate(page=page, per_page=20, error_out=False)
     transfers = pagination.items
-    total_transfers = TafTransfer.query.count()
-    pending_transfers = TafTransfer.query.filter_by(status='Pending').count()
+    base_count_query = TafTransfer.query.filter(
+        func.lower(func.trim(TafTransfer.transaction_type)) != 'charge slip'
+    )
+    total_transfers = base_count_query.count()
+    pending_transfers = base_count_query.filter(
+        or_(
+            func.lower(func.trim(TafTransfer.status)) == 'pending',
+            TafTransfer.status.is_(None),
+            func.trim(TafTransfer.status) == '',
+        )
+    ).count()
 
     # Get item counts for each transfer
     transfer_ids = [transfer.id for transfer in transfers]
@@ -6754,16 +6765,25 @@ def _sync_taf_wastage_inventory_for_store_date(store, transaction_date):
 
 def _reverse_inventory_trans_quantities(transfer_record):
     from .models import DailyEndingInventory, DailyEndingInventoryItem
-    from .views import _resolve_product_master_id, _find_or_create_inventory_item, _recalculate_inventory_item
+    from .views import _resolve_product_master_id, _find_or_create_inventory_item, _recalculate_inventory_item, _sync_taf_csi_inventory_for_store_date
 
     transaction_type = str(transfer_record.transaction_type or '').strip()
     transaction_date = transfer_record.transaction_date
     transfer_from = transfer_record.transfer_from
     transfer_to = transfer_record.transfer_to
 
+    source_store = Store.query.filter_by(name=transfer_from).first() or transfer_record.store
+    if transaction_type == 'Charge Slip':
+        if source_store and transaction_date:
+            charge_type = str(transfer_record.charge_type or 'Charge').strip()
+            if charge_type == 'Spoilage':
+                _sync_taf_wastage_inventory_for_store_date(source_store, transaction_date)
+            else:
+                _sync_taf_csi_inventory_for_store_date(source_store, transaction_date)
+        return
+
     transfer_items = TafTransferItem.query.filter_by(transfer_id=transfer_record.id).all()
 
-    source_store = Store.query.filter_by(name=transfer_from).first()
     if source_store:
         source_inventory = DailyEndingInventory.query.filter_by(
             store_id=source_store.id,
@@ -6807,10 +6827,20 @@ def _reverse_inventory_trans_quantities(transfer_record):
 
 
 def _apply_inventory_trans_quantities(transfer_record):
-    from .views import _resolve_product_master_id, _find_or_create_inventory_item, _recalculate_inventory_item
+    from .views import _resolve_product_master_id, _find_or_create_inventory_item, _recalculate_inventory_item, _sync_taf_csi_inventory_for_store_date
 
     transaction_type = str(transfer_record.transaction_type or '').strip()
-    source_store = Store.query.filter_by(name=transfer_record.transfer_from).first()
+    source_store = Store.query.filter_by(name=transfer_record.transfer_from).first() or transfer_record.store
+
+    if transaction_type == 'Charge Slip':
+        if source_store and transfer_record.transaction_date:
+            charge_type = str(transfer_record.charge_type or 'Charge').strip()
+            if charge_type == 'Spoilage':
+                _sync_taf_wastage_inventory_for_store_date(source_store, transfer_record.transaction_date)
+            else:
+                _sync_taf_csi_inventory_for_store_date(source_store, transfer_record.transaction_date)
+        return
+
     source_inventory = DailyEndingInventory.query.filter_by(
         store_id=source_store.id,
         inventory_date=transfer_record.transaction_date,
@@ -6849,23 +6879,42 @@ def _apply_inventory_trans_quantities(transfer_record):
 @admin.route('/admin/taf/edit/<int:transfer_id>', methods=['GET', 'POST'])
 @login_required
 def admin_edit_taf(transfer_id):
-    if current_user.role not in ('Superadmin', 'Admin'):
+    if current_user.role not in ('Superadmin', 'Admin', 'Inventory Staff'):
         flash('Access denied.', category='error')
         return redirect(url_for('admin.dashboard'))
 
     transfer = TafTransfer.query.options(selectinload(TafTransfer.items)).get_or_404(transfer_id)
     if request.method == 'POST':
         try:
+            from .views import _sync_taf_csi_inventory_for_store_date
+
+            old_store = transfer.store or Store.query.filter_by(name=transfer.transfer_from).first()
+            old_date = transfer.transaction_date
+            old_charge_type = str(transfer.charge_type or 'Charge').strip()
+            old_transaction_type = str(transfer.transaction_type or '').strip()
+
             _reverse_inventory_trans_quantities(transfer)
             transfer.transaction_date = datetime.strptime(request.form['transaction_date'], '%Y-%m-%d').date()
             transfer.control_no = (request.form.get('control_no') or '').strip()
             transfer.transaction_type = (request.form.get('transaction_type') or '').strip()
-            transfer_to = (request.form.get('transfer_to') or '').strip()
-            if transfer.transaction_type == 'Wastage Transfer':
-                transfer_to = 'Main Office'
-            elif transfer.transaction_type in ('EGI Plant Transfer', 'Supplies Transfer'):
-                transfer_to = 'EGI Plant'
-            transfer.transfer_to = transfer_to
+            
+            if transfer.transaction_type == 'Charge Slip':
+                transfer.transfer_to = 'Charge Slip'
+                transfer.customer_name = (request.form.get('customer_name') or '').strip()
+                transfer.charge_type = (request.form.get('charge_type') or 'Charge').strip()
+                try:
+                    transfer.discount_percent = max(0.0, float(request.form.get('discount_percent') or 0))
+                except ValueError:
+                    transfer.discount_percent = 0.0
+                transfer.approved_by_name = (request.form.get('approved_by_name') or '').strip() or None
+            else:
+                transfer_to = (request.form.get('transfer_to') or '').strip()
+                if transfer.transaction_type == 'Wastage Transfer':
+                    transfer_to = 'Main Office'
+                elif transfer.transaction_type in ('EGI Plant Transfer', 'Supplies Transfer'):
+                    transfer_to = 'EGI Plant'
+                transfer.transfer_to = transfer_to
+
             transfer.prepared_by_name = (request.form.get('prepared_by_name') or '').strip()
             transfer.received_by_name = (request.form.get('received_by_name') or '').strip() or None
             transfer.status = (request.form.get('status') or 'Pending').strip()
@@ -6873,7 +6922,7 @@ def admin_edit_taf(transfer_id):
             item_ids = request.form.getlist('item_id[]')
             item_names = request.form.getlist('item_name[]')
             unit_costs = request.form.getlist('unit_cost[]')
-            quantities = request.form.getlist('quantity[]')
+            quantities = request.form.getlist('quantity[]') or request.form.getlist('qty[]')
             received_quantities = request.form.getlist('received_quantity[]')
             remarks = request.form.getlist('remarks[]')
             existing_items = {str(item.id): item for item in transfer.items}
@@ -6887,8 +6936,16 @@ def admin_edit_taf(transfer_id):
                 item = existing_items.get(item_id) or TafTransferItem(transfer=transfer)
                 if item.id:
                     kept_ids.add(item.id)
-                unit_cost = max(0.0, float(unit_costs[index] or 0))
-                quantity = max(0, int(quantities[index] or 0))
+                try:
+                    unit_cost = max(0.0, float(unit_costs[index])) if index < len(unit_costs) and unit_costs[index] else 0.0
+                except (ValueError, TypeError):
+                    unit_cost = 0.0
+
+                try:
+                    quantity = max(0, int(quantities[index])) if index < len(quantities) and quantities[index] else 0
+                except (ValueError, TypeError):
+                    quantity = 0
+
                 received_raw = received_quantities[index].strip() if index < len(received_quantities) else ''
                 item.item_name = item_name
                 item.unit_cost = unit_cost
@@ -6902,7 +6959,20 @@ def admin_edit_taf(transfer_id):
                 if old_item.id and old_item.id not in kept_ids:
                     db.session.delete(old_item)
             transfer.grand_total = grand_total
+            if transfer.transaction_type == 'Charge Slip':
+                discount_amount = grand_total * ((transfer.discount_percent or 0.0) / 100.0)
+                transfer.net_total = max(0.0, grand_total - discount_amount)
+
             db.session.flush()
+
+            # Sync old store/date/type inventory if date or type changed
+            if old_transaction_type == 'Charge Slip' and old_store and old_date:
+                if old_date != transfer.transaction_date or old_charge_type != transfer.charge_type or transfer.transaction_type != 'Charge Slip':
+                    if old_charge_type == 'Spoilage':
+                        _sync_taf_wastage_inventory_for_store_date(old_store, old_date)
+                    else:
+                        _sync_taf_csi_inventory_for_store_date(old_store, old_date)
+
             _apply_inventory_trans_quantities(transfer)
             log_audit_event(
                 action='taf.edit', entity_type='TafTransfer', entity_id=transfer.id,
@@ -6911,16 +6981,41 @@ def admin_edit_taf(transfer_id):
             )
             db.session.commit()
             flash('TAF updated successfully.', category='success')
+            if transfer.transaction_type == 'Charge Slip':
+                return redirect(url_for('admin.admin_charge_slips'))
             return redirect(url_for('admin.admin_taf'))
         except Exception as exc:
             db.session.rollback()
             flash(f'Unable to update TAF: {str(exc)}', category='error')
+
+    product_rows = (
+        ProductMaster.query
+        .filter(ProductMaster.description.isnot(None))
+        .order_by(ProductMaster.description.asc())
+        .all()
+    )
+    product_names = []
+    product_price_map = {}
+    store_obj = transfer.store or Store.query.filter_by(name=transfer.transfer_from).first()
+    store_group = Store.determine_store_group(store_obj.name) if store_obj else 'premium'
+    for row in product_rows:
+        p_name = str(getattr(row, 'description', '') or '').strip()
+        if not p_name:
+            continue
+        if p_name not in product_names:
+            product_names.append(p_name)
+        price_val = getattr(row, 'sp_np' if store_group == 'non_premium' else 'sp_p', None)
+        if price_val is None or price_val == 0.0:
+            price_val = getattr(row, 'tp', 0.0)
+        product_price_map[p_name] = float(price_val or 0.0)
 
     return render_template(
         'admin/taf_edit.html',
         user=current_user,
         transfer=transfer,
         stores=Store.query.order_by(Store.name.asc()).all(),
+        product_names=product_names,
+        product_price_map=product_price_map,
     )
 
 
@@ -6928,15 +7023,22 @@ def admin_edit_taf(transfer_id):
 @login_required
 def admin_delete_taf(transfer_id):
     """Delete a TAF transfer and reverse inventory changes"""
-    if current_user.role not in ('Superadmin', 'Admin'):
+    if current_user.role not in ('Superadmin', 'Admin', 'Inventory Staff'):
         return jsonify({'success': False, 'error': 'Access denied.'}), 403
 
     try:
+        from .views import _sync_taf_csi_inventory_for_store_date
+
         # Get the transfer record
         transfer = TafTransfer.query.get_or_404(transfer_id)
+        store = transfer.store or Store.query.filter_by(name=transfer.transfer_from).first()
+        trans_date = transfer.transaction_date
+        charge_type = str(transfer.charge_type or 'Charge').strip()
+        transaction_type = str(transfer.transaction_type or '').strip()
         
-        # Reverse inventory changes before deleting
-        _reverse_inventory_trans_quantities(transfer)
+        # For non-Charge-Slip transfers, reverse inventory before deleting record
+        if transaction_type != 'Charge Slip':
+            _reverse_inventory_trans_quantities(transfer)
         
         # Log the deletion
         log_audit_event(
@@ -6955,6 +7057,14 @@ def admin_delete_taf(transfer_id):
         # Delete the transfer (cascade will delete items)
         db.session.delete(transfer)
         db.session.commit()
+
+        # If Charge Slip, reconcile InvenSync after deletion from DB
+        if transaction_type == 'Charge Slip' and store and trans_date:
+            if charge_type == 'Spoilage':
+                _sync_taf_wastage_inventory_for_store_date(store, trans_date)
+            else:
+                _sync_taf_csi_inventory_for_store_date(store, trans_date)
+            db.session.commit()
         
         return jsonify({
             'success': True,
@@ -6966,6 +7076,119 @@ def admin_delete_taf(transfer_id):
         error_trace = traceback.format_exc()
         print(f'Error deleting TAF: {error_trace}')
         return jsonify({'success': False, 'error': f'Failed to delete transfer: {str(e)}'}), 500
+
+
+@admin.route('/admin/charge-slips')
+@admin.route('/admin/charge-slip')
+@login_required
+def admin_charge_slips():
+    if current_user.role not in ('Superadmin', 'Admin', 'Inventory Staff'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    selected_date_str = (request.args.get('date') or '').strip()
+    selected_date = None
+    if selected_date_str:
+        try:
+            selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = None
+
+    page = request.args.get('page', 1, type=int)
+    search_query = (request.args.get('q') or '').strip()
+    charge_type_filter = (request.args.get('charge_type') or '').strip().lower()
+    status_filter = (request.args.get('status') or '').strip().lower()
+    store_filter = (request.args.get('store') or '').strip().lower()
+
+    query = TafTransfer.query.options(
+        selectinload(TafTransfer.store),
+        selectinload(TafTransfer.submitter)
+    ).outerjoin(Store, TafTransfer.store_id == Store.id).filter(
+        func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip'
+    )
+
+    if selected_date:
+        query = query.filter(TafTransfer.transaction_date == selected_date)
+
+    if search_query:
+        like_query = f'%{search_query.lower()}%'
+        query = query.filter(or_(
+            func.lower(TafTransfer.control_no).like(like_query),
+            func.lower(TafTransfer.customer_name).like(like_query),
+            func.lower(TafTransfer.prepared_by_name).like(like_query),
+            func.lower(TafTransfer.approved_by_name).like(like_query),
+            func.lower(TafTransfer.received_by_name).like(like_query),
+            func.lower(Store.name).like(like_query),
+        ))
+
+    if charge_type_filter:
+        query = query.filter(func.lower(func.trim(TafTransfer.charge_type)) == charge_type_filter)
+
+    if status_filter:
+        status_expression = func.lower(func.trim(TafTransfer.status))
+        if status_filter == 'pending':
+            query = query.filter(or_(
+                status_expression == status_filter,
+                TafTransfer.status.is_(None),
+                func.trim(TafTransfer.status) == '',
+            ))
+        else:
+            query = query.filter(status_expression == status_filter)
+
+    if store_filter:
+        query = query.filter(func.lower(func.trim(Store.name)) == store_filter)
+
+    query = query.order_by(
+        TafTransfer.transaction_date.desc(),
+        TafTransfer.id.desc()
+    )
+
+    pagination = query.paginate(page=page, per_page=20, error_out=False)
+    charge_slips = pagination.items
+
+    transfer_ids = [slip.id for slip in charge_slips]
+    item_count_by_transfer = {}
+    if transfer_ids:
+        item_count_by_transfer = {
+            int(transfer_id): int(item_count or 0)
+            for transfer_id, item_count in (
+                db.session.query(
+                    TafTransferItem.transfer_id,
+                    func.count(TafTransferItem.id),
+                )
+                .filter(TafTransferItem.transfer_id.in_(transfer_ids))
+                .group_by(TafTransferItem.transfer_id)
+                .all()
+            )
+        }
+
+    all_charge_slips = TafTransfer.query.filter(
+        func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip'
+    ).all()
+
+    total_count = len(all_charge_slips)
+    total_net_amount = sum(float(slip.net_total or slip.grand_total or 0.0) for slip in all_charge_slips)
+    total_spoilage_count = sum(1 for slip in all_charge_slips if str(slip.charge_type or '').strip().lower() == 'spoilage')
+
+    return render_template(
+        'admin/charge_slips.html',
+        user=current_user,
+        charge_slips=charge_slips,
+        item_count_by_transfer=item_count_by_transfer,
+        selected_date=selected_date.strftime('%Y-%m-%d') if selected_date else '',
+        pagination=pagination,
+        total_count=total_count,
+        total_net_amount=total_net_amount,
+        total_spoilage_count=total_spoilage_count,
+        filter_stores=Store.query.order_by(Store.name.asc()).all(),
+        filters={
+            'date': selected_date_str,
+            'q': search_query,
+            'charge_type': charge_type_filter,
+            'status': status_filter,
+            'store': store_filter,
+        },
+    )
 
 
 # ================================================
