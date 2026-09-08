@@ -1,0 +1,254 @@
+{% extends "admin_base.html" %}
+
+{% block title %}Charge Slips - Admin Panel{% endblock %}
+
+{% block content %}
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900 font-semibold">Charge Slips (All Stores)</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <input type="date" id="headerDateInput" class="px-4 py-2 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 transition text-sm font-medium" value="{{ selected_date }}">
+    <button onclick="updateHeaderDate()" class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 active:scale-95">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 2.2" />
+      </svg>
+      <span>Filter Date</span>
+    </button>
+  </div>
+</header>
+
+<!-- Content -->
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <!-- Page Title & Stats Cards -->
+  <section class="space-y-4">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <h1 class="text-3xl font-bold text-slate-900 tracking-tight">All Charge Slips History</h1>
+        <p class="mt-1 text-slate-600">View, edit, and delete Charge Slips across all stores</p>
+      </div>
+    </div>
+
+    <!-- Stats Summary Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Charge Slips</p>
+        <p class="mt-2 text-2xl font-bold text-slate-900">{{ total_count }}</p>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Net Charges</p>
+        <p class="mt-2 text-2xl font-bold text-cyan-700">₱{{ '%.2f'|format(total_net_amount) }}</p>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Spoilage Slips</p>
+        <p class="mt-2 text-2xl font-bold text-amber-700">{{ total_spoilage_count }}</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Search & Filter Controls -->
+  <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <form id="cs-filter-form" method="get" action="{{ url_for('admin.admin_charge_slips') }}" class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(200px,1fr)_160px_160px_160px_auto_auto]">
+      <input type="hidden" name="date" value="{{ selected_date }}">
+      <input id="cs-search" name="q" value="{{ filters.q }}" type="search" placeholder="Search control no, recipient, store..." class="rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
+      
+      <select name="store" class="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+        <option value="">All Stores</option>
+        {% for store in filter_stores %}
+        {% set option_val = store.name|lower %}
+        <option value="{{ option_val }}" {% if filters.store == option_val %}selected{% endif %}>{{ store.name }}</option>
+        {% endfor %}
+      </select>
+
+      <select name="charge_type" class="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+        <option value="">All Charge Types</option>
+        <option value="charge" {% if filters.charge_type == 'charge' %}selected{% endif %}>Charge</option>
+        <option value="spoilage" {% if filters.charge_type == 'spoilage' %}selected{% endif %}>Spoilage</option>
+      </select>
+
+      <select name="status" class="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+        <option value="">All Statuses</option>
+        <option value="pending" {% if filters.status == 'pending' %}selected{% endif %}>Pending</option>
+        <option value="received" {% if filters.status == 'received' %}selected{% endif %}>Received</option>
+      </select>
+
+      <button type="submit" class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 transition-colors">Search</button>
+      <a href="{{ url_for('admin.admin_charge_slips') }}" class="rounded-xl border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Clear</a>
+    </form>
+    <p class="mt-3 text-xs font-medium text-slate-500">Showing {{ pagination.total }} matching Charge Slip{{ '' if pagination.total == 1 else 's' }} across all pages.</p>
+  </section>
+
+  <!-- Charge Slips Table -->
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between">
+      <div>
+        <h3 class="text-lg font-bold text-slate-900">Charge Slip Records</h3>
+        <p class="text-sm text-slate-500 mt-0.5">All Charge and Spoilage slips submitted across all store locations</p>
+      </div>
+    </div>
+
+    <div class="overflow-x-auto">
+      {% if charge_slips %}
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-100">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Date</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Control No</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Store</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Recipient / Name</th>
+            <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Type</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Items</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Subtotal</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Discount</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Net Charges</th>
+            <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Status</th>
+            {% if user.role in ('Superadmin', 'Admin', 'Inventory Staff') %}
+            <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 bg-white">
+          {% for slip in charge_slips %}
+          {% set status_label = slip.status if slip.status else 'Pending' %}
+          {% set charge_type_val = slip.charge_type or 'Charge' %}
+          <tr class="odd:bg-white even:bg-slate-50 hover:bg-slate-100/80 transition-colors">
+            <td class="px-4 py-3 text-sm text-slate-700 whitespace-nowrap">{{ slip.transaction_date.strftime('%b %d, %Y') if slip.transaction_date else '' }}</td>
+            <td class="px-4 py-3 text-sm font-semibold text-slate-900 whitespace-nowrap">{{ slip.control_no }}</td>
+            <td class="px-4 py-3 text-sm font-medium text-slate-800 whitespace-nowrap">{{ slip.store.name if slip.store else (slip.transfer_from or '-') }}</td>
+            <td class="px-4 py-3 text-sm font-medium text-slate-900 whitespace-nowrap">{{ slip.customer_name if slip.customer_name else '—' }}</td>
+            <td class="px-4 py-3 text-center whitespace-nowrap">
+              <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold {% if charge_type_val == 'Spoilage' %}bg-amber-100 text-amber-800 border border-amber-200{% else %}bg-cyan-100 text-cyan-800 border border-cyan-200{% endif %}">
+                {{ charge_type_val }}
+              </span>
+            </td>
+            <td class="px-4 py-3 text-sm text-slate-900 text-right font-semibold whitespace-nowrap">{{ item_count_by_transfer.get(slip.id, 0) }}</td>
+            <td class="px-4 py-3 text-sm text-right text-slate-700 whitespace-nowrap">₱{{ '%.2f'|format(slip.grand_total or 0) }}</td>
+            <td class="px-4 py-3 text-sm text-right text-slate-600 whitespace-nowrap">{{ '%.1f'|format(slip.discount_percent or 0) }}%</td>
+            <td class="px-4 py-3 text-sm text-right font-extrabold text-cyan-700 whitespace-nowrap">₱{{ '%.2f'|format(slip.net_total or 0) }}</td>
+            <td class="px-4 py-3 text-center whitespace-nowrap">
+              <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold {% if status_label == 'Pending' %}bg-amber-100 text-amber-800 border border-amber-200{% else %}bg-emerald-100 text-emerald-800 border border-emerald-200{% endif %}">
+                {{ status_label }}
+              </span>
+            </td>
+            {% if user.role in ('Superadmin', 'Admin', 'Inventory Staff') %}
+            <td class="px-4 py-3 text-center whitespace-nowrap">
+              <div class="flex items-center justify-center gap-1.5">
+                <!-- Edit Button -->
+                <a href="{{ url_for('admin.admin_edit_taf', transfer_id=slip.id) }}" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors" title="Edit Charge Slip" aria-label="Edit Charge Slip">
+                  ✎
+                </a>
+
+                <!-- Delete Button -->
+                <button onclick="deleteChargeSlip({{ slip.id }}, '{{ slip.control_no }}')" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 transition-colors" title="Delete Charge Slip" aria-label="Delete Charge Slip">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 6h18"></path>
+                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                  </svg>
+                </button>
+              </div>
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="text-center py-12">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-slate-300 mb-4">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <h3 class="text-lg font-bold text-slate-900 mb-1">No Charge Slips Found</h3>
+        <p class="text-sm text-slate-600">{% if filters.q or filters.store or filters.charge_type or filters.status or selected_date %}No Charge Slips match the selected search or filters.{% else %}No Charge Slips have been submitted yet.{% endif %}</p>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Pagination Controls -->
+    {% if pagination.pages > 1 %}
+    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4 bg-slate-50">
+      <p class="text-sm text-slate-500">Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }}–{{ [pagination.page * pagination.per_page, pagination.total]|min }} of {{ pagination.total }}</p>
+      <nav class="flex items-center gap-1">
+        {% if pagination.has_prev %}
+        <a href="{{ url_for('admin.admin_charge_slips', page=pagination.prev_num, date=selected_date, q=filters.q, charge_type=filters.charge_type, status=filters.status, store=filters.store) }}" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-white text-slate-700">Previous</a>
+        {% endif %}
+        {% for page_num in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+          {% if page_num %}
+          <a href="{{ url_for('admin.admin_charge_slips', page=page_num, date=selected_date, q=filters.q, charge_type=filters.charge_type, status=filters.status, store=filters.store) }}" class="rounded-lg border px-3 py-1.5 text-sm font-medium {% if page_num == pagination.page %}bg-slate-900 text-white border-slate-900{% else %}border-slate-300 hover:bg-white text-slate-700{% endif %}">{{ page_num }}</a>
+          {% else %}
+          <span class="px-1 text-slate-400">…</span>
+          {% endif %}
+        {% endfor %}
+        {% if pagination.has_next %}
+        <a href="{{ url_for('admin.admin_charge_slips', page=pagination.next_num, date=selected_date, q=filters.q, charge_type=filters.charge_type, status=filters.status, store=filters.store) }}" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-white text-slate-700">Next</a>
+        {% endif %}
+      </nav>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+function updateHeaderDate() {
+  const dateVal = document.getElementById('headerDateInput').value;
+  const url = new URL(window.location.href);
+  if (dateVal) {
+    url.searchParams.set('date', dateVal);
+  } else {
+    url.searchParams.delete('date');
+  }
+  url.searchParams.set('page', '1');
+  window.location.href = url.toString();
+}
+
+function deleteChargeSlip(transferId, controlNo) {
+  if (!confirm(`Are you sure you want to delete Charge Slip ${controlNo}? This will automatically reverse/reconcile store inventory.`)) {
+    return;
+  }
+  
+  fetch(`/admin/taf/delete/${transferId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    }
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.success) {
+      if (window.toast) {
+        window.toast.success(data.message || 'Charge Slip deleted successfully.');
+      } else {
+        alert(data.message || 'Charge Slip deleted successfully.');
+      }
+      setTimeout(() => window.location.reload(), 600);
+    } else {
+      alert(data.error || 'Failed to delete Charge Slip.');
+    }
+  })
+  .catch(err => {
+    console.error('Error deleting charge slip:', err);
+    alert('An error occurred while deleting the Charge Slip.');
+  });
+}
+</script>
+
+{% endblock %}

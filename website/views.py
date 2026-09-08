@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file, current_app
 from flask_login import login_required, current_user
+from sqlalchemy.orm import selectinload
 from .models import (
     User,
     Store,
@@ -3097,6 +3098,39 @@ def _build_taf_trans_out_quantity_by_master_id(store, transaction_date):
     return master_quantities
 
 
+def _build_taf_csi_quantity_by_master_id(store, transaction_date):
+    """Return CSI quantities from Charge Slips (charge_type != 'Spoilage')."""
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip')
+        .filter(func.lower(func.trim(func.coalesce(TafTransfer.charge_type, 'charge'))) != 'spoilage')
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(quantity or 0)
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
 def _build_taf_wastage_quantity_by_master_id(store, transaction_date):
     """Return sent wastage quantities, including TAFs that are still pending."""
     if not store or not transaction_date:
@@ -3107,7 +3141,13 @@ def _build_taf_wastage_quantity_by_master_id(store, transaction_date):
         .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
         .filter(TafTransfer.store_id == store.id)
         .filter(TafTransfer.transaction_date == transaction_date)
-        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer')
+        .filter(
+            (func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer') |
+            (
+                (func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip') &
+                (func.lower(func.trim(func.coalesce(TafTransfer.charge_type, ''))) == 'spoilage')
+            )
+        )
         .all()
     )
     if not transfer_rows:
@@ -3178,22 +3218,28 @@ def _build_taf_transfer_trace(store, transaction_date, product_master_id, direct
 
     normalized_store_name = str(store.name or '').strip().lower()
 
-    query = (
-        db.session.query(TafTransferItem, TafTransfer)
-        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
-        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
-    )
     if direction == 'out':
-        query = query.filter(TafTransfer.store_id == store.id).filter(TafTransfer.transaction_date == transaction_date)
+        query = (
+            db.session.query(TafTransferItem, TafTransfer)
+            .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+            .filter(TafTransfer.store_id == store.id)
+            .filter(TafTransfer.transaction_date == transaction_date)
+        )
     elif direction == 'in':
         if not normalized_store_name:
             return [], 0
-        query = query.filter(
-            func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name
-        ).filter(
-            func.lower(func.trim(TafTransfer.status)) != 'pending'
-        ).filter(
-            func.coalesce(TafTransfer.received_date, TafTransfer.transaction_date) == transaction_date
+        query = (
+            db.session.query(TafTransferItem, TafTransfer)
+            .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+            .filter(
+                func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name
+            ).filter(
+                func.lower(func.trim(TafTransfer.status)) != 'pending'
+            ).filter(
+                func.coalesce(TafTransfer.received_date, TafTransfer.transaction_date) == transaction_date
+            )
         )
 
     transfer_rows = query.all()
@@ -6922,6 +6968,7 @@ def _generate_taf_control_no(transaction_date, transaction_type='Product Transfe
         'EGI Plant Transfer': 'STR',
         'Supplies Transfer': 'STR',
         'Supplies Request': 'SRQ',
+        'Charge Slip': 'CS',
     }
     prefix_key = prefix_key_map.get(normalized_type, 'TAF')
     date_part = transaction_date.strftime('%Y%m%d')
@@ -7143,6 +7190,44 @@ def _sync_taf_wastage_inventory_for_store_date(store, transaction_date, affected
             continue
         inv_item.wastage_qty = int(wastage_by_master_id.get(inv_item.product_master_id, 0) or 0)
         _recalculate_inventory_item(inv_item)
+
+    db.session.flush()
+
+
+def _sync_taf_csi_inventory_for_store_date(store, transaction_date, affected_product_ids=None):
+    """Reconcile InvenSync csi_qty for a store/date from Charge Slips."""
+    if not store or not transaction_date:
+        return
+
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=transaction_date,
+    ).first()
+    if not inventory:
+        inventory = DailyEndingInventory(
+            store_id=store.id,
+            inventory_date=transaction_date,
+            created_by=getattr(current_user, 'id', None)
+        )
+        db.session.add(inventory)
+        db.session.flush()
+
+    csi_map = _build_taf_csi_quantity_by_master_id(store, transaction_date)
+
+    for inv_item in inventory.items:
+        if not inv_item.product_master_id:
+            continue
+        inv_item.csi_qty = int(csi_map.get(inv_item.product_master_id, 0) or 0)
+        _recalculate_inventory_item(inv_item)
+
+    existing_pm_ids = {item.product_master_id for item in inventory.items if item.product_master_id}
+    for pm_id, qty in csi_map.items():
+        if pm_id not in existing_pm_ids and qty > 0:
+            product = ProductMaster.query.get(pm_id)
+            if product:
+                item = _find_or_create_inventory_item(inventory, pm_id, product.description)
+                item.csi_qty = qty
+                _recalculate_inventory_item(item)
 
     db.session.flush()
 
@@ -7633,6 +7718,626 @@ def store_manager_transaction_activity_form():
         supply_items=supply_items,
         supply_requests=supply_requests,
     )
+
+
+@views.route('/store-manager/charge-slip', methods=['GET', 'POST'])
+@login_required
+def store_manager_charge_slip():
+    role = str(getattr(current_user, 'role', '') or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Managers or Inventory Staff can access Charge Slip.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    today_date = date.today()
+    selected_date = _parse_iso_date(request.args.get('date')) or today_date
+    if selected_date > today_date:
+        selected_date = today_date
+
+    if request.method == 'POST':
+        edit_id_raw = request.form.get('edit_id') or request.args.get('edit_id')
+        edit_id = None
+        if edit_id_raw:
+            try:
+                edit_id = int(edit_id_raw)
+            except (ValueError, TypeError):
+                edit_id = None
+
+        taf_date = _parse_iso_date(request.form.get('taf_date')) or today_date
+        if taf_date > today_date:
+            flash('Transaction date cannot be in the future.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=today_date.strftime('%Y-%m-%d')))
+
+        if edit_id:
+            existing_transfer = TafTransfer.query.filter_by(id=edit_id, store_id=store.id, transaction_type='Charge Slip').first()
+            if not existing_transfer:
+                flash('Charge Slip record not found for editing.', category='error')
+                return redirect(url_for('views.store_manager_charge_slip_history'))
+            
+            is_finalized = _is_operational_day_finalized(store.id, existing_transfer.transaction_date)
+            if is_finalized and role not in ('Inventory Staff', 'Admin', 'Superadmin'):
+                flash(
+                    f'End of Day for {existing_transfer.transaction_date.strftime("%b %d, %Y")} has been finalized. '
+                    f'Charge Slips on this date are locked for Store Managers. Contact Inventory Staff or Admin to edit.',
+                    category='error'
+                )
+                return redirect(url_for('views.store_manager_charge_slip_history'))
+            if (existing_transfer.status or '').strip() != 'Pending' and role not in ('Inventory Staff', 'Admin', 'Superadmin'):
+                flash('Only Pending Charge Slips can be edited.', category='error')
+                return redirect(url_for('views.store_manager_charge_slip_history'))
+        else:
+            existing_transfer = None
+
+        customer_name = str(request.form.get('customer_name', '') or '').strip()
+        charge_type = str(request.form.get('charge_type', 'Charge') or '').strip()
+        prepared_by_name = str(request.form.get('prepared_by_name', '') or '').strip() or str(current_user.full_name or current_user.username or '').strip()
+        approved_by_name = str(request.form.get('approved_by_name', '') or '').strip()
+        received_by_name = str(request.form.get('received_by_name', '') or '').strip()
+        discount_percent = _parse_float(request.form.get('discount_percent', 0.0), default=0.0)
+
+        if not customer_name:
+            flash('Name is required for Charge Slip.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+        if not approved_by_name:
+            flash('Approved By is required.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+        if not received_by_name:
+            flash('Received By is required.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+
+        item_names = request.form.getlist('item_name[]')
+        unit_costs = request.form.getlist('unit_cost[]')
+        quantities = request.form.getlist('qty[]')
+        remarks_list = request.form.getlist('remarks[]')
+        row_count = max(len(item_names), len(unit_costs), len(quantities), len(remarks_list))
+
+        parsed_items = []
+        for idx in range(row_count):
+            raw_item_name = item_names[idx] if idx < len(item_names) else ''
+            raw_unit_cost = unit_costs[idx] if idx < len(unit_costs) else ''
+            raw_quantity = quantities[idx] if idx < len(quantities) else ''
+            raw_remarks = remarks_list[idx] if idx < len(remarks_list) else ''
+
+            item_name = str(raw_item_name or '').strip()
+            remarks = str(raw_remarks or '').strip()
+            unit_cost = _parse_float(raw_unit_cost, default=0.0)
+            quantity = _parse_int(raw_quantity, default=0)
+
+            if not item_name and not str(raw_unit_cost or '').strip() and not str(raw_quantity or '').strip():
+                continue
+            if not item_name:
+                flash(f'Particular / Item Name is required on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+            if quantity <= 0:
+                flash(f'Unit / Qty must be greater than 0 on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+            if unit_cost < 0:
+                flash(f'Price cannot be negative on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+
+            line_total = float(unit_cost * quantity)
+            parsed_items.append({
+                'item_name': item_name,
+                'unit_cost': float(unit_cost),
+                'quantity': int(quantity),
+                'line_total': line_total,
+                'remarks': remarks or None,
+            })
+
+        if not parsed_items:
+            flash('Please add at least one item before submitting the Charge Slip.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+
+        control_no = str(request.form.get('control_no', '') or '').strip()
+        if not control_no:
+            flash('Control Number is required.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+
+        if existing_transfer:
+            ctrl_conflict = TafTransfer.query.filter(TafTransfer.control_no == control_no, TafTransfer.id != existing_transfer.id).first()
+        else:
+            ctrl_conflict = TafTransfer.query.filter_by(control_no=control_no).first()
+
+        if ctrl_conflict:
+            flash(f'Control Number "{control_no}" already exists. Please enter a unique control number.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+
+        grand_total = float(sum(item['line_total'] for item in parsed_items))
+        discount_amount = grand_total * (discount_percent / 100.0)
+        net_total = grand_total - discount_amount
+
+        try:
+            if existing_transfer:
+                old_date = existing_transfer.transaction_date
+                old_charge_type = existing_transfer.charge_type
+
+                existing_transfer.transaction_date = taf_date
+                existing_transfer.control_no = control_no
+                existing_transfer.customer_name = customer_name
+                existing_transfer.charge_type = charge_type
+                existing_transfer.prepared_by_name = prepared_by_name
+                existing_transfer.approved_by_name = approved_by_name
+                existing_transfer.received_by_name = received_by_name
+                existing_transfer.discount_percent = discount_percent
+                existing_transfer.grand_total = grand_total
+                existing_transfer.net_total = net_total
+
+                TafTransferItem.query.filter_by(transfer_id=existing_transfer.id).delete()
+                transfer_record = existing_transfer
+            else:
+                transfer_record = TafTransfer(
+                    store_id=store.id,
+                    transaction_date=taf_date,
+                    control_no=control_no,
+                    transaction_type='Charge Slip',
+                    transfer_from=store.name,
+                    transfer_to='Charge Slip',
+                    customer_name=customer_name,
+                    charge_type=charge_type,
+                    prepared_by_name=prepared_by_name,
+                    approved_by_name=approved_by_name,
+                    received_by_name=received_by_name,
+                    discount_percent=discount_percent,
+                    grand_total=grand_total,
+                    net_total=net_total,
+                    status='Pending',
+                    submitted_by=current_user.id,
+                )
+                db.session.add(transfer_record)
+
+            db.session.flush()
+
+            for item in parsed_items:
+                db.session.add(
+                    TafTransferItem(
+                        transfer_id=transfer_record.id,
+                        item_name=item['item_name'],
+                        unit_cost=item['unit_cost'],
+                        quantity=item['quantity'],
+                        line_total=item['line_total'],
+                        remarks=item['remarks'],
+                    )
+                )
+
+            db.session.flush()
+            if charge_type == 'Spoilage':
+                _sync_taf_wastage_inventory_for_store_date(store, taf_date)
+            else:
+                _sync_taf_csi_inventory_for_store_date(store, taf_date)
+
+            action_name = 'taf.charge_slip.update' if edit_id else 'taf.charge_slip.submit'
+            msg = f'Charge Slip updated successfully! Control No: {control_no}' if edit_id else f'Charge Slip submitted successfully! Control No: {control_no}'
+
+            log_audit_event(
+                action=action_name,
+                entity_type='TafTransfer',
+                entity_id=transfer_record.id,
+                reason='Store manager saved Charge Slip.',
+                details={
+                    'store_id': store.id,
+                    'transaction_date': taf_date.strftime('%Y-%m-%d'),
+                    'control_no': control_no,
+                    'customer_name': customer_name,
+                    'charge_type': charge_type,
+                    'grand_total': round(grand_total, 2),
+                    'discount_percent': discount_percent,
+                    'net_total': round(net_total, 2),
+                },
+            )
+            db.session.commit()
+            flash(msg, category='success')
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.exception('Error saving Charge Slip: %s', str(exc))
+            flash('Error saving Charge Slip. Please try again.', category='error')
+
+        return redirect(url_for('views.store_manager_charge_slip_history'))
+
+    control_no = _generate_taf_control_no(selected_date, 'Charge Slip')
+    product_rows = (
+        ProductMaster.query
+        .with_entities(ProductMaster.description, ProductMaster.sp_p, ProductMaster.sp_np, ProductMaster.tp)
+        .order_by(ProductMaster.description.asc())
+        .all()
+    )
+    store_group = Store.determine_store_group(store.name)
+    product_names = []
+    product_price_map = {}
+    for row in product_rows:
+        p_name = str(getattr(row, 'description', '') or '').strip()
+        if not p_name:
+            continue
+        product_names.append(p_name)
+        price_val = getattr(row, 'sp_np' if store_group == 'non_premium' else 'sp_p', None)
+        if price_val is None or price_val == 0.0:
+            price_val = getattr(row, 'tp', 0.0)
+        product_price_map[p_name] = float(price_val or 0.0)
+
+    edit_id = request.args.get('edit_id')
+    view_id = request.args.get('view_id')
+    loaded_slip = None
+    loaded_slip_items = []
+    is_edit_mode = False
+    is_view_only = False
+
+    if edit_id:
+        try:
+            loaded_slip = TafTransfer.query.filter_by(id=int(edit_id), store_id=store.id).first()
+            if loaded_slip:
+                is_finalized = _is_operational_day_finalized(store.id, loaded_slip.transaction_date)
+                if is_finalized and role not in ('Inventory Staff', 'Admin', 'Superadmin'):
+                    flash('This Charge Slip is locked for Store Managers because End of Day has been finalized.', category='warning')
+                    is_view_only = True
+                elif (loaded_slip.status or '').strip() != 'Pending' and role not in ('Inventory Staff', 'Admin', 'Superadmin'):
+                    flash('This Charge Slip is no longer pending and cannot be edited by Store Managers.', category='warning')
+                    is_view_only = True
+                else:
+                    is_edit_mode = True
+                loaded_slip_items = TafTransferItem.query.filter_by(transfer_id=loaded_slip.id).all()
+        except (ValueError, TypeError):
+            loaded_slip = None
+    elif view_id:
+        try:
+            loaded_slip = TafTransfer.query.filter_by(id=int(view_id), store_id=store.id).first()
+            if loaded_slip:
+                loaded_slip_items = TafTransferItem.query.filter_by(transfer_id=loaded_slip.id).all()
+                is_view_only = True
+        except (ValueError, TypeError):
+            loaded_slip = None
+
+    return render_template(
+        'store_manager/charge_slip.html',
+        user=current_user,
+        store=store,
+        today=today_date.strftime('%Y-%m-%d'),
+        selected_report_date=selected_date.strftime('%Y-%m-%d'),
+        control_no=control_no,
+        product_names=product_names,
+        product_price_map=product_price_map,
+        loaded_slip=loaded_slip,
+        loaded_slip_items=loaded_slip_items,
+        is_edit_mode=is_edit_mode,
+        is_view_only=is_view_only,
+    )
+
+
+@views.route('/store-manager/charge-slip/<int:transfer_id>')
+@login_required
+def store_manager_charge_slip_view(transfer_id):
+    return redirect(url_for('views.store_manager_charge_slip', view_id=transfer_id))
+
+
+@views.route('/store-manager/charge-slip-history')
+@login_required
+def store_manager_charge_slip_history():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Manager or Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    show_all_stores = request.args.get('all_stores', '0') == '1'
+
+    query = TafTransfer.query.options(selectinload(TafTransfer.items), selectinload(TafTransfer.store)).filter_by(transaction_type='Charge Slip')
+    if not show_all_stores:
+        query = query.filter_by(store_id=store.id)
+
+    charge_slips = (
+        query
+        .order_by(TafTransfer.transaction_date.desc(), TafTransfer.created_at.desc())
+        .all()
+    )
+
+    transfer_ids = [transfer.id for transfer in charge_slips]
+    item_count_by_transfer = {}
+    slip_items_by_transfer = {}
+    finalized_dates_map = {}
+
+    if transfer_ids:
+        item_count_by_transfer = {
+            int(transfer_id): int(item_count or 0)
+            for transfer_id, item_count in (
+                db.session.query(
+                    TafTransferItem.transfer_id,
+                    func.count(TafTransferItem.id),
+                )
+                .filter(TafTransferItem.transfer_id.in_(transfer_ids))
+                .group_by(TafTransferItem.transfer_id)
+                .all()
+            )
+        }
+        all_items = TafTransferItem.query.filter(TafTransferItem.transfer_id.in_(transfer_ids)).all()
+        for item in all_items:
+            t_id = int(item.transfer_id)
+            if t_id not in slip_items_by_transfer:
+                slip_items_by_transfer[t_id] = []
+            slip_items_by_transfer[t_id].append({
+                'item_name': item.item_name,
+                'qty': item.quantity,
+                'unit_cost': float(item.unit_cost or 0.0),
+                'total_cost': float(item.line_total or 0.0),
+            })
+
+    for slip in charge_slips:
+        finalized_dates_map[slip.id] = _is_operational_day_finalized(slip.store_id, slip.transaction_date)
+
+    product_rows = ProductMaster.query.order_by(ProductMaster.description.asc()).all()
+    store_group = Store.determine_store_group(store.name)
+    product_names = []
+    product_price_map = {}
+    for row in product_rows:
+        p_name = str(getattr(row, 'description', '') or '').strip()
+        if not p_name:
+            continue
+        product_names.append(p_name)
+        price_val = getattr(row, 'sp_np' if store_group == 'non_premium' else 'sp_p', None)
+        if price_val is None or price_val == 0.0:
+            price_val = getattr(row, 'tp', 0.0)
+        product_price_map[p_name] = float(price_val or 0.0)
+
+    all_stores_query = Store.query.order_by(Store.name.asc()).all()
+    all_stores = [{'id': s.id, 'name': s.name} for s in all_stores_query]
+
+    return render_template(
+        'store_manager/charge_slip_history.html',
+        user=current_user,
+        store=store,
+        charge_slips=charge_slips,
+        item_count_by_transfer=item_count_by_transfer,
+        slip_items_by_transfer=slip_items_by_transfer,
+        finalized_dates_map=finalized_dates_map,
+        show_all_stores=show_all_stores,
+        product_names=product_names,
+        product_price_map=product_price_map,
+        all_stores=all_stores,
+    )
+
+
+@views.route('/store-manager/charge-slip/validate/<int:transfer_id>', methods=['POST'])
+@login_required
+def validate_charge_slip(transfer_id):
+    role = (current_user.role or '').strip()
+    if role not in ('Inventory Staff', 'Admin', 'Superadmin', 'Store Manager'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    slip = TafTransfer.query.get(transfer_id)
+    if not slip:
+        return jsonify({'success': False, 'message': 'Charge Slip not found.'}), 404
+
+    new_status = 'Validated' if slip.status != 'Validated' else 'Pending'
+    slip.status = new_status
+
+    from datetime import datetime
+    user_name = (getattr(current_user, 'full_name', None) or getattr(current_user, 'username', None) or f'User #{current_user.id}').strip()
+    if new_status == 'Validated':
+        slip.validated_by = current_user.id
+        slip.validated_at = datetime.now()
+    else:
+        slip.validated_by = None
+        slip.validated_at = None
+
+    try:
+        log_audit_event(
+            action='taf.charge_slip.validate',
+            entity_type='TafTransfer',
+            entity_id=slip.id,
+            reason=f'User {user_name} updated Charge Slip status to {new_status}.',
+            details={
+                'control_no': slip.control_no,
+                'status': new_status,
+                'validated_by_id': current_user.id,
+                'validated_by_name': user_name,
+                'user_id': current_user.id
+            }
+        )
+        db.session.commit()
+        val_time_str = slip.validated_at.strftime('%b %d, %Y %I:%M %p') if slip.validated_at else ''
+        return jsonify({
+            'success': True,
+            'status': new_status,
+            'validated_by_name': user_name if new_status == 'Validated' else '',
+            'validated_by_id': current_user.id if new_status == 'Validated' else None,
+            'validated_at_str': val_time_str,
+            'message': f'Status updated to {new_status}.'
+        })
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception('Error validating Charge Slip: %s', str(exc))
+        return jsonify({'success': False, 'message': 'Failed to update status.'}), 500
+
+
+@views.route('/store-manager/charge-slip/inline-update', methods=['POST'])
+@login_required
+def inline_update_charge_slip():
+    role = (current_user.role or '').strip()
+    if role not in ('Inventory Staff', 'Admin', 'Superadmin', 'Store Manager'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    data = request.get_json() or {}
+    transfer_id = data.get('transfer_id')
+    item_id = data.get('item_id')
+
+    if not transfer_id or str(transfer_id).lower() in ('', 'none'):
+        from datetime import datetime
+        store_id = None
+        if data.get('store_id'):
+            try:
+                store_id = int(data['store_id'])
+            except (ValueError, TypeError):
+                pass
+        if not store_id:
+            store_id = session.get('store_id') or (current_user.assigned_store_id if getattr(current_user, 'assigned_store_id', None) else None)
+        if not store_id and current_user.assigned_stores:
+            store_id = current_user.assigned_stores[0].id
+        if not store_id:
+            first_store = Store.query.first()
+            store_id = first_store.id if first_store else 1
+
+        ref_no = str(data.get('ref_no') or '').strip()
+        if not ref_no:
+            count_slips = TafTransfer.query.count() + 1
+            ref_no = f"CS-{datetime.now().strftime('%Y%m%d')}-{count_slips:04d}"
+        else:
+            existing = TafTransfer.query.filter_by(control_no=ref_no).first()
+            if existing:
+                return jsonify({'success': False, 'message': f'Control No. {ref_no} is already in use.'}), 400
+
+        t_date = datetime.now().date()
+        if data.get('transaction_date'):
+            try:
+                t_date = datetime.strptime(data['transaction_date'], '%Y-%m-%d').date()
+            except ValueError:
+                pass
+
+        disc_pct = 0.0
+        if data.get('discount_percent'):
+            try:
+                disc_pct = float(data['discount_percent'])
+            except (ValueError, TypeError):
+                pass
+
+        slip = TafTransfer(
+            store_id=store_id,
+            control_no=ref_no,
+            customer_name=str(data.get('payee') or '').strip(),
+            transaction_date=t_date,
+            discount_percent=disc_pct,
+            remarks=str(data.get('remarks') or '').strip(),
+            status='Pending',
+            user_id=current_user.id
+        )
+        db.session.add(slip)
+        db.session.flush()
+        transfer_id = slip.id
+    else:
+        slip = TafTransfer.query.get(transfer_id)
+        if not slip:
+            return jsonify({'success': False, 'message': 'Charge Slip not found.'}), 404
+
+    # Update slip header fields
+    if data.get('store_id'):
+        try:
+            slip.store_id = int(data['store_id'])
+        except (ValueError, TypeError):
+            pass
+
+    if 'transaction_date' in data and data['transaction_date']:
+        try:
+            from datetime import datetime
+            slip.transaction_date = datetime.strptime(data['transaction_date'], '%Y-%m-%d').date()
+        except ValueError:
+            pass
+
+    if 'payee' in data:
+        slip.customer_name = str(data['payee'] or '').strip()
+
+    if 'ref_no' in data and data['ref_no']:
+        new_ref = str(data['ref_no']).strip()
+        if new_ref and new_ref != slip.control_no:
+            existing = TafTransfer.query.filter_by(control_no=new_ref).first()
+            if existing and existing.id != slip.id:
+                return jsonify({'success': False, 'message': f'Control No. {new_ref} is already in use.'}), 400
+            slip.control_no = new_ref
+
+    if 'discount_percent' in data:
+        try:
+            slip.discount_percent = float(data['discount_percent'] or 0.0)
+        except (ValueError, TypeError):
+            pass
+
+    # Update line item if item_id provided or create new item if item_id == 'new'
+    updated_item = None
+    if item_id:
+        if str(item_id).lower() == 'new':
+            item_name = str(data.get('item_name') or 'New Item').strip()
+            qty = max(0, int(data.get('quantity') or 0)) if 'quantity' in data and data['quantity'] != '' else 0
+            cost = max(0.0, float(data.get('unit_cost') or 0.0)) if 'unit_cost' in data and data['unit_cost'] != '' else 0.0
+            item_remarks = str(data.get('remarks') or '').strip()
+            item = TafTransferItem(
+                transfer_id=slip.id,
+                item_name=item_name,
+                quantity=qty,
+                unit_cost=cost,
+                line_total=qty * cost,
+                remarks=item_remarks
+            )
+            db.session.add(item)
+            db.session.flush()
+            updated_item = item
+        else:
+            item = TafTransferItem.query.get(item_id)
+            if item and item.transfer_id == slip.id:
+                if 'item_name' in data:
+                    item.item_name = str(data['item_name'] or '').strip()
+                if 'quantity' in data:
+                    try:
+                        item.quantity = max(0, int(data['quantity'] or 0))
+                    except (ValueError, TypeError):
+                        pass
+                if 'unit_cost' in data:
+                    try:
+                        item.unit_cost = max(0.0, float(data['unit_cost'] or 0.0))
+                    except (ValueError, TypeError):
+                        pass
+                if 'remarks' in data:
+                    item.remarks = str(data['remarks'] or '').strip()
+                item.line_total = (item.quantity or 0) * (item.unit_cost or 0.0)
+                updated_item = item
+
+    # Recalculate slip totals
+    all_items = TafTransferItem.query.filter_by(transfer_id=slip.id).all()
+    if all_items:
+        slip.grand_total = sum(i.quantity * i.unit_cost for i in all_items)
+    else:
+        slip.grand_total = 0.0
+
+    disc_frac = max(0.0, min(100.0, slip.discount_percent or 0.0)) / 100.0
+    slip.net_total = slip.grand_total * (1.0 - disc_frac)
+
+    try:
+        log_audit_event(
+            action='taf.charge_slip.inline_update',
+            entity_type='TafTransfer',
+            entity_id=slip.id,
+            reason='User updated Charge Slip line item / header inline via Spreadsheet view.',
+            details={
+                'control_no': slip.control_no,
+                'item_id': item_id,
+                'user_id': current_user.id
+            }
+        )
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': 'Row saved successfully!',
+            'transfer_id': slip.id,
+            'store_id': slip.store_id,
+            'store_name': slip.store.name if slip.store else '',
+            'grand_total': slip.grand_total,
+            'net_total': slip.net_total,
+            'discount_percent': slip.discount_percent,
+            'control_no': slip.control_no,
+            'customer_name': slip.customer_name,
+            'transaction_date': slip.transaction_date.strftime('%Y-%m-%d') if slip.transaction_date else '',
+            'month_str': slip.transaction_date.strftime('%B') if slip.transaction_date else '',
+            'item_id': updated_item.id if updated_item else None,
+            'item_name': updated_item.item_name if updated_item else '',
+            'quantity': updated_item.quantity if updated_item else 0,
+            'unit_cost': updated_item.unit_cost if updated_item else 0.0,
+            'line_total': updated_item.line_total if updated_item else 0.0,
+            'remarks': updated_item.remarks if updated_item else slip.remarks
+        })
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception('Error inline updating Charge Slip: %s', str(exc))
 
 
 @views.route('/store-manager/trans')
@@ -11058,18 +11763,10 @@ def invensync():
                         inv_item.bo_qty = bulk_order_qty
 
     taf_trans_out_map = _build_taf_trans_out_quantity_by_master_id(store, selected_date)
-    if taf_trans_out_map:
-        for inv_item in inventory_items.values():
-            if not inv_item.product_master_id:
-                continue
-
-            taf_trans_out_qty = int(taf_trans_out_map.get(inv_item.product_master_id, 0) or 0)
-            if taf_trans_out_qty <= 0:
-                continue
-
-            current_trans_out_qty = int(inv_item.trans_out_qty or 0)
-            if current_trans_out_qty == 0:
-                inv_item.trans_out_qty = taf_trans_out_qty
+    for inv_item in inventory_items.values():
+        if not inv_item.product_master_id:
+            continue
+        inv_item.trans_out_qty = int(taf_trans_out_map.get(inv_item.product_master_id, 0) or 0)
 
     taf_trans_in_map = _build_taf_trans_in_quantity_by_master_id(store, selected_date)
     for inv_item in inventory_items.values():
@@ -11077,16 +11774,17 @@ def invensync():
             continue
         inv_item.trans_in_qty = int(taf_trans_in_map.get(inv_item.product_master_id, 0) or 0)
 
-    # Wastage uses the quantity sent on the TAF immediately. Pending transfers
-    # are included, and assigning the calculated total prevents a later receive
-    # action from leaving the same wastage counted twice.
+    taf_csi_map = _build_taf_csi_quantity_by_master_id(store, selected_date)
+    for inv_item in inventory_items.values():
+        if not inv_item.product_master_id:
+            continue
+        inv_item.csi_qty = int(taf_csi_map.get(inv_item.product_master_id, 0) or 0)
+
     taf_wastage_map = _build_taf_wastage_quantity_by_master_id(store, selected_date)
-    if taf_wastage_map:
-        for inv_item in inventory_items.values():
-            if not inv_item.product_master_id:
-                continue
-            if inv_item.product_master_id in taf_wastage_map:
-                inv_item.wastage_qty = int(taf_wastage_map[inv_item.product_master_id] or 0)
+    for inv_item in inventory_items.values():
+        if not inv_item.product_master_id:
+            continue
+        inv_item.wastage_qty = int(taf_wastage_map.get(inv_item.product_master_id, 0) or 0)
 
     saved_sales_map = {}
     saved_bitbit_sold_details = {}
@@ -12269,6 +12967,90 @@ def get_masterlist_products():
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@views.route('/api/charges', methods=['GET'])
+@views.route('/api/charge-slips', methods=['GET'])
+def api_get_charges():
+    """API Endpoint to fetch Charge Slips (defaults to status=Validated for payroll integration)"""
+    try:
+        status_param = (request.args.get('status') or 'Validated').strip()
+        date_param = (request.args.get('date') or '').strip()
+        store_param = (request.args.get('store_id') or '').strip()
+
+        query = TafTransfer.query.options(
+            selectinload(TafTransfer.items),
+            selectinload(TafTransfer.store),
+            selectinload(TafTransfer.validator)
+        ).filter(
+            func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip'
+        )
+
+        if status_param.lower() != 'all':
+            query = query.filter(func.lower(func.trim(TafTransfer.status)) == status_param.lower())
+
+        if date_param:
+            try:
+                filter_date = datetime.strptime(date_param, '%Y-%m-%d').date()
+                query = query.filter(TafTransfer.transaction_date == filter_date)
+            except ValueError:
+                pass
+
+        if store_param:
+            try:
+                query = query.filter(TafTransfer.store_id == int(store_param))
+            except ValueError:
+                pass
+
+        transfers = query.order_by(TafTransfer.transaction_date.desc(), TafTransfer.id.desc()).all()
+
+        charges_data = []
+        for transfer in transfers:
+            store_name = transfer.store.name if transfer.store else transfer.transfer_from
+            validator_name = (transfer.validator.full_name or transfer.validator.username or '').strip() if transfer.validator else ''
+            if not validator_name:
+                validator_name = (transfer.approved_by_name or transfer.prepared_by_name or '').strip()
+
+            items_data = []
+            for item in transfer.items:
+                items_data.append({
+                    'id': item.id,
+                    'item_name': item.item_name,
+                    'unit_cost': float(item.unit_cost or 0.0),
+                    'quantity': int(item.quantity or 0),
+                    'line_total': float(item.line_total or 0.0),
+                    'remarks': item.remarks or ''
+                })
+
+            charges_data.append({
+                'id': transfer.id,
+                'control_no': transfer.control_no,
+                'transaction_date': transfer.transaction_date.strftime('%Y-%m-%d') if transfer.transaction_date else '',
+                'store_id': transfer.store_id,
+                'store_name': store_name,
+                'customer_name': transfer.customer_name or 'Unspecified Employee',
+                'charge_type': transfer.charge_type or 'Charge',
+                'discount_percent': float(transfer.discount_percent or 0.0),
+                'grand_total': float(transfer.grand_total or 0.0),
+                'net_total': float(transfer.net_total or 0.0),
+                'status': transfer.status or 'Pending',
+                'prepared_by_name': transfer.prepared_by_name or '',
+                'approved_by_name': transfer.approved_by_name or '',
+                'received_by_name': transfer.received_by_name or '',
+                'validated_by_id': transfer.validated_by,
+                'validated_by_name': validator_name,
+                'validated_at': transfer.validated_at.isoformat() if transfer.validated_at else None,
+                'created_at': transfer.created_at.isoformat() if transfer.created_at else None,
+                'items': items_data
+            })
+
+        return jsonify({
+            'success': True,
+            'count': len(charges_data),
+            'charges': charges_data
+        }), 200
+    except Exception as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 500
 
 
 

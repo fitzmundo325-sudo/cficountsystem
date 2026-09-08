@@ -21,3 +21,9 @@ __pycache__/
 .env
 .vscode/
 .idea/
+
+# Ignore iPayroll
+iPayroll/
+scratch/
+*.zip
+
