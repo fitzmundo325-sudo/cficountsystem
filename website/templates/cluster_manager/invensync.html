@@ -203,7 +203,7 @@
         <div class="invensync-stat-pill flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
           <span class="flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
           <span class="text-xs font-bold uppercase tracking-wide text-slate-500">Checks current</span>
-          <span class="text-sm font-bold text-slate-900">{{ store_summaries|selectattr('update_status.inventory.is_up_to_date')|list|length + store_summaries|selectattr('update_status.wastage.is_up_to_date')|list|length + store_summaries|selectattr('update_status.pos_sold.is_up_to_date')|list|length + store_summaries|selectattr('update_status.delivery.is_up_to_date')|list|length }}/{{ store_summaries|length * 4 }}</span>
+          <span class="text-sm font-bold text-slate-900">{{ store_summaries|selectattr('update_status.inventory.is_up_to_date')|list|length + store_summaries|selectattr('update_status.pos_sold.is_up_to_date')|list|length + store_summaries|selectattr('update_status.delivery.is_up_to_date')|list|length }}/{{ store_summaries|length * 3 }}</span>
         </div>
       </div>
     </section>
