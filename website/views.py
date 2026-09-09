@@ -9979,6 +9979,10 @@ def cluster_manager_cluster_data_export_excel():
             return redirect(url_for('views.cluster_manager_cluster_data', cluster_id=cluster.id, month=current_month, year=current_year))
     # For 'all' export type, use all stores in cluster (store_ids already set to all cluster stores)
 
+    # Stores included in the export scope (used for row labels; consolidated rows
+    # do not carry a store_id, so label them by the number of stores in scope).
+    exported_stores = [s for s in stores if s.id in store_ids]
+
     # Build date range for the month
     year_int = int(current_year)
     month_int = int(current_month)
@@ -10036,7 +10040,7 @@ def cluster_manager_cluster_data_export_excel():
     # Create Excel workbook
     wb = Workbook()
     ws = wb.active
-    ws.title = "Cluster Data Export"
+    ws.title = "Sales Data"
 
     title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
     sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
@@ -10050,7 +10054,7 @@ def cluster_manager_cluster_data_export_excel():
     pct_format = '0.00%'
 
     # Title
-    ws.append(["CLUSTER DATA EXPORT"])
+    ws.append(["SALES DATA"])
     ws.cell(row=1, column=1).font = title_font
 
     # Meta info
@@ -10073,7 +10077,12 @@ def cluster_manager_cluster_data_export_excel():
         c.font = header_font
         c.fill = header_fill
 
-    # Data rows
+    # Data rows (only render missing-report rows through today for the current month;
+    # for past months render all days to match the cluster data page view).
+    cutoff_day = num_days
+    if year_int == today.year and month_int == today.month:
+        cutoff_day = today.day
+
     month_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     for day in range(1, num_days + 1):
         date_str = f"{year_int}-{month_int:02d}-{day:02d}"
@@ -10081,8 +10090,9 @@ def cluster_manager_cluster_data_export_excel():
         
         if day_reports:
             for report in day_reports:
-                store_name = stores[0].name if len(stores) == 1 else (next((s.name for s in stores if s.id == report.store_id), f'Store {report.store_id}'))
-                vs_tgt = report.calc.vs_tgt
+                store_name = exported_stores[0].name if len(exported_stores) == 1 else 'All Stores'
+                calc = report.calc
+                vs_tgt = calc['vs_tgt']
                 mtd_vs_tgt = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_tgt')
                 mtd_vs_ly = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_ly')
                 
@@ -10091,11 +10101,11 @@ def cluster_manager_cluster_data_export_excel():
                     store_name,
                     float(report.pos_gross_sales or 0),
                     float(report.ci_regular_gross_sales or 0),
-                    float(report.calc.total_gross_sales or 0),
+                    float(calc['total_gross_sales'] or 0),
                     float(daily_targets.get(date_str, {}).get('target_net', 0)),
                     float(daily_targets.get(date_str, {}).get('last_year_net', 0)),
                     vs_tgt / 100 if vs_tgt is not None else None,
-                    float(report.calc.net_sales or 0),
+                    float(calc['net_sales'] or 0),
                     float(acc_daily_sales.get(date_str, {}).get('net_sales', 0)),
                     float(acc_daily_targets.get(date_str, {}).get('target_net', 0)),
                     float(acc_daily_targets.get(date_str, {}).get('last_year_net', 0)),
@@ -10103,10 +10113,10 @@ def cluster_manager_cluster_data_export_excel():
                     (mtd_vs_ly / 100) if mtd_vs_ly is not None else None,
                     float(daily_targets.get(date_str, {}).get('gbi_target', 0)),
                     float(acc_daily_targets.get(date_str, {}).get('gbi_target', 0)),
-                    float(report.calc.ar or 0) / 100 if report.calc.ar is not None else None,
-                    float(report.calc.vs_ly or 0) / 100 if report.calc.vs_ly is not None else None,
-                    report.calc.tc_total,
-                    float(report.calc.ac or 0),
+                    float(calc['ar'] or 0) / 100 if calc['ar'] is not None else None,
+                    float(calc['vs_ly'] or 0) / 100 if calc['vs_ly'] is not None else None,
+                    calc['tc_total'],
+                    float(calc['ac'] or 0),
                 ]
                 ws.append(row_data)
                 row_num = ws.max_row
@@ -10122,9 +10132,9 @@ def cluster_manager_cluster_data_export_excel():
                 vs_tgt_cell = ws.cell(row=row_num, column=8)
                 if vs_tgt_cell.value is not None:
                     vs_tgt_cell.font = green_font if vs_tgt_cell.value >= 0 else red_font
-        elif day <= today.day and (year_int != today.year or month_int != today.month or day <= today.day):
+        elif day <= cutoff_day:
             # Missing report row
-            store_name = stores[0].name if len(stores) == 1 else 'All Stores'
+            store_name = exported_stores[0].name if len(exported_stores) == 1 else 'All Stores'
             row_data = [
                 f"{month_names[month_int]} {day:02d}, {year_int}",
                 store_name,
@@ -10161,26 +10171,27 @@ def cluster_manager_cluster_data_export_excel():
     summary_row = ws.max_row
     ws.cell(row=summary_row, column=1).font = Font(name="Calibri", size=10, bold=True, color="1E293B")
     
+    sales = summary['sales']
     summary_data = [
         '', 'TOTAL / AVG',
-        float(summary.sales.gross_sales),
-        float(summary.sales.ci_sales),
-        float(summary.sales.total_gross_sales),
-        float(summary.sales.target_net),
-        float(summary.sales.last_year_net),
-        float(summary.sales.vs_tgt_percent) / 100,
-        float(summary.sales.net_sales),
-        float(summary.sales.acc_net_sales),
-        float(summary.sales.acc_target_net),
-        float(summary.sales.acc_ly_net),
-        float(summary.sales.mtd_vs_tgt_percent) / 100,
-        float(summary.sales.mtd_vs_ly_percent) / 100,
-        float(summary.sales.gbi_target),
-        float(summary.sales.acc_gbi),
-        float(summary.sales.ar_percent) / 100,
-        float(summary.sales.vs_ly_percent) / 100,
-        float(summary.sales.tc),
-        float(summary.sales.ac),
+        float(sales['gross_sales']),
+        float(sales['ci_sales']),
+        float(sales['total_gross_sales']),
+        float(sales['target_net']),
+        float(sales['last_year_net']),
+        float(sales['vs_tgt_percent']) / 100,
+        float(sales['net_sales']),
+        float(sales['acc_net_sales']),
+        float(sales['acc_target_net']),
+        float(sales['acc_ly_net']),
+        float(sales['mtd_vs_tgt_percent']) / 100,
+        float(sales['mtd_vs_ly_percent']) / 100,
+        float(sales['gbi_target']),
+        float(sales['acc_gbi']),
+        float(sales['ar_percent']) / 100,
+        float(sales['vs_ly_percent']) / 100,
+        float(sales['tc']),
+        float(sales['ac']),
     ]
     ws.append(summary_data)
     for col_idx in [3, 4, 5, 6, 7, 9, 10, 11, 12, 15, 16, 20]:
@@ -10203,6 +10214,217 @@ def cluster_manager_cluster_data_export_excel():
                 pass
         adjusted_width = min(max_length + 2, 30)
         ws.column_dimensions[column].width = adjusted_width
+
+    # ------------------------------------------------------------------
+    # Additional sheets mirroring the Cluster Data page tabs.
+    # ------------------------------------------------------------------
+    def _add_tab_sheet(sheet_title, headers, rows, footer, money_cols=(), pct_cols=()):
+        tab_ws = wb.create_sheet(sheet_title)
+        tab_ws.append([sheet_title.upper()])
+        tab_ws.cell(row=1, column=1).font = title_font
+        tab_ws.append([f"Cluster: {cluster.name} | Month: {month_names_full[month_int]} {year_int} | Store Scope: {request.cookies.get('store_scope', 'official').capitalize()}"])
+        tab_ws.cell(row=2, column=1).font = sub_font
+        tab_ws.append([])
+        tab_ws.append(headers)
+        for col in range(1, len(headers) + 1):
+            c = tab_ws.cell(row=4, column=col)
+            c.font = header_font
+            c.fill = header_fill
+        for row in rows:
+            tab_ws.append(row)
+        if footer:
+            tab_ws.append([])
+            tab_ws.append(footer)
+            footer_bold = Font(name="Calibri", size=10, bold=True, color="1E293B")
+            for col in range(1, len(footer) + 1):
+                tab_ws.cell(row=tab_ws.max_row, column=col).font = footer_bold
+        for col_idx in money_cols:
+            for r in range(5, tab_ws.max_row + 1):
+                cell = tab_ws.cell(row=r, column=col_idx)
+                if cell.value is not None:
+                    cell.number_format = number_format
+        for col_idx in pct_cols:
+            for r in range(5, tab_ws.max_row + 1):
+                cell = tab_ws.cell(row=r, column=col_idx)
+                if cell.value is not None:
+                    cell.number_format = pct_format
+        for col in tab_ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+                except:
+                    pass
+            tab_ws.column_dimensions[column].width = min(max_length + 2, 30)
+        return tab_ws
+
+    # Performance Overview tab (mirrors the top summary card on the page)
+    overview = summary['overview']
+    perf_store_label = exported_stores[0].name if len(exported_stores) == 1 else _get_team_name(cluster)
+    perf_rows = [
+        ['Store Name', perf_store_label, None],
+        ['Month', f"{month_names_full[month_int]} {year_int}", None],
+        ['MTD Sales', float(overview['mtd_sales']), None],
+        ['Target', float(overview['total_target']), float(overview['variance_percent'] or 0) / 100],
+        ['Variance', float(overview['variance_amount']), None],
+        ['SBI Sales', float(overview['sbi_sales']), float(overview['sbi_percent'] or 0) / 100],
+        ['MTD Wastage', float(overview['wastage_amount']), float(overview['wastage_percent'] or 0) / 100],
+        ['MTD Discount', float(overview['discount_amount']), float(overview['discount_percent'] or 0) / 100],
+    ]
+    _add_tab_sheet('Performance Overview', ['Metric', 'Value', '%'], perf_rows, None, money_cols=[2], pct_cols=[3])
+    wb.move_sheet('Sales Data', offset=1)
+
+    # Aggregators tab
+    agg_headers = ['Date', 'GDS Sales', 'GDS TC', 'Grabfood Sales', 'Grabfood TC', 'FoodPanda Sales', 'FoodPanda TC', 'Maxim Sales', 'Maxim TC', 'Total Agg Sales', 'Total Agg TC']
+    agg_rows = []
+    for day in range(1, num_days + 1):
+        date_str = f"{year_int}-{month_int:02d}-{day:02d}"
+        day_reports = reports_by_date.get(date_str, [])
+        if day_reports:
+            report = day_reports[0]
+            gds_s = float(report.gds_sales or 0)
+            gds_tc = int(report.gds_tc or 0)
+            grab_s = float(report.grab_sales or 0)
+            grab_tc = int(report.grab_tc or 0)
+            fp_s = float(report.foodpanda_sales or 0)
+            fp_tc = int(report.foodpanda_tc or 0)
+        elif day <= cutoff_day:
+            gds_s = grab_s = fp_s = 0.0
+            gds_tc = grab_tc = fp_tc = 0
+        else:
+            continue
+        agg_rows.append([
+            f"{month_names[month_int]} {day:02d}, {year_int}",
+            gds_s, gds_tc, grab_s, grab_tc, fp_s, fp_tc,
+            0.0, 0,
+            gds_s + grab_s + fp_s,
+            gds_tc + grab_tc + fp_tc,
+        ])
+    agg_agg = summary['aggregators']
+    agg_footer = [
+        'TOTAL / AVG',
+        float(agg_agg['gds_sales']), int(agg_agg['gds_tc']),
+        float(agg_agg['grab_sales']), int(agg_agg['grab_tc']),
+        float(agg_agg['foodpanda_sales']), int(agg_agg['foodpanda_tc']),
+        float(agg_agg['maxim_sales']), int(agg_agg['maxim_tc']),
+        float(agg_agg['total_agg_sales']), int(agg_agg['total_agg_tc']),
+    ]
+    _add_tab_sheet('Aggregators', agg_headers, agg_rows, agg_footer, money_cols=[2, 4, 6, 8, 10])
+
+    # SBI tab
+    sbi_headers = ['Date', 'Booth Selling', 'TC', 'Bulk Order', 'TC', 'Reseller', 'TC', 'Company Tie-up', 'TC', 'GOW', 'TC', 'Ambulant/OOT', 'TC', 'Other SBI', 'TC', 'Total SBI', 'TC']
+    sbi_fields = [
+        ('boothselling_sales', 'boothselling_tc'),
+        ('bulk_order_sales', 'bulk_order_tc'),
+        ('reseller_sales', 'reseller_tc'),
+        ('tieup_sales', 'tieup_tc'),
+        ('gow_sales', 'gow_tc'),
+        ('ambulant_sales', 'ambulant_tc'),
+    ]
+    sbi_rows = []
+    for day in range(1, num_days + 1):
+        date_str = f"{year_int}-{month_int:02d}-{day:02d}"
+        day_reports = reports_by_date.get(date_str, [])
+        if not day_reports and day > cutoff_day:
+            continue
+        report = day_reports[0] if day_reports else None
+        values = []
+        total_s = 0.0
+        total_tc = 0
+        for sales_field, tc_field in sbi_fields:
+            if report is None:
+                s_val = 0.0
+                t_val = 0
+            else:
+                s_val = float(getattr(report, sales_field, 0) or 0)
+                t_val = int(getattr(report, tc_field, 0) or 0)
+            values.extend([s_val, t_val])
+            total_s += s_val
+            total_tc += t_val
+        values.extend([0.0, 0])
+        values.extend([total_s, total_tc])
+        sbi_rows.append([f"{month_names[month_int]} {day:02d}, {year_int}"] + values)
+    sbi_agg = summary['sbi']
+    sbi_footer = [
+        'TOTAL / AVG',
+        float(sbi_agg['boothselling_sales']), int(sbi_agg['boothselling_tc']),
+        float(sbi_agg['bulk_order_sales']), int(sbi_agg['bulk_order_tc']),
+        float(sbi_agg['reseller_sales']), int(sbi_agg['reseller_tc']),
+        float(sbi_agg['tieup_sales']), int(sbi_agg['tieup_tc']),
+        float(sbi_agg['gow_sales']), int(sbi_agg['gow_tc']),
+        float(sbi_agg['ambulant_sales']), int(sbi_agg['ambulant_tc']),
+        float(sbi_agg['other_sbi_sales']), int(sbi_agg['other_sbi_tc']),
+        float(sbi_agg['total_sbi_sales']), int(sbi_agg['total_sbi_tc']),
+    ]
+    _add_tab_sheet('SBI', sbi_headers, sbi_rows, sbi_footer, money_cols=[2, 4, 6, 8, 10, 12, 14, 16])
+
+    # Cost Monitoring tab
+    cost_headers = ['Date', 'Wastage Amount', 'Wastage Daily %', 'Senior / PWD', 'Promo (LDTS)', 'Bulk Orders', 'Total Disc Peso', 'Discount Daily %']
+    cost_rows = []
+    for day in range(1, num_days + 1):
+        date_str = f"{year_int}-{month_int:02d}-{day:02d}"
+        day_reports = reports_by_date.get(date_str, [])
+        if not day_reports and day > cutoff_day:
+            continue
+        report = day_reports[0] if day_reports else None
+        if report is None:
+            w_amt = 0.0
+            w_pct = 0.0
+            sp = 0.0
+            pr = 0.0
+            bo = 0.0
+            tot_disc = 0.0
+            d_pct = 0.0
+        else:
+            calc = report.calc
+            w_amt = float(calc['wastage_amount'] or 0)
+            w_pct = float(calc['wastage_percent'] or 0) / 100
+            sp = float(report.senior_pwd_discount or 0)
+            pr = float(report.promo_ldts_discount or 0)
+            bo = float(report.bulk_orders_discount or 0)
+            tot_disc = float(calc['total_discount'] or 0)
+            d_pct = float(calc['discount_percent'] or 0) / 100
+        cost_rows.append([
+            f"{month_names[month_int]} {day:02d}, {year_int}",
+            w_amt, w_pct, sp, pr, bo, tot_disc, d_pct,
+        ])
+    cost_agg = summary['cost']
+    cost_footer = [
+        'TOTAL / AVG',
+        float(cost_agg['wastage_amount']),
+        float(cost_agg['wastage_daily_percent'] or 0) / 100,
+        float(cost_agg['senior_pwd_discount']),
+        float(cost_agg['promo_ldts_discount']),
+        float(cost_agg['bulk_orders_discount']),
+        float(cost_agg['total_discount']),
+        float(cost_agg['discount_daily_percent'] or 0) / 100,
+    ]
+    _add_tab_sheet('Cost Monitoring', cost_headers, cost_rows, cost_footer, money_cols=[2, 4, 5, 6, 7], pct_cols=[3, 8])
+
+    # Inventory Monitoring tab
+    inv_headers = ['Date', 'Qty Sold - GC', 'Qty Sold - Rolls', 'Qty Sold - Premium', 'Qty Sold - Cheesy Ensay', 'Qty Sold - Slices', 'Qty Sold - Mamon', 'Ending Inv - GC', 'Ending Inv - Rolls', 'Ending Inv - Premium']
+    inv_qty_fields = ['pos_qty_gc', 'pos_qty_rolls', 'pos_qty_premium', 'pos_qty_cheesy_ensay', 'pos_qty_slices', 'pos_qty_mamon']
+    inv_ending_fields = ['ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium']
+    inv_rows = []
+    for day in range(1, num_days + 1):
+        date_str = f"{year_int}-{month_int:02d}-{day:02d}"
+        day_reports = reports_by_date.get(date_str, [])
+        if not day_reports and day > cutoff_day:
+            continue
+        report = day_reports[0] if day_reports else None
+        qty_vals = [int(getattr(report, f, 0) or 0) if report is not None else 0 for f in inv_qty_fields]
+        end_vals = [int(getattr(report, f, 0) or 0) if report is not None else 0 for f in inv_ending_fields]
+        inv_rows.append([f"{month_names[month_int]} {day:02d}, {year_int}"] + qty_vals + end_vals)
+    inv_agg = summary['inventory']
+    inv_footer = [
+        'TOTAL / AVG',
+        int(inv_agg['pos_qty_gc']), int(inv_agg['pos_qty_rolls']), int(inv_agg['pos_qty_premium']),
+        int(inv_agg['pos_qty_cheesy_ensay']), int(inv_agg['pos_qty_slices']), int(inv_agg['pos_qty_mamon']),
+        int(inv_agg['ending_inv_gc']), int(inv_agg['ending_inv_rolls']), int(inv_agg['ending_inv_premium']),
+    ]
+    _add_tab_sheet('Inventory Monitoring', inv_headers, inv_rows, inv_footer)
 
     # Save to BytesIO
     from io import BytesIO

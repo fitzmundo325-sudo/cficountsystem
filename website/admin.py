@@ -650,9 +650,12 @@ def export_pos_sold_excel():
     start_date_raw = (request.args.get('start_date') or '').strip()
     end_date_raw = (request.args.get('end_date') or '').strip()
     export_type = request.args.get('export_type', 'range')
+    scope = (request.args.get('scope') or 'cluster').strip()
 
     if export_type not in ('range', 'all'):
         export_type = 'range'
+    if scope not in ('cluster', 'all'):
+        scope = 'cluster'
 
     allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
 
@@ -673,20 +676,27 @@ def export_pos_sold_excel():
         except (TypeError, ValueError):
             return None
 
-    if not selected_cluster_id or (allowed_cluster_ids is not None and selected_cluster_id not in allowed_cluster_ids):
-        flash('Please select a valid cluster.', category='error')
-        return redirect(url_for('admin.pos_sold'))
+    if scope == 'all':
+        if not clusters:
+            flash('No clusters are available to export.', category='error')
+            return redirect(url_for('admin.pos_sold'))
+        source_cluster_ids = {int(cluster.id) for cluster in clusters}
+    else:
+        if not selected_cluster_id or (allowed_cluster_ids is not None and selected_cluster_id not in allowed_cluster_ids):
+            flash('Please select a valid cluster.', category='error')
+            return redirect(url_for('admin.pos_sold'))
+        source_cluster_ids = {selected_cluster_id}
 
     start_date = _parse_iso_date(start_date_raw)
     end_date = _parse_iso_date(end_date_raw)
 
     if export_type == 'all':
-        # Get earliest and latest dates for the selected cluster/store
+        # Get earliest and latest dates for the selected clusters/store
         earliest_query = db.session.query(func.min(DailyReport.report_date)).join(Store).filter(
-            Store.cluster_id == selected_cluster_id
+            Store.cluster_id.in_(source_cluster_ids)
         )
         latest_query = db.session.query(func.max(DailyReport.report_date)).join(Store).filter(
-            Store.cluster_id == selected_cluster_id
+            Store.cluster_id.in_(source_cluster_ids)
         )
         if selected_store_id:
             earliest_query = earliest_query.filter(Store.id == selected_store_id)
@@ -710,9 +720,9 @@ def export_pos_sold_excel():
         if start_date > end_date:
             start_date, end_date = end_date, start_date
 
-    allowed_store_ids = {int(store.id) for store in stores if int(store.cluster_id or 0) == int(selected_cluster_id)}
+    allowed_store_ids = {int(store.id) for store in stores if int(store.cluster_id or 0) in source_cluster_ids}
     if selected_store_id and selected_store_id not in allowed_store_ids:
-        flash('Selected store does not belong to the chosen cluster.', category='error')
+        flash('Selected store does not belong to the chosen cluster(s).', category='error')
         return redirect(url_for('admin.pos_sold'))
 
     from .admin import _get_product_alias_lookup, _normalize_product_text
@@ -740,7 +750,7 @@ def export_pos_sold_excel():
         .join(Store, Store.id == DailyReport.store_id)
         .outerjoin(Cluster, Cluster.id == Store.cluster_id)
         .filter(
-            Store.cluster_id == selected_cluster_id,
+            Store.cluster_id.in_(source_cluster_ids),
             DailyReport.report_date >= start_date,
             DailyReport.report_date <= end_date,
         )
@@ -811,21 +821,13 @@ def export_pos_sold_excel():
         ),
     )
 
-    # Create Excel workbook
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "POS Sold Export"
-
     title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
     sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
     header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="4338CA", end_color="4338CA", fill_type="solid")
     data_font = Font(name="Calibri", size=10, color="0F172A")
     money_font = Font(name="Calibri", size=10, color="0F172A")
-
-    # Title
-    ws.append(["POS SOLD EXPORT"])
-    ws.cell(row=1, column=1).font = title_font
+    headers = ['Store', 'Product', 'Category', 'Days with Sales', 'Qty', 'Gross Sales', 'Discount', 'Net Sales']
 
     # Meta info
     cluster_name = cluster_lookup.get(selected_cluster_id, Cluster(name='Unknown')).name
@@ -833,61 +835,136 @@ def export_pos_sold_excel():
     if selected_store_id:
         store = Store.query.get(selected_store_id)
         store_name = f" | Store: {store.name}" if store else ''
-    
-    if export_type == 'all':
-        ws.append([f"Cluster: {cluster_name}{store_name} | All Available Dates"])
+
+    if scope == 'all':
+        scope_label = 'All Clusters'
     else:
-        ws.append([f"Cluster: {cluster_name}{store_name} | Date Range: {start_date} to {end_date}"])
-    ws.cell(row=2, column=1).font = sub_font
-    ws.append([])
+        scope_label = f'Cluster: {cluster_name}'
 
-    # Headers
-    headers = ['Store', 'Product', 'Category', 'Days', 'Qty', 'Gross Sales', 'Discount', 'Net Sales']
-    ws.append(headers)
-    for col in range(1, 9):
-        c = ws.cell(row=4, column=col)
-        c.font = header_font
-        c.fill = header_fill
+    if export_type == 'all':
+        meta_text = f"{scope_label}{store_name} | All Available Dates"
+    else:
+        meta_text = f"{scope_label}{store_name} | Date Range: {start_date} to {end_date}"
 
-    # Data rows
+    exported_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    def _to_sheet_title(name):
+        # Excel sheet names: max 31 chars, no []:*?/\ characters
+        safe = re.sub(r'[\[\]:*?/\\]', '', str(name or 'Store')).strip()
+        safe = safe[:31].strip()
+        return safe or 'Store'
+
+    store_groups = {}
     for row in table_rows:
-        ws.append([
-            row['store_name'],
-            row['product_name'],
-            row['category'],
-            row['days_count'],
-            row['quantity'],
-            row['gross_sales'],
-            row['discount'],
-            row['net_sales'],
-        ])
-        for col in range(1, 9):
-            c = ws.cell(row=ws.max_row, column=col)
-            c.font = data_font if col < 6 else money_font
-            if col >= 6:
-                c.number_format = '#,##0.00'
+        sid = int(row['store_id'])
+        group = store_groups.get(sid)
+        if group is None:
+            group = {'store_name': row['store_name'], 'rows': []}
+            store_groups[sid] = group
+        group['rows'].append(row)
 
-    # Auto-adjust column widths
-    for col in ws.columns:
-        max_length = 0
-        column = col[0].column_letter
-        for cell in col:
-            try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
-            except:
-                pass
-        adjusted_width = min(max_length + 2, 40)
-        ws.column_dimensions[column].width = adjusted_width
+    def _write_store_sheet(ws, sname):
+        ws.append(["POS SOLD EXPORT"])
+        ws.cell(row=1, column=1).font = title_font
+
+        ws.append([f"Store: {sname} | {meta_text}"])
+        ws.cell(row=2, column=1).font = sub_font
+        ws.append([f"Exported on: {exported_at}"])
+        ws.cell(row=3, column=1).font = sub_font
+        ws.append([])
+
+        ws.append(headers)
+        for col in range(1, 9):
+            c = ws.cell(row=5, column=col)
+            c.font = header_font
+            c.fill = header_fill
+
+    def _append_data_rows(ws, rows):
+        for row in rows:
+            ws.append([
+                row['store_name'],
+                row['product_name'],
+                row['category'],
+                row['days_count'],
+                row['quantity'],
+                row['gross_sales'],
+                row['discount'],
+                row['net_sales'],
+            ])
+            cur_row = ws.max_row
+            for col in range(1, 9):
+                c = ws.cell(row=cur_row, column=col)
+                c.font = data_font if col < 6 else money_font
+                if col >= 6:
+                    c.number_format = '#,##0.00'
+
+    def _autofit_columns(ws):
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 40)
+            ws.column_dimensions[column].width = adjusted_width
+
+    # Create Excel workbook with one sheet per store
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    used_titles = set()
+    for sid in sorted(store_groups.keys()):
+        group = store_groups[sid]
+        base_title = _to_sheet_title(group['store_name'])
+        title = base_title
+        counter = 2
+        while title in used_titles:
+            suffix = f' ({counter})'
+            title = base_title[:31 - len(suffix)] + suffix
+            counter += 1
+        used_titles.add(title)
+
+        ws = wb.create_sheet(title=title)
+        _write_store_sheet(ws, group['store_name'])
+        _append_data_rows(ws, group['rows'])
+        _autofit_columns(ws)
+
+    if not store_groups:
+        ws = wb.create_sheet(title='No Data')
+        ws.append(["POS SOLD EXPORT"])
+        ws.cell(row=1, column=1).font = title_font
+        ws.append([meta_text])
+        ws.cell(row=2, column=1).font = sub_font
+        ws.append([f"Exported on: {exported_at}"])
+        ws.cell(row=3, column=1).font = sub_font
+        ws.append([])
+        ws.append(headers)
+        for col in range(1, 9):
+            c = ws.cell(row=5, column=col)
+            c.font = header_font
+            c.fill = header_fill
+        ws.append(['No data found for the selected filters.'])
+        ws.cell(row=6, column=1).font = data_font
+        _autofit_columns(ws)
 
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
 
-    if export_type == 'all':
-        filename = f'POS_Sold_Export_{cluster_name}_All_Dates.xlsx'
+    if scope == 'all':
+        cluster_label = 'All_Clusters'
     else:
-        filename = f'POS_Sold_Export_{start_date}_to_{end_date}.xlsx'
+        cluster_label = cluster_name
+
+    file_timestamp = exported_at.replace(':', '').replace(' ', '_')
+
+    if export_type == 'all':
+        filename = f'POS_Sold_Export_{cluster_label}_All_Dates_{file_timestamp}.xlsx'
+    else:
+        filename = f'POS_Sold_Export_{cluster_label}_{start_date}_to_{end_date}_{file_timestamp}.xlsx'
     return send_file(
         output,
         as_attachment=True,
@@ -1561,9 +1638,12 @@ def export_delivery_excel():
     start_date_raw = (request.args.get('start_date') or '').strip()
     end_date_raw = (request.args.get('end_date') or '').strip()
     export_type = request.args.get('export_type', 'range')
+    scope = (request.args.get('scope') or 'cluster').strip()
 
     if export_type not in ('range', 'all'):
         export_type = 'range'
+    if scope not in ('cluster', 'all'):
+        scope = 'cluster'
 
     allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
 
@@ -1584,20 +1664,27 @@ def export_delivery_excel():
         except (TypeError, ValueError):
             return None
 
-    if not selected_cluster_id or (allowed_cluster_ids is not None and selected_cluster_id not in allowed_cluster_ids):
-        flash('Please select a valid cluster.', category='error')
-        return redirect(url_for('admin.delivery'))
+    if scope == 'all':
+        if not clusters:
+            flash('No clusters are available to export.', category='error')
+            return redirect(url_for('admin.delivery'))
+        source_cluster_ids = {int(cluster.id) for cluster in clusters}
+    else:
+        if not selected_cluster_id or (allowed_cluster_ids is not None and selected_cluster_id not in allowed_cluster_ids):
+            flash('Please select a valid cluster.', category='error')
+            return redirect(url_for('admin.delivery'))
+        source_cluster_ids = {selected_cluster_id}
 
     start_date = _parse_iso_date(start_date_raw)
     end_date = _parse_iso_date(end_date_raw)
 
     if export_type == 'all':
-        # Get earliest and latest dates for the selected cluster/store
+        # Get earliest and latest dates for the selected clusters/store
         earliest_query = db.session.query(func.min(RsoDelivery.report_date)).join(Store).filter(
-            Store.cluster_id == selected_cluster_id
+            Store.cluster_id.in_(source_cluster_ids)
         )
         latest_query = db.session.query(func.max(RsoDelivery.report_date)).join(Store).filter(
-            Store.cluster_id == selected_cluster_id
+            Store.cluster_id.in_(source_cluster_ids)
         )
         if selected_store_id:
             earliest_query = earliest_query.filter(Store.id == selected_store_id)
@@ -1621,9 +1708,9 @@ def export_delivery_excel():
         if start_date > end_date:
             start_date, end_date = end_date, start_date
 
-    allowed_store_ids = {int(store.id) for store in stores if int(store.cluster_id or 0) == int(selected_cluster_id)}
+    allowed_store_ids = {int(store.id) for store in stores if int(store.cluster_id or 0) in source_cluster_ids}
     if selected_store_id and selected_store_id not in allowed_store_ids:
-        flash('Selected store does not belong to the chosen cluster.', category='error')
+        flash('Selected store does not belong to the chosen cluster(s).', category='error')
         return redirect(url_for('admin.delivery'))
 
     delivery_query = (
@@ -1641,7 +1728,7 @@ def export_delivery_excel():
         .join(Store, Store.id == RsoDelivery.store_id)
         .outerjoin(Cluster, Cluster.id == Store.cluster_id)
         .filter(
-            Store.cluster_id == selected_cluster_id,
+            Store.cluster_id.in_(source_cluster_ids),
             RsoDelivery.report_date >= start_date,
             RsoDelivery.report_date <= end_date,
         )
@@ -1671,20 +1758,16 @@ def export_delivery_excel():
         for row in delivery_rows
     ]
 
-    # Create Excel workbook
+    # Create Excel workbook with one sheet per store
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Delivery Export"
+    wb.remove(wb.active)
 
     title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
     sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
     header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="047857", end_color="047857", fill_type="solid")
     data_font = Font(name="Calibri", size=10, color="0F172A")
-
-    # Title
-    ws.append(["DELIVERY EXPORT"])
-    ws.cell(row=1, column=1).font = title_font
+    headers = ['Store', 'Date', 'Product', 'Source', 'Entries', 'Qty', 'Received Qty']
 
     # Meta info
     cluster_name = cluster_lookup.get(selected_cluster_id, Cluster(name='Unknown')).name
@@ -1692,58 +1775,128 @@ def export_delivery_excel():
     if selected_store_id:
         store = Store.query.get(selected_store_id)
         store_name = f" | Store: {store.name}" if store else ''
-    
-    if export_type == 'all':
-        ws.append([f"Cluster: {cluster_name}{store_name} | All Available Dates"])
+
+    if scope == 'all':
+        scope_label = 'All Clusters'
     else:
-        ws.append([f"Cluster: {cluster_name}{store_name} | Date Range: {start_date} to {end_date}"])
-    ws.cell(row=2, column=1).font = sub_font
-    ws.append([])
+        scope_label = f'Cluster: {cluster_name}'
 
-    # Headers
-    headers = ['Store', 'Date', 'Product', 'Source', 'Entries', 'Qty', 'Received Qty']
-    ws.append(headers)
-    for col in range(1, 8):
-        c = ws.cell(row=4, column=col)
-        c.font = header_font
-        c.fill = header_fill
+    if export_type == 'all':
+        meta_text = f"{scope_label}{store_name} | All Available Dates"
+    else:
+        meta_text = f"{scope_label}{store_name} | Date Range: {start_date} to {end_date}"
 
-    # Data rows
+    exported_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    def _to_sheet_title(name):
+        # Excel sheet names: max 31 chars, no []:*?/\ characters
+        safe = re.sub(r'[\[\]:*?/\\]', '', str(name or 'Store')).strip()
+        safe = safe[:31].strip()
+        return safe or 'Store'
+
+    store_groups = {}
     for row in table_rows:
-        ws.append([
-            row['store_name'],
-            row['report_date'].strftime('%Y-%m-%d') if row['report_date'] else '',
-            row['product_name'],
-            row['upload_source'],
-            row['entry_count'],
-            row['quantity'],
-            row['received_quantity'],
-        ])
-        for col in range(1, 8):
-            c = ws.cell(row=ws.max_row, column=col)
-            c.font = data_font
+        sid = int(row['store_id'])
+        group = store_groups.get(sid)
+        if group is None:
+            group = {'store_name': row['store_name'], 'rows': []}
+            store_groups[sid] = group
+        group['rows'].append(row)
 
-    # Auto-adjust column widths
-    for col in ws.columns:
-        max_length = 0
-        column = col[0].column_letter
-        for cell in col:
-            try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
-            except:
-                pass
-        adjusted_width = min(max_length + 2, 40)
-        ws.column_dimensions[column].width = adjusted_width
+    def _write_store_sheet(ws, sname):
+        ws.append(["DELIVERY EXPORT"])
+        ws.cell(row=1, column=1).font = title_font
+
+        ws.append([f"Store: {sname} | {meta_text}"])
+        ws.cell(row=2, column=1).font = sub_font
+        ws.append([f"Exported on: {exported_at}"])
+        ws.cell(row=3, column=1).font = sub_font
+        ws.append([])
+
+        ws.append(headers)
+        for col in range(1, 8):
+            c = ws.cell(row=5, column=col)
+            c.font = header_font
+            c.fill = header_fill
+
+    def _append_data_rows(ws, rows):
+        for row in rows:
+            ws.append([
+                row['store_name'],
+                row['report_date'].strftime('%Y-%m-%d') if row['report_date'] else '',
+                row['product_name'],
+                row['upload_source'],
+                row['entry_count'],
+                row['quantity'],
+                row['received_quantity'],
+            ])
+            for col in range(1, 8):
+                c = ws.cell(row=ws.max_row, column=col)
+                c.font = data_font
+
+    def _autofit_columns(ws):
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 40)
+            ws.column_dimensions[column].width = adjusted_width
+
+    used_titles = set()
+    for sid in sorted(store_groups.keys()):
+        group = store_groups[sid]
+        base_title = _to_sheet_title(group['store_name'])
+        title = base_title
+        counter = 2
+        while title in used_titles:
+            suffix = f' ({counter})'
+            title = base_title[:31 - len(suffix)] + suffix
+            counter += 1
+        used_titles.add(title)
+
+        ws = wb.create_sheet(title=title)
+        _write_store_sheet(ws, group['store_name'])
+        _append_data_rows(ws, group['rows'])
+        _autofit_columns(ws)
+
+    if not store_groups:
+        ws = wb.create_sheet(title='No Data')
+        ws.append(["DELIVERY EXPORT"])
+        ws.cell(row=1, column=1).font = title_font
+        ws.append([meta_text])
+        ws.cell(row=2, column=1).font = sub_font
+        ws.append([f"Exported on: {exported_at}"])
+        ws.cell(row=3, column=1).font = sub_font
+        ws.append([])
+        ws.append(headers)
+        for col in range(1, 8):
+            c = ws.cell(row=5, column=col)
+            c.font = header_font
+            c.fill = header_fill
+        ws.append(['No data found for the selected filters.'])
+        ws.cell(row=6, column=1).font = data_font
+        _autofit_columns(ws)
 
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
 
-    if export_type == 'all':
-        filename = f'Delivery_Export_{cluster_name}_All_Dates.xlsx'
+    if scope == 'all':
+        cluster_label = 'All_Clusters'
     else:
-        filename = f'Delivery_Export_{start_date}_to_{end_date}.xlsx'
+        cluster_label = cluster_name
+
+    file_timestamp = exported_at.replace(':', '').replace(' ', '_')
+
+    if export_type == 'all':
+        filename = f'Delivery_Export_{cluster_label}_All_Dates_{file_timestamp}.xlsx'
+    else:
+        filename = f'Delivery_Export_{cluster_label}_{start_date}_to_{end_date}_{file_timestamp}.xlsx'
     return send_file(
         output,
         as_attachment=True,

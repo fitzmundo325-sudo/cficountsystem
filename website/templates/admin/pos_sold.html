@@ -599,25 +599,51 @@
     <div class="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl" data-modal-content>
       <div class="border-b border-slate-200 px-6 py-4">
         <h3 class="text-xl font-bold text-slate-900">Export POS Sold Data</h3>
-        <p class="mt-1 text-sm text-slate-500">Choose what data to export for the selected cluster</p>
+        <p class="mt-1 text-sm text-slate-500">Choose what data to export</p>
       </div>
       <form id="exportPosSoldForm" method="GET" action="{{ url_for('admin.export_pos_sold_excel') }}" class="space-y-4 px-6 py-5">
-        <input type="hidden" name="cluster_id" value="{{ selected_cluster_id }}">
         <input type="hidden" name="store_id" value="{{ selected_store_id }}">
-        
-        <!-- Export Type Radio Buttons -->
+
+        <!-- Export Option Radio Buttons (single choice) -->
+        <input type="hidden" name="scope" value="cluster">
+        <input type="hidden" name="export_type" value="range">
         <div>
-          <label class="block text-sm font-semibold text-slate-700 mb-3">Export Type</label>
+          <label class="block text-sm font-semibold text-slate-700 mb-3">Export Option</label>
           <div class="space-y-2">
             <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
-              <input type="radio" name="export_type" value="range" checked class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
-              <div><p class="font-medium text-slate-900">Date Range</p><p class="text-xs text-slate-500">Export data for a specific date range</p></div>
+              <input type="radio" name="export_option" value="cluster_range" checked class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">This Cluster</p><p class="text-xs text-slate-500">Selected cluster, specific date range</p></div>
             </label>
             <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
-              <input type="radio" name="export_type" value="all" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
-              <div><p class="font-medium text-slate-900">All Dates</p><p class="text-xs text-slate-500">Export all historical data for this cluster</p></div>
+              <input type="radio" name="export_option" value="cluster_all" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">This Cluster</p><p class="text-xs text-slate-500">Selected cluster, all historical dates</p></div>
+            </label>
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_option" value="all_range" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">All Cluster Stores Data</p><p class="text-xs text-slate-500">All clusters and stores, specific date range</p></div>
+            </label>
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_option" value="all_all" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">All Cluster Stores Data</p><p class="text-xs text-slate-500">All clusters and stores, all historical dates</p></div>
             </label>
           </div>
+        </div>
+
+        <!-- Cluster Selection -->
+        <div id="posSoldExportClusterField">
+          <label for="export_pos_cluster_id" class="mb-1 block text-sm font-semibold text-slate-700">Cluster</label>
+          <select id="export_pos_cluster_id" name="cluster_id" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
+            {% if clusters %}
+              {% if not selected_cluster_id %}
+                <option value="">Select a Cluster</option>
+              {% endif %}
+              {% for cluster in clusters %}
+                <option value="{{ cluster.id }}" {% if selected_cluster_id and cluster.id == selected_cluster_id %}selected{% endif %}>{{ cluster.name }}</option>
+              {% endfor %}
+            {% else %}
+              <option value="">No Clusters Available</option>
+            {% endif %}
+          </select>
         </div>
 
         <!-- Date Range Fields -->
@@ -677,19 +703,52 @@
       resetSubmitBtn();
     };
 
-    // Toggle fields based on export_type radio selection
-    const radioButtons = modal.querySelectorAll('input[name="export_type"]');
+    // Single export option radio encodes scope + export_type
+    const optionRadios = modal.querySelectorAll('input[name="export_option"]');
     const rangeFields = modal.querySelector('#posSoldRangeFields');
+    const clusterField = modal.querySelector('#posSoldExportClusterField');
+    const clusterSelect = document.getElementById('export_pos_cluster_id');
+    const scopeHidden = form ? form.querySelector('input[name="scope"]') : null;
+    const typeHidden = form ? form.querySelector('input[name="export_type"]') : null;
+    const storeHidden = form ? form.querySelector('input[name="store_id"]') : null;
 
-    radioButtons.forEach(radio => {
+    function currentOption() {
+      const checked = modal.querySelector('input[name="export_option"]:checked');
+      return checked ? checked.value : 'cluster_range';
+    }
+
+    function applyOption(optionValue) {
+      const parts = (optionValue || 'cluster_range').split('_');
+      const scope = parts[0] === 'all' ? 'all' : 'cluster';
+      const type = parts[1] === 'all' ? 'all' : 'range';
+
+      if (scopeHidden) scopeHidden.value = scope;
+      if (typeHidden) typeHidden.value = type;
+
+      rangeFields.classList.toggle('hidden', type !== 'range');
+      clusterField.classList.toggle('hidden', scope !== 'cluster');
+      if (clusterSelect) clusterSelect.required = scope === 'cluster';
+      if (scope !== 'cluster' && storeHidden) storeHidden.value = '';
+    }
+
+    optionRadios.forEach(radio => {
       radio.addEventListener('change', function() {
-        rangeFields.classList.toggle('hidden', this.value !== 'range');
+        applyOption(this.value);
       });
     });
+
+    if (clusterSelect) {
+      clusterSelect.addEventListener('change', function() {
+        if (storeHidden) storeHidden.value = '';
+      });
+    }
+
+    applyOption(currentOption());
 
     // Close modal on form submit - show downloading state, then close after delay
     if (form) {
       form.addEventListener('submit', () => {
+        applyOption(currentOption());
         if (submitBtn) {
           submitBtn.disabled = true;
           submitBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Downloading...';
