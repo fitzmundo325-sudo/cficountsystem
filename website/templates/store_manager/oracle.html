@@ -70,6 +70,18 @@
   #oracle-order-view.oracle-fs #oracle-fs-bar {
     display: flex;
   }
+  #history-detail-panel tbody td:nth-child(3) {
+    white-space: nowrap;
+  }
+  #history-detail-panel tbody td:nth-child(3) > div {
+    display: inline;
+  }
+  #history-detail-panel tbody td:nth-child(3) > div + div::before {
+    content: ' ';
+  }
+  #history-detail-panel tbody td:first-child > div + div {
+    display: none;
+  }
 </style>
 
 <!-- Header -->
@@ -292,7 +304,7 @@
         <tbody id="history-tbody" class="divide-y divide-slate-100"></tbody>
       </table></div>
     </div>
-    <div id="history-detail-panel" class="mt-4 hidden rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden"></div>
+    <div id="history-detail-panel" role="dialog" aria-modal="true" aria-label="Order details" onclick="if(event.target===this)closeHistoryModal()" class="fixed inset-0 z-50 hidden overflow-y-auto bg-slate-900/50 p-4 md:p-8"></div>
   </div>
 
   <!-- DAILY AVERAGES -->
@@ -341,6 +353,8 @@ const STORE_SAVED_BUFFERS = {{ store_buffers|tojson if store_buffers is defined 
 const INVENSYNC_DATA = {{ invensync_data|tojson if invensync_data is defined else '{}' }};
 const PREV_INVENTORY_DATE = {{ prev_inventory_date|tojson if prev_inventory_date is defined else 'null' }};
 const ORACLE_DATE = {{ oracle_date|tojson if oracle_date is defined else 'null' }};
+const ORACLE_INCOMING_ORDERS = {{ oracle_incoming_orders|tojson if oracle_incoming_orders is defined else '{}' }};
+const ORACLE_ORDER_HISTORY = {{ oracle_order_history|tojson if oracle_order_history is defined else '[]' }};
 const POS_SALES_DATA = {{ pos_sales_data|tojson if pos_sales_data is defined else '{}' }};
 const BULK_ORDER_WEEKS = {{ bulk_order_weeks|tojson if bulk_order_weeks is defined else '[]' }};
 const BULK_ORDER_PRODUCT_DATA = {{ bulk_order_product_data|tojson if bulk_order_product_data is defined else '{}' }};
@@ -370,7 +384,8 @@ Object.entries(POS_SALES_DATA || {}).forEach(([pid,weeks])=>{
 
 const DB={
   inventory:PRODUCTS.map(p=>{const iv=INVENSYNC_DATA[String(p.id)];return{productId:p.id,productName:p.name,category:p.category,unit:p.unit,currentStock:iv?iv.ending_stock:0,reorderPoint:0,lastUpdated:fmt(new Date())};}),
-  orderHistory:[],pendingApprovals:[],transfers:[],
+  orderHistory:ORACLE_ORDER_HISTORY.filter(order=>order.status==='approved'),
+  pendingApprovals:ORACLE_ORDER_HISTORY.filter(order=>order.status==='pending'),transfers:[],
   settings:{store:'{{ store.name }}',branch:'{{ store.name }}',manager:'{{ user.username }}',contact:'',leadTime:1,buffer:20,alertDays:3}
 };
 let productBuffers={};
@@ -385,7 +400,7 @@ function getCurStock(pid){return(DB.inventory.find(x=>x.productId===pid)||{curre
 function getAvgDay(pid,dayName){const di=DAYS.indexOf(dayName);if(di<0)return 0;const w=salesData[pid];return w?w.reduce((s,wk)=>s+(wk[di]||0),0)/4:0;}
 function getAvgDayIdx(pid,di){const w=salesData[pid];return w?w.reduce((s,wk)=>s+(wk[di]||0),0)/4:0;}
 function getSalesDataPointCount(pid){const w=salesData[pid];if(!w)return 0;let c=0;w.forEach(wk=>wk.forEach(v=>{if((parseInt(v)||0)>0)c++;}));return c;}
-function getIncoming(pid,od,dd){return 0;}
+function getIncoming(pid,od,dd){return Number(ORACLE_INCOMING_ORDERS[String(pid)]?.[dd]||0);}
 function getExpSales(pid,od,dd){
   if(!od||!dd)return 0;
   let t=0;
@@ -492,7 +507,8 @@ function renderOrderTable(){
     const sug=useTarget?calcTarget(p,dayIdx,tSales,mult,ne,tIn,tOut):calcAvg(p,dayName,mult,ne,tIn,tOut);
     const minS=Math.max(0,Math.floor(sug*0.8)),maxS=Math.ceil(sug*1.2);
     const fv=orderFinalQtys[p.id]!==undefined?orderFinalQtys[p.id]:'',fo=fv!==''?(parseInt(fv)||0):sug;
-    const inc=fo;
+    // Draft final quantities are not incoming stock until an Oracle order exists.
+    const inc=getIncoming(p.id,od,dd);
     const oor=fv!==''&&(fo<minS||fo>maxS);
     const iStyle=oor?'border-red-400 bg-red-50 text-red-700':'';
     const finalOrderCell=CLUSTER_VIEW
@@ -529,13 +545,22 @@ function renderOrderTable(){
 }
 function onFinalChange(pid,val){orderFinalQtys[pid]=val===''?undefined:val;renderOrderTable();}
 function onFinalKeyDown(event,input){
-  if(event.key!=='Enter') return;
+  if(!['Enter','ArrowUp','ArrowDown','ArrowRight'].includes(event.key)) return;
   event.preventDefault();
   const fields=Array.from(document.querySelectorAll('.input-final'));
   const index=fields.indexOf(input);
+  if(event.key==='ArrowRight'){
+    // The center value is the suggested quantity shown as the input placeholder.
+    input.value=input.placeholder;
+  }
   onFinalChange(input.dataset.finalProductId,input.value);
   const nextFields=Array.from(document.querySelectorAll('.input-final'));
-  const next=nextFields[Math.min(index+1,nextFields.length-1)];
+  const nextIndex=event.key==='ArrowDown'||event.key==='Enter'
+    ? Math.min(index+1,nextFields.length-1)
+    : event.key==='ArrowUp'
+      ? Math.max(index-1,0)
+      : index;
+  const next=nextFields[nextIndex];
   if(next){next.focus();next.select();}
 }
 function onBufferChange(pid,val){productBuffers[pid]=parseFloat(val)||0;renderOrderTable();}
@@ -560,26 +585,54 @@ async function saveBuffersToCluster(){
 
 
 <script>
-function submitOrder(){
+async function submitOrder(){
   if(CLUSTER_VIEW) return;
   const od=document.getElementById('order-date').value,dd=document.getElementById('delivery-date').value;
   const dayName=getDelivDayName(),dayIdx=getDelivDayIdx(),mult=getEffMult();
   const event=document.getElementById('forecast-event').selectedOptions[0].text;
   const manager=document.getElementById('order-manager').value;
   const tsRaw=document.getElementById('target-sales-input').value,tSales=tsRaw!==''?parseFloat(tsRaw):null,useTarget=tSales!==null&&tSales>0;
-  let autoC=0,pendC=0;
+   let autoC=0,pendC=0;
+   const submittedOrders=[];
   PRODUCTS.forEach(p=>{
     const stock=getCurStock(p.id),exp=getExpSales(p.id,od,dd);
     const tIn=getTrans(p.id,'in',od,dd),tOut=getTrans(p.id,'out',od,dd),ne=Math.max(0,stock-exp);
     const sug=useTarget?calcTarget(p,dayIdx,tSales,mult,ne,tIn,tOut):calcAvg(p,dayName,mult,ne,tIn,tOut);
     const minS=Math.max(0,Math.floor(sug*0.8)),maxS=Math.ceil(sug*1.2);
-    const fv=orderFinalQtys[p.id],fo=fv!==undefined&&fv!==''?(parseInt(fv)||0):sug;
-    if(fo<=0)return;
-    const obj={id:'ORD-'+Math.random().toString(36).substr(2,6).toUpperCase(),orderDateActual:od,delivDate:dd,dayName,event,mode:useTarget?'Target Sales':'Avg Consumption',productId:p.id,productName:p.name,suggested:sug,minSug:minS,maxSug:maxS,finalOrder:fo,unitCost:p.plantPrice,totalCost:fo*p.plantPrice,multiplier:mult,manager,timestamp:new Date().toISOString()};
-    if(fo<minS||fo>maxS){DB.pendingApprovals.push(obj);pendC++;}else{DB.orderHistory.push(obj);autoC++;}
-  });
-  if(autoC+pendC===0){showToast('No Oracle history saved because all final order quantities are zero.','info');return;}
-  orderFinalQtys={};updateApprovalsBadge();
+     // Only explicitly entered final quantities should be submitted to history.
+     const fv=orderFinalQtys[p.id];
+     if(fv===undefined||fv==='')return;
+     const fo=parseInt(fv)||0;
+     if(fo<=0)return;
+     const obj={id:'ORD-'+Math.random().toString(36).substr(2,6).toUpperCase(),orderDateActual:od,delivDate:dd,dayName,event,mode:useTarget?'Target Sales':'Avg Consumption',productId:p.id,productName:p.name,suggested:sug,minSug:minS,maxSug:maxS,finalOrder:fo,unitCost:p.plantPrice,totalCost:fo*p.plantPrice,multiplier:mult,manager,timestamp:new Date().toISOString()};
+     submittedOrders.push({productId:p.id,quantity:fo,orderDate:od,deliveryDate:dd,suggested:sug,minSuggested:minS,maxSuggested:maxS});
+     if(fo<minS||fo>maxS){pendC++;}else{autoC++;}
+   });
+   if(autoC+pendC===0){showToast('No Oracle history saved because all final order quantities are zero.','info');return;}
+   let savedOrders=[];
+   try{
+     const response=await fetch('/store-manager/oracle/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({orders:submittedOrders})});
+     const result=await response.json();
+     if(!response.ok||!result.ok)throw new Error(result.error||'Unable to save Oracle order');
+     savedOrders=result.orders||[];
+   }catch(error){showToast(error.message||'Unable to save Oracle order','error');return;}
+   submittedOrders.forEach(order=>{
+     const saved=savedOrders.find(item=>item.productId===order.productId);
+     if(saved?.status==='approved'){
+       const byDate=ORACLE_INCOMING_ORDERS[String(order.productId)]||(ORACLE_INCOMING_ORDERS[String(order.productId)]={});
+       byDate[order.deliveryDate]=(byDate[order.deliveryDate]||0)+order.quantity;
+     }
+   });
+   PRODUCTS.forEach(p=>{
+     const obj=submittedOrders.find(order=>order.productId===p.id);
+     if(!obj)return;
+     const saved=savedOrders.find(order=>order.productId===p.id);
+     const sug=obj.suggested,minS=obj.minSuggested,maxS=obj.maxSuggested,fo=obj.quantity;
+     const product=p;
+     const historyObj={id:saved?`ORD-${saved.id}`:'ORD-'+Math.random().toString(36).substr(2,6).toUpperCase(),orderDateActual:obj.orderDate,delivDate:obj.deliveryDate,dayName,event,mode:useTarget?'Target Sales':'Avg Consumption',productId:p.id,productName:p.name,suggested:sug,minSug:minS,maxSug:maxS,finalOrder:fo,unitCost:product.plantPrice,totalCost:fo*product.plantPrice,multiplier:mult,manager,timestamp:new Date().toISOString()};
+     if(saved?.status==='pending')DB.pendingApprovals.push(historyObj);else DB.orderHistory.push(historyObj);
+   });
+   orderFinalQtys={};updateApprovalsBadge();
   showToast(pendC>0?`${autoC} auto-approved. ${pendC} require Manager Approval.`:'Order submitted!',pendC>0?'info':'success');
   renderOrderTable();
 }
@@ -604,7 +657,7 @@ function renderHistory(){
   if(!DB.orderHistory.length){tbody.innerHTML=`<tr><td colspan="9" class="px-4 py-8 text-center text-slate-400"><i class="bi bi-clock-history text-2xl block mb-2"></i>No order history found.</td></tr>`;return;}
   tbody.innerHTML=[...DB.orderHistory].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).map(h=>{
     const t=new Date(h.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-    return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${h.orderDateActual}</div><div class="text-[10px] text-slate-400">${t}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${h.delivDate}</div><div class="text-[10px] text-slate-400">${h.dayName}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${h.productName}</div><div class="text-[10px] text-slate-400">${h.productId}</div></td><td class="px-3 py-2.5"><div class="text-slate-600">${h.event} (${h.multiplier}×)</div><div class="text-[10px] text-purple-500 font-semibold">${h.mode}</div></td><td class="px-3 py-2.5 text-center font-bold text-emerald-600">${h.suggested}</td><td class="px-3 py-2.5 text-center font-bold text-sky-600">${h.finalOrder}</td><td class="px-3 py-2.5 text-center text-slate-600">₱${h.unitCost.toLocaleString()}</td><td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${h.totalCost.toLocaleString()}</td><td class="px-3 py-2.5 text-slate-500 text-xs">${h.manager}</td></tr>`;
+     return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${h.orderDateActual}</div><div class="text-[10px] text-slate-400">${t}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${h.delivDate}</div><div class="text-[10px] text-slate-400">${h.dayName}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${h.productName}</div></td><td class="px-3 py-2.5"><div class="text-slate-600">${h.event} (${h.multiplier}×)</div><div class="text-[10px] text-purple-500 font-semibold">${h.mode}</div></td><td class="px-3 py-2.5 text-center font-bold text-emerald-600">${h.suggested}</td><td class="px-3 py-2.5 text-center font-bold text-sky-600">${h.finalOrder}</td><td class="px-3 py-2.5 text-center text-slate-600">₱${h.unitCost.toLocaleString()}</td><td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${h.totalCost.toLocaleString()}</td><td class="px-3 py-2.5 text-slate-500 text-xs">${h.manager}</td></tr>`;
   }).join('');
 }
 
@@ -633,14 +686,14 @@ function groupOrderHistoryByDate(){
 function renderHistory(){
   const tbody=document.getElementById('history-tbody');
   const detailPanel=document.getElementById('history-detail-panel');
-  if(detailPanel){detailPanel.classList.add('hidden');detailPanel.innerHTML='';}
+   if(detailPanel){detailPanel.classList.add('hidden');detailPanel.innerHTML='';document.body.classList.remove('overflow-hidden');}
   const groups=groupOrderHistoryByDate();
   if(!groups.length){tbody.innerHTML=`<tr><td colspan="8" class="px-4 py-8 text-center text-slate-400"><i class="bi bi-clock-history text-2xl block mb-2"></i>No order history found.</td></tr>`;return;}
   tbody.innerHTML=groups.map(g=>{
     const t=g.latestTimestamp?new Date(g.latestTimestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
     const deliveryDates=[...g.deliveryDates].sort().join(', ')||'--';
     const managers=[...g.managers].sort().join(', ')||'--';
-    return `<tr class="cursor-pointer hover:bg-sky-50 transition-colors" onclick="showHistoryDate('${escapeHtml(g.date)}')"><td class="px-3 py-3"><div class="font-bold text-slate-800">${escapeHtml(g.date)}</div><div class="text-[10px] text-slate-400">Latest: ${escapeHtml(t)}</div></td><td class="px-3 py-3 text-center font-bold text-slate-700">${g.items.length}</td><td class="px-3 py-3 text-slate-600">${escapeHtml(deliveryDates)}</td><td class="px-3 py-3 text-center font-bold text-emerald-600">${g.suggestedTotal.toLocaleString()}</td><td class="px-3 py-3 text-center font-bold text-sky-600">${g.finalTotal.toLocaleString()}</td><td class="px-3 py-3 text-center font-semibold text-slate-800">₱${g.totalCost.toLocaleString()}</td><td class="px-3 py-3 text-slate-500 text-xs">${escapeHtml(managers)}</td><td class="px-3 py-3 text-center"><button type="button" class="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">View</button></td></tr>`;
+     return `<tr class="cursor-pointer hover:bg-sky-50 transition-colors" onclick="showHistoryDate('${escapeHtml(g.date)}')"><td class="px-3 py-3"><div class="font-bold text-slate-800">${escapeHtml(g.date)}</div><div class="text-[10px] text-slate-400">Latest: ${escapeHtml(t)}</div></td><td class="px-3 py-3 text-center font-bold text-slate-700">${g.items.length}</td><td class="px-3 py-3 text-slate-600">${escapeHtml(deliveryDates)}</td><td class="px-3 py-3 text-center font-bold text-emerald-600">${g.suggestedTotal.toLocaleString()}</td><td class="px-3 py-3 text-center font-bold text-sky-600">${g.finalTotal.toLocaleString()}</td><td class="px-3 py-3 text-center font-semibold text-slate-800">₱${g.totalCost.toLocaleString()}</td><td class="px-3 py-3 text-slate-500 text-xs">${escapeHtml(managers)}</td><td class="px-3 py-3 text-center"><div class="flex items-center justify-center gap-1.5"><button type="button" title="View order" aria-label="View order" onclick="event.stopPropagation();showHistoryDate('${escapeHtml(g.date)}')" class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white hover:bg-slate-800"><i class="bi bi-eye"></i></button><button type="button" title="Delete order" aria-label="Delete order" onclick="event.stopPropagation();deleteOracleOrderDate('${escapeHtml(g.date)}')" class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 bg-white text-rose-600 hover:bg-rose-50"><i class="bi bi-trash3"></i></button></div></td></tr>`;
   }).join('');
 }
 
@@ -652,8 +705,29 @@ function showHistoryDate(orderDate){
   const totalFinal=items.reduce((sum,item)=>sum+Number(item.finalOrder||0),0);
   const totalCost=items.reduce((sum,item)=>sum+Number(item.totalCost||0),0);
   detailPanel.innerHTML=`<div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3"><div><h2 class="text-base font-bold text-slate-900">Order Details - ${escapeHtml(orderDate)}</h2><p class="mt-0.5 text-xs text-slate-500">${items.length} products | Final Qty: ${totalFinal.toLocaleString()} | Total Cost: ₱${totalCost.toLocaleString()}</p></div><button type="button" onclick="document.getElementById('history-detail-panel').classList.add('hidden')" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">Close</button></div><div class="oracle-scroll"><table class="w-full text-xs" style="min-width:900px"><thead class="bg-slate-100 text-slate-600"><tr><th class="px-3 py-2.5 text-left font-semibold">Product</th><th class="px-3 py-2.5 text-left font-semibold">Delivery</th><th class="px-3 py-2.5 text-left font-semibold">Forecast / Mode</th><th class="px-3 py-2.5 text-center font-semibold text-emerald-600">Suggested</th><th class="px-3 py-2.5 text-center font-semibold text-sky-600">Final</th><th class="px-3 py-2.5 text-center font-semibold">Unit Cost</th><th class="px-3 py-2.5 text-center font-semibold">Total Cost</th><th class="px-3 py-2.5 text-left font-semibold">Manager</th></tr></thead><tbody class="divide-y divide-slate-100 bg-white">${items.map(h=>`<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${escapeHtml(h.productName)}</div><div class="text-[10px] text-slate-400">${escapeHtml(h.productId)}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${escapeHtml(h.delivDate)}</div><div class="text-[10px] text-slate-400">${escapeHtml(h.dayName)}</div></td><td class="px-3 py-2.5"><div class="text-slate-600">${escapeHtml(h.event)} (${escapeHtml(h.multiplier)}x)</div><div class="text-[10px] text-purple-500 font-semibold">${escapeHtml(h.mode)}</div></td><td class="px-3 py-2.5 text-center font-bold text-emerald-600">${Number(h.suggested||0).toLocaleString()}</td><td class="px-3 py-2.5 text-center font-bold text-sky-600">${Number(h.finalOrder||0).toLocaleString()}</td><td class="px-3 py-2.5 text-center text-slate-600">₱${Number(h.unitCost||0).toLocaleString()}</td><td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${Number(h.totalCost||0).toLocaleString()}</td><td class="px-3 py-2.5 text-slate-500 text-xs">${escapeHtml(h.manager)}</td></tr>`).join('')}</tbody></table></div>`;
-  const detailHeader = detailPanel.querySelector('.border-b');
-  const closeButton = detailHeader ? detailHeader.querySelector('button') : null;
+   detailPanel.innerHTML='<div class="mx-auto my-4 max-w-6xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">'+detailPanel.innerHTML+'</div>';
+   const actionHeader=document.createElement('th');
+   actionHeader.className='px-3 py-2.5 text-center font-semibold';
+   actionHeader.textContent='Action';
+   detailPanel.querySelector('thead tr').appendChild(actionHeader);
+   const suggestedHeader=detailPanel.querySelector('thead th:nth-child(4)');
+   if(suggestedHeader)suggestedHeader.textContent='Suggested Range';
+   detailPanel.querySelectorAll('tbody tr').forEach((row,index)=>{
+     const item=items[index];
+     if(row.children[3]&&item)row.children[3].innerHTML=`<div class="inline-flex items-center gap-2 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1"><span class="text-[10px] text-slate-500">${item.minSug}</span><span class="font-bold text-emerald-600">${item.suggested}</span><span class="text-[10px] text-slate-500">${item.maxSug}</span></div>`;
+     if(item){
+       const actionCell=document.createElement('td');
+       actionCell.className='px-3 py-2.5 text-center';
+       const orderId=String(item.id||'').replace(/^ORD-/,'');
+       actionCell.innerHTML=canDeleteOracleOrder(item)
+         ? `<button type="button" onclick="deleteOracleOrder('${orderId}')" class="rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">Delete</button>`
+         : '<span class="text-[10px] text-slate-400">Locked</span>';
+       row.appendChild(actionCell);
+     }
+   });
+   const detailHeader = detailPanel.querySelector('.border-b');
+   const closeButton = detailHeader ? detailHeader.querySelector('button') : null;
+   if(closeButton)closeButton.onclick=closeHistoryModal;
   if(detailHeader && closeButton && !detailHeader.querySelector('[data-export-history-excel]')){
     const exportButton=document.createElement('button');
     exportButton.type='button';
@@ -668,29 +742,75 @@ function showHistoryDate(orderDate){
     buttonWrap.appendChild(closeButton);
   }
   detailPanel.classList.remove('hidden');
-  detailPanel.scrollIntoView({behavior:'smooth',block:'nearest'});
+   document.body.classList.add('overflow-hidden');
+}
+
+function closeHistoryModal(){
+  document.getElementById('history-detail-panel').classList.add('hidden');
+  document.body.classList.remove('overflow-hidden');
+}
+
+function canDeleteOracleOrder(order){
+  const submittedAt=new Date(order.timestamp).getTime();
+  return Number.isFinite(submittedAt)&&Date.now()-submittedAt<24*60*60*1000;
+}
+
+async function deleteOracleOrder(orderId){
+  if(!confirm('Delete this Oracle order?'))return;
+  try{
+    const response=await fetch(`/store-manager/oracle/order/${encodeURIComponent(orderId)}`,{method:'DELETE'});
+    const result=await response.json();
+    if(!response.ok||!result.ok)throw new Error(result.error||'Unable to delete order');
+    const deleted=result.deleted||{};
+    DB.orderHistory=DB.orderHistory.filter(order=>String(order.id)!==`ORD-${orderId}`);
+    const byDate=ORACLE_INCOMING_ORDERS[String(deleted.productId)];
+    if(byDate&&deleted.deliveryDate){
+      byDate[deleted.deliveryDate]=Math.max(0,(byDate[deleted.deliveryDate]||0)-Number(deleted.quantity||0));
+    }
+    renderHistory();
+    showToast('Oracle order deleted','success');
+  }catch(error){showToast(error.message||'Unable to delete order','error');}
+}
+
+async function deleteOracleOrderDate(orderDate){
+  if(!confirm(`Delete all orders submitted on ${orderDate}?`))return;
+  try{
+    const response=await fetch(`/store-manager/oracle/order-date/${encodeURIComponent(orderDate)}`,{method:'DELETE'});
+    const result=await response.json();
+    if(!response.ok||!result.ok)throw new Error(result.error||'Unable to delete order');
+    const deleted=result.deleted||[];
+    DB.orderHistory=DB.orderHistory.filter(order=>String(order.orderDateActual)!==String(orderDate));
+    deleted.forEach(order=>{
+      const byDate=ORACLE_INCOMING_ORDERS[String(order.productId)];
+      if(byDate&&order.deliveryDate)byDate[order.deliveryDate]=Math.max(0,(byDate[order.deliveryDate]||0)-Number(order.quantity||0));
+    });
+    renderHistory();
+    showToast('Oracle order deleted','success');
+  }catch(error){showToast(error.message||'Unable to delete order','error');}
 }
 
 function exportHistoryDateExcel(orderDate){
   const items=DB.orderHistory.filter(order=>String(order.orderDateActual||'No Date')===String(orderDate)&&Number(order.finalOrder||0)>0).sort((a,b)=>String(a.productName||'').localeCompare(String(b.productName||'')));
   if(!items.length){showToast('No Oracle history data to export.','info');return;}
-  const rows=items.map(h=>`
-    <tr>
-      <td>${escapeHtml(h.productId)}</td>
-      <td>${escapeHtml(h.productName)}</td>
-      <td>${Number(h.finalOrder||0)}</td>
-      <td>${escapeHtml(h.delivDate)}</td>
-      <td>${escapeHtml(h.dayName)}</td>
+   const rows=items.map(h=>`
+     <tr>
+       <td>${escapeHtml(h.productName)}</td>
+       <td>${Number(h.minSug||0)}</td>
+       <td>${Number(h.suggested||0)}</td>
+       <td>${Number(h.maxSug||0)}</td>
+       <td>${Number(h.finalOrder||0)}</td>
+       <td>${escapeHtml(h.delivDate)}</td>
+       <td>${escapeHtml(h.dayName)}</td>
     </tr>
   `).join('');
-  const totalFinal=items.reduce((sum,item)=>sum+Number(item.finalOrder||0),0);
-  const html=`<!doctype html><html><head><meta charset="utf-8"></head><body>
-    <table border="1">
-      <tr><th colspan="5">Oracle Order History - ${escapeHtml(DB.settings.store||'Store')} - ${escapeHtml(orderDate)}</th></tr>
-      <tr><td colspan="5">Total Products: ${items.length} | Total Quantity: ${totalFinal}</td></tr>
-      <tr>
-        <th>Product ID</th><th>Product Name</th><th>Quantity</th><th>Delivery Date</th><th>Delivery Day</th>
-      </tr>
+   const totalFinal=items.reduce((sum,item)=>sum+Number(item.finalOrder||0),0);
+   const html=`<!doctype html><html><head><meta charset="utf-8"></head><body>
+     <table border="1">
+       <tr><th colspan="7">Oracle Order History - ${escapeHtml(DB.settings.store||'Store')} - ${escapeHtml(orderDate)}</th></tr>
+       <tr><td colspan="7">Total Products: ${items.length} | Total Quantity: ${totalFinal}</td></tr>
+       <tr>
+         <th>Product Name</th><th>Suggested Min</th><th>Suggested Center</th><th>Suggested Max</th><th>Final Order</th><th>Delivery Date</th><th>Delivery Day</th>
+       </tr>
       ${rows}
     </table>
   </body></html>`;

@@ -531,6 +531,29 @@ class StoreProductBuffer(db.Model):
     updated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
 
     __table_args__ = (db.UniqueConstraint('store_id', 'product_id', name='uq_store_product_buffer'),)
+
+
+class OracleOrder(db.Model):
+    """Submitted Oracle quantities used as future incoming delivery stock."""
+    __tablename__ = 'oracle_order'
+
+    id = db.Column(db.Integer, primary_key=True)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product_master.id'), nullable=False, index=True)
+    order_date = db.Column(db.Date, nullable=False, index=True)
+    delivery_date = db.Column(db.Date, nullable=False, index=True)
+    quantity = db.Column(db.Integer, nullable=False)
+    suggested_qty = db.Column(db.Integer, nullable=False, default=0)
+    min_suggested_qty = db.Column(db.Integer, nullable=False, default=0)
+    max_suggested_qty = db.Column(db.Integer, nullable=False, default=0)
+    status = db.Column(db.String(20), nullable=False, default='approved', index=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=func.now(), nullable=False)
+    approved_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    store = db.relationship('Store', backref='oracle_orders')
+    product = db.relationship('ProductMaster')
+    creator = db.relationship('User', foreign_keys=[created_by])
     
     
 class ProductChangesEventsLog(db.Model):
