@@ -10812,6 +10812,68 @@ def store_manager_delete_oracle_order_date(order_date):
     return {'ok': True, 'deleted': deleted}
 
 
+@views.route('/store-manager/oracle/export/<order_date>')
+@login_required
+def store_manager_export_oracle_order(order_date):
+    if current_user.role != 'Store Manager':
+        return {'ok': False, 'error': 'Access denied'}, 403
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    try:
+        selected_date = datetime.strptime(order_date, '%Y-%m-%d').date()
+    except ValueError:
+        return {'ok': False, 'error': 'Invalid order date'}, 400
+
+    orders = OracleOrder.query.filter_by(
+        store_id=store.id if store else None,
+        order_date=selected_date,
+        status='approved',
+    ).order_by(OracleOrder.product_id.asc()).all()
+    if not orders:
+        return {'ok': False, 'error': 'No Oracle history data to export'}, 404
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = 'Oracle Order'
+    headers = ['Product Name', 'Suggested qty', 'Final Order', 'Delivery Date', 'Delivery Day']
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill('solid', fgColor='E2E8F0')
+        cell.alignment = Alignment(horizontal='center')
+
+    for row_index, order in enumerate(orders, start=2):
+        sheet.append([
+            order.product.description if order.product else str(order.product_id),
+            '',
+            order.quantity,
+            order.delivery_date.isoformat(),
+            order.delivery_date.strftime('%A'),
+        ])
+        suggested_cell = sheet.cell(row=row_index, column=2)
+        suggested_cell.value = f'{order.min_suggested_qty}-{order.suggested_qty}-{order.max_suggested_qty}'
+
+    for cell in sheet['B'][1:]:
+        cell.alignment = Alignment(horizontal='center')
+    for cell in sheet['C'][1:]:
+        cell.alignment = Alignment(horizontal='center')
+    for width, column in zip((32, 18, 14, 16, 16), ('A', 'B', 'C', 'D', 'E')):
+        sheet.column_dimensions[column].width = width
+    sheet.freeze_panes = 'A2'
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f'oracle-history-{selected_date.isoformat()}.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
 @views.route('/cluster-manager/cluster-sbase')
 @login_required
 def cluster_manager_cluster_sbase():
