@@ -24,6 +24,7 @@ from .models import (
     SupplyRequest,
     SupplyRequestItem,
     DeliveryReconciliation,
+    OracleOrder,
 )
 from . import db
 from .audit import log_audit_event
@@ -10708,6 +10709,109 @@ def cluster_manager_save_store_buffers():
     return {'ok': True}
 
 
+@views.route('/store-manager/oracle/submit', methods=['POST'])
+@login_required
+def store_manager_submit_oracle_order():
+    if current_user.role != 'Store Manager':
+        return {'ok': False, 'error': 'Access denied'}, 403
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        return {'ok': False, 'error': 'Store not found or not assigned'}, 404
+
+    data = request.get_json(silent=True) or {}
+    orders = data.get('orders') or []
+    if not orders:
+        return {'ok': False, 'error': 'No order quantities were entered'}, 400
+
+    saved_orders = []
+    try:
+        for item in orders:
+            quantity = int(item['quantity'])
+            order_date = datetime.strptime(item['orderDate'], '%Y-%m-%d').date()
+            delivery_date = datetime.strptime(item['deliveryDate'], '%Y-%m-%d').date()
+            suggested = int(item.get('suggested', 0))
+            min_suggested = int(item.get('minSuggested', 0))
+            max_suggested = int(item.get('maxSuggested', 0))
+            if quantity <= 0 or delivery_date < order_date:
+                continue
+            status = 'approved' if min_suggested <= quantity <= max_suggested else 'pending'
+            order = OracleOrder(
+                store_id=store.id,
+                product_id=int(item['productId']),
+                order_date=order_date,
+                delivery_date=delivery_date,
+                quantity=quantity,
+                suggested_qty=suggested,
+                min_suggested_qty=min_suggested,
+                max_suggested_qty=max_suggested,
+                status=status,
+                created_by=current_user.id,
+                approved_at=datetime.utcnow() if status == 'approved' else None,
+            )
+            db.session.add(order)
+            db.session.flush()
+            saved_orders.append({'id': order.id, 'productId': order.product_id, 'status': status})
+        db.session.commit()
+    except (KeyError, TypeError, ValueError):
+        db.session.rollback()
+        return {'ok': False, 'error': 'Invalid Oracle order data'}, 400
+    except Exception as exc:
+        db.session.rollback()
+        return {'ok': False, 'error': str(exc)}, 500
+
+    return {
+        'ok': True,
+        'saved': len(saved_orders),
+        'approved': sum(item['status'] == 'approved' for item in saved_orders),
+        'pending': sum(item['status'] == 'pending' for item in saved_orders),
+        'orders': saved_orders,
+    }
+
+
+@views.route('/store-manager/oracle/order/<int:order_id>', methods=['DELETE'])
+@login_required
+def store_manager_delete_oracle_order(order_id):
+    if current_user.role != 'Store Manager':
+        return {'ok': False, 'error': 'Access denied'}, 403
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    order = OracleOrder.query.filter_by(id=order_id, store_id=store.id if store else None).first()
+    if not order:
+        return {'ok': False, 'error': 'Order not found'}, 404
+    created_at = order.created_at.replace(tzinfo=None) if order.created_at else datetime.utcnow()
+    if datetime.utcnow() - created_at >= timedelta(days=1):
+        return {'ok': False, 'error': 'Orders can only be deleted within 1 day of submission'}, 403
+
+    deleted = {'productId': order.product_id, 'deliveryDate': order.delivery_date.isoformat(), 'quantity': order.quantity}
+    db.session.delete(order)
+    db.session.commit()
+    return {'ok': True, 'deleted': deleted}
+
+
+@views.route('/store-manager/oracle/order-date/<order_date>', methods=['DELETE'])
+@login_required
+def store_manager_delete_oracle_order_date(order_date):
+    if current_user.role != 'Store Manager':
+        return {'ok': False, 'error': 'Access denied'}, 403
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    try:
+        selected_date = datetime.strptime(order_date, '%Y-%m-%d').date()
+    except ValueError:
+        return {'ok': False, 'error': 'Invalid order date'}, 400
+    orders = OracleOrder.query.filter_by(store_id=store.id if store else None, order_date=selected_date).all()
+    if not orders:
+        return {'ok': False, 'error': 'Order not found'}, 404
+    now = datetime.utcnow()
+    if any(now - (order.created_at.replace(tzinfo=None) if order.created_at else now) >= timedelta(days=1) for order in orders):
+        return {'ok': False, 'error': 'Orders can only be deleted within 1 day of submission'}, 403
+    deleted = [{'productId': order.product_id, 'deliveryDate': order.delivery_date.isoformat(), 'quantity': order.quantity} for order in orders]
+    for order in orders:
+        db.session.delete(order)
+    db.session.commit()
+    return {'ok': True, 'deleted': deleted}
+
+
 @views.route('/cluster-manager/cluster-sbase')
 @login_required
 def cluster_manager_cluster_sbase():
@@ -12725,6 +12829,33 @@ def oracle():
     # Load saved per-product buffers for this store (if any)
     saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
     store_buffers = {b.product_id: b.buffer_pct for b in saved}
+    incoming_orders = OracleOrder.query.filter_by(store_id=store.id, status='approved').filter(
+        OracleOrder.delivery_date >= oracle_date
+    ).all()
+    oracle_incoming_orders = {}
+    for order in incoming_orders:
+        product_orders = oracle_incoming_orders.setdefault(str(order.product_id), {})
+        delivery_key = order.delivery_date.isoformat()
+        product_orders[delivery_key] = product_orders.get(delivery_key, 0) + order.quantity
+    oracle_order_history = [{
+        'id': f'ORD-{order.id}',
+        'orderDateActual': order.order_date.isoformat(),
+        'delivDate': order.delivery_date.isoformat(),
+        'dayName': order.delivery_date.strftime('%A'),
+        'mode': 'Avg Consumption',
+        'productId': order.product_id,
+        'productName': order.product.description if order.product else str(order.product_id),
+        'suggested': order.suggested_qty,
+        'minSug': order.min_suggested_qty,
+        'maxSug': order.max_suggested_qty,
+        'finalOrder': order.quantity,
+        'unitCost': order.product.tp if order.product else 0,
+        'totalCost': order.quantity * (order.product.tp if order.product else 0),
+        'multiplier': 1,
+        'manager': order.creator.username if order.creator else '',
+        'timestamp': order.created_at.isoformat() if order.created_at else '',
+        'status': order.status,
+    } for order in OracleOrder.query.filter_by(store_id=store.id).order_by(OracleOrder.created_at.desc()).all()]
 
     # Fetch invensync data (ending inventory from prev day, delivery/trans from oracle date)
     invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
@@ -12738,6 +12869,8 @@ def oracle():
         store=store,
         products=products,
         store_buffers=store_buffers,
+        oracle_incoming_orders=oracle_incoming_orders,
+        oracle_order_history=oracle_order_history,
         invensync_data=invensync_data,
         prev_inventory_date=prev_inventory_date,
         oracle_date=oracle_date.isoformat(),

@@ -480,6 +480,7 @@ def create_app():
         DailyEndingInventory,
         DailyEndingInventoryItem,
         DeliveryReconciliation,
+        OracleOrder,
     )
 
     with app.app_context():
