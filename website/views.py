@@ -10733,9 +10733,10 @@ def store_manager_submit_oracle_order():
             suggested = int(item.get('suggested', 0))
             min_suggested = int(item.get('minSuggested', 0))
             max_suggested = int(item.get('maxSuggested', 0))
-            if quantity <= 0 or delivery_date < order_date:
+            if quantity < 0 or delivery_date < order_date:
                 continue
-            status = 'approved' if min_suggested <= quantity <= max_suggested else 'pending'
+            # Zero-quantity rows preserve empty days in a submitted weekly plan.
+            status = 'approved' if quantity == 0 or min_suggested <= quantity <= max_suggested else 'pending'
             order = OracleOrder(
                 store_id=store.id,
                 product_id=int(item['productId']),
@@ -10769,7 +10770,7 @@ def store_manager_submit_oracle_order():
     }
 
 
-@views.route('/store-manager/oracle/order/<int:order_id>', methods=['DELETE'])
+@views.route('/store-manager/oracle/order/<int:order_id>', methods=['DELETE', 'PATCH'])
 @login_required
 def store_manager_delete_oracle_order(order_id):
     if current_user.role != 'Store Manager':
@@ -10782,6 +10783,20 @@ def store_manager_delete_oracle_order(order_id):
     created_at = order.created_at.replace(tzinfo=None) if order.created_at else datetime.utcnow()
     if datetime.utcnow() - created_at >= timedelta(days=1):
         return {'ok': False, 'error': 'Orders can only be deleted within 1 day of submission'}, 403
+
+    if request.method == 'PATCH':
+        data = request.get_json(silent=True) or {}
+        try:
+            quantity = int(data.get('quantity'))
+        except (TypeError, ValueError):
+            return {'ok': False, 'error': 'Invalid quantity'}, 400
+        if quantity < 0:
+            return {'ok': False, 'error': 'Quantity cannot be negative'}, 400
+        order.quantity = quantity
+        order.status = 'approved' if quantity == 0 or order.min_suggested_qty <= quantity <= order.max_suggested_qty else 'pending'
+        order.approved_at = datetime.utcnow() if order.status == 'approved' else None
+        db.session.commit()
+        return {'ok': True, 'quantity': quantity, 'status': order.status}
 
     deleted = {'productId': order.product_id, 'deliveryDate': order.delivery_date.isoformat(), 'quantity': order.quantity}
     db.session.delete(order)
@@ -10832,35 +10847,81 @@ def store_manager_export_oracle_order(order_date):
         return {'ok': False, 'error': 'No Oracle history data to export'}, 404
 
     from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = 'Oracle Order'
-    headers = ['Product Name', 'Suggested qty', 'Final Order', 'Delivery Date', 'Delivery Day']
-    sheet.append(headers)
+    dates = sorted({order.delivery_date for order in orders})
+    if len(dates) >= 2:
+        expanded_dates = []
+        cursor = dates[0]
+        while cursor <= dates[-1] and len(expanded_dates) < 7:
+            expanded_dates.append(cursor)
+            cursor += timedelta(days=1)
+        dates = expanded_dates
+
+    orders_by_product_date = {}
+    products_by_id = {}
+    for order in orders:
+        product_id = int(order.product_id)
+        products_by_id[product_id] = order.product.description if order.product else str(product_id)
+        orders_by_product_date[(product_id, order.delivery_date)] = order
+
+    header = ['Product'] + [f'{delivery_date.strftime("%a, %b %d")}\nMin · Center · Max' for delivery_date in dates] + ['Week Total']
+    sheet.append(header)
+    dark_fill = PatternFill('solid', fgColor='1E293B')
+    header_fill = PatternFill('solid', fgColor='E2E8F0')
+    border = Border(*(Side(style='thin', color='1E293B') for _ in range(4)))
     for cell in sheet[1]:
-        cell.font = Font(bold=True)
-        cell.fill = PatternFill('solid', fgColor='E2E8F0')
-        cell.alignment = Alignment(horizontal='center')
+        cell.font = Font(bold=True, color='0F172A')
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = border
+    sheet.row_dimensions[1].height = 34
 
-    for row_index, order in enumerate(orders, start=2):
-        sheet.append([
-            order.product.description if order.product else str(order.product_id),
-            '',
-            order.quantity,
-            order.delivery_date.isoformat(),
-            order.delivery_date.strftime('%A'),
-        ])
-        suggested_cell = sheet.cell(row=row_index, column=2)
-        suggested_cell.value = f'{order.min_suggested_qty}-{order.suggested_qty}-{order.max_suggested_qty}'
+    for product_id in sorted(products_by_id, key=lambda pid: products_by_id[pid].lower()):
+        row = [products_by_id[product_id]]
+        week_total = 0
+        for delivery_date in dates:
+            order = orders_by_product_date.get((product_id, delivery_date))
+            if order:
+                row.append(f'{order.min_suggested_qty}   {order.suggested_qty}   {order.max_suggested_qty}\nFinal: {order.quantity}')
+                week_total += int(order.quantity or 0)
+            else:
+                row.append('—')
+        row.append(week_total)
+        sheet.append(row)
 
-    for cell in sheet['B'][1:]:
-        cell.alignment = Alignment(horizontal='center')
-    for cell in sheet['C'][1:]:
-        cell.alignment = Alignment(horizontal='center')
-    for width, column in zip((32, 18, 14, 16, 16), ('A', 'B', 'C', 'D', 'E')):
-        sheet.column_dimensions[column].width = width
+    for row_index in range(2, sheet.max_row + 1):
+        sheet.cell(row=row_index, column=1).font = Font(bold=True)
+        for column_index in range(1, sheet.max_column + 1):
+            cell = sheet.cell(row=row_index, column=column_index)
+            cell.alignment = Alignment(horizontal='center' if column_index > 1 else 'left', vertical='center', wrap_text=True)
+            cell.border = border
+            if column_index > 1 and column_index < sheet.max_column:
+                cell.fill = PatternFill('solid', fgColor='F0F9FF')
+
+    totals_row = sheet.max_row + 1
+    sheet.cell(row=totals_row, column=1).value = 'TOTALS'
+    for column_index, delivery_date in enumerate(dates, start=2):
+        sheet.cell(row=totals_row, column=column_index).value = sum(
+            int(order.quantity or 0)
+            for order in orders
+            if order.delivery_date == delivery_date
+        )
+    sheet.cell(row=totals_row, column=sheet.max_column).value = sum(int(order.quantity or 0) for order in orders)
+    for cell in sheet[totals_row]:
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = dark_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = border
+
+    sheet.column_dimensions['A'].width = 32
+    for column_index in range(2, sheet.max_column + 1):
+        sheet.column_dimensions[sheet.cell(row=1, column=column_index).column_letter].width = 18
+    for row_index in range(2, totals_row):
+        sheet.row_dimensions[row_index].height = 36
     sheet.freeze_panes = 'A2'
 
     output = io.BytesIO()
@@ -12715,12 +12776,31 @@ def _build_oracle_pos_sales_data(store, products, anchor_date=None):
         return sales_data
 
     alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    bulk_totals = {}
+    bulk_rows = RsoDelivery.query.filter(
+        RsoDelivery.store_id == store.id,
+        RsoDelivery.report_date >= start_date,
+        RsoDelivery.report_date <= end_date,
+        RsoDelivery.upload_source == 'bulk',
+    ).all()
+    for bulk_row in bulk_rows:
+        bulk_product_id = _resolve_pos_sold_master_id(bulk_row.product_name, alias_lookup, master_lookup)
+        if bulk_product_id not in product_ids:
+            continue
+        bulk_quantity = int(bulk_row.received_quantity if bulk_row.received_quantity is not None else (bulk_row.quantity or 0))
+        if bulk_quantity > 0:
+            key = (bulk_row.report_date, bulk_product_id)
+            bulk_totals[key] = bulk_totals.get(key, 0) + bulk_quantity
+
     for report_date, product_name, total_qty in pos_rows:
+        # Bitbit 6s rows are bulk-order packs, not organic POS demand.
+        if _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
+            continue
         master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
         if master_id not in product_ids:
             continue
 
-        quantity = int(total_qty or 0)
+        quantity = max(0, int(total_qty or 0) - bulk_totals.get((report_date, master_id), 0))
         if quantity <= 0:
             continue
 
