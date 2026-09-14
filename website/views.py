@@ -13773,9 +13773,23 @@ def invensync_v2():
     return render_template("admin/invensync_v2.html", user=current_user, page=page)
     
 
+
+#v2 of the Inv Sync
+@views.route('/store-manager/invensync_details_v2', methods=['GET'])
+@login_required
+def invensync_details_v2():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    page = 'invensync'
+    return render_template("store_manager/invensync_v2.html", user=current_user, page=page)
 # ================================================
 # Supply Requests (store side)
 # ================================================
+    
+
+
 
 
 @views.route('/store-manager/supply-request')
