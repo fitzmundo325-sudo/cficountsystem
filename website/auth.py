@@ -26,7 +26,7 @@ def login():
         if user:
             if check_password_hash(user.password, password):
                 flash('Logged in successfully!', category='success')
-                login_user(user, remember=True) 
+                login_user(user, remember=False)
                 user.last_activity_at = datetime.now(timezone.utc)
                 user.last_login_at = user.last_activity_at
                 user.last_interaction_at = None

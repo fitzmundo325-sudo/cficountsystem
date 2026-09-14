@@ -3077,7 +3077,7 @@ def _build_taf_trans_out_quantity_by_master_id(store, transaction_date):
         .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
         .filter(TafTransfer.store_id == store.id)
         .filter(TafTransfer.transaction_date == transaction_date)
-        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer']))
         .all()
     )
     if not transfer_rows:
@@ -3223,7 +3223,7 @@ def _build_taf_transfer_trace(store, transaction_date, product_master_id, direct
         query = (
             db.session.query(TafTransferItem, TafTransfer)
             .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
-            .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer']))
             .filter(TafTransfer.store_id == store.id)
             .filter(TafTransfer.transaction_date == transaction_date)
         )

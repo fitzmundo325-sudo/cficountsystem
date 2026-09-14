@@ -34,11 +34,11 @@ with app.app_context():
     print("Building TAF lookups...", flush=True)
     alias_lookup, master_lookup = _build_pos_sold_master_lookups()
     
-    # Query all TAF transfers that are Product Transfer
+    # Query all TAF transfers that are Product Transfer or EGI Plant Transfer
     taf_query = (
         db.session.query(TafTransferItem, TafTransfer)
         .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
-        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer']))
     )
     
     # Data structures to hold totals
