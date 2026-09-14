@@ -9,6 +9,7 @@ from flask_login import login_required, current_user
 from sqlalchemy import asc, desc, distinct, table, func, or_, case, cast, Integer, String
 from sqlalchemy.orm import aliased, selectinload
 from werkzeug.security import generate_password_hash, check_password_hash
+from collections import OrderedDict
 
 import random, string, requests
 import pytz
@@ -19,7 +20,7 @@ from dotenv import load_dotenv
 
 from . import db, cache
 from datetime import datetime, date, timedelta
-from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig
+from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem
 
 from .admin import log_audit_event
 
@@ -2868,6 +2869,769 @@ def update_store_pricing():
     except Exception as e:
         db.session.rollback()
         return {'type': 'error', 'message': f'Server error: {str(e)}'}
+
+
+def _serialize_inventory_item(item):
+    """Convert a DailyEndingInventoryItem into a JSON-safe dict."""
+    if not item:
+        return None
+    srp_price = float(item.srp_price or 0)
+    total_ending_qty = int(item.total_ending_qty or 0)
+    theo_ending_qty = int(item.theo_ending_qty or 0)
+    wastage_qty = int(item.wastage_qty or 0)
+    variance_qty = total_ending_qty - theo_ending_qty
+
+    return {
+        'id': item.id,
+        'product_master_id': item.product_master_id,
+        'srp_price': srp_price,
+        'beginning_qty': item.beginning_qty,
+        'delivery_qty': item.delivery_qty,
+        'trans_in_qty': item.trans_in_qty,
+        'bo_qty': item.bo_qty,
+        'adv_del_qty': item.adv_del_qty,
+        'trans_out_qty': item.trans_out_qty,
+        'wastage_qty': item.wastage_qty,
+        'wastage_amount': round(wastage_qty * srp_price, 2),
+        'csi_qty': item.csi_qty,
+        'quantity_sold': item.quantity_sold,
+        'draft_quantity_sold': getattr(item, 'draft_quantity_sold', None),
+        'ending_d5_qty': item.ending_d5_qty,
+        'ending_d4_qty': item.ending_d4_qty,
+        'ending_d3_qty': item.ending_d3_qty,
+        'total_ending_qty': item.total_ending_qty,
+        'total_peso_srp': round(total_ending_qty * srp_price, 2),
+        'theo_ending_qty': item.theo_ending_qty,
+        'variance_qty': variance_qty,
+        'variance_peso': round(variance_qty * srp_price, 2),
+        'remarks': item.remarks or '',
+        'adjustment_type': getattr(item, 'adjustment_type', '') or '',
+        'adjustment_product_master_id': getattr(item, 'adjustment_product_master_id', None),
+        'adjustment_qty': getattr(item, 'adjustment_qty', None),
+        'adjustment_charges': getattr(item, 'adjustment_charges', '') or '',
+        'pos_reviewed_source': getattr(item, 'pos_reviewed_source', None),
+        'pos_reviewed_date': item.pos_reviewed_date.strftime('%Y-%m-%d') if getattr(item, 'pos_reviewed_date', None) else None,
+        'bitbit_sold_tags': getattr(item, 'bitbit_sold_tags', None) or [],
+        'motif_sold_tags': getattr(item, 'motif_sold_tags', None) or [],
+    }
+
+
+def _serialize_product_row(product, inv_item):
+    """Combine a ProductMaster row with its inventory item for this date."""
+    return {
+        'id': product.id,
+        'description': product.description or 'No Description',
+        'code': product.code or '',
+        'category': product.category or '',
+        'tp': float(product.tp) if product.tp else 0,
+        'inventory_item': _serialize_inventory_item(inv_item),
+    }
+
+
+
+
+@api_handles.route('/get_invensync_detail_data', methods=['GET','POST'])
+@login_required
+def get_invensync_detail_data():
+    """Fetch all data needed to render the InvenSync per-store/date detail page (v2)."""
+    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor', 'Area Manager']:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    if current_user.role == 'Inventory Staff':
+        store_id = request.args.get('store_id', type=int) or request.form.get('store_id', type=int)
+        if not store_id:
+            return {'type': 'error', 'message': 'store_id is required for Inventory Staff.', 'redirect': 'inventory_staff_dashboard'}
+
+    try:
+        role = (current_user.role or '').strip()
+        if role == 'Store Manager':
+            store = Store.query.filter_by(manager_id=current_user.id).first()
+        elif role == 'Inventory Staff':
+            store_id = request.args.get('store_id', type=int) or request.form.get('store_id', type=int)
+            assigned_store_ids = _inventory_staff_assigned_store_ids()
+            store = Store.query.get(store_id) if store_id in assigned_store_ids else None
+        elif role == 'Cluster Manager':
+            store_id = request.args.get('store_id', type=int) or request.form.get('store_id', type=int)
+            if not store_id:
+                return {'type': 'error', 'message': 'store_id is required for Cluster Manager.', 'redirect': 'cluster_manager_invensync'}
+            from .models import Cluster
+            cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+            store = Store.query.get(store_id) if store_id else None
+            if store and cluster and store.cluster_id != cluster.id:
+                return {'type': 'error', 'message': 'Access denied. Store does not belong to your cluster.'}
+        else:
+            store_id = request.args.get('store_id', type=int) or request.form.get('store_id', type=int)
+            if not store_id:
+                return {'type': 'error', 'message': 'store_id is required.', 'redirect': 'admin_dashboard'}
+            store = Store.query.get(store_id) if store_id else None
+
+        if not store:
+            return {'type': 'error', 'message': 'Store not found or not assigned.'}
+
+        selected_date_str = request.args.get('date', '')
+        if selected_date_str:
+            try:
+                selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                selected_date = date.today()
+        else:
+            selected_date = date.today()
+
+        missing_invensync_dates = []
+        if current_user.role == 'Store Manager' and not selected_date_str:
+            today_date = date.today()
+            month_start = today_date.replace(day=1)
+            cutoff_date = today_date - timedelta(days=1)
+            missing_invensync_dates = _build_missing_invensync_dates(store.id, month_start, cutoff_date)
+
+        inventory = DailyEndingInventory.query.filter_by(
+            store_id=store.id,
+            inventory_date=selected_date
+        ).first()
+
+        if not inventory:
+            inventory = DailyEndingInventory(
+                store_id=store.id,
+                inventory_date=selected_date,
+                created_by=current_user.id
+            )
+            db.session.add(inventory)
+            db.session.commit()
+
+        products = ProductMaster.query.all()
+        motif_product_options = [
+            {
+                'id': int(product.id),
+                'code': product.code,
+                'description': product.description,
+                'price': float(product.sp_p or product.sp_np or 0.0),
+            }
+            for product in sorted(products, key=lambda item: (item.description or '').lower())
+            if (
+                (product.description or '').strip()
+                and not (
+                    'additional charge' in (product.description or '').strip().lower()
+                    and 'motif' in (product.description or '').strip().lower()
+                )
+            )
+        ]
+
+        category_order = {
+            'breads': 1, 'trayproducts': 2, 'rolls': 3, 'greetingcakes': 4,
+            'premium': 5, 'cremadefruta': 6, 'gmproducts': 7, 'candles': 8, 'addons': 9,
+        }
+
+        def _product_category_label(product):
+            return (product.category or '').strip() or 'Uncategorized'
+
+        def _category_dom_id(category_name):
+            normalized = re.sub(r'[^a-z0-9]+', '', (category_name or '').lower())
+            return normalized or 'uncategorized'
+
+        def _product_category_key(product):
+            return _category_dom_id(_product_category_label(product))
+
+        products.sort(key=lambda p: (
+            category_order.get(_product_category_key(p), 99),
+            _product_category_key(p),
+            p.id,
+        ))
+
+        category_groups_by_key = OrderedDict()
+        for product in products:
+            category_label = _product_category_label(product)
+            category_key = _product_category_key(product)
+            group = category_groups_by_key.setdefault(category_key, {
+                'id': _category_dom_id(category_label),
+                'display_name': category_label,
+                'products': [],
+            })
+            group['products'].append(product)
+        category_groups = list(category_groups_by_key.values())
+
+        prev_inventory = DailyEndingInventory.query.filter_by(
+            store_id=store.id,
+            inventory_date=selected_date - timedelta(days=1),
+        ).first()
+        finalized_prev_totals = {}
+        if prev_inventory and prev_inventory.is_finalized:
+            finalized_prev_totals = {
+                prev_item.product_master_id: int(prev_item.total_ending_qty or 0)
+                for prev_item in prev_inventory.items
+                if prev_item.product_master_id is not None
+            }
+
+        existing_items = {
+            int(item.product_master_id): item
+            for item in DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
+            if item.product_master_id is not None
+        }
+        inventory_items = {}
+        new_items_to_add = []
+        products_by_id = {p.id: p for p in products}
+
+        for product in products:
+            item = existing_items.get(product.id)
+            beginning_qty = finalized_prev_totals.get(product.id, 0)
+            if not item:
+                srp = product.sp_p if store.store_group == 'premium' else product.sp_np
+                item = DailyEndingInventoryItem(
+                    inventory_id=inventory.id,
+                    product_master_id=product.id,
+                    product_code=str(product.code) if product.code else '',
+                    product_description=product.description,
+                    srp_price=srp or 0,
+                    beginning_qty=beginning_qty,
+                )
+                new_items_to_add.append(item)
+            elif product.id in finalized_prev_totals:
+                item.beginning_qty = beginning_qty
+            inventory_items[product.id] = item
+
+        if new_items_to_add:
+            db.session.add_all(new_items_to_add)
+        db.session.commit()
+
+        if not inventory.is_finalized:
+            tier_srp_by_product = {
+                p.id: float((p.sp_p if store.store_group == 'premium' else (p.sp_np or p.sp_p)) or 0.0)
+                for p in products
+            }
+            price_dirty = False
+            for inv_item in inventory_items.values():
+                if not inv_item.product_master_id:
+                    continue
+                tier_srp = tier_srp_by_product.get(inv_item.product_master_id)
+                if tier_srp is not None and float(inv_item.srp_price or 0.0) != tier_srp:
+                    inv_item.srp_price = tier_srp
+                    price_dirty = True
+            if price_dirty:
+                db.session.commit()
+
+        rso_deliveries = RsoDelivery.query.filter_by(
+            store_id=store.id,
+            report_date=selected_date
+        ).filter(RsoDelivery.delivery_reviewed_date.isnot(None)).all()
+
+        if rso_deliveries:
+            rso_alias_master_lookup = {
+                str(normalized_alias or '').strip(): int(product_master_id)
+                for normalized_alias, product_master_id in (
+                    db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
+                    .all()
+                )
+                if str(normalized_alias or '').strip()
+            }
+
+            for inv_item in inventory_items.values():
+                if inv_item.product_master_id:
+                    product = products_by_id.get(inv_item.product_master_id)
+                    if product:
+                        regular_delivery_qty = 0
+                        bulk_order_qty = 0
+                        has_regular_delivery = False
+                        has_bulk_order = False
+                        latest_reviewed_date = None
+
+                        for rso_item in rso_deliveries:
+                            if not _match_rso_to_inventory(rso_item, product, rso_alias_master_lookup):
+                                continue
+
+                            reviewed_qty = int(
+                                rso_item.received_quantity
+                                if rso_item.received_quantity is not None
+                                else (rso_item.quantity or 0)
+                            )
+                            upload_source = str(rso_item.upload_source or 'delivery').strip().lower()
+                            if upload_source == 'bulk':
+                                bulk_order_qty += reviewed_qty
+                                has_bulk_order = True
+                            else:
+                                regular_delivery_qty += reviewed_qty
+                                has_regular_delivery = True
+                                if (
+                                    rso_item.delivery_reviewed_date
+                                    and (
+                                        latest_reviewed_date is None
+                                        or rso_item.delivery_reviewed_date > latest_reviewed_date
+                                    )
+                                ):
+                                    latest_reviewed_date = rso_item.delivery_reviewed_date
+
+                        if has_regular_delivery:
+                            if int(inv_item.delivery_qty or 0) == 0:
+                                inv_item.delivery_qty = regular_delivery_qty
+                                inv_item.delivery_reviewed_date = latest_reviewed_date
+                        elif has_bulk_order and int(inv_item.delivery_qty or 0) == bulk_order_qty:
+                            inv_item.delivery_qty = 0
+
+                        if has_bulk_order:
+                            inv_item.bo_qty = bulk_order_qty
+
+        taf_trans_out_map = _build_taf_trans_out_quantity_by_master_id(store, selected_date)
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            inv_item.trans_out_qty = int(taf_trans_out_map.get(inv_item.product_master_id, 0) or 0)
+
+        taf_trans_in_map = _build_taf_trans_in_quantity_by_master_id(store, selected_date)
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            inv_item.trans_in_qty = int(taf_trans_in_map.get(inv_item.product_master_id, 0) or 0)
+
+        taf_csi_map = _build_taf_csi_quantity_by_master_id(store, selected_date)
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            inv_item.csi_qty = int(taf_csi_map.get(inv_item.product_master_id, 0) or 0)
+
+        taf_wastage_map = _build_taf_wastage_quantity_by_master_id(store, selected_date)
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            inv_item.wastage_qty = int(taf_wastage_map.get(inv_item.product_master_id, 0) or 0)
+
+        saved_sales_map = {}
+        saved_bitbit_sold_details = {}
+        saved_motif_sold_details = {}
+        motif_charge_payload = None
+
+        for item in inventory_items.values():
+            _recalculate_inventory_item(item)
+
+        saved_report = DailyReport.query.filter_by(
+            store_id=store.id,
+            report_date=selected_date,
+        ).first()
+        saved_report_id = saved_report.id if saved_report else None
+        final_pos_items = PosSold.query.filter_by(daily_report_id=saved_report_id).all() if saved_report_id else []
+        pos_staging = _get_pos_sold_staging(store.id, selected_date)
+        staged_pos_items = _get_staged_pos_sold_items(pos_staging)
+
+        if final_pos_items:
+            saved_motif_items = [
+                {
+                    'product_name': item.product_name,
+                    'quantity': item.quantity,
+                    'gross_sales': item.gross_sales,
+                    'discount': item.discount,
+                    'net_sales': item.net_sales,
+                }
+                for item in final_pos_items
+            ]
+            saved_motif_rows = _get_saved_motif_rows(saved_report.pos_motif_breakdown_json)
+            saved_sales_map, saved_bitbit_sold_details = _build_complete_pos_quantities(
+                saved_motif_items, saved_motif_rows, include_bitbit_details=True,
+            )
+            saved_motif_sold_details = _build_motif_sold_details(saved_motif_rows)
+        elif staged_pos_items:
+            saved_motif_rows = _get_saved_motif_rows(pos_staging.motif_breakdown_json)
+            saved_sales_map, saved_bitbit_sold_details = _build_complete_pos_quantities(
+                staged_pos_items, saved_motif_rows, include_bitbit_details=True,
+            )
+            saved_motif_sold_details = _build_motif_sold_details(saved_motif_rows)
+
+        motif_source_items = final_pos_items if final_pos_items else (staged_pos_items if staged_pos_items else [])
+
+        if motif_source_items:
+            motif_payload_items = []
+            for item in motif_source_items:
+                if isinstance(item, dict):
+                    motif_payload_items.append({
+                        'product_name': item.get('product_name'),
+                        'quantity': item.get('quantity'),
+                        'gross_sales': item.get('gross_sales'),
+                        'discount': item.get('discount'),
+                        'net_sales': item.get('net_sales'),
+                    })
+                else:
+                    motif_payload_items.append({
+                        'product_name': getattr(item, 'product_name', None),
+                        'quantity': getattr(item, 'quantity', None),
+                        'gross_sales': getattr(item, 'gross_sales', None),
+                        'discount': getattr(item, 'discount', None),
+                        'net_sales': getattr(item, 'net_sales', None),
+                    })
+            motif_charge_payload = _build_motif_charge_payload_from_pos_items(motif_payload_items)
+
+        if final_pos_items or staged_pos_items:
+            for inv_item in inventory_items.values():
+                if inv_item.product_master_id:
+                    sold_qty = saved_sales_map.get(inv_item.product_master_id)
+                    inv_item.quantity_sold = int(sold_qty) if sold_qty else None
+                    inv_item.pos_reviewed_source = 'saved'
+                    inv_item.pos_reviewed_date = selected_date
+                    _recalculate_inventory_item(inv_item)
+                if inv_item.product_master_id and inv_item.product_master_id in saved_bitbit_sold_details:
+                    inv_item.bitbit_sold_tags = saved_bitbit_sold_details[inv_item.product_master_id]
+                if inv_item.product_master_id and inv_item.product_master_id in saved_motif_sold_details:
+                    inv_item.motif_sold_tags = saved_motif_sold_details[inv_item.product_master_id]
+
+        db.session.commit()
+
+        _, global_config_data = _get_or_create_global_invensync_config()
+        effective_config_data = _get_effective_invensync_config(global_config_data, store.id)
+        admin_unlock_scope = _get_invensync_admin_unlock(global_config_data, store.id, selected_date)
+        force_beginning_entry = store.id in {
+            int(item) for item in global_config_data.get('force_beginning_store_ids', [])
+            if str(item).isdigit()
+        }
+        store_beginning_baseline_finalized = DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store.id,
+            DailyEndingInventory.is_beginning_finalized.is_(True),
+        ).first() is not None
+
+        has_any_beginning = any(
+            item.beginning_qty and item.beginning_qty > 0
+            for item in inventory_items.values()
+        )
+        prev_inventory_exists = DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store.id,
+            DailyEndingInventory.inventory_date < selected_date
+        ).first() is not None
+        is_first_time = (not store_beginning_baseline_finalized) and not has_any_beginning and not prev_inventory_exists
+        allow_beginning_stock_entry = (is_first_time or force_beginning_entry) and current_user.role == 'Store Manager'
+        has_no_wastage = all(int(item.wastage_qty or 0) == 0 for item in inventory_items.values())
+
+        cluster_sidebar_ctx = {}
+        if role == 'Cluster Manager':
+            from .models import Cluster
+            cm_cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+            if cm_cluster:
+                cm_stores = Store.query.filter_by(cluster_id=cm_cluster.id).all()
+                cluster_sidebar_ctx = {
+                    'cluster': {'id': cm_cluster.id, 'name': cm_cluster.name},
+                    'team_name': _get_team_name(cm_cluster),
+                    'cluster_sidebar_stores': _build_cluster_sidebar_stores(cm_stores),
+                }
+
+        category_groups_payload = [
+            {
+                'id': group['id'],
+                'display_name': group['display_name'],
+                'products': [
+                    _serialize_product_row(product, inventory_items.get(product.id))
+                    for product in group['products']
+                    if product.id not in global_config_data.get('hidden_rows', [])
+                ],
+            }
+            for group in category_groups
+        ]
+
+        adj_product_options = [
+            {
+                'id': int(p.id),
+                'description': p.description,
+                'code': str(p.code or ''),
+                'price': float((p.sp_p if store.store_group == 'premium' else (p.sp_np or p.sp_p)) or 0.0),
+            }
+            for p in sorted(products, key=lambda x: (x.description or '').lower())
+            if (p.description or '').strip()
+        ]
+
+        return {
+            'type': 'success',
+            'store': {
+                'id': store.id,
+                'name': store.name,
+                'store_group': store.store_group,
+                'manager_id': store.manager_id,
+                'cluster_id': store.cluster_id,
+            },
+            'inventory': {
+                'id': inventory.id,
+                'inventory_date': inventory.inventory_date.strftime('%Y-%m-%d'),
+                'is_finalized': bool(inventory.is_finalized),
+                'is_beginning_finalized': bool(getattr(inventory, 'is_beginning_finalized', False)),
+            },
+            'category_groups': category_groups_payload,
+            'selected_date': selected_date.strftime('%Y-%m-%d'),
+            'today': date.today().strftime('%Y-%m-%d'),
+            'global_config_data': effective_config_data,
+            'admin_unlock_scope': admin_unlock_scope,
+            'is_first_time': is_first_time,
+            'allow_beginning_stock_entry': allow_beginning_stock_entry,
+            'store_beginning_baseline_finalized': store_beginning_baseline_finalized,
+            'has_no_wastage': has_no_wastage,
+            'missing_dates': missing_invensync_dates,
+            'next_missing_date': missing_invensync_dates[0]['iso'] if missing_invensync_dates else None,
+            'motif_charge_payload': motif_charge_payload,
+            'motif_product_options': motif_product_options,
+            'adj_product_options': adj_product_options,
+            'show_trans_trace': current_user.role in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'),
+            'is_edit_adjustments': (current_user.role == 'Inventory Staff'),
+            'is_view_only': current_user.role in ['Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor', 'Area Manager'],
+            **cluster_sidebar_ctx,
+        }
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(e)}
+
+
+
+def _build_taf_trans_out_quantity_by_master_id(store, transaction_date):
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer']))
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(quantity or 0)
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+
+def _build_taf_trans_in_quantity_by_master_id(store, transaction_date):
+    if not store or not transaction_date:
+        return {}
+
+    normalized_store_name = str(store.name or '').strip().lower()
+    if not normalized_store_name:
+        return {}
+
+    transfer_rows = (
+        db.session.query(
+            TafTransferItem.item_name,
+            TafTransferItem.quantity,
+            TafTransferItem.received_quantity,
+        )
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(func.coalesce(TafTransfer.received_date, TafTransfer.transaction_date) == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+        .filter(func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name)
+        .filter(func.lower(func.trim(TafTransfer.status)) != 'pending')
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, sent_quantity, received_quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(received_quantity if received_quantity is not None else (sent_quantity or 0))
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+
+
+def _build_taf_csi_quantity_by_master_id(store, transaction_date):
+    """Return CSI quantities from Charge Slips (charge_type != 'Spoilage')."""
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip')
+        .filter(func.lower(func.trim(func.coalesce(TafTransfer.charge_type, 'charge'))) != 'spoilage')
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(quantity or 0)
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+
+def _build_taf_wastage_quantity_by_master_id(store, transaction_date):
+    """Return sent wastage quantities, including TAFs that are still pending."""
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(
+            (func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer') |
+            (
+                (func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip') &
+                (func.lower(func.trim(func.coalesce(TafTransfer.charge_type, ''))) == 'spoilage')
+            )
+        )
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, sent_quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        quantity = int(sent_quantity or 0)
+        if not master_id or quantity <= 0:
+            continue
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+
+def _recalculate_inventory_item(item, sold_override=None):
+    """Recalculate all derived fields for an inventory item"""
+    sold_qty = int(sold_override) if sold_override is not None else int(item.quantity_sold or 0)
+
+    # Wastage amount
+    item.wastage_amount = (item.wastage_qty or 0) * (item.srp_price or 0)
+
+    # Total ending
+    item.total_ending_qty = (
+        int(item.ending_d5_qty or 0)
+        + int(item.ending_d4_qty or 0)
+        + int(item.ending_d3_qty or 0)
+    )
+    item.total_peso_srp = item.total_ending_qty * (item.srp_price or 0)
+
+    # THEO ending
+    item.theo_ending_qty = (
+        int(item.beginning_qty or 0)
+        + int(item.delivery_qty or 0)
+        + int(item.trans_in_qty or 0)
+        + int(item.bo_qty or 0)
+        + int(item.adv_del_qty or 0)
+        - int(item.trans_out_qty or 0)
+        - int(item.wastage_qty or 0)
+        - int(item.csi_qty or 0)
+        - sold_qty
+    )
+
+    # Variance
+    item.variance_qty = item.total_ending_qty - item.theo_ending_qty
+    item.variance_peso = item.variance_qty * (item.srp_price or 0)
+
+    
+
+def _get_pos_sold_staging(store_id, report_date):
+    return PosSoldStaging.query.filter_by(store_id=store_id, report_date=report_date).first()
+
+
+def _get_staged_pos_sold_items(staging):
+    if not staging:
+        return []
+    try:
+        raw_items = json.loads(staging.items_json or '[]')
+    except (TypeError, ValueError):
+        raw_items = []
+    return _sanitize_pos_sold_items(raw_items if isinstance(raw_items, list) else [])
+
+
+
+
+def _get_or_create_global_invensync_config():
+    default_data = {
+        'hidden_rows': [],
+        'hidden_columns': [],
+        'hidden_cells': [],
+        'locked_rows': [],
+        'locked_columns': [],
+        'locked_cells': [],
+        'editable_columns': [],
+        'force_beginning_store_ids': [],
+        'store_configs': {},
+        'admin_unlocks': {},
+    }
+    config = GlobalInvenSyncConfig.query.first()
+    if not config:
+        config = GlobalInvenSyncConfig(config_data=json.dumps(default_data))
+        db.session.add(config)
+        return config, default_data
+
+    try:
+        config_data = json.loads(config.config_data or '{}')
+    except ValueError:
+        config_data = {}
+
+    for key, value in default_data.items():
+        expected_type = dict if isinstance(value, dict) else list
+        if key not in config_data or not isinstance(config_data.get(key), expected_type):
+            config_data[key] = dict(value) if isinstance(value, dict) else list(value)
+
+    return config, config_data
+
+
+
+def _get_effective_invensync_config(global_config_data, store_id):
+    effective_config = dict(global_config_data or {})
+    store_configs = effective_config.get('store_configs', {})
+    store_config = store_configs.get(str(store_id), {}) if isinstance(store_configs, dict) else {}
+    if not isinstance(store_config, dict):
+        store_config = {}
+
+    for key in ['hidden_columns', 'locked_columns', 'editable_columns']:
+        if key in store_config and isinstance(store_config.get(key), list):
+            effective_config[key] = store_config.get(key, [])
+
+    return effective_config
+
+
+
+
+def _get_invensync_admin_unlock(global_config_data, store_id, inventory_date):
+    admin_unlocks = (global_config_data or {}).get('admin_unlocks', {})
+    if not isinstance(admin_unlocks, dict):
+        return {'all': False, 'cells': []}
+
+    store_unlocks = admin_unlocks.get(str(store_id), {})
+    if not isinstance(store_unlocks, dict):
+        return {'all': False, 'cells': []}
+
+    date_key = inventory_date.isoformat() if hasattr(inventory_date, 'isoformat') else str(inventory_date or '')
+    unlock_data = store_unlocks.get(date_key, {})
+    if not isinstance(unlock_data, dict):
+        return {'all': False, 'cells': []}
+
+    return {
+        'all': bool(unlock_data.get('all')),
+        'cells': [str(item).strip() for item in unlock_data.get('cells', []) if str(item).strip()],
+    }
+
+
 
 # ================================
 # Inv Sync Section End
