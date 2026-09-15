@@ -13774,7 +13774,7 @@ def invensync_v2():
     
 
 
-#v2 of the Inv Sync
+#v2 of the Inv Sync Details
 @views.route('/store-manager/invensync_details_v2', methods=['GET'])
 @login_required
 def invensync_details_v2():
