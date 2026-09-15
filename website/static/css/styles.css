@@ -920,6 +920,10 @@ th.sortable:hover {
 	
 }
 
+tr.hide_child_inputs > td:not(:first-child) {
+  display: none;
+}
+
 
 @media (max-width: 1023px) {
 	
