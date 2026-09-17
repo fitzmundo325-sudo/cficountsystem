@@ -925,6 +925,39 @@ tr.hide_child_inputs > td:not(:first-child) {
 }
 
 
+/* Misc Styles */
+
+.bluring_element{
+	opacity:1;
+	-webkit-transition:0.3s;
+	transition:0.3s
+}
+
+
+.blur_element{
+	-webkit-filter:blur(3px);
+	filter:blur(2px);
+	opacity:0.8;
+	cursor:wait !important;
+}
+
+
+
+.fancy_button{
+	user-select:none;
+	-webkit-transition:0.3s;
+	transition:0.3s;
+}
+
+
+.fancy_button:active{
+	transform:translateY(3px) !important;
+}
+
+.fancy_clicked{
+	transform:translateY(3px) !important;
+}
+
 @media (max-width: 1023px) {
 	
 }
