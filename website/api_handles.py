@@ -63,6 +63,95 @@ def _normalize_product_text(value):
     return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
 
 
+
+
+def _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup, similarity_threshold=0.85):
+    normalized_name = _normalize_product_text(product_name)
+    if not normalized_name:
+        return None
+    if normalized_name in alias_lookup:
+        return alias_lookup[normalized_name]
+    if normalized_name in master_lookup:
+        return master_lookup[normalized_name]
+
+    best_score = 0.0
+    best_master_id = None
+    for normalized_master, product_master_id in master_lookup.items():
+        if not normalized_master:
+            continue
+        score = SequenceMatcher(None, normalized_name, normalized_master).ratio()
+        if score > best_score:
+            best_score = score
+            best_master_id = product_master_id
+
+    return best_master_id if best_score >= similarity_threshold else None
+
+
+def _get_saved_motif_rows(raw_value):
+    if isinstance(raw_value, str):
+        try:
+            raw_value = json.loads(raw_value or '[]')
+        except (TypeError, ValueError):
+            return []
+    if isinstance(raw_value, dict):
+        raw_value = raw_value.get('rows') or []
+    return raw_value if isinstance(raw_value, list) else []
+
+
+def _build_complete_pos_quantities(items, motif_rows=None, include_bitbit_details=False):
+    result = _build_pos_sold_quantities_by_master_id(items, include_bitbit_details=include_bitbit_details)
+    if include_bitbit_details:
+        quantities, bitbit_details = result
+    else:
+        quantities, bitbit_details = result, None
+    for row in motif_rows or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            product_id = int(row.get('product_id') or 0)
+            quantity = int(row.get('quantity') or 0)
+        except (TypeError, ValueError):
+            continue
+        if product_id > 0 and quantity > 0:
+            quantities[product_id] = int(quantities.get(product_id, 0) or 0) + quantity
+    return (quantities, bitbit_details) if include_bitbit_details else quantities
+
+
+
+DEFAULT_POS_SOLD_ALIASES = {
+    # Bag & Packaging Aliases
+    'bag kraft large': 144,
+    'bag kraft medium': 144,
+    'bag kraft small': 144,
+    'bag kraft': 144,
+    'kraft bag large': 144,
+    'kraft bag medium': 144,
+    'kraft bag small': 144,
+    'kraft bag': 144,
+    'cake tote bag': 143,
+    'cake bag 9rd/8rd': 149,
+    'cake bag': 149,
+    'non woven bag': 144,
+    'non woven bag 023': 144,
+    # Candle Aliases
+    'candle sml- blue': 131,
+    'candle sml blue': 131,
+    'candle sml- pink': 131,
+    'candle sml pink': 131,
+    'candle sml- red': 131,
+    'candle sml red': 131,
+    'candle sml- white': 131,
+    'candle sml white': 131,
+    'candle sml- yellow': 131,
+    'candle sml yellow': 131,
+    'candle sml': 131,
+    'candle big - blue': 131,
+    'stick candles - blue': 131,
+    'stick candles - pink': 131,
+}
+
+
+
 def _build_name_variants(normalized_name):
     variants = {normalized_name}
     if normalized_name.endswith('ies') and len(normalized_name) > 5:
@@ -72,6 +161,176 @@ def _build_name_variants(normalized_name):
     if normalized_name.endswith('s') and len(normalized_name) > 3:
         variants.add(normalized_name[:-1])
     return {item for item in variants if item}
+
+
+
+def _build_pos_sold_quantities_by_master_id(items, include_bitbit_details=False):
+    if not items:
+        return ({}, {}) if include_bitbit_details else {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    bitbit_details = {}
+
+    for raw_item in items:
+        if isinstance(raw_item, dict):
+            quantity = int(raw_item.get('quantity', 0) or 0)
+            product_name = raw_item.get('product_name', '')
+        else:
+            quantity = int(getattr(raw_item, 'quantity', 0) or 0)
+            product_name = str(getattr(raw_item, 'product_name', '') or '')
+        if quantity <= 0:
+            continue
+        bitbit_rule = _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup)
+        if bitbit_rule:
+            source_master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+            if source_master_id:
+                master_quantities[source_master_id] = int(master_quantities.get(source_master_id, 0) or 0) + quantity
+
+            master_id = bitbit_rule['target_master_id']
+            converted_quantity = quantity * int(bitbit_rule.get('multiplier') or 6)
+            master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + converted_quantity
+            bitbit_details.setdefault(master_id, []).append({
+                'source_name': bitbit_rule['source_name'],
+                'packs': quantity,
+                'slices': converted_quantity,
+                'target_name': bitbit_rule['target_name'],
+                'discount_amount': BITBIT_6S_DISCOUNT_AMOUNT,
+                'is_source_row': False,
+            })
+            continue
+
+        master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return (master_quantities, bitbit_details) if include_bitbit_details else master_quantities
+
+
+
+BITBIT_6S_POS_SOLD_RULES = [
+    {
+        'source': 'Assorted Butter Cake Slices Bitbit 6s',
+        'keywords': ['butter', 'cake', 'slice', 'bitbit', '6'],
+        'target': 'Butter Cake Slice',
+    },
+    {
+        'source': 'Fluffy Mamon Bitbit 6s',
+        'keywords': ['fluffy', 'mamon', 'bitbit', '6'],
+        'target': 'Fluffy Mamon',
+    },
+    {
+        'source': 'Cheesy Ensaymada Bitbit 6s',
+        'keywords': ['cheesy', 'ensaymada', 'bitbit', '6'],
+        'target': 'Cheesy Ensaymada',
+    },
+    {
+        'source': 'Assorted Chiffon Cake Slices Bitbit 6s',
+        'keywords': ['chiffon', 'cake', 'slice', 'bitbit', '6'],
+        'target': 'Chiffon Cake Slice',
+    },
+]
+
+
+BITBIT_6S_DISCOUNT_AMOUNT = 10
+
+
+def _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
+    normalized_name = _normalize_product_text(product_name)
+    if not normalized_name:
+        return None
+
+    for rule in BITBIT_6S_POS_SOLD_RULES:
+        normalized_source = _normalize_product_text(rule.get('source'))
+        keyword_match = all(
+            _normalize_product_text(keyword) in normalized_name
+            for keyword in rule.get('keywords', [])
+            if _normalize_product_text(keyword)
+        )
+        if not (
+            (normalized_source and normalized_source in normalized_name)
+            or keyword_match
+        ):
+            continue
+
+        target_name = rule.get('target') or ''
+        target_master_id = _resolve_pos_sold_master_id(target_name, alias_lookup, master_lookup, similarity_threshold=0.75)
+        if not target_master_id:
+            continue
+
+        return {
+            'target_master_id': target_master_id,
+            'target_name': target_name,
+            'source_name': str(product_name or rule.get('source') or '').strip(),
+            'multiplier': 6,
+        }
+
+    return None
+
+
+def _build_motif_sold_details(motif_rows):
+    details = {}
+    for row in motif_rows or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            product_id = int(row.get('product_id') or 0)
+            quantity = int(row.get('quantity') or 0)
+        except (TypeError, ValueError):
+            continue
+        if product_id <= 0 or quantity <= 0:
+            continue
+        details.setdefault(product_id, []).append({
+            'motif_index': int(row.get('motif_index') or 1),
+            'product': str(row.get('product') or '').strip(),
+            'quantity': quantity,
+            'unit_price': float(row.get('unit_price') or 0.0),
+            'discount': float(row.get('discount') or 0.0),
+            'price': float(row.get('price') or 0.0),
+        })
+    return details
+
+
+
+def _build_motif_charge_payload_from_pos_items(items):
+    motif_items = []
+    normalized_motif_name = _normalize_product_text('ADDITIONAL CHARGE FOR MOTIF')
+    for item in items or []:
+        if isinstance(item, dict):
+            product_name = str(item.get('product_name') or '').strip()
+            quantity = item.get('quantity', 0)
+            gross_sales = item.get('gross_sales', 0.0)
+            discount = item.get('discount', 0.0)
+            net_sales = item.get('net_sales', 0.0)
+        else:
+            product_name = str(getattr(item, 'product_name', '') or '').strip()
+            quantity = getattr(item, 'quantity', 0)
+            gross_sales = getattr(item, 'gross_sales', 0.0)
+            discount = getattr(item, 'discount', 0.0)
+            net_sales = getattr(item, 'net_sales', 0.0)
+        normalized_product_name = _normalize_product_text(product_name)
+        if not normalized_product_name or normalized_motif_name not in normalized_product_name:
+            continue
+        motif_items.append({
+            'product_name': product_name,
+            'quantity': int(quantity or 0),
+            'gross_sales': float(gross_sales or 0.0),
+            'discount': float(discount or 0.0),
+            'net_sales': float(net_sales or 0.0),
+        })
+
+    if not motif_items:
+        return None
+
+    return {
+        'detected': True,
+        'items': motif_items,
+        'quantity': sum(int(item.get('quantity', 0) or 0) for item in motif_items),
+        'gross_sales': sum(float(item.get('gross_sales', 0.0) or 0.0) for item in motif_items),
+        'discount': sum(float(item.get('discount', 0.0) or 0.0) for item in motif_items),
+        'net_sales': sum(float(item.get('net_sales', 0.0) or 0.0) for item in motif_items),
+    }
 
 
 
@@ -87,6 +346,10 @@ def _get_product_alias_lookup():
         for normalized_alias, description in rows
         if str(normalized_alias or '').strip() and (description or '').strip()
     }
+
+
+
+
 
 
 # Lightweight cached access to product master rows for fast category resolution
@@ -108,6 +371,275 @@ def _cached_product_masters():
             for description, category in product_masters
         ]
     return _cached_master_rows
+
+
+# other api handles for INVsync
+
+
+@api_handles.route('/invensync/trace-data')
+@login_required
+def invensync_transfer_trace():
+    """Return the TafTransfer records behind a Trans-In / Trans-Out cell.
+    Admin roles only."""
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        return jsonify({'ok': False, 'message': 'Access denied.'}), 403
+
+    store_id = request.args.get('store_id', type=int)
+    date_str = request.args.get('date', '').strip()
+    product_master_id = request.args.get('product_master_id', type=int)
+    direction = request.args.get('direction', '').strip().lower()
+
+    if not store_id or not date_str or not product_master_id:
+        return jsonify({'ok': False, 'message': 'Missing required parameters.'}), 400
+    if direction not in ('in', 'out', 'delivery', 'sold'):
+        return jsonify({'ok': False, 'message': 'Invalid direction.'}), 400
+
+    store = Store.query.get(store_id)
+    if not store:
+        return jsonify({'ok': False, 'message': 'Store not found.'}), 404
+
+    try:
+        transaction_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'ok': False, 'message': 'Invalid date.'}), 400
+
+    if not ProductMaster.query.get(product_master_id):
+        return jsonify({'ok': False, 'message': 'Product not found.'}), 404
+
+    if direction in ('in', 'out'):
+        records, traced_total = _build_taf_transfer_trace(
+            store, transaction_date, product_master_id, direction
+        )
+    elif direction == 'delivery':
+        records, traced_total = _build_delivery_trace(
+            store, transaction_date, product_master_id
+        )
+    elif direction == 'sold':
+        records, traced_total = _build_sold_trace(
+            store, transaction_date, product_master_id
+        )
+    else:
+        records, traced_total = [], 0
+
+    return jsonify({
+        'ok': True,
+        'direction': direction,
+        'store_id': store_id,
+        'date': date_str,
+        'product_master_id': product_master_id,
+        'traced_total': traced_total,
+        'records': records,
+        'record_count': len(records),
+    })
+
+
+def _build_sold_trace(store, transaction_date, product_master_id):
+    from website.models import PosSold, DailyReport, User
+    
+    query = (
+        db.session.query(PosSold, DailyReport)
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(DailyReport.store_id == store.id)
+        .filter(DailyReport.report_date == transaction_date)
+    )
+    pos_rows = query.all()
+    if not pos_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    for item, report in pos_rows:
+        resolved_master_id = _resolve_pos_sold_master_id(
+            item.product_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(item.quantity or 0)
+        if quantity <= 0:
+            continue
+
+        uploader_name = ''
+        if report.submitted_by:
+            uploader = User.query.get(report.submitted_by)
+            if uploader:
+                uploader_name = uploader.full_name
+
+        records.append({
+            'control_no': 'POS Upload',
+            'transaction_date': report.report_date.strftime('%Y-%m-%d') if getattr(report, 'report_date', None) else '',
+            'transaction_type': 'POS Sold',
+            'transfer_from': store.name,
+            'transfer_to': 'Customer',
+            'status': 'Sold',
+            'prepared_by_name': uploader_name,
+            'received_by_name': 'Customer',
+            'quantity': quantity,
+            'received_quantity': quantity,
+            'short_over_qty': 0,
+            'remarks': item.product_name,
+        })
+
+    # traced_total uses the same quantity logic as the InvenSync Sold column
+    # (Bitbit 6s conversion + motif additions), so the trace matches the cell.
+    try:
+        motif_rows = json.loads(pos_rows[0][1].pos_motif_breakdown_json or '[]')
+    except (TypeError, ValueError):
+        motif_rows = []
+    sold_map = _build_complete_pos_quantities(
+        [item for item, _report in pos_rows],
+        motif_rows,
+    )
+    traced_total = int(sold_map.get(int(product_master_id), 0) or 0)
+
+    return records, traced_total
+
+
+def _build_delivery_trace(store, transaction_date, product_master_id):
+    from website.models import RsoDelivery, User
+    
+    query = (
+        db.session.query(RsoDelivery)
+        .filter(RsoDelivery.store_id == store.id)
+        .filter(RsoDelivery.report_date == transaction_date)
+        .filter(RsoDelivery.delivery_reviewed_date.isnot(None))
+    )
+    delivery_rows = query.all()
+    if not delivery_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    traced_total = 0
+    for delivery in delivery_rows:
+        if str(delivery.upload_source or 'delivery').strip().lower() == 'bulk':
+            continue
+        resolved_master_id = _resolve_pos_sold_master_id(
+            delivery.product_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(delivery.quantity or 0)
+        received_qty = int(delivery.received_quantity) if delivery.received_quantity is not None else quantity
+
+        traced_total += received_qty
+
+        uploader_name = ''
+        if delivery.uploaded_by:
+            uploader = User.query.get(delivery.uploaded_by)
+            if uploader:
+                uploader_name = uploader.full_name
+
+        records.append({
+            'control_no': getattr(delivery, 'rso_no', None) or 'N/A',
+            'transaction_date': delivery.report_date.strftime('%Y-%m-%d') if getattr(delivery, 'report_date', None) else '',
+            'transaction_type': 'Bulk Order' if str(getattr(delivery, 'upload_source', '')).strip().lower() == 'bulk' else 'Delivery',
+            'transfer_from': 'Supplier/Warehouse',
+            'transfer_to': store.name,
+            'status': 'Reviewed',
+            'prepared_by_name': uploader_name,
+            'received_by_name': uploader_name,
+            'quantity': quantity,
+            'received_quantity': received_qty,
+            'short_over_qty': quantity - received_qty if quantity and received_qty is not None else 0,
+            'remarks': delivery.manual_note,
+        })
+    return records, traced_total
+
+
+
+
+def _build_taf_transfer_trace(store, transaction_date, product_master_id, direction):
+    """Return the TafTransfer records that account for a store/day product's
+    Trans-In or Trans-Out column. Mirrors the column source logic so the trace
+    always matches the auto-populated values used by the InvenSync table."""
+    if not store or not transaction_date or not product_master_id:
+        return [], 0
+
+    direction = str(direction or '').strip().lower()
+    if direction not in ('in', 'out'):
+        return [], 0
+
+    normalized_store_name = str(store.name or '').strip().lower()
+
+    if direction == 'out':
+        query = (
+            db.session.query(TafTransferItem, TafTransfer)
+            .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer']))
+            .filter(TafTransfer.store_id == store.id)
+            .filter(TafTransfer.transaction_date == transaction_date)
+        )
+    elif direction == 'in':
+        if not normalized_store_name:
+            return [], 0
+        query = (
+            db.session.query(TafTransferItem, TafTransfer)
+            .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+            .filter(
+                func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name
+            ).filter(
+                func.lower(func.trim(TafTransfer.status)) != 'pending'
+            ).filter(
+                func.coalesce(TafTransfer.received_date, TafTransfer.transaction_date) == transaction_date
+            )
+        )
+
+    transfer_rows = query.all()
+    if not transfer_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    traced_total = 0
+    for transfer_item, transfer in transfer_rows:
+        resolved_master_id = _resolve_pos_sold_master_id(
+            transfer_item.item_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(transfer_item.quantity or 0)
+        received_qty = int(transfer_item.received_quantity) if transfer_item.received_quantity is not None else quantity
+
+        if direction == 'out':
+            count_qty = quantity
+        else:
+            count_qty = received_qty
+        if count_qty <= 0:
+            continue
+
+        traced_total += count_qty
+        records.append({
+            'control_no': getattr(transfer, 'control_no', None),
+            'transaction_date': (
+                transfer.transaction_date.strftime('%Y-%m-%d')
+                if getattr(transfer, 'transaction_date', None) else ''
+            ),
+            'transaction_type': getattr(transfer, 'transaction_type', None),
+            'transfer_from': getattr(transfer, 'transfer_from', None),
+            'transfer_to': getattr(transfer, 'transfer_to', None),
+            'status': getattr(transfer, 'status', None),
+            'prepared_by_name': getattr(transfer, 'prepared_by_name', None),
+            'received_by_name': getattr(transfer, 'received_by_name', None),
+            'quantity': quantity,
+            'received_quantity': received_qty,
+            'short_over_qty': int(transfer_item.short_over_qty or 0),
+            'unit_cost': float(transfer_item.unit_cost or 0.0),
+            'line_total': float(transfer_item.line_total or 0.0),
+            'remarks': transfer_item.remarks,
+            'created_at': (
+                transfer.created_at.strftime('%Y-%m-%d %H:%M')
+                if getattr(transfer, 'created_at', None) else ''
+            ),
+        })
+
+    return records, traced_total
 
 # ================================
 # Product Masterlist Section Start
@@ -3631,6 +4163,99 @@ def _get_invensync_admin_unlock(global_config_data, store_id, inventory_date):
         'cells': [str(item).strip() for item in unlock_data.get('cells', []) if str(item).strip()],
     }
 
+
+def _normalize_product_name(name):
+    """Normalize product name for comparison: lowercase, strip, collapse spaces."""
+    if not name:
+        return ''
+    # Convert to lowercase, strip whitespace, collapse multiple spaces
+    normalized = ' '.join(str(name).lower().strip().split())
+    return normalized
+
+
+def _match_rso_to_inventory(rso_item, product, alias_master_lookup=None):
+    """
+    Match RSO delivery item to inventory product.
+    Priority: Product Code > Full Product Name (exact normalized match)
+    
+    Rules:
+    - Do NOT use partial/substring matching
+    - Only accept exact full name matches after normalization
+    - Case-insensitive, trim spaces, normalize formatting
+    """
+    # Normalize both names
+    rso_name_normalized = _normalize_product_name(rso_item.product_name)
+    rso_alias_key = _normalize_product_text(rso_item.product_name)
+    product_desc_normalized = _normalize_product_name(product.description)
+    product_desc_key = _normalize_product_text(product.description)
+    product_code_str = str(product.code or '').strip()
+
+    # Product aliases are linked to a master product in System Analyzer. Resolve
+    # them at display time so aliases also apply to RSO rows uploaded before the
+    # link was created.
+    if (
+        rso_alias_key
+        and alias_master_lookup
+        and alias_master_lookup.get(rso_alias_key) == product.id
+    ):
+        return True
+    
+    # Try matching by product code if RSO item has a code embedded in product_name
+    # Some Excel files might have format: "CODE - Product Name" or "CODE Product Name"
+    rso_name_upper = str(rso_item.product_name).strip()
+    
+    # Check if RSO product_name starts with a number (potential product code)
+    code_match = re.match(r'^(\d+)\s*[-–—]?\s*(.+)$', rso_name_upper)
+    if code_match:
+        rso_code_from_name = code_match.group(1).strip()
+        if rso_code_from_name == product_code_str:
+            return True
+    
+    # Primary matching: Exact normalized product name comparison
+    if rso_name_normalized and product_desc_normalized:
+        if rso_name_normalized == product_desc_normalized:
+            return True
+
+    # Treat formatting-only differences the same way System Analyzer does.
+    # Example: "Pizza Bread - Cheeseburger" and
+    # "Pizza Bread (Cheese Burger)" both become "pizzabreadcheeseburger".
+    if rso_alias_key and product_desc_key and rso_alias_key == product_desc_key:
+        return True
+    
+    # Secondary matching: If product code in RSO matches product.code exactly
+    # (for cases where RSO product_name IS the product code)
+    if rso_name_normalized == product_code_str.lower():
+        return True
+    
+    return False
+
+
+
+def _build_pos_sold_master_lookups():
+    alias_lookup = {}
+    master_lookup = {}
+
+    for alias_text, product_master_id in DEFAULT_POS_SOLD_ALIASES.items():
+        norm = _normalize_product_text(alias_text)
+        if norm:
+            alias_lookup[norm] = int(product_master_id)
+
+    for normalized_alias, product_master_id in (
+        db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
+        .all()
+    ):
+        alias_text = str(normalized_alias or '').strip()
+        if alias_text:
+            alias_lookup[alias_text] = int(product_master_id)
+
+    for product_id, description in (
+        db.session.query(ProductMaster.id, ProductMaster.description).all()
+    ):
+        normalized_description = _normalize_product_text(description)
+        if normalized_description:
+            master_lookup[normalized_description] = int(product_id)
+
+    return alias_lookup, master_lookup
 
 
 # ================================
