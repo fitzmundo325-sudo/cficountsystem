@@ -942,6 +942,11 @@ tr.hide_child_inputs > td:not(:first-child) {
 }
 
 
+.hide_element{
+	opacity:0.05;
+	
+}
+
 
 .fancy_button{
 	user-select:none;
