@@ -59,7 +59,7 @@ window.INVENSYNC_URLS = {
 };
 </script>
 <!-- Top Header -->
-<header class="sticky top-0 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-2 min-h-14 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" style="z-index:99;">
+<header class="sticky top-0 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-2 min-h-14 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between hide_element bluring_element" style="z-index:99;">
   <div class="flex items-center gap-3 sm:gap-4">
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -74,6 +74,8 @@ window.INVENSYNC_URLS = {
     <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500" data-visible-role="Admin,Superadmin">
       <span class="hover:text-slate-900 cursor-pointer">Admin</span><span class="mx-2">/</span><span class="hover:text-slate-900 cursor-pointer">InvenSync</span><span class="mx-2">/</span><span class="text-slate-900">Store Details</span>
     </nav>
+	
+	
     <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500" data-visible-role="Inventory Staff,Cluster Manager,Auditor,Area Manager">
       <span class="hover:text-slate-900 cursor-pointer">Inventory Staff</span><span class="mx-2">/</span><span class="text-slate-900">InvenSync</span><span class="mx-2">/</span>
       <span class="px-2 py-0.5 bg-violet-100 text-violet-700 text-xs rounded-full font-semibold" data-visible-when="is_edit_adjustments">Adjustments Editable</span>
@@ -96,15 +98,19 @@ window.INVENSYNC_URLS = {
     </button>
 
     <label for="selected_date" class="text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">Date</label>
-    <div class="inline-flex items-center gap-1">
-      <button type="button" onclick="navigateInvenSyncDateOffset(-1)" class="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-colors" title="Previous Day">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
-      </button>
-      <input type="date" id="selected_date" name="selected_date" required class="w-40 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none shadow-sm" onchange="changeDate(this.value)">
-      <button type="button" onclick="navigateInvenSyncDateOffset(1)" class="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-colors" title="Next Day">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-      </button>
-    </div>
+	
+	
+	<div id="dateNavSection" class="relative inline-flex items-center gap-1">
+		  <button type="button" onclick="navigateInvenSyncDateOffset(-1)" class="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-colors" title="Previous Day">
+			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"></path></svg>
+		  </button>
+		  <input type="date" id="selected_date" name="selected_date" required="" class="w-40 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none shadow-sm" onchange="changeDate(this.value)">
+		  <button type="button" onclick="navigateInvenSyncDateOffset(1)" class="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-colors" title="Next Day">
+			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"></path></svg>
+		  </button>
+	</div>
+	
+	
     <div class="text-sm font-medium text-slate-600"><span class="text-slate-900" id="headerStoreName"></span></div>
   </div>
 </header>

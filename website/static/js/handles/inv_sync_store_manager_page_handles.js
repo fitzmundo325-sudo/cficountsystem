@@ -121,13 +121,19 @@ function renderCategoryFilters(categoryGroups) {
 function blurProductTable(rowCount) {
   let tbody = document.getElementById('invensyncTableBody');
   tbody.classList.add("blur_element","bluring_element");
+  
+  
 }
 
 
 function unblurProductTable() {
   document.querySelectorAll('.bluring_element').forEach(el => {
     el.classList.remove('blur_element');
+    el.classList.remove('hide_element');
   });
+  
+  removeLoadingOnDate();
+  
 }
 
 
@@ -1754,6 +1760,7 @@ function buildInvenSyncDateUrl(dateValue) {
 function changeDate(newDate) {
   if (!newDate) return;
   navigateToInvenSyncDate(newDate);
+  addLoadingOnDate();
 }
 
 function navigateToInvenSyncDate(newDate) {
@@ -1762,7 +1769,32 @@ function navigateToInvenSyncDate(newDate) {
   let newUrl = `${window.location.pathname}?${params.toString()}`;
   history.pushState({ date: newDate }, '', newUrl);
   loadInvenSyncDetailData();
+  addLoadingOnDate();
 }
+
+
+function addLoadingOnDate() {
+  let section = document.getElementById('dateNavSection');
+  if (!section || document.getElementById('dateNavLoadingOverlay')) return;
+
+  let overlay = document.createElement('div');
+  overlay.id = 'dateNavLoadingOverlay';
+  overlay.className = 'absolute inset-0 z-10 flex items-center justify-center rounded-lg';
+  overlay.style.backdropFilter = 'blur(2px)';
+  overlay.style.webkitBackdropFilter = 'blur(2px)';
+  overlay.style.backgroundColor = 'rgba(255, 255, 255, 0.5)';
+  overlay.innerHTML = '<i class="fa fa-spinner fa-spin text-slate-600"></i>';
+
+  section.appendChild(overlay);
+}
+
+
+function removeLoadingOnDate() {
+  let overlay = document.getElementById('dateNavLoadingOverlay');
+  if (overlay) overlay.remove();
+}
+
+
 
 window.addEventListener('popstate', () => loadInvenSyncDetailData());
 
@@ -4082,7 +4114,7 @@ function closeInvensyncExportModal() {
   }
 })();
 
-
+//Export Function goes here ====================================
 
 
 async function downloadInvenSyncExport() {
