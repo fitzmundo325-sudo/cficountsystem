@@ -963,6 +963,12 @@ tr.hide_child_inputs > td:not(:first-child) {
 	transform:translateY(3px) !important;
 }
 
+
+.invensync-category-count{
+	white-space:nowrap;
+}
+
+
 @media (max-width: 1023px) {
 	
 }
