@@ -862,6 +862,21 @@
 
     <!-- User Section -->
     <div class="mt-auto border-t border-slate-800 p-4 shrink-0">
+      <button id="admin-theme-toggle" type="button"
+        class="mb-3 flex w-full items-center gap-3 rounded-xl border border-slate-700 bg-slate-800/70 p-2 text-left text-slate-200 transition-colors hover:bg-slate-800"
+        aria-label="Toggle theme">
+        <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-700 text-amber-300">
+          <svg data-admin-theme-sun xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg data-admin-theme-moon class="hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </span>
+        <span class="nav-label text-sm font-semibold" data-admin-theme-label>Dark Theme</span>
+      </button>
+
       <button type="button" class="pwa-install-btn mb-3 w-full flex items-center gap-3 rounded-xl border border-indigo-400/20 bg-indigo-500/10 p-2 text-left text-indigo-100 transition-colors hover:bg-indigo-500/20" data-tooltip="Install App">
         <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -951,12 +966,12 @@
     <script>
       // Global Store View (Official / Starlink) scope toggle
       (function () {
-        const buttons = Array.from(document.querySelectorAll('.store-scope-btn'));
+        let buttons = Array.from(document.querySelectorAll('.store-scope-btn'));
         if (!buttons.length) return;
 
         function updateButtonStyles(activeScope) {
           buttons.forEach((btn) => {
-            const isSelected = (btn.getAttribute('data-scope') || 'official').toLowerCase() === activeScope.toLowerCase();
+            let isSelected = (btn.getAttribute('data-scope') || 'official').toLowerCase() === activeScope.toLowerCase();
             if (isSelected) {
               btn.classList.add('bg-indigo-500', 'text-white');
               btn.classList.remove('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
@@ -970,13 +985,13 @@
         buttons.forEach((btn) => {
           btn.addEventListener('click', function (e) {
             e.preventDefault();
-            const scope = (this.getAttribute('data-scope') || 'official').toLowerCase();
-            const maxAge = 60 * 60 * 24 * 365;
+            let scope = (this.getAttribute('data-scope') || 'official').toLowerCase();
+            let maxAge = 60 * 60 * 24 * 365;
             document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${maxAge}; samesite=lax`;
 
             updateButtonStyles(scope);
 
-            const url = new URL(window.location.href);
+            let url = new URL(window.location.href);
             if (url.searchParams.has('store_id')) {
               url.searchParams.delete('store_id');
               window.history.replaceState({}, '', url.toString());
@@ -985,19 +1000,19 @@
             if (typeof window.reloadDashboard === 'function') {
               window.reloadDashboard(true);
             } else {
-              const mainContent = document.getElementById('general_container');
+              let mainContent = document.getElementById('general_container');
               if (mainContent) {
                 mainContent.style.opacity = '0.5';
                 fetch(window.location.href)
                   .then((res) => res.text())
                   .then((html) => {
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(html, 'text/html');
-                    const newMain = doc.getElementById('general_container');
+                    let parser = new DOMParser();
+                    let doc = parser.parseFromString(html, 'text/html');
+                    let newMain = doc.getElementById('general_container');
                     if (newMain) {
                       mainContent.innerHTML = newMain.innerHTML;
                       Array.from(mainContent.querySelectorAll('script')).forEach((oldScript) => {
-                        const newScript = document.createElement('script');
+                        let newScript = document.createElement('script');
                         Array.from(oldScript.attributes).forEach((attr) => newScript.setAttribute(attr.name, attr.value));
                         newScript.appendChild(document.createTextNode(oldScript.innerHTML));
                         oldScript.parentNode.replaceChild(newScript, oldScript);
@@ -1021,13 +1036,13 @@
     {% if user and user.role == 'Inventory Staff' %}
     <script>
       document.getElementById('inventory-staff-store-switcher')?.addEventListener('change', function() {
-        const storeId = this.value;
-        const scopedPaths = ['/store-manager/invensync-dashboard', '/'];
+        let storeId = this.value;
+        let scopedPaths = ['/store-manager/invensync-dashboard', '/'];
         if (scopedPaths.includes(window.location.pathname)) {
           window.location.href = `/store-manager/invensync?store_id=${encodeURIComponent(storeId)}`;
           return;
         }
-        const target = new URL(window.location.href);
+        let target = new URL(window.location.href);
         target.searchParams.set('store_id', storeId);
         window.location.href = target.toString();
       });
@@ -1037,11 +1052,11 @@
     {% if user and user.role == 'Store Manager' %}
     <script>
       document.addEventListener('DOMContentLoaded', function() {
-        const guideParams = new URLSearchParams(window.location.search);
+        let guideParams = new URLSearchParams(window.location.search);
         if (guideParams.get('guide') !== '1') return;
 
-        const path = window.location.pathname;
-        const pageOwnedTours = [
+        let path = window.location.pathname;
+        let pageOwnedTours = [
           '/store-manager/daily-report/pos-sold',
           '/store-manager/delivery',
           '/store-manager/transaction-activity-form'
@@ -1053,7 +1068,7 @@
           return;
         }
 
-        const guideStyle = document.createElement('style');
+        let guideStyle = document.createElement('style');
         guideStyle.textContent = `
           .store-help-tour-panel {
             position: fixed;
@@ -1104,23 +1119,23 @@
         }
 
         function first(selectors) {
-          for (const selector of selectors) {
-            const found = Array.from(document.querySelectorAll(selector)).find(visible);
+          for (let selector of selectors) {
+            let found = Array.from(document.querySelectorAll(selector)).find(visible);
             if (found) return found;
           }
           return null;
         }
 
         function textButton(words) {
-          const buttons = Array.from(document.querySelectorAll('button, a'));
+          let buttons = Array.from(document.querySelectorAll('button, a'));
           return buttons.find(el => visible(el) && words.some(word => String(el.textContent || '').toLowerCase().includes(word))) || null;
         }
 
         function rectFor(elements) {
-          const visibleElements = elements.filter(visible);
+          let visibleElements = elements.filter(visible);
           if (!visibleElements.length) return null;
-          const rects = visibleElements.map(el => el.getBoundingClientRect());
-          const padding = 10;
+          let rects = visibleElements.map(el => el.getBoundingClientRect());
+          let padding = 10;
           return {
             top: Math.max(0, Math.min(...rects.map(rect => rect.top)) - padding),
             left: Math.max(0, Math.min(...rects.map(rect => rect.left)) - padding),
@@ -1129,7 +1144,7 @@
           };
         }
 
-        const pageTitles = {
+        let pageTitles = {
           '/store-manager/daily-report': 'Daily Report',
           '/store-manager/oracle': 'Oracle',
           '/store-manager/store-data': 'Store Data',
@@ -1137,11 +1152,11 @@
           '/store-manager/trans-out': 'Trans-Out',
           '/store-manager/wastage': 'Wastage'
         };
-        const pageTitle = Object.entries(pageTitles).find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`))?.[1] || 'This tool';
-        const isTransferListGuide = path === '/store-manager/trans' || path === '/store-manager/trans-out';
-        const transferActionTarget = first(['.transfer-action-guide-target']);
+        let pageTitle = Object.entries(pageTitles).find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`))?.[1] || 'This tool';
+        let isTransferListGuide = path === '/store-manager/trans' || path === '/store-manager/trans-out';
+        let transferActionTarget = first(['.transfer-action-guide-target']);
 
-        const steps = [
+        let steps = [
           {
             elements: [first(['header nav', 'header'])],
             text: `Welcome to the ${pageTitle} walkthrough. This guide will point out the main areas of this tool.`,
@@ -1189,31 +1204,31 @@
           tourActive = false;
           removeTour();
           document.body.classList.remove('overflow-hidden');
-          const url = new URL(window.location.href);
+          let url = new URL(window.location.href);
           url.searchParams.delete('guide');
           window.history.replaceState({}, document.title, url.toString());
         }
 
         function renderStep(options = {}) {
           if (!tourActive) return;
-          const shouldScrollTarget = options.scrollTarget !== false;
+          let shouldScrollTarget = options.scrollTarget !== false;
           if (renderTimer) {
             clearTimeout(renderTimer);
             renderTimer = null;
           }
           removeTour();
-          const step = steps[stepIndex];
+          let step = steps[stepIndex];
           if (!step) {
             clearTour();
             return;
           }
-          const target = step.elements.find(visible) || step.elements.find(Boolean);
+          let target = step.elements.find(visible) || step.elements.find(Boolean);
           if (target && shouldScrollTarget) {
             target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
           }
           renderTimer = setTimeout(() => {
             renderTimer = null;
-            const rect = rectFor(step.elements);
+            let rect = rectFor(step.elements);
             if (!rect) {
               stepIndex += 1;
               renderStep();
@@ -1228,7 +1243,7 @@
               { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
               { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top }
             ].forEach(panel => {
-              const el = document.createElement('div');
+              let el = document.createElement('div');
               el.className = 'store-help-tour-panel';
               el.style.top = `${panel.top}px`;
               el.style.left = `${panel.left}px`;
@@ -1237,11 +1252,11 @@
               document.body.appendChild(el);
             });
 
-            const label = document.createElement('div');
+            let label = document.createElement('div');
             label.className = 'store-help-tour-label';
-            const message = document.createElement('div');
+            let message = document.createElement('div');
             message.textContent = step.text;
-            const button = document.createElement('button');
+            let button = document.createElement('button');
             button.type = 'button';
             button.textContent = step.nextText;
             button.addEventListener('click', function() {
@@ -1255,8 +1270,8 @@
               label.style.left = `${Math.max(16, rect.left - 400)}px`;
               label.style.top = `${Math.max(24, rect.top)}px`;
             } else if (step.placement === 'right') {
-              const labelLeft = rect.right + 24;
-              const hasRightSpace = labelLeft + 340 <= window.innerWidth;
+              let labelLeft = rect.right + 24;
+              let hasRightSpace = labelLeft + 340 <= window.innerWidth;
               label.style.left = `${hasRightSpace ? labelLeft : Math.max(16, rect.left - 360)}px`;
               label.style.top = `${Math.max(24, rect.top)}px`;
             } else {
@@ -1297,8 +1312,8 @@
         let lastBrowsePresenceSentAt = 0;
         let lastTypingPresenceSentAt = 0;
         let lastPresenceType = '';
-        const pingPresence = (activityType) => {
-          const now = Date.now();
+        let pingPresence = (activityType) => {
+          let now = Date.now();
           if (activityType === 'typing' || activityType === 'uploading') {
             if ((lastPresenceType === 'typing' || lastPresenceType === 'uploading') && now - lastTypingPresenceSentAt < 10000) return;
             lastTypingPresenceSentAt = now;
@@ -1319,22 +1334,22 @@
           }).catch(() => {});
         };
         document.addEventListener('keydown', event => {
-          const target = event.target;
+          let target = event.target;
           if (target && (target.matches('input, textarea, select') || target.isContentEditable)) {
             pingPresence('typing');
           }
         });
         document.addEventListener('input', () => pingPresence('typing'), { passive: true });
         document.addEventListener('change', event => {
-          const target = event.target;
+          let target = event.target;
           if (target && target.matches('input[type="file"]') && target.files && target.files.length) {
             pingPresence('uploading');
           }
         });
         document.addEventListener('submit', event => {
-          const form = event.target;
+          let form = event.target;
           if (!form) return;
-          const hasSelectedFile = Array.from(form.querySelectorAll('input[type="file"]'))
+          let hasSelectedFile = Array.from(form.querySelectorAll('input[type="file"]'))
             .some(input => input.files && input.files.length);
           if (hasSelectedFile) pingPresence('uploading');
         });
