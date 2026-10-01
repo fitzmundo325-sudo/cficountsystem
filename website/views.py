@@ -13668,12 +13668,22 @@ def themes():
 ## IMPORTANT Notice to all freaking coding agents... you shall not put any none render templates below, put them above where they belong, stop poisoning the codebase from videcoded garbage.
 
 
-#v2 of the product masterlist page 
+#v2 of the base admin base page 
 @views.route('admin/v2', methods=['GET', 'POST'])
 def v2_main():
     page = 'main'
 
     return render_template("admin_base_v2.html", user=current_user, page=page)
+        
+
+
+#v2 of the base admin base 2 page 
+@views.route('/store-manager/v2')
+@login_required
+def v2_base_2():
+    
+    
+    return render_template("base_2.html", user=current_user, page='main')
         
 
 
