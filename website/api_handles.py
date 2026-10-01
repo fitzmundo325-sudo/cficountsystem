@@ -3902,6 +3902,46 @@ def get_invensync_detail_data():
 
 
 
+def _build_missing_invensync_dates(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return []
+
+    first_inventory_date = (
+        DailyEndingInventory.query
+        .filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.is_finalized.is_(True),
+        )
+        .with_entities(func.min(DailyEndingInventory.inventory_date))
+        .scalar()
+    )
+    if not first_inventory_date or first_inventory_date > cutoff_date:
+        return []
+
+    start_date = max(month_start, first_inventory_date)
+    existing_dates = {
+        row.inventory_date for row in DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= start_date,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).all()
+        if row.inventory_date
+    }
+
+    missing_dates = []
+    cursor = start_date
+    while cursor <= cutoff_date:
+        if cursor not in existing_dates:
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+    return missing_dates
+
+
+
 def _build_taf_trans_out_quantity_by_master_id(store, transaction_date):
     if not store or not transaction_date:
         return {}

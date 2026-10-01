@@ -13788,7 +13788,7 @@ def invensync_v2():
 @views.route('/store-manager/invensync_details_v2', methods=['GET'])
 @login_required
 def invensync_details_v2():
-    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager','Store Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
