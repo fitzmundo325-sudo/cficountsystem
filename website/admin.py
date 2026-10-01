@@ -5699,6 +5699,15 @@ def invensync():
     if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
+    
+    #redirect Admin Accounts to the new v2 of the inv_sync
+    q = (request.args.get('q') or '').strip()
+    params = {'m': 'invensync_v2'}
+    if q:
+        params['q'] = q
+    return redirect(url_for('views.v2_main', **params))
+
+
 
     selected_tab = request.args.get('tab', 'summary')
     if current_user.role in ('General Manager', 'Auditor', 'Area Manager') and selected_tab in ('config', 'store_config'):

@@ -27,3 +27,4 @@ iPayroll/
 scratch/
 *.zip
 
+*.pyc
