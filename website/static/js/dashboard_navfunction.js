@@ -149,6 +149,18 @@ function showInvSyncPageAdmin(elm){
 // ====================================
 
 
+//Store Manager ===============
+
+function showInvSyncStoreUser(elm){
+	activate(elm);
+
+	let page = open_modal("/store-manager/invensync_details_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
 
 
 // Utilities
