@@ -132,7 +132,7 @@ function unblurProductTable() {
     el.classList.remove('hide_element');
   });
   
-  removeLoadingOnDate();
+
   
 }
 
@@ -476,6 +476,9 @@ async function renderTableBody(data) {
 	
 	
   }
+  //Only Trigger after all lazy loaded rows are ready
+  removeLoadingOnDate();
+  
 }
 // --- Missing dates modal content ---
 function renderMissingDatesModal(data) {
@@ -3799,17 +3802,17 @@ function initInventoryPageAfterRender() {
   preloadAdjacentDates(window.location.href);
 
 
-
   let goMissingBtn = document.getElementById('missing-dates-go');
   if (goMissingBtn) {
-    goMissingBtn.addEventListener('click', function() {
-      if (!nextMissingDate) {
-        hideMissingDatesModal();
-        return;
-      }
-      window.location.href = buildInvenSyncDateUrl(nextMissingDate);
-    });
+    goMissingBtn.onclick = function() {
+      hideMissingDatesModal();
+      if (!nextMissingDate) return;
+      let dateInput = document.getElementById('selected_date');
+      dateInput.value = nextMissingDate;
+      dateInput.dispatchEvent(new Event('change'));
+    };
   }
+  
 
   if (!isInvenSyncGuideMode && Array.isArray(missingDates) && missingDates.length > 0) {
     showMissingDatesModal();

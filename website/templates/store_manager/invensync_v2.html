@@ -40,6 +40,9 @@
   .trans-trace-hover:hover { background: #eef2ff; border-radius: 6px; box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.35); }
   
   
+  .missing_dates_modal{
+	z-index:999;
+  }
 
   
   
@@ -277,7 +280,7 @@ window.INVENSYNC_URLS = {
 
 </div>
 <!-- Missing InvenSync Dates Modal -->
-<div id="missing-dates-modal" class="fixed inset-0 z-20 hidden">
+<div id="missing-dates-modal" class="fixed inset-0 z-20 hidden missing_dates_modal">
   <div id="missing-dates-overlay" class="absolute inset-0 bg-slate-900/50"></div>
   <div class="relative z-10 min-h-full flex items-center justify-center p-4">
     <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
