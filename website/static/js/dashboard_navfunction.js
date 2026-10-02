@@ -226,6 +226,9 @@ function closeSidebar(){
 
 
 function toggleSidebarCollapse(){
+	console.log("Element");
+	
+	
 	toggleMobileSidebar();
 }
 
