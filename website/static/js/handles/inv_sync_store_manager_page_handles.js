@@ -193,7 +193,7 @@ function observeRowVisibility(rootElement, container) {
     });
   }, {
     root: rootElement || null,
-    rootMargin: '500px 0px',
+    rootMargin: '400px 300px',
     threshold: 0,
   });
 
@@ -374,7 +374,7 @@ async function renderTableBody(data) {
 
   for (let group of categoryGroups) {
     if (!group.products.length) continue;
-    await sleep(200);
+    await sleep(170);
 	unblurProductTable();
 
     let catNode = categoryTemplate.content.cloneNode(true);
