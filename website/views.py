@@ -13794,6 +13794,42 @@ def invensync_details_v2():
 
     page = 'invensync'
     return render_template("store_manager/invensync_v2.html", user=current_user, page=page)
+    
+
+  
+#v2 of the Oracle
+@views.route('/store-manager/oracle_v2', methods=['GET'])
+@login_required
+def oracle_v2():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        flash('Store not found or not assigned.', category='error')
+        return redirect(url_for('views.home'))
+
+    oracle_date = ''
+    date_str = request.args.get('date', '')
+    if date_str:
+        try:
+            oracle_date = datetime.strptime(date_str, '%Y-%m-%d').date().isoformat()
+        except ValueError:
+            oracle_date = ''
+
+    page = 'oracle'
+    return render_template(
+        "store_manager/oracle_v2.html",
+        user=current_user,
+        page=page,
+        store_id=store.id,
+        oracle_date=oracle_date,
+        admin_shell=False,
+        cluster_view=False,
+    )
+    
+    
 # ================================================
 # Supply Requests (store side)
 # ================================================
