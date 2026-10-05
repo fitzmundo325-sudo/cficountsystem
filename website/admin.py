@@ -7675,3 +7675,14 @@ def themes():
     session['theme'] = theme
 
     return theme
+
+@admin.route('/store-manager/set_theme', methods=['POST'])
+def themes_store():
+    theme = request.form.get("theme")
+
+    if 'theme' not in session:
+        session['theme'] = theme
+
+    session['theme'] = theme
+
+    return theme
