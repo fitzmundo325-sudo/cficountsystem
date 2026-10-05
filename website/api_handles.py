@@ -4303,6 +4303,131 @@ def _build_pos_sold_master_lookups():
 # ================================
  
  
+ 
+# ================================
+# Oracle Section Start
+# ================================
+@api_handles.route('/get_oracle_data', methods=['GET', 'POST'])
+@login_required
+def get_oracle_data():
+    from datetime import datetime, date as _date
+    from sqlalchemy.orm import joinedload
+    from .models import OracleOrder, ProductMaster, Store, StoreProductBuffer
+    from .views import (
+        _fetch_oracle_invensync_data,
+        _build_oracle_pos_sales_data,
+        _build_oracle_bulk_order_weeks,
+        _build_oracle_bulk_order_product_data,
+    )
+
+    if current_user.role == 'Store Manager':
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            return {'type': 'error', 'message': 'Store not found or not assigned.'}
+    elif current_user.role in ('Superadmin', 'Admin'):
+        try:
+            store_id = int(request.form.get('store_id') or request.args.get('store_id') or 0)
+        except (ValueError, TypeError):
+            store_id = 0
+        store = Store.query.filter_by(id=store_id).first() if store_id else None
+        if not store:
+            return {'type': 'error', 'message': 'Store not found.'}
+    else:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    oracle_date = None
+    date_str = request.form.get('date') or request.args.get('date') or ''
+    if date_str:
+        try:
+            oracle_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            oracle_date = None
+    if oracle_date is None:
+        oracle_date = _date.today()
+
+    products = ProductMaster.query.all()
+    is_premium = store.store_group == 'premium'
+    product_rows = [{
+        'id': p.id,
+        'code': p.code if p.code is not None else p.id,
+        'name': p.description,
+        'category': p.category,
+        'plantPrice': float(p.tp or 0),
+        'sellingPrice': float((p.sp_p if is_premium else p.sp_np) or 0),
+    } for p in products]
+
+    saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
+    store_buffers = {
+        str(b.product_id): float(b.buffer_pct)
+        for b in saved if b.buffer_pct is not None
+    }
+
+    incoming_orders = OracleOrder.query.filter_by(store_id=store.id, status='approved').filter(
+        OracleOrder.delivery_date >= oracle_date
+    ).all()
+    oracle_incoming_orders = {}
+    for order in incoming_orders:
+        product_orders = oracle_incoming_orders.setdefault(str(order.product_id), {})
+        delivery_key = order.delivery_date.isoformat()
+        product_orders[delivery_key] = product_orders.get(delivery_key, 0) + order.quantity
+
+    history_orders = (
+        OracleOrder.query
+        .options(joinedload(OracleOrder.product), joinedload(OracleOrder.creator))
+        .filter_by(store_id=store.id)
+        .order_by(OracleOrder.created_at.desc())
+        .all()
+    )
+    oracle_order_history = [{
+        'id': f'ORD-{order.id}',
+        'orderDateActual': order.order_date.isoformat(),
+        'delivDate': order.delivery_date.isoformat(),
+        'dayName': order.delivery_date.strftime('%A'),
+        'mode': 'Avg Consumption',
+        'productId': order.product_id,
+        'productName': order.product.description if order.product else str(order.product_id),
+        'suggested': order.suggested_qty,
+        'minSug': order.min_suggested_qty,
+        'maxSug': order.max_suggested_qty,
+        'finalOrder': order.quantity,
+        'unitCost': float(order.product.tp or 0) if order.product else 0,
+        'totalCost': float(order.quantity * (order.product.tp or 0)) if order.product else 0,
+        'multiplier': 1,
+        'manager': order.creator.username if order.creator else '',
+        'timestamp': order.created_at.isoformat() if order.created_at else '',
+        'status': order.status,
+    } for order in history_orders]
+
+    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
+    pos_sales_data = _build_oracle_pos_sales_data(store, products, oracle_date)
+    bulk_order_weeks = _build_oracle_bulk_order_weeks(store, oracle_date)
+    bulk_order_product_data = _build_oracle_bulk_order_product_data(store, products, oracle_date)
+
+    return {
+        'type': 'success',
+        'store': {'id': store.id, 'name': store.name, 'store_group': store.store_group},
+        'oracle_date': oracle_date.isoformat(),
+        'products': product_rows,
+        'store_buffers': store_buffers,
+        'oracle_incoming_orders': oracle_incoming_orders,
+        'oracle_order_history': oracle_order_history,
+        'invensync_data': invensync_data,
+        'prev_inventory_date': prev_inventory_date,
+        'pos_sales_data': pos_sales_data,
+        'bulk_order_weeks': bulk_order_weeks,
+        'bulk_order_product_data': bulk_order_product_data,
+    }
+ 
+ 
+ 
+# ================================
+# Oracle Section End
+# ================================
+ 
+ 
+ 
+ 
+ 
 # ================================
 # Users Section Start
 # ================================

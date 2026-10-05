@@ -1,0 +1,948 @@
+{% extends "base_headless.html" %}
+{% block title %}Oracle{% endblock %}
+
+{% block content %}
+
+<!-- Jinja declarations -->
+<script>
+  let CURRENT_USER_ROLE = "{{ current_user.role }}";
+  let ORACLE_USERNAME = "{{ current_user.username }}";
+  let ORACLE_STORE_ID = "{{ store_id|default('') }}";
+  let ORACLE_CLUSTER_ID = "{{ cluster_id|default('') }}";
+  let ORACLE_DATE = "{{ oracle_date|default('') }}";
+  let ORACLE_VIEW = "{{ 'admin' if admin_shell|default(false) else ('cluster' if cluster_view|default(false) else 'store') }}";
+  let ORACLE_BACK_URL = "{{ url_for('admin.admin_oracle') if admin_shell|default(false) else (url_for('views.cluster_manager_oracle', cluster_id=cluster_id|default(''), date=oracle_date|default('')) if cluster_view|default(false) else '') }}";
+</script>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<style>
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  .view {
+    display: none;
+  }
+
+  .view.active {
+    display: block;
+  }
+
+  .o-tab {
+    border-bottom: 2px solid transparent;
+  }
+
+  .o-tab.active {
+    border-bottom-color: #0ea5e9;
+    color: #0f172a;
+    font-weight: 600;
+  }
+
+  .o-tab:hover:not(.active) {
+    color: #0f172a;
+    background: #f8fafc;
+  }
+
+  .input-final {
+    background: #f0f9ff;
+    border: 1px solid #7dd3fc;
+    border-radius: 6px;
+    text-align: center;
+    width: 76px;
+    padding: 5px 4px;
+    font-size: 12px;
+    font-weight: 600;
+    outline: none;
+  }
+
+  .input-final:focus {
+    border-color: #0ea5e9;
+    box-shadow: 0 0 0 2px #bae6fd;
+  }
+
+  @keyframes fadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(8px)
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0)
+    }
+  }
+
+  .fade-up {
+    animation: fadeUp .25s ease forwards;
+  }
+
+  @keyframes toastIn {
+    from {
+      transform: translateX(16px);
+      opacity: 0
+    }
+
+    to {
+      transform: translateX(0);
+      opacity: 1
+    }
+  }
+
+  .o-toast {
+    animation: toastIn .2s ease;
+  }
+
+  .forecast-bar select option {
+    background: #1e293b;
+    color: #fff;
+  }
+
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .oracle-shell {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .oracle-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .daily-average-scroll {
+    max-height: min(62vh, 560px);
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .weekly-average-scroll {
+    max-height: min(52vh, 430px);
+  }
+
+  .weekly-average-scroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 8;
+    background: #f1f5f9;
+    box-shadow: inset 0 -1px 0 #cbd5e1;
+  }
+
+  #weekly-order-table {
+    table-layout: fixed;
+    border: 1px solid #1e293b;
+    border-collapse: collapse;
+  }
+
+  #weekly-order-table th,
+  #weekly-order-table td {
+    border: 1px solid #1e293b;
+  }
+
+  #weekly-order-table th:first-child,
+  #weekly-order-table td:first-child {
+    width: 180px;
+    border-right: 1px solid #1e293b !important;
+  }
+
+  .weekly-order-cell {
+    width: 145px;
+    min-width: 145px;
+    vertical-align: top;
+  }
+
+  .weekly-range {
+    display: flex;
+    width: max-content;
+    max-width: 100%;
+    min-height: 21px;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 6px;
+    gap: 4px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .weekly-final-input {
+    display: block;
+    width: 76px;
+    margin: 0 auto;
+  }
+
+  .history-range {
+    display: flex !important;
+    width: max-content !important;
+    margin: 0 auto 6px !important;
+    white-space: nowrap;
+  }
+
+  .history-final {
+    display: flex !important;
+    width: 76px !important;
+    min-width: 76px;
+    min-height: 29px;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto !important;
+    box-sizing: border-box;
+  }
+
+  .weekly-product-select {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 42px;
+    cursor: pointer;
+    appearance: none;
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 0;
+    background-color: transparent;
+  }
+
+  .weekly-product-select:focus {
+    outline: none;
+  }
+
+  .weekly-product-cell {
+    box-sizing: border-box;
+    border: 1px solid transparent;
+  }
+
+  .weekly-product-cell:focus-within {
+    border-color: #38bdf8;
+  }
+
+  #oracle-order-view.oracle-fs {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #oracle-order-view.oracle-fs .oracle-card {
+    flex: 1;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #oracle-order-view.oracle-fs .oracle-card .oracle-scroll {
+    flex: 1;
+    min-height: 0;
+  }
+
+  #oracle-order-view.oracle-fs thead th {
+    position: sticky;
+    top: 0;
+    z-index: 8;
+    background: #f1f5f9;
+    box-shadow: inset 0 -1px 0 #cbd5e1;
+  }
+
+  #oracle-fs-bar {
+    display: none;
+  }
+
+  #oracle-order-view.oracle-fs #oracle-fs-bar {
+    display: flex;
+  }
+  #history-detail-panel tbody td:nth-child(3) {
+    white-space: nowrap;
+  }
+
+  #history-detail-panel tbody td:nth-child(3)>div {
+    display: inline;
+  }
+
+  #history-detail-panel tbody td:nth-child(3)>div+div::before {
+    content: ' ';
+  }
+
+  #history-detail-panel tbody td:first-child>div+div {
+    display: none;
+  }
+</style>
+
+<!-- Header -->
+<header
+  class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-4 md:px-6 py-3 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+  <div class="flex min-w-0 items-center gap-3">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
+      <i class="bi bi-list text-xl"></i>
+    </button>
+    <a id="oracle-back-link" href="#" data-show-in="admin cluster"
+      data-title-admin="Back to Admin Oracle" data-title-cluster="Back to Cluster Oracle"
+      class="hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <i class="bi bi-arrow-left text-base"></i>
+    </a>
+    <nav class="flex items-center text-sm font-medium text-slate-500">
+      <span data-show-in="admin" class="hidden">Admin</span>
+      <span data-show-in="cluster" class="hidden">Cluster Manager</span>
+      <span data-show-in="store" class="hidden">Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900 font-semibold">Oracle</span>
+    </nav>
+  </div>
+  <div class="flex min-w-0 flex-wrap items-center gap-2 md:gap-3">
+    <span id="topbar-date"
+      class="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full whitespace-nowrap"></span>
+    <span id="oracle-store-name" class="text-sm font-semibold text-slate-700 truncate max-w-[180px]"></span>
+    <button id="btn-new-order" data-show-in="store admin"
+      class="hidden flex items-center gap-1.5 bg-sky-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-sky-700 transition-colors whitespace-nowrap">
+      <i class="bi bi-plus-lg"></i> New Order
+    </button>
+    <button id="btn-submit-order" data-show-in="store admin"
+      class="hidden flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors whitespace-nowrap">
+      <i class="bi bi-check-lg"></i> Submit Order
+    </button>
+    <button id="btn-fullscreen" data-show-in="store admin"
+      class="hidden flex items-center gap-1.5 bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors whitespace-nowrap"
+      title="Expand the order table to fullscreen">
+      <i class="bi bi-arrows-fullscreen"></i> Fullscreen
+    </button>
+    <button id="cluster-save-buffers" data-show-in="cluster"
+      class="hidden flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors whitespace-nowrap">
+      <i class="bi bi-floppy"></i> Save Buffers
+    </button>
+  </div>
+</header>
+
+<!-- Tab Nav -->
+<div id="oracle-tab-nav" data-show-in="store admin" class="hidden bg-white border-b border-slate-200 px-6 flex gap-1 overflow-x-auto">
+  <button
+    class="o-tab active flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors"
+    id="tab-order-form" data-nav="order-form"> <i class="bi bi-cart3"></i> Order Form</button>
+  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors"
+    id="tab-history" data-nav="history"> <i class="bi bi-clock-history"></i> History</button>
+  <button class="o-tab flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500 whitespace-nowrap transition-colors"
+    id="tab-daily-averages" data-nav="daily-averages"> <i class="bi bi-bar-chart-line"></i> Daily
+    Averages</button>
+</div>
+
+<div class="oracle-shell px-4 pt-4 pb-6 md:px-6 space-y-4 max-w-[2400px] mx-auto min-w-0">
+
+
+  <!-- ORDER FORM -->
+  <div class="view active" id="view-order-form">
+    <div class="mb-5">
+      <h1 class="text-2xl font-bold text-slate-900 tracking-tight">
+        <span data-show-in="cluster" class="hidden">Store Buffer % Editor</span>
+        <span data-show-in="store admin" class="hidden">Smart Order Form</span>
+      </h1>
+      <p class="mt-1 text-sm text-slate-500">
+        <span data-show-in="cluster" class="hidden">Adjust this store's product buffer percentages. Store order fields are view-only in this cluster view.</span>
+        <span data-show-in="store admin" class="hidden">Quantities suggested based on stock, expected sales, and avg consumption. <strong class="text-slate-700">Orders
+          outside ±20% range require Cluster Manager Approval.</strong></span>
+      </p>
+    </div>
+
+    <!-- Date/Manager row -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+        <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Order Date</label><input
+            type="date" id="order-date"
+            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Delivery Start <span
+              class="text-amber-500 normal-case font-normal">(min +2 days)</span></label><input type="date"
+            id="delivery-date"
+            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Delivery End</label><input
+            type="date" id="delivery-end-date"
+            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Planning Window</label><input
+            type="text" id="delivery-day" readonly
+            class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-600"></div>
+        <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Prepared By</label><input
+            type="text" id="order-manager"
+            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 outline-none">
+        </div>
+      </div>
+      <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+        <div>
+          <p class="text-sm font-semibold text-slate-800">Build an order plan</p>
+          <p class="text-xs text-slate-500">Review a suggested range for each day, then override only what you need.</p>
+        </div>
+        <div class="inline-flex rounded-lg border border-slate-300 bg-slate-50 p-1" role="group" aria-label="Order planning mode">
+          <button type="button" id="mode-weekly" class="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">Weekly plan</button>
+          <button type="button" id="mode-single" class="rounded-md px-3 py-1.5 text-xs font-semibold text-slate-600">Single day</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Forecast bar -->
+    <div class="bg-slate-800 rounded-xl p-4 md:p-5 mb-4 flex flex-wrap gap-4 md:gap-5 items-start">
+      <div class="min-w-[180px] flex-1 sm:flex-none">
+        <label class="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Forecast Event</label>
+        <select id="forecast-event"
+          class="forecast-bar w-full px-3 py-2 bg-slate-700 border border-slate-600 text-white rounded-lg text-sm outline-none focus:ring-2 focus:ring-sky-400">
+          <option value="1.00">Normal Day</option>
+          <option value="1.25">Payday Week (+25%)</option>
+          <option value="1.40">Holiday (+40%)</option>
+          <option value="0.85">Rainy Season (-15%)</option>
+          <option value="1.60">Valentine's Day (+60%)</option>
+          <option value="1.80">Christmas Season (+80%)</option>
+          <option value="1.15">Summer (+15%)</option>
+          <option value="1.20">School Opening (+20%)</option>
+          <option value="1.35">Long Weekend (+35%)</option>
+          <option value="1.50">Super Sale (+50%)</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Multiplier</label>
+        <div id="eff-mult" class="px-4 py-2 bg-sky-500 text-white font-bold rounded-lg text-sm">1.00×</div>
+      </div>
+      <div class="bg-slate-700/60 border border-slate-600 rounded-lg p-3 min-w-[200px] flex-1 sm:flex-none">
+        <label class="block text-xs font-semibold text-slate-300 mb-1.5"><i class="bi bi-bullseye"></i> Target Sales
+          (₱)</label>
+        <input type="number" id="target-sales-input" placeholder="e.g. 5000" min="0"
+          class="w-full px-3 py-1.5 bg-slate-600 border border-slate-500 text-white placeholder-slate-400 rounded text-sm outline-none focus:ring-1 focus:ring-sky-400">
+        <p class="text-[10px] text-slate-400 mt-1">Rev-share method. Optional.</p>
+      </div>
+      <div class="flex min-w-[180px] flex-1 flex-col gap-2 items-start xl:items-end justify-center">
+        <div id="order-mode-indicator"
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-900/50 border border-emerald-700 text-emerald-300 rounded-full text-xs font-semibold whitespace-nowrap">
+          <i class="bi bi-bar-chart-fill"></i> Avg Consumption</div>
+        <span class="text-xs text-slate-500">Multiplier applied to suggested qty</span>
+      </div>
+    </div>
+
+    <!-- Search and category filter -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-4">
+      <div class="space-y-3">
+        <div class="relative max-w-md">
+          <input id="product-search-input" type="search" autocomplete="off" placeholder="Search product, code, or price"
+            class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pl-9 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100">
+          <svg xmlns="http://www.w3.org/2000/svg"
+            class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <path d="m21 21-4.3-4.3"></path>
+          </svg>
+        </div>
+        <div id="category-filter-container" class="flex flex-wrap items-center gap-2">
+          <button type="button"
+            class="category-filter-btn px-3 py-2 rounded-lg border border-slate-300 bg-slate-900 text-white text-sm font-semibold transition"
+            data-category-filter="all">
+            All
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Weekly order planner -->
+    <div id="weekly-order-panel" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <div><h2 class="text-sm font-bold text-slate-800">Daily order plan</h2><p class="text-xs text-slate-500">Each day is submitted with its own delivery date.</p></div>
+        <span id="weekly-plan-summary" class="text-xs font-semibold text-slate-500"></span>
+      </div>
+      <div class="oracle-scroll"><table id="weekly-order-table" class="w-full text-xs" style="min-width:1250px">
+        <thead id="weekly-order-head" class="bg-slate-100 text-slate-600"></thead>
+        <tbody id="weekly-order-body" class="divide-y divide-slate-100">
+          <tr><td class="px-4 py-12 text-center text-slate-400">Loading...</td></tr>
+        </tbody>
+        <tfoot id="weekly-order-foot"></tfoot>
+      </table></div>
+      <div class="bg-slate-50 border-t border-slate-200 px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-500">
+        <span>SKUs: <strong class="text-slate-700" id="weekly-sum-skus">0</strong></span>
+        <span>Suggested: <strong class="text-emerald-600" id="weekly-sum-suggested">0</strong></span>
+        <span>Final: <strong class="text-sky-600" id="weekly-sum-final">0</strong></span>
+        <span>Est. Cost: <strong class="text-sky-600" id="weekly-sum-cost">₱0</strong></span>
+      </div>
+    </div>
+
+    <!-- Single-day order table -->
+    <div id="oracle-order-view">
+      <div id="oracle-fs-bar"
+        class="flex-none bg-white border-b border-slate-200 px-4 md:px-6 h-14 items-center justify-between shadow-sm">
+        <span class="text-sm font-semibold text-slate-700">Oracle — <span id="oracle-fs-store-name"></span></span>
+        <button id="btn-exit-fullscreen"
+          class="flex items-center gap-1.5 px-3 py-1.5 bg-slate-600 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition-colors">
+          <i class="bi bi-fullscreen-exit"></i> Exit Fullscreen
+        </button>
+      </div>
+      <div class="oracle-card bg-white rounded-t-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="oracle-scroll">
+          <table id="order-table" class="w-full text-xs" style="min-width:1100px">
+            <thead class="bg-slate-100 text-slate-600 sticky top-0">
+              <tr>
+                <th class="px-3 py-3 text-left font-semibold">Product</th>
+                <th class="px-3 py-3 text-center font-semibold">Total Ending Inventory<br><span
+                    class="text-[9px] text-slate-400 font-normal">from InvenSync</span></th>
+                <th class="px-3 py-3 text-center font-semibold text-sky-600">Incoming Delivery Stock<br><span
+                    class="text-[9px] text-slate-400 font-normal">from Oracle order qty</span></th>
+                <th class="px-3 py-3 text-center font-semibold text-rose-500">Expected Sales</th>
+                <th class="px-3 py-3 text-center font-semibold text-amber-600">Trans In</th>
+                <th class="px-3 py-3 text-center font-semibold text-rose-500">Trans Out</th>
+                <th class="px-3 py-3 text-center font-semibold">Effective Stock</th>
+                <th class="px-3 py-3 text-center font-semibold">Avg Sales</th>
+                <th class="px-3 py-3 text-center font-semibold">Buffer %</th>
+                <th class="px-3 py-3 text-center font-semibold text-emerald-600">Suggested Range<br><span
+                    class="text-[9px] text-slate-400 font-normal">Min · Center · Max</span></th>
+                <th class="px-3 py-3 text-center font-semibold text-sky-600">Final Order</th>
+                <th class="px-3 py-3 text-center font-semibold text-teal-600">Est. On Hand After Delivery</th>
+                <th class="px-3 py-3 text-center font-semibold">Plant ₱</th>
+                <th class="px-3 py-3 text-center font-semibold">SRP ₱</th>
+                <th class="px-3 py-3 text-center font-semibold">Total Cost</th>
+              </tr>
+            </thead>
+            <tbody id="order-table-body" class="divide-y divide-slate-100">
+              <tr><td colspan="15" class="px-4 py-12 text-center text-slate-400">Loading...</td></tr>
+            </tbody>
+            <tfoot id="order-table-foot"></tfoot>
+          </table>
+        </div>
+      </div>
+
+      <!-- Compact summary footer -->
+      <div
+        class="bg-slate-50 border border-slate-200 rounded-b-xl border-t-0 px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div class="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
+          <span>SKUs: <strong class="text-slate-700" id="sum-skus">0</strong></span>
+          <span>Suggested: <strong class="text-slate-700" id="sum-suggested">0</strong></span>
+          <span>Final: <strong class="text-slate-700" id="sum-final">0</strong></span>
+          <span>Est. Cost: <strong class="text-sky-600" id="sum-cost">₱0</strong></span>
+        </div>
+        <div class="flex flex-wrap gap-2 sm:ml-auto">
+          <button id="btn-refresh-suggested"
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors"><i
+              class="bi bi-arrow-clockwise"></i> Refresh</button>
+          <button id="btn-clear-overrides" data-show-in="store admin"
+            class="hidden px-3 py-1.5 bg-white border border-slate-300 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors">Clear
+            Overrides</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- HISTORY -->
+  <div class="view" id="view-history">
+    <div class="flex items-center justify-between mb-5">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">Order History</h1>
+        <p class="mt-1 text-sm text-slate-500">Past submitted orders and suggested vs final quantities.</p>
+      </div>
+      <button id="btn-history-refresh"
+        class="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"><i
+          class="bi bi-arrow-clockwise"></i> Refresh</button>
+    </div>
+    <div id="history-weekly-container" class="space-y-4"></div>
+    <div id="history-detail-panel" role="dialog" aria-modal="true" aria-label="Order details"
+      class="fixed inset-0 z-50 hidden overflow-y-auto bg-slate-900/50 p-4 md:p-8"></div>
+  </div>
+
+  <!-- DAILY AVERAGES -->
+  <div class="view" id="view-daily-averages">
+    <div class="mb-5">
+      <h1 class="text-2xl font-bold text-slate-900">Daily Average Consumption</h1>
+      <p class="mt-1 text-sm text-slate-500">Based on POS Sold for the latest 4 weeks. You can adjust values before
+        ordering.</p>
+    </div>
+    <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3">
+      <i class="bi bi-calendar3 text-sky-500"></i> Weekly Sales — Units Sold Per Product Per Day
+    </div>
+    <div id="weekly-sales-tables-container" class="space-y-4"></div>
+    <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3 mt-8">
+      <i class="bi bi-graph-up text-sky-500"></i> Average Daily Sold &amp; Product Share (4-Week Summary)
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+      <div class="oracle-scroll">
+        <table class="w-full text-xs" style="min-width:800px">
+          <thead class="bg-slate-100 text-slate-600">
+            <tr>
+              <th class="px-3 py-3 text-left font-semibold">Product</th>
+              <th class="px-3 py-3 text-center font-semibold">Mon</th>
+              <th class="px-3 py-3 text-center font-semibold">Tue</th>
+              <th class="px-3 py-3 text-center font-semibold">Wed</th>
+              <th class="px-3 py-3 text-center font-semibold">Thu</th>
+              <th class="px-3 py-3 text-center font-semibold">Fri</th>
+              <th class="px-3 py-3 text-center font-semibold">Sat</th>
+              <th class="px-3 py-3 text-center font-semibold">Sun</th>
+              <th class="px-3 py-3 text-center font-semibold">4-Wk Total</th>
+            </tr>
+          </thead>
+          <tbody id="avg-summary-body" class="divide-y divide-slate-100"></tbody>
+          <tfoot id="avg-summary-foot"></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+
+</div><!-- /content -->
+
+<!-- Toast container -->
+<div id="o-toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+
+<!-- Templates - shared -->
+<template id="tmpl-category-btn">
+  <button type="button"
+    class="category-filter-btn px-3 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-100 transition"
+    data-cell="label"></button>
+</template>
+
+<template id="tmpl-message-row">
+  <tr>
+    <td class="px-4 py-12 text-center text-slate-400" data-cell="message"></td>
+  </tr>
+</template>
+
+<template id="tmpl-toast">
+  <div class="o-toast flex items-center gap-3 px-4 py-3 rounded-xl border text-white text-sm shadow-xl pointer-events-auto max-w-xs">
+    <i class="bi" data-cell="icon"></i><span data-cell="message"></span>
+  </div>
+</template>
+
+<!-- Templates - single-day order table -->
+<template id="tmpl-order-row">
+  <tr class="hover:bg-slate-50">
+    <td class="px-3 py-2.5">
+      <div class="font-semibold text-slate-800" data-cell="name"></div>
+      <div class="text-[10px] text-slate-400" data-cell="code"></div>
+    </td>
+    <td class="px-3 py-2.5 text-center"><span class="px-2 py-0.5 rounded-full text-[10px] font-semibold" data-cell="stock"></span></td>
+    <td class="px-3 py-2.5 text-center font-semibold text-sky-600" data-cell="incoming"></td>
+    <td class="px-3 py-2.5 text-center font-semibold text-rose-500" data-cell="expected"></td>
+    <td class="px-3 py-2.5 text-center font-semibold text-amber-600" data-cell="trans_in"></td>
+    <td class="px-3 py-2.5 text-center font-semibold text-rose-500" data-cell="trans_out"></td>
+    <td class="px-3 py-2.5 text-center" data-cell="effective_stock"></td>
+    <td class="px-3 py-2.5 text-center text-slate-600" data-cell="avg_sales"></td>
+    <td class="px-3 py-2.5 text-center">
+      <input type="number" min="0" max="200" class="w-14 text-center text-xs border border-slate-300 rounded px-1 py-1" data-cell="buffer"><span class="text-slate-400 text-[10px]">%</span>
+    </td>
+    <td class="px-3 py-2.5 text-center">
+      <div class="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+        <span class="text-[10px] text-slate-500 font-semibold" data-cell="min"></span>
+        <span class="font-bold text-emerald-600 text-sm" data-cell="suggested"></span>
+        <span class="text-[10px] text-slate-500 font-semibold" data-cell="max"></span>
+      </div>
+    </td>
+    <td class="px-3 py-2.5 text-center">
+      <input type="number" min="0" class="input-final" data-cell="final_input">
+      <span class="hidden inline-flex min-w-[76px] justify-center rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600" data-cell="final_readonly"></span>
+    </td>
+    <td class="px-3 py-2.5 text-center">
+      <div class="inline-flex flex-col items-center px-3 py-1.5 rounded-lg" data-cell="est_box">
+        <span class="font-bold text-sm" data-cell="est_value"></span>
+        <span class="text-[9px]" data-cell="est_unit"></span>
+      </div>
+    </td>
+    <td class="px-3 py-2.5 text-center text-slate-600" data-cell="plant"></td>
+    <td class="px-3 py-2.5 text-center text-slate-600" data-cell="srp"></td>
+    <td class="px-3 py-2.5 text-center font-semibold text-slate-800" data-cell="total_cost"></td>
+  </tr>
+</template>
+
+<template id="tmpl-order-foot">
+  <tr class="bg-slate-100 font-semibold text-xs">
+    <td colspan="9" class="px-3 py-2.5 text-right text-slate-500">TOTALS</td>
+    <td class="px-3 py-2.5 text-center text-emerald-600 text-sm" data-cell="tot_suggested"></td>
+    <td class="px-3 py-2.5 text-center text-sky-600" data-cell="tot_final"></td>
+    <td></td>
+    <td></td>
+    <td class="px-3 py-2.5 text-center" data-cell="tot_srp"></td>
+    <td class="px-3 py-2.5 text-center" data-cell="tot_cost"></td>
+  </tr>
+</template>
+
+<!-- Templates - weekly order planner -->
+<template id="tmpl-weekly-head-row">
+  <tr>
+    <th class="sticky left-0 z-10 bg-slate-100 px-3 py-3 text-left font-semibold">Product</th>
+    <th class="border-l border-slate-200 px-3 py-3 text-center font-semibold" data-cell="week_total_head">Week Total</th>
+  </tr>
+</template>
+
+<template id="tmpl-weekly-head-date">
+  <th class="border-l border-slate-200 px-3 py-2 text-center font-semibold">
+    <div data-cell="date_label"></div>
+    <span class="text-[10px] font-normal text-slate-400">Min · Center · Max</span>
+  </th>
+</template>
+
+<template id="tmpl-weekly-product-row">
+  <tr class="hover:bg-slate-50">
+    <td class="weekly-product-cell sticky left-0 z-[1] bg-white p-2">
+      <input type="text" placeholder="Choose or type a product..." autocomplete="off" aria-label="Choose product"
+        class="weekly-product-select px-1 py-2 text-xs font-semibold text-slate-700 outline-none" data-cell="product_input">
+      <datalist data-cell="product_options"></datalist>
+    </td>
+    <td class="border-l border-slate-100 px-3 py-2.5 text-center font-bold text-sky-600" data-cell="week_total"></td>
+  </tr>
+</template>
+
+<template id="tmpl-weekly-option">
+  <option></option>
+</template>
+
+<template id="tmpl-weekly-empty-cell">
+  <td class="weekly-order-cell border-l border-slate-100 px-2 py-2 text-center text-xs text-slate-300">Choose a product</td>
+</template>
+
+<template id="tmpl-weekly-day-cell">
+  <td class="weekly-order-cell border-l border-slate-100 px-2 py-2 text-center">
+    <div class="weekly-range rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold">
+      <span class="text-slate-400" data-cell="min"></span>
+      <strong class="text-emerald-600" data-cell="suggested"></strong>
+      <span class="text-slate-400" data-cell="max"></span>
+    </div>
+    <input type="number" min="0" class="input-final weekly-final-input" data-cell="final_input">
+  </td>
+</template>
+
+<template id="tmpl-weekly-foot-row">
+  <tr class="bg-slate-800 font-semibold text-xs">
+    <td class="px-3 py-2.5 text-left text-white">TOTALS</td>
+    <td class="border-l border-white/20 px-3 py-2.5 text-center text-sky-300" data-cell="week_total"></td>
+  </tr>
+</template>
+
+<template id="tmpl-weekly-foot-cell">
+  <td class="border-l border-white/20 px-3 py-2.5 text-center text-white" data-cell="total"></td>
+</template>
+
+<!-- Templates - history -->
+<template id="tmpl-history-empty">
+  <div class="rounded-xl border border-slate-200 bg-white px-4 py-12 text-center text-slate-400">
+    <i class="bi bi-clock-history mb-2 block text-2xl"></i>No order history found.
+  </div>
+</template>
+
+<template id="tmpl-history-card">
+  <article class="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm transition hover:border-slate-500 hover:shadow-md">
+    <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-slate-800 px-5 py-4 text-white">
+      <div>
+        <h2 class="text-sm font-bold" data-cell="title"></h2>
+        <p class="mt-1 text-xs text-slate-300" data-cell="subtitle"></p>
+      </div>
+      <div class="flex items-center gap-5">
+        <div class="text-right">
+          <div class="text-[10px] uppercase tracking-wide text-slate-400">Final quantity</div>
+          <strong class="text-lg text-white" data-cell="final_total"></strong>
+          <div class="text-xs text-slate-300" data-cell="total_cost"></div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" data-cell="view_btn" class="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100"><i class="bi bi-eye"></i> View</button>
+          <button type="button" data-cell="delete_btn" class="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-700"><i class="bi bi-trash3"></i> Delete</button>
+        </div>
+      </div>
+    </div>
+    <div class="flex items-center justify-between px-5 py-3 text-xs text-slate-500">
+      <span>Suggested total: <strong class="text-emerald-600" data-cell="suggested_total"></strong></span>
+      <span>Open the weekly breakdown to review each delivery day <i class="bi bi-arrow-right ml-1"></i></span>
+    </div>
+  </article>
+</template>
+
+<template id="tmpl-history-detail-shell">
+  <div class="mx-auto my-4 max-w-6xl overflow-hidden rounded-xl border border-slate-800 bg-white shadow-2xl">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
+      <h2 class="text-base font-bold text-slate-900" data-cell="title"></h2>
+      <div class="flex items-center gap-2">
+        <button type="button" data-cell="export_btn" class="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"><i class="bi bi-file-earmark-excel"></i> Export Excel</button>
+        <button type="button" data-cell="close_btn" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">Close</button>
+      </div>
+    </div>
+    <div data-cell="content"></div>
+  </div>
+</template>
+
+<template id="tmpl-history-week">
+  <div>
+    <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-800 px-5 py-3 text-white">
+      <div>
+        <h2 class="text-sm font-bold" data-cell="title"></h2>
+        <p class="mt-0.5 text-xs text-slate-300" data-cell="subtitle"></p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-300">Final: <strong class="text-white" data-cell="final_total"></strong> · <span data-cell="total_cost"></span></span>
+        <button type="button" data-cell="delete_btn" class="rounded-lg border border-white/30 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-white/10"><i class="bi bi-trash3"></i> Delete</button>
+      </div>
+    </div>
+    <div class="oracle-scroll">
+      <table class="w-full text-xs" data-cell="table">
+        <thead class="bg-slate-100 text-slate-600">
+          <tr data-cell="head_row">
+            <th class="sticky left-0 z-[2] bg-slate-100 px-3 py-2.5 text-left font-semibold">Product</th>
+            <th class="border-l border-slate-200 px-3 py-2.5 text-center font-semibold" data-cell="week_total_head">Week Total</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100" data-cell="body"></tbody>
+        <tfoot>
+          <tr class="bg-slate-800 font-semibold text-white" data-cell="foot_row">
+            <td class="px-3 py-2.5">TOTALS</td>
+            <td class="border-l border-white/20 px-3 py-2.5 text-center" data-cell="week_total"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+</template>
+
+<template id="tmpl-history-head-date">
+  <th class="border-l border-slate-200 px-3 py-2.5 text-center font-semibold">
+    <div data-cell="date_label"></div>
+    <span class="text-[10px] font-normal text-slate-400">Min · Center · Max</span>
+  </th>
+</template>
+
+<template id="tmpl-history-product-row">
+  <tr class="hover:bg-slate-50">
+    <td class="sticky left-0 z-[1] bg-white px-3 py-2.5">
+      <div class="font-semibold text-slate-800" data-cell="name"></div>
+      <div class="text-[10px] text-slate-400" data-cell="code"></div>
+    </td>
+    <td class="border-l border-slate-200 px-3 py-2 text-center font-bold text-sky-600" data-cell="week_total"></td>
+  </tr>
+</template>
+
+<template id="tmpl-history-day-cell">
+  <td class="border-l border-slate-200 px-3 py-2 text-center">
+    <div class="history-range weekly-range rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold">
+      <span class="text-slate-400" data-cell="min"></span>
+      <strong class="text-emerald-600" data-cell="suggested"></strong>
+      <span class="text-slate-400" data-cell="max"></span>
+    </div>
+    <div class="history-final input-final weekly-final-input" title="Double-click to edit" data-cell="final"></div>
+  </td>
+</template>
+
+<template id="tmpl-history-empty-cell">
+  <td class="border-l border-slate-200 px-3 py-2 text-center"><span class="text-slate-300">—</span></td>
+</template>
+
+<template id="tmpl-history-foot-cell">
+  <td class="border-l border-white/20 px-3 py-2.5 text-center" data-cell="total"></td>
+</template>
+
+<!-- Templates - daily averages -->
+<template id="tmpl-week-card">
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-5 py-3 flex flex-wrap gap-2 items-center justify-between" data-cell="header">
+      <div class="flex flex-wrap items-center gap-2" data-cell="badges">
+        <span class="text-sm font-bold text-white" data-cell="label"></span>
+      </div>
+      <span class="text-xs text-white/70">Units: <strong class="text-white" data-cell="units"></strong> | Rev: <strong class="text-white" data-cell="revenue"></strong><span class="hidden" data-cell="bulk_detail"> | Bulk: <strong class="text-white" data-cell="bulk_sales"></strong> / TC <strong class="text-white" data-cell="bulk_tc"></strong></span></span>
+    </div>
+    <div class="oracle-scroll daily-average-scroll weekly-average-scroll">
+      <table class="w-full table-fixed border-collapse text-xs" style="min-width:1230px">
+        <thead class="bg-slate-100 text-slate-600">
+          <tr data-cell="head_row">
+            <th class="w-[180px] px-3 py-2 text-left font-semibold">Product</th>
+            <th class="w-[80px] border-l border-slate-300 px-3 py-2 text-center font-semibold" data-cell="week_total_head">Total</th>
+            <th class="w-[110px] border-l border-slate-300 px-3 py-2 text-center font-semibold">Revenue</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100" data-cell="body"></tbody>
+        <tfoot>
+          <tr data-cell="foot_row">
+            <td class="w-[180px] px-3 py-2 font-bold text-xs text-white">Day Total</td>
+            <td class="w-[80px] border-l border-white/25 px-3 py-2 text-center font-bold text-xs text-white" data-cell="week_total"></td>
+            <td class="w-[110px] border-l border-white/25 px-3 py-2 text-center font-bold text-xs text-white" data-cell="week_revenue"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+</template>
+
+<template id="tmpl-week-bulk-yes">
+  <span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-amber-200"><i class="bi bi-box-seam"></i> Bulk Order</span>
+</template>
+
+<template id="tmpl-week-bulk-no">
+  <span class="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/70 ring-1 ring-white/15"><i class="bi bi-dash-circle"></i> No Bulk Order</span>
+</template>
+
+<template id="tmpl-week-day-head">
+  <th class="w-[120px] border-l border-slate-300 px-2 py-2 text-center font-semibold"><div data-cell="day"></div></th>
+</template>
+
+<template id="tmpl-week-product-row">
+  <tr class="hover:bg-slate-50">
+    <td class="w-[180px] px-3 py-2 font-semibold text-slate-800 text-xs" data-cell="name"></td>
+    <td class="w-[80px] border-l border-slate-300 px-3 py-2 text-center font-bold text-xs text-slate-700" data-cell="total"></td>
+    <td class="w-[110px] border-l border-slate-300 px-3 py-2 text-center text-xs text-amber-700 font-semibold" data-cell="revenue"></td>
+  </tr>
+</template>
+
+<template id="tmpl-week-day-cell">
+  <td class="w-[120px] border-l border-slate-200 px-2 py-2 text-center">
+    <div class="flex min-h-[52px] items-center justify-center gap-2">
+      <span class="inline-flex w-[44px] shrink-0 items-center justify-center rounded-md px-2 py-1 text-[11px] font-semibold" data-cell="qty"></span>
+      <div class="hidden flex shrink-0 flex-col items-start gap-1" data-cell="tags">
+        <span class="inline-flex min-h-[18px] min-w-[48px] items-center justify-center rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-bold leading-none text-sky-800 ring-1 ring-sky-200 cursor-help" data-cell="pos"></span>
+        <span class="inline-flex min-h-[18px] min-w-[48px] items-center justify-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold leading-none text-amber-800 ring-1 ring-amber-200 cursor-help" data-cell="bo"></span>
+      </div>
+    </div>
+  </td>
+</template>
+
+<template id="tmpl-week-foot-cell">
+  <td class="w-[120px] border-l border-white/25 px-2 py-2 text-center font-bold text-xs text-white" data-cell="total"></td>
+</template>
+
+<template id="tmpl-avg-row">
+  <tr class="hover:bg-slate-50">
+    <td class="px-3 py-2.5">
+      <div class="font-semibold text-slate-800" data-cell="name"></div>
+      <div class="text-[10px] text-slate-400" data-cell="category"></div>
+    </td>
+    <td class="px-3 py-2.5 text-center" data-cell="total_cell">
+      <div class="font-bold text-sky-600" data-cell="total_avg"></div>
+      <div class="text-[9px] text-slate-500" data-cell="total_pct"></div>
+      <div class="text-[9px] text-emerald-600" data-cell="total_rev"></div>
+    </td>
+  </tr>
+</template>
+
+<template id="tmpl-avg-cell">
+  <td class="px-3 py-2.5 text-center">
+    <div class="font-bold text-slate-800" data-cell="avg"></div>
+    <div class="text-[9px] text-purple-500 font-semibold" data-cell="pct"></div>
+    <div class="text-[9px] text-emerald-600 font-medium" data-cell="rev"></div>
+  </td>
+</template>
+
+<template id="tmpl-avg-foot-row">
+  <tr class="bg-slate-800">
+    <td class="px-3 py-2.5 font-bold text-xs text-white">Day Avg</td>
+    <td class="px-3 py-2.5 text-center" data-cell="total_cell">
+      <div class="font-bold text-xs text-sky-300" data-cell="total_avg"></div>
+      <div class="text-[9px] text-slate-400">100%</div>
+      <div class="text-[9px] text-sky-300" data-cell="total_rev"></div>
+    </td>
+  </tr>
+</template>
+
+<template id="tmpl-avg-foot-cell">
+  <td class="px-3 py-2.5 text-center">
+    <div class="font-bold text-xs text-white" data-cell="avg"></div>
+    <div class="text-[9px] text-slate-400">100%</div>
+    <div class="text-[9px] text-sky-300" data-cell="rev"></div>
+  </td>
+</template>
+
+
+<script defer src="{{ url_for('static', filename='js/handles/oracle_handles.js', v='fs3') }}"></script>
+
+{% endblock %}
