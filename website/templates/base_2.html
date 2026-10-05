@@ -623,12 +623,15 @@
         </div>
         <span class="nav-label whitespace-nowrap truncate">InvenSync</span>
       </a>
-      <a href="/store-manager/oracle" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/store-manager/oracle') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Oracle">
+      <a onclick="showOracleStoreUser(this)" id="_oracle_v2" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/store-manager/oracle') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Oracle">
         <div class="shrink-0 {% if request.path.startswith('/store-manager/oracle') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12h6"/></svg>
         </div>
         <span class="nav-label whitespace-nowrap truncate">Oracle</span>
       </a>
+	  
+	  
+	  
       <a href="/store-manager/daily-report" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_daily_report_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Daily Report">
         <div class="shrink-0 {% if is_daily_report_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
@@ -994,6 +997,7 @@
 	{% if current_user.is_authenticated and current_user.role == 'Store Manager' %}
 	<script>Base2.initPresence({{ url_for('views.presence_ping')|tojson }});</script>
 	{% endif %}
+
 
 
     <script src="{{ url_for('static', filename='js/request_builder.js') }}"></script>
