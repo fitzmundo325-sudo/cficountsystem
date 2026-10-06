@@ -1,5 +1,7 @@
-// ORACLE_HANDLES_VERSION 2026-10-05-fs3
-// ---------------------------------------------------------------- Constants
+// =============================================================
+// ORACLE_HANDLES_VERSION 2026-10-06-obs2
+// ----------------------------------------- Constants ---------
+
 let DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 let DAYS_DISPLAY = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 let DISP_TO_JS = [1, 2, 3, 4, 5, 6, 0];
@@ -13,7 +15,7 @@ let WEEK_META = [
   { label: 'Week 4 (Last Week)', hCls: 'bg-rose-800', iBg: '#FFF1F2', iBd: 'rgba(225,29,72,0.3)', iClr: '#881337' }
 ];
 
-// ---------------------------------------------------------------- State
+// ---------------------------------------------- State -------
 let CLUSTER_VIEW = ORACLE_VIEW === 'cluster';
 let STORE = { id: '', name: '', store_group: '' };
 let PRODUCTS = [];
@@ -102,6 +104,33 @@ function showToast(msg, type = 'info') {
   setCell(toastEl, 'message', msg);
   container.appendChild(toastEl);
   setTimeout(fadeOutToast.bind(null, toastEl), 3000);
+}
+
+// ---------------------------------------------------------------- Row visibility observer
+let rowObserver = null;
+
+function onRowIntersect(entries) {
+  entries.forEach(entry => {
+    entry.target.classList.toggle('unrender', !entry.isIntersecting);
+  });
+}
+
+function getRowObserver() {
+  if (!rowObserver && 'IntersectionObserver' in window) {
+    rowObserver = new IntersectionObserver(onRowIntersect, { root: null, rootMargin: '200px 0px' });
+  }
+  return rowObserver;
+}
+
+function appendObservedRow(parent, row) {
+  parent.appendChild(row);
+  let observer = getRowObserver();
+  if (observer) observer.observe(row);
+}
+
+function unobserveRows(container) {
+  if (!rowObserver || !container) return;
+  container.querySelectorAll('tr').forEach(tr => rowObserver.unobserve(tr));
 }
 
 // ---------------------------------------------------------------- View visibility
@@ -217,7 +246,9 @@ function applyOracleData(data) {
 function showLoadError(message) {
   let weeklyBody = document.getElementById('weekly-order-body');
   let orderBody = document.getElementById('order-table-body');
+  unobserveRows(weeklyBody);
   weeklyBody.innerHTML = '';
+  unobserveRows(orderBody);
   orderBody.innerHTML = '';
   weeklyBody.appendChild(buildMessageRow(message, 1));
   orderBody.appendChild(buildMessageRow(message, 15));
@@ -717,6 +748,7 @@ function renderOrderTable() {
   let tbody = document.getElementById('order-table-body');
   let tfoot = document.getElementById('order-table-foot');
   let totSug = 0, totFinal = 0, totPlant = 0, totSell = 0;
+  unobserveRows(tbody);
   tbody.innerHTML = '';
   tfoot.innerHTML = '';
   if (!filteredProducts.length) {
@@ -726,7 +758,7 @@ function renderOrderTable() {
   }
   filteredProducts.forEach(p => {
     let built = buildOrderRow(p, ctx);
-    tbody.appendChild(built.row);
+    appendObservedRow(tbody, built.row);
     totSug += built.sug;
     totFinal += built.fo;
     totPlant += built.fo * p.plantPrice;
@@ -989,6 +1021,7 @@ function renderWeeklyOrderTable() {
   let foot = document.getElementById('weekly-order-foot');
   if (!head || !body || !foot) return;
   head.innerHTML = '';
+  unobserveRows(body);
   body.innerHTML = '';
   foot.innerHTML = '';
   if (!dates.length) {
@@ -1015,7 +1048,7 @@ function renderWeeklyOrderTable() {
       let emptyTotal = setCell(row, 'week_total', '—');
       emptyTotal.classList.remove('font-bold', 'text-sky-600');
       emptyTotal.classList.add('text-slate-300');
-      body.appendChild(row);
+      appendObservedRow(body, row);
       return;
     }
     let plans = getWeeklySuggestions(selected, dates, mult);
@@ -1030,7 +1063,7 @@ function renderWeeklyOrderTable() {
     });
     totalCost += rowFinal * selected.plantPrice;
     setCell(row, 'week_total', rowFinal);
-    body.appendChild(row);
+    appendObservedRow(body, row);
   });
   let footRow = cloneTemplate('tmpl-weekly-foot-row');
   dailySuggested.forEach(total => {
@@ -1247,7 +1280,7 @@ function buildHistoryWeek(g) {
       insertBeforeCell(row, td, 'week_total');
     });
     setCell(row, 'week_total', rowTotal);
-    body.appendChild(row);
+    appendObservedRow(body, row);
   });
   let footRow = getCell(week, 'foot_row');
   dates.forEach(date => {
@@ -1265,6 +1298,7 @@ function renderHistory() {
   let detailPanel = document.getElementById('history-detail-panel');
   if (detailPanel) {
     detailPanel.classList.add('hidden');
+    unobserveRows(detailPanel);
     detailPanel.innerHTML = '';
     document.body.classList.remove('overflow-hidden');
   }
@@ -1306,6 +1340,7 @@ function showHistoryWeek(index) {
   exportBtn.addEventListener('click', onExportHistoryClick);
   getCell(shell, 'close_btn').addEventListener('click', closeHistoryModal);
   getCell(shell, 'content').appendChild(buildHistoryWeek(g));
+  unobserveRows(detailPanel);
   detailPanel.innerHTML = '';
   detailPanel.appendChild(shell);
   detailPanel.classList.remove('hidden');
@@ -1417,9 +1452,13 @@ function getBulkOrderCell(productId, w, di) {
   return { qty: Number(raw.qty || 0) || 0, date: raw.date || raw.upload_date || '' };
 }
 
-function renderDailyAverages() {
-  renderWeeklyTables();
-  renderAvgSummary();
+async function renderDailyAverages() {
+	
+	postMessageToParent("function:showSpaLoading");
+	
+	await renderWeeklyTables();
+	await renderAvgSummary();
+   
 }
 
 function buildWeekDayCell(p, w, di, m) {
@@ -1441,6 +1480,8 @@ function buildWeekDayCell(p, w, di, m) {
   }
   return td;
 }
+
+
 
 function buildWeekCard(w) {
   let m = WEEK_META[w];
@@ -1487,14 +1528,24 @@ function buildWeekCard(w) {
   return card;
 }
 
-function renderWeeklyTables() {
+
+async function renderWeeklyTables() {
   let con = document.getElementById('weekly-sales-tables-container');
   con.innerHTML = '';
-  for (let w = 0; w < 4; w++) con.appendChild(buildWeekCard(w));
+  for (let w = 0; w < 4; w++){ 
+	await sleep(300);
+	con.appendChild(buildWeekCard(w))
+  
+  };
 }
 
-function renderAvgSummary() {
+
+
+async function renderAvgSummary() {
   let aS = {}, aR = {};
+	
+	
+
   PRODUCTS.forEach(p => {
     aS[p.id] = DISP_TO_JS.map(di => salesData[p.id].reduce((s, wk, weekIndex) => s + getOrganicSales(p.id, weekIndex, di), 0) / 4);
     aR[p.id] = aS[p.id].map(a => a * p.sellingPrice);
@@ -1507,13 +1558,21 @@ function renderAvgSummary() {
   let gR = pR.reduce((s, v) => s + v, 0);
   let body = document.getElementById('avg-summary-body');
   let foot = document.getElementById('avg-summary-foot');
+  unobserveRows(body);
   body.innerHTML = '';
   foot.innerHTML = '';
-  PRODUCTS.forEach((p, pi) => {
+  
+  for (let pi = 0; pi < PRODUCTS.length; pi++) {
+	  
+	  
+	  
+    let p = PRODUCTS[pi];
     let row = cloneTemplate('tmpl-avg-row');
     setCell(row, 'name', p.name);
     setCell(row, 'category', p.category);
-    aS[p.id].forEach((avg, ci) => {
+
+    for (let ci = 0; ci < aS[p.id].length; ci++) {
+      let avg = aS[p.id][ci];
       let rev = aR[p.id][ci];
       let pct = cR[ci] > 0 ? (rev / cR[ci] * 100).toFixed(1) : '0.0';
       let td = cloneTemplate('tmpl-avg-cell');
@@ -1521,23 +1580,33 @@ function renderAvgSummary() {
       setCell(td, 'pct', pct + '%');
       setCell(td, 'rev', '₱' + rev.toFixed(0));
       insertBeforeCell(row, td, 'total_cell');
-    });
+    }
+
     let pct4 = gR > 0 ? (pR[pi] / gR * 100).toFixed(1) : '0.0';
     setCell(row, 'total_avg', pU[pi].toFixed(1));
     setCell(row, 'total_pct', pct4 + '%');
     setCell(row, 'total_rev', '₱' + pR[pi].toFixed(0));
-    body.appendChild(row);
-  });
+    appendObservedRow(body, row);
+
+  }
+  
+  
   let footRow = cloneTemplate('tmpl-avg-foot-row');
-  DISP_TO_JS.forEach((_, ci) => {
+  for (let ci = 0; ci < DISP_TO_JS.length; ci++) {
     let td = cloneTemplate('tmpl-avg-foot-cell');
     setCell(td, 'avg', cU[ci].toFixed(1));
     setCell(td, 'rev', '₱' + cR[ci].toFixed(0));
     insertBeforeCell(footRow, td, 'total_cell');
-  });
+
+    await sleep(1);
+  }
+  
   setCell(footRow, 'total_avg', gU.toFixed(1));
   setCell(footRow, 'total_rev', '₱' + gR.toFixed(0));
   foot.appendChild(footRow);
+  
+postMessageToParent("function:hideSpaLoading");
+  
 }
 
 // ---------------------------------------------------------------- Listeners

@@ -278,6 +278,20 @@
   #history-detail-panel tbody td:first-child>div+div {
     display: none;
   }
+  
+  
+  
+  .unrender > *:not(:first-child) {
+  display: none;
+}
+
+
+.unrender > *:first-child {
+  min-height: 70px;
+  padding:10px;
+}
+
+  
 </style>
 
 <!-- Header -->
@@ -943,7 +957,12 @@
 </template>
 
 
-<script defer src="{{ url_for('static', filename='js/handles/oracle_handles.js', v='fs3') }}"></script>
+
 <script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
 
 {% endblock %}
+
+{% block extra_js %}
+	<script defer src="{{ url_for('static', filename='js/handles/oracle_handles.js', v='fs3') }}"></script>
+{% endblock %}
+	
