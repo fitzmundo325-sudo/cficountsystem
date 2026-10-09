@@ -3583,26 +3583,32 @@ function toggleFullscreen() {
   let isHidden = modal.classList.contains('hidden');
 
   if (isHidden) {
+	postMessageToParent("function:overRideFullscreen:true");
     updateFullscreenContent();
 
     modal.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
 
     localStorage.setItem('dailyCombinedFullscreen', 'true');
-
+	
+	
     setTimeout(() => {
       enableHorizontalScroll();
 observeRowVisibility(document.getElementById('fullscreen-scroll-container'), document.getElementById('modal-content'));
     }, 100);
   } else {
+	postMessageToParent("function:overRideFullscreen");
     modal.classList.add('hidden');
     document.body.style.overflow = '';
 
     localStorage.removeItem('dailyCombinedFullscreen');
-
+	
+	
 	observeRowVisibility(null, document.getElementById('invensyncTableBody'));
   }
 }
+
+
 
 
 function updateFullscreenContent() {
@@ -4215,4 +4221,6 @@ async function downloadInvenSyncExport() {
 }
 
 document.getElementById('exportInvenSyncSubmitBtn').addEventListener('click', downloadInvenSyncExport);
+
+
 

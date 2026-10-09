@@ -871,6 +871,9 @@ function toggleOrderFullscreen() {
   let weeklyPanel = document.getElementById('weekly-order-panel');
   if (!view) return;
   if (view.classList.contains('oracle-fs')) {
+	  
+	postMessageToParent("function:overRideFullscreen")
+	  
     view.classList.remove('oracle-fs');
     view.style.cssText = '';
     if (fullscreenPlaceholder && fullscreenPlaceholder.parentNode) {
@@ -881,9 +884,13 @@ function toggleOrderFullscreen() {
     if (weeklyPanel) weeklyPanel.classList.toggle('hidden', orderMode !== 'weekly');
     document.body.style.overflow = '';
     return;
+	
+	
   }
   let orderView = document.getElementById('view-order-form');
   if (!orderView || !orderView.classList.contains('active')) return;
+  postMessageToParent("function:overRideFullscreen:true")
+  
   renderOrderTable();
   fullscreenPlaceholder = document.createComment('oracle-order-view');
   view.parentNode.replaceChild(fullscreenPlaceholder, view);
