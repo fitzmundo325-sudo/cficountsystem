@@ -11113,10 +11113,43 @@ def update_report_value():
         if not report_id or not field_name or new_value is None:
             return jsonify({'success': False, 'error': 'Missing required fields'}), 400
         
-        # Get the report
-        report = DailyReport.query.get(report_id)
+        # Cluster data is consolidated by date. Consolidated rows use a
+        # negative date ordinal as their display id, so resolve that row back
+        # to the real reports in the cluster before applying an edit.
+        source_reports = []
+        try:
+            report_id = int(report_id)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Report not found'}), 404
+
+        if report_id < 0:
+            report_date = date.fromordinal(-report_id)
+            managed_cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+            if not managed_cluster:
+                return jsonify({'success': False, 'error': 'Cluster not found'}), 404
+            source_reports = (
+                DailyReport.query
+                .join(Store, DailyReport.store_id == Store.id)
+                .filter(
+                    Store.cluster_id == managed_cluster.id,
+                    DailyReport.report_date == report_date,
+                    DailyReport.status.in_(('Pending', 'Approved', 'Rejected')),
+                )
+                .order_by(DailyReport.id.asc())
+                .all()
+            )
+            report = source_reports[0] if source_reports else None
+        else:
+            report = DailyReport.query.get(report_id)
+
         if not report:
             return jsonify({'success': False, 'error': 'Report not found'}), 404
+
+        if not source_reports:
+            managed_cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+            if not managed_cluster or not report.store or report.store.cluster_id != managed_cluster.id:
+                return jsonify({'success': False, 'error': 'Report is outside your assigned cluster'}), 403
+            source_reports = [report]
         
         # Cluster manager tables expose edit controls for pending, approved, and rejected rows.
         if report.status not in ('Pending', 'Approved', 'Rejected'):
@@ -11164,10 +11197,15 @@ def update_report_value():
             except ValueError:
                 return jsonify({'success': False, 'error': f'{field_name} must be an integer'}), 400
         
-        # Set the attribute
+        # For a consolidated cluster row, preserve the displayed aggregate by
+        # applying the requested delta to one real source report.
         if hasattr(report, field_name):
+            aggregate_value = sum(float(getattr(item, field_name, 0) or 0) for item in source_reports)
             previous_value = getattr(report, field_name)
-            setattr(report, field_name, new_value)
+            if len(source_reports) > 1:
+                setattr(report, field_name, float(previous_value or 0) + (float(new_value) - aggregate_value))
+            else:
+                setattr(report, field_name, new_value)
             log_audit_event(
                 action='report.update_field',
                 entity_type='DailyReport',
