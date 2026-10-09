@@ -1585,10 +1585,12 @@ def _apply_ending_inventory_from_invensync(reports):
         combined = f'{category} {sub_category} {product_text}'
         if 'greetingcake' in combined or category == 'gc':
             return 'gc'
+        # Premium must be based on the Product Master category, not on a
+        # product description that happens to contain the word "premium".
+        if category == 'premium':
+            return 'premium'
         if 'roll' in combined:
             return 'rolls'
-        if 'premium' in combined:
-            return 'premium'
         return None
 
     totals_by_key = {}
@@ -1609,12 +1611,10 @@ def _apply_ending_inventory_from_invensync(reports):
         bucket = _resolve_bucket(item)
         if not bucket:
             continue
-        component_ending_qty = (
-            int(item.ending_d5_qty or 0)
-            + int(item.ending_d4_qty or 0)
-            + int(item.ending_d3_qty or 0)
-        )
-        ending_qty = int(item.total_ending_qty or component_ending_qty or 0)
+        # Cluster totals must use the item's persisted Total Ending Inventory
+        # value.  In particular, zero is a valid total and must not fall back
+        # to the component columns, otherwise the Premium total is overstated.
+        ending_qty = int(item.total_ending_qty or 0)
         bucket_totals = totals_by_key.setdefault(key, {'gc': 0, 'rolls': 0, 'premium': 0})
         bucket_totals[bucket] += ending_qty
 
