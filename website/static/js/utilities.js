@@ -160,7 +160,6 @@ const utility = {
 
 
 
-
 var shown = false;
 var created = false;
 function createDialogue_old(type,data){
@@ -627,3 +626,11 @@ function childViewToggleSidebar(){
 	postMessageToParent("function:toggleSidebarCollapse");
 }
 
+function overRideFullscreen(stat=false){
+	if(stat){
+		_("general_container").classList.add("override_fullscreen");
+	}else{
+		_("general_container").classList.remove("override_fullscreen");
+	}	
+	
+}
