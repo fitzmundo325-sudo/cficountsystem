@@ -969,6 +969,18 @@ tr.hide_child_inputs > td:not(:first-child) {
 }
 
 
+
+.override_fullscreen{
+	position:fixed;
+	top:0;
+	right:0;
+	left:0;
+	z-index:50;
+	margin-left:0px !important;
+	
+	
+}
+
 @media (max-width: 1023px) {
 	
 }
