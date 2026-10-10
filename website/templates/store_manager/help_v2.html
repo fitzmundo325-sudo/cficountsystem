@@ -1,0 +1,135 @@
+{% extends "base_headless.html" %}
+
+{% block title %}Help{% endblock %}
+
+{% block content %}
+
+<style>
+  details > summary::-webkit-details-marker { display: none; }
+  .help-card:target { box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35); }
+</style>
+
+<script>
+let currentUserRole = {{ user.role|tojson }};
+let initialStoreId = {{ request.args.get('store_id', '')|tojson }};
+let initialStoreName = {{ (store.name if store is defined and store else '')|tojson }};
+</script>
+
+<!-- Top Header -->
+<header class="sticky top-0 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-2 min-h-14 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" style="z-index:99;">
+  <div class="flex items-center gap-3 sm:gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500" data-visible-role="Store Manager">
+      <span class="hover:text-slate-900 cursor-pointer">Store Manager</span><span class="mx-2">/</span><span class="text-slate-900">Help</span>
+    </nav>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-3 sm:justify-end">
+    <div class="text-sm font-medium text-slate-600"><span class="text-slate-900" id="headerStoreName"></span></div>
+  </div>
+</header>
+
+<!-- Content -->
+<div id="help-page-shell" class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-[2400px] w-full mx-auto space-y-6">
+
+  <!-- Page Header -->
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Help<span id="pageStoreNameWrap" class="hidden"> - <span id="pageStoreName"></span></span></h1>
+      <p class="mt-1 text-slate-600">Step-by-step walkthroughs for daily work: InvenSync, Oracle, Daily Report, POS Sold, Delivery, TransAct tools, and Store Data.</p>
+    </div>
+  </section>
+
+  <!-- Support Banner -->
+  <div id="supportBanner" class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-4">
+    <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <p class="text-sm font-bold uppercase tracking-wide text-emerald-700">Need system support?</p>
+        <h2 class="mt-1 text-xl font-bold text-slate-900">Submit a ticket to the support team</h2>
+        <p class="mt-1 max-w-3xl text-sm text-slate-700">If you run into missing data, upload issues, locked records, incorrect values, or any system problem, please create a ticket so the support team can review it properly. Include the store name, affected date, menu/tool, and a short description of the issue.</p>
+      </div>
+      <a href="https://script.google.com/macros/s/AKfycbxzRlxWaFoNDE5sW5ZdH2ai1KzBopjES3Ua6FI2Zb07YmmuusnPNB26Yl_FEjBzA3vU/exec" target="_blank" rel="noopener noreferrer" class="inline-flex shrink-0 items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700">Open Ticketing System</a>
+    </div>
+  </div>
+
+  <div class="space-y-3">
+    <div id="help-search-target" class="relative max-w-md">
+      <input id="help-search-input" type="search" autocomplete="off" placeholder="Search a tool or a step" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pl-9 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100">
+      <svg xmlns="http://www.w3.org/2000/svg" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+    </div>
+    <div id="help-category-target" class="flex flex-wrap items-center gap-2"></div>
+  </div>
+
+  <div id="main-content" class="space-y-6">
+
+    <section id="daily-flow-section" class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Suggested daily order</p>
+      <h2 class="mt-1 text-lg font-bold text-slate-900">A simple flow for the end of the day</h2>
+      <ol id="daily-flow-list" class="mt-4 flex flex-wrap items-center gap-2"></ol>
+    </section>
+
+    <section id="help-grid" class="grid gap-4 md:grid-cols-2 2xl:grid-cols-3"></section>
+
+    <div id="help-empty" class="hidden rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
+      <p class="text-base font-semibold text-slate-800">No walkthrough matches your search.</p>
+      <p class="mt-1 text-sm text-slate-500">Try a shorter word, or send a ticket if you cannot find what you need.</p>
+    </div>
+
+    <section id="faq-section" class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-wide text-sky-700">Quick answers</p>
+      <h2 class="mt-1 text-lg font-bold text-slate-900">Common questions</h2>
+      <div id="faq-list" class="mt-4 divide-y divide-slate-200 rounded-xl border border-slate-200"></div>
+    </section>
+
+  </div>
+
+</div>
+
+<template id="categoryFilterButtonTemplate">
+  <button type="button" class="category-filter-btn px-3 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-semibold transition fancy_button" data-cell="button"></button>
+</template>
+
+<template id="dailyFlowItemTemplate">
+  <li class="flex items-center gap-2" data-cell="row">
+    <a href="#" class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-800 transition hover:border-sky-300 hover:bg-sky-50" data-cell="link">
+      <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white" data-cell="number"></span>
+      <span data-cell="label"></span>
+    </a>
+    <span class="text-slate-400" data-cell="arrow">&rarr;</span>
+  </li>
+</template>
+
+<template id="helpCardTemplate">
+  <article class="help-card scroll-mt-20 flex flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-sm" data-cell="row">
+    <p class="text-xs font-black uppercase tracking-wide text-sky-700">Walkthrough</p>
+    <h2 class="mt-1 text-xl font-bold text-slate-900" data-cell="title"></h2>
+    <p class="mt-1 text-sm text-slate-500" data-cell="summary"></p>
+    <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600" data-cell="steps"></ol>
+    <div class="mt-auto pt-4">
+      <a href="#" class="inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800" data-cell="link">Start Walkthrough</a>
+    </div>
+  </article>
+</template>
+
+<template id="helpStepTemplate">
+  <li data-cell="step"></li>
+</template>
+
+<template id="faqItemTemplate">
+  <details class="group px-4 py-3" data-cell="row">
+    <summary class="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-900">
+      <span data-cell="question"></span>
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+    </summary>
+    <p class="mt-2 text-sm text-slate-600" data-cell="answer"></p>
+  </details>
+</template>
+
+<script defer src="{{ url_for('static', filename='js/handles/help_store_manager_page_handles.js') }}?v=help-v2-20261010-1"></script>
+
+{% endblock %}
