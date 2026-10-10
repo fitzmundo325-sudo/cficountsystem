@@ -690,7 +690,7 @@
         </div>
         <span class="nav-label whitespace-nowrap truncate">Store Data</span>
       </a>
-      <a href="/store-manager/help" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_help_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Help">
+      <a onclick="showHelpPage(this)" id="_help_v2" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_help_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Help">
         <div class="shrink-0 {% if is_help_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>
         </div>

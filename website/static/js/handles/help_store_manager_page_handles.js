@@ -20,7 +20,7 @@ let helpTools = [
     category: 'daily',
     title: 'InvenSync',
     summary: 'Daily stock counts, deliveries, transfers, wastage, and variance.',
-    url: '/store-manager/invensync?guide=1',
+    url: '/store-manager/invensync_details_v2?guide=1',
     steps: [
       'Pick the inventory date at the top, or use the arrows to move one day at a time.',
       'Use Search or the category buttons to find products faster. Click Sync if a product is missing from the list.',
@@ -180,6 +180,21 @@ let helpFaqs = [
   }
 ];
 
+
+let helpParentTargets = {
+  'invensync': 'invensync_details_v2',
+  'pos-sold': 'daily-report/pos-sold',
+  'delivery': 'delivery',
+  'daily-report': 'daily-report',
+  'oracle': 'oracle',
+  'transact': 'transaction-activity-form',
+  'trans-in': 'trans',
+  'trans-out': 'trans-out',
+  'wastage': 'wastage',
+  'store-data': 'store-data'
+};
+
+
 let activeHelpCategory = 'all';
 let helpSearchTerm = '';
 let helpCardElements = [];
@@ -191,6 +206,19 @@ function cloneHelpTemplate(templateId) {
 function helpCell(root, name) {
   return root.querySelector('[data-cell="' + name + '"]');
 }
+
+
+
+function goToTool(tool) {
+  let target = helpParentTargets[tool.id] || tool.id;
+  if (typeof postMessageToParent === 'function') {
+    postMessageToParent('goToParent:' + target + '?guide=1');
+    return;
+  }
+  window.location.href = tool.url;
+}
+
+
 
 function setStoreName() {
   if (typeof initialStoreName === 'undefined' || !initialStoreName) return;
@@ -251,7 +279,9 @@ function renderHelpCards() {
     card.dataset.search = [tool.title, tool.summary].concat(tool.steps).join(' ').toLowerCase();
     helpCell(card, 'title').textContent = tool.title;
     helpCell(card, 'summary').textContent = tool.summary;
-    helpCell(card, 'link').setAttribute('href', tool.url);
+    helpCell(card, 'link').addEventListener('click', function () {
+      goToTool(tool);
+    });
     let steps = helpCell(card, 'steps');
     tool.steps.forEach(function (text) {
       let step = cloneHelpTemplate('helpStepTemplate');
