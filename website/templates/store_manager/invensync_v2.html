@@ -16,6 +16,39 @@
   #main-content table thead th, #main-content table tbody tr[data-product-id] td { border-right: 1px solid rgba(203, 213, 225, 0.55); }
   #main-content table thead th:last-child, #main-content table tbody tr[data-product-id] td:last-child { border-right: none; }
 
+  /* Fullscreen uses the custom page scrollbar; hide its native scrollbars. */
+  #fullscreen-scroll-container {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  #fullscreen-scroll-container::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  #fullscreen-modal,
+  #fullscreen-modal * {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  #fullscreen-modal::-webkit-scrollbar,
+  #fullscreen-modal *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  html:has(#fullscreen-modal:not(.hidden)),
+  body:has(#fullscreen-modal:not(.hidden)) {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  html:has(#fullscreen-modal:not(.hidden))::-webkit-scrollbar,
+  body:has(#fullscreen-modal:not(.hidden))::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+
   @keyframes bounceIn { 0% { opacity: 0; transform: scale(0.7); } 50% { transform: scale(1.03); } 100% { opacity: 1; transform: scale(1); } }
   .animate-bounce-in { animation: bounceIn 0.4s ease-out; }
 
@@ -43,6 +76,65 @@
   .missing_dates_modal{
 	z-index:999;
   }
+
+  /* External, always-visible horizontal control for the wide inventory table. */
+  .invensync-horizontal-scrollbar {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 3px;
+    z-index: 10040;
+    display: none;
+    padding: 4px 0;
+    overflow: hidden !important;
+    overflow-y: hidden !important;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: rgba(248, 250, 252, 0.97);
+    box-shadow: 0 5px 14px rgba(15, 23, 42, 0.18);
+    scrollbar-width: auto !important;
+    -ms-overflow-style: auto !important;
+  }
+
+  .invensync-horizontal-scrollbar.is-active { display: block; }
+  body.invensync-fullscreen-active #invensync-main-horizontal-scrollbar { display: none !important; pointer-events: none; }
+  html.invensync-fullscreen-active,
+  html.invensync-fullscreen-active body {
+    overflow: hidden !important;
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  html.invensync-fullscreen-active::-webkit-scrollbar,
+  html.invensync-fullscreen-active body::-webkit-scrollbar,
+  html.invensync-fullscreen-active *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  html.invensync-fullscreen-active * {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  body.invensync-fullscreen-active,
+  body.invensync-fullscreen-active #main-content,
+  body.invensync-fullscreen-active #main-content * {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  body.invensync-fullscreen-active::-webkit-scrollbar,
+  body.invensync-fullscreen-active #main-content::-webkit-scrollbar,
+  body.invensync-fullscreen-active #main-content *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  .invensync-horizontal-scrollbar__rail { position: relative; height: 10px; margin: 0 4px; border-radius: 999px; background: #e2e8f0; }
+  .invensync-horizontal-scrollbar__thumb { position: absolute; top: 0; left: 0; height: 10px; min-width: 48px; border-radius: 999px; background: #475569; cursor: grab; touch-action: none; }
+  .invensync-horizontal-scrollbar__thumb:hover, .invensync-horizontal-scrollbar__thumb.is-dragging { background: #1e293b; cursor: grabbing; }
+  html.admin-dark .invensync-horizontal-scrollbar { border-color: #475569; background: rgba(30, 41, 59, 0.97); }
+  html.admin-dark .invensync-horizontal-scrollbar__rail { background: #334155; }
+  html.admin-dark .invensync-horizontal-scrollbar__thumb { background: #94a3b8; }
+  html.admin-dark .invensync-horizontal-scrollbar__thumb:hover, html.admin-dark .invensync-horizontal-scrollbar__thumb.is-dragging { background: #cbd5e1; }
 
   
   
@@ -275,6 +367,9 @@ window.INVENSYNC_URLS = {
           <tbody class="divide-y divide-slate-200" id="invensyncTableBody"></tbody>
         </table>
       </div>
+      <div id="invensync-main-horizontal-scrollbar" class="invensync-horizontal-scrollbar" aria-label="Scroll inventory table horizontally" tabindex="0">
+        <div class="invensync-horizontal-scrollbar__rail"><div class="invensync-horizontal-scrollbar__thumb"></div></div>
+      </div>
     </div>
   </div>
 
@@ -469,6 +564,7 @@ window.INVENSYNC_URLS = {
       </div>
     </div>
 <div id="fullscreen-scroll-container" class="flex-1 overflow-auto bg-white"><div id="modal-content" class="transition-all duration-300 ease-in-out"></div></div>
+<div id="invensync-fullscreen-horizontal-scrollbar" class="invensync-horizontal-scrollbar" aria-label="Scroll inventory table horizontally" tabindex="0"><div class="invensync-horizontal-scrollbar__rail"><div class="invensync-horizontal-scrollbar__thumb"></div></div></div>
   </div>
 </div>
 
@@ -537,7 +633,7 @@ window.INVENSYNC_URLS = {
 
 
 
-<script defer src="{{ url_for('static', filename='js/handles/inv_sync_store_manager_page_handles.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/handles/inv_sync_store_manager_page_handles.js') }}?v=invensync-scrollbar-20261010-7"></script>
 
 <script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
 

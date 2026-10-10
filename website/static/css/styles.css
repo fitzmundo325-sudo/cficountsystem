@@ -189,8 +189,8 @@ body::-webkit-scrollbar,
 
 /* Custom Floating Page Scrollbar Thumb (Matches Sidebar implementation, draggable & hover-persistent) */
 .page-scrollbar-thumb {
-    position: fixed;
-    right: 3px;
+    position: absolute;
+    right: 0;
     width: 7px;
     min-height: 36px;
     border-radius: 999px;
@@ -200,6 +200,24 @@ body::-webkit-scrollbar,
     cursor: grab;
     transition: opacity 0.4s ease, width 0.15s ease, background-color 0.2s ease;
     z-index: 9999;
+}
+
+.page-scrollbar-rail {
+    position: fixed;
+    top: 3px;
+    right: 2px;
+    bottom: 3px;
+    width: 10px;
+    border-radius: 999px;
+    background: rgba(100, 116, 139, 0.2);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+    z-index: 9998;
+}
+
+.page-scrollbar-rail.is-visible {
+    opacity: 1;
 }
 
 .page-scrollbar-thumb:hover,
@@ -278,7 +296,7 @@ body::-webkit-scrollbar,
     min-height: 32px;
     border-radius: 999px;
     background: #64748b;
-    opacity: 0;
+    opacity: 1;
     pointer-events: none;
     transition: opacity 0.55s ease;
     z-index: 60;
