@@ -11977,7 +11977,15 @@ def invensync():
     if current_user.role not in ['Store Manager', 'Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor', 'Area Manager']:
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
-
+    
+    if current_user.role == 'Store Manager':
+        q = (request.args.get('q') or '').strip()
+        params = {'m': 'invensync_details_v2'}
+        if q:
+            params['q'] = q
+        return redirect(url_for('views.v2_base_2', **params))
+    
+    
     # Inventory Staff behavior:
     # - Without store_id: redirect to dashboard (all stores view)
     # - With store_id: allow viewing specific store details (read-only)
@@ -13866,6 +13874,19 @@ def oracle_v2():
         admin_shell=False,
         cluster_view=False,
     )
+
+
+
+#v2 of the Help page
+@views.route('/store-manager/help_v2', methods=['GET'])
+@login_required
+def help_v2():
+    if current_user.role not in ('Superadmin', 'Admin', 'Store Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    page = 'help'
+    return render_template("store_manager/help_v2.html", user=current_user, page=page)
     
     
 # ================================================
