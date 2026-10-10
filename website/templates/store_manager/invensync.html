@@ -274,6 +274,68 @@
     transform: translateY(-1px);
   }
 
+  /* Keep a visible horizontal control outside the wide inventory table. */
+  .invensync-horizontal-scrollbar {
+    position: sticky;
+    bottom: 12px;
+    z-index: 60;
+    display: none;
+    margin: 8px 10px 12px;
+    padding: 4px 0;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: rgba(248, 250, 252, 0.96);
+    box-shadow: 0 5px 14px rgba(15, 23, 42, 0.12);
+    scrollbar-width: auto !important;
+    -ms-overflow-style: auto !important;
+  }
+
+  .invensync-horizontal-scrollbar.is-active {
+    display: block;
+  }
+
+  .invensync-horizontal-scrollbar__track {
+    height: 8px;
+    min-width: 100%;
+  }
+
+  .invensync-horizontal-scrollbar::-webkit-scrollbar {
+    display: block !important;
+    width: 12px !important;
+    height: 12px !important;
+  }
+
+  .invensync-horizontal-scrollbar::-webkit-scrollbar-track {
+    background: #e2e8f0;
+    border-radius: 999px;
+  }
+
+  .invensync-horizontal-scrollbar::-webkit-scrollbar-thumb {
+    background: #64748b;
+    border: 2px solid #e2e8f0;
+    border-radius: 999px;
+  }
+
+  .invensync-horizontal-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+  }
+
+  html.admin-dark .invensync-horizontal-scrollbar {
+    border-color: #475569;
+    background: rgba(30, 41, 59, 0.96);
+  }
+
+  html.admin-dark .invensync-horizontal-scrollbar::-webkit-scrollbar-track {
+    background: #334155;
+  }
+
+  html.admin-dark .invensync-horizontal-scrollbar::-webkit-scrollbar-thumb {
+    background: #94a3b8;
+    border-color: #334155;
+  }
+
 </style>
 
 <!-- Top Header -->
@@ -922,6 +984,9 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
+      <div id="invensync-main-horizontal-scrollbar" class="invensync-horizontal-scrollbar" aria-label="Scroll inventory table horizontally" tabindex="0">
+        <div class="invensync-horizontal-scrollbar__track"></div>
       </div>
     </div>
   </div>
@@ -3766,9 +3831,71 @@ function loadPreviousDateInventory() {
 }
 
 // Horizontal scroll with Alt + Mouse Wheel
+function bindExternalHorizontalScrollbar(scrollContainer, scrollbar) {
+  if (!scrollContainer || !scrollbar) return;
+
+  if (scrollbar._invensyncCleanup) {
+    scrollbar._invensyncCleanup();
+  }
+
+  const track = scrollbar.querySelector('.invensync-horizontal-scrollbar__track');
+  if (!track) return;
+
+  let syncing = false;
+  const update = function() {
+    const table = scrollContainer.querySelector('table');
+    if (!table) {
+      scrollbar.classList.remove('is-active');
+      return;
+    }
+
+    const scrollWidth = Math.max(table.scrollWidth, scrollContainer.clientWidth);
+    track.style.width = `${scrollWidth}px`;
+    scrollbar.classList.toggle('is-active', scrollWidth > scrollContainer.clientWidth + 1);
+  };
+  const syncFromTable = function() {
+    if (syncing) return;
+    syncing = true;
+    scrollbar.scrollLeft = scrollContainer.scrollLeft;
+    requestAnimationFrame(() => { syncing = false; });
+  };
+  const syncFromScrollbar = function() {
+    if (syncing) return;
+    syncing = true;
+    scrollContainer.scrollLeft = scrollbar.scrollLeft;
+    requestAnimationFrame(() => { syncing = false; });
+  };
+
+  scrollContainer.addEventListener('scroll', syncFromTable, { passive: true });
+  scrollbar.addEventListener('scroll', syncFromScrollbar, { passive: true });
+  window.addEventListener('resize', update);
+
+  const resizeObserver = typeof ResizeObserver !== 'undefined'
+    ? new ResizeObserver(update)
+    : null;
+  if (resizeObserver) {
+    resizeObserver.observe(scrollContainer);
+    const table = scrollContainer.querySelector('table');
+    if (table) resizeObserver.observe(table);
+  }
+
+  scrollbar._invensyncCleanup = function() {
+    scrollContainer.removeEventListener('scroll', syncFromTable);
+    scrollbar.removeEventListener('scroll', syncFromScrollbar);
+    window.removeEventListener('resize', update);
+    if (resizeObserver) resizeObserver.disconnect();
+    scrollbar._invensyncCleanup = null;
+  };
+
+  update();
+  syncFromTable();
+}
+
 function enableHorizontalScroll() {
   // Enable for main content
   const scrollContainer = document.querySelector('#main-content .inventory-scroll-container');
+  const mainScrollbar = document.getElementById('invensync-main-horizontal-scrollbar');
+  bindExternalHorizontalScrollbar(scrollContainer, mainScrollbar);
   if (scrollContainer) {
     scrollContainer.addEventListener('wheel', function(e) {
       if (e.altKey) {
@@ -3781,6 +3908,8 @@ function enableHorizontalScroll() {
   
   // Enable for fullscreen modal
   const fullscreenScrollContainer = document.querySelector('#fullscreen-modal .overflow-auto');
+  const fullscreenScrollbar = document.getElementById('invensync-fullscreen-horizontal-scrollbar');
+  bindExternalHorizontalScrollbar(fullscreenScrollContainer, fullscreenScrollbar);
   if (fullscreenScrollContainer) {
     fullscreenScrollContainer.addEventListener('wheel', function(e) {
       if (e.altKey) {
@@ -4380,6 +4509,9 @@ function closeInvensyncExportModal() {
     <div class="flex-1 overflow-auto bg-white">
       <div id="modal-content" class="transition-all duration-300 ease-in-out">
         <!-- Content will be cloned here -->
+      </div>
+      <div id="invensync-fullscreen-horizontal-scrollbar" class="invensync-horizontal-scrollbar" aria-label="Scroll inventory table horizontally" tabindex="0">
+        <div class="invensync-horizontal-scrollbar__track"></div>
       </div>
     </div>
   </div>

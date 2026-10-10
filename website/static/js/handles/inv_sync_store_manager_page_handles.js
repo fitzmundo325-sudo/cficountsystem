@@ -3293,9 +3293,127 @@ function loadPreviousDateInventory() {
 }
 
 // Horizontal scroll with Alt + Mouse Wheel
+function bindExternalHorizontalScrollbar(scrollContainer, scrollbar) {
+  if (!scrollContainer || !scrollbar) return;
+
+  if (scrollbar._invensyncCleanup) scrollbar._invensyncCleanup();
+  const rail = scrollbar.querySelector('.invensync-horizontal-scrollbar__rail');
+  const thumb = scrollbar.querySelector('.invensync-horizontal-scrollbar__thumb');
+  if (!rail || !thumb) return;
+
+  let syncing = false;
+  let dragging = false;
+  let dragStartX = 0;
+  let dragStartScrollLeft = 0;
+  const update = function() {
+    const table = scrollContainer.querySelector('table');
+    if (!table) {
+      scrollbar.classList.remove('is-active');
+      return;
+    }
+    const scrollWidth = Math.max(table.scrollWidth, scrollContainer.clientWidth);
+    const hasOverflow = scrollWidth > scrollContainer.clientWidth + 1;
+    const maxScrollLeft = Math.max(0, scrollWidth - scrollContainer.clientWidth);
+    const railWidth = rail.clientWidth;
+    const thumbWidth = Math.max(48, Math.round(railWidth * (scrollContainer.clientWidth / scrollWidth)));
+    const maxThumbLeft = Math.max(0, railWidth - thumbWidth);
+    const thumbLeft = maxScrollLeft ? Math.round((scrollContainer.scrollLeft / maxScrollLeft) * maxThumbLeft) : 0;
+    thumb.style.width = `${Math.min(railWidth, thumbWidth)}px`;
+    thumb.style.transform = `translateX(${thumbLeft}px)`;
+    scrollbar.classList.toggle('is-active', hasOverflow);
+
+    // The rail is display:none until overflow is detected. Re-measure after
+    // it becomes visible so the fullscreen thumb gets a real drag range.
+    if (hasOverflow && railWidth === 0) {
+      requestAnimationFrame(update);
+      return;
+    }
+
+    const mainContent = document.getElementById('main-content');
+    if (mainContent) {
+      const bounds = mainContent.getBoundingClientRect();
+      scrollbar.style.left = `${Math.max(12, bounds.left + 12)}px`;
+      scrollbar.style.right = `${Math.max(12, window.innerWidth - bounds.right + 12)}px`;
+    }
+  };
+  const syncFromTable = function() {
+    if (syncing) return;
+    syncing = true;
+    scrollbar.scrollLeft = scrollContainer.scrollLeft;
+    update();
+    requestAnimationFrame(() => { syncing = false; });
+  };
+  const moveFromPointer = function(clientX) {
+    const table = scrollContainer.querySelector('table');
+    if (!table) return;
+    const maxScrollLeft = Math.max(0, table.scrollWidth - scrollContainer.clientWidth);
+    const maxThumbLeft = Math.max(0, rail.clientWidth - thumb.offsetWidth);
+    const nextThumbLeft = Math.max(0, Math.min(maxThumbLeft, clientX - rail.getBoundingClientRect().left - (dragging ? dragStartX : thumb.offsetWidth / 2)));
+    const targetLeft = maxThumbLeft ? (nextThumbLeft / maxThumbLeft) * maxScrollLeft : 0;
+    scrollContainer.scrollTo({ left: targetLeft, behavior: 'auto' });
+    update();
+  };
+  const startDrag = function(event) {
+    dragging = true;
+    dragStartX = event.clientX - thumb.getBoundingClientRect().left;
+    dragStartScrollLeft = scrollContainer.scrollLeft;
+    thumb.classList.add('is-dragging');
+    thumb.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  };
+  const drag = function(event) {
+    if (!dragging) return;
+    const table = scrollContainer.querySelector('table');
+    const maxScrollLeft = table ? Math.max(0, table.scrollWidth - scrollContainer.clientWidth) : 0;
+    const maxThumbLeft = Math.max(0, rail.clientWidth - thumb.offsetWidth);
+    const nextThumbLeft = Math.max(0, Math.min(maxThumbLeft, event.clientX - rail.getBoundingClientRect().left - dragStartX));
+    const targetLeft = maxThumbLeft ? (nextThumbLeft / maxThumbLeft) * maxScrollLeft : dragStartScrollLeft;
+    scrollContainer.scrollTo({ left: targetLeft, behavior: 'auto' });
+    update();
+  };
+  const stopDrag = function() {
+    dragging = false;
+    thumb.classList.remove('is-dragging');
+  };
+
+  scrollContainer.addEventListener('scroll', syncFromTable, { passive: true });
+  thumb.addEventListener('pointerdown', startDrag);
+  thumb.addEventListener('pointermove', drag);
+  thumb.addEventListener('pointerup', stopDrag);
+  thumb.addEventListener('pointercancel', stopDrag);
+  rail.addEventListener('pointerdown', function(event) {
+    if (event.target === thumb) return;
+    dragging = false;
+    moveFromPointer(event.clientX);
+  });
+  window.addEventListener('resize', update);
+
+  const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+  if (resizeObserver) {
+    resizeObserver.observe(scrollContainer);
+    const table = scrollContainer.querySelector('table');
+    if (table) resizeObserver.observe(table);
+  }
+
+  scrollbar._invensyncCleanup = function() {
+    scrollContainer.removeEventListener('scroll', syncFromTable);
+    thumb.removeEventListener('pointerdown', startDrag);
+    thumb.removeEventListener('pointermove', drag);
+    thumb.removeEventListener('pointerup', stopDrag);
+    thumb.removeEventListener('pointercancel', stopDrag);
+    window.removeEventListener('resize', update);
+    if (resizeObserver) resizeObserver.disconnect();
+    scrollbar._invensyncCleanup = null;
+  };
+
+  update();
+  syncFromTable();
+}
+
 function enableHorizontalScroll() {
   // Enable for main content
   let scrollContainer = document.querySelector('#main-content .inventory-scroll-container');
+  bindExternalHorizontalScrollbar(scrollContainer, document.getElementById('invensync-main-horizontal-scrollbar'));
   if (scrollContainer) {
     scrollContainer.addEventListener('wheel', function(e) {
       if (e.altKey) {
@@ -3308,6 +3426,7 @@ function enableHorizontalScroll() {
   
   // Enable for fullscreen modal
   let fullscreenScrollContainer = document.querySelector('#fullscreen-modal .overflow-auto');
+  bindExternalHorizontalScrollbar(fullscreenScrollContainer, document.getElementById('invensync-fullscreen-horizontal-scrollbar'));
   if (fullscreenScrollContainer) {
     fullscreenScrollContainer.addEventListener('wheel', function(e) {
       if (e.altKey) {
@@ -3587,7 +3706,10 @@ function toggleFullscreen() {
     updateFullscreenContent();
 
     modal.classList.remove('hidden');
+    document.body.classList.add('invensync-fullscreen-active');
+    document.documentElement.classList.add('invensync-fullscreen-active');
     document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
 
     localStorage.setItem('dailyCombinedFullscreen', 'true');
 	
@@ -3599,7 +3721,10 @@ observeRowVisibility(document.getElementById('fullscreen-scroll-container'), doc
   } else {
 	postMessageToParent("function:overRideFullscreen");
     modal.classList.add('hidden');
+    document.body.classList.remove('invensync-fullscreen-active');
+    document.documentElement.classList.remove('invensync-fullscreen-active');
     document.body.style.overflow = '';
+    document.documentElement.style.overflow = '';
 
     localStorage.removeItem('dailyCombinedFullscreen');
 	
