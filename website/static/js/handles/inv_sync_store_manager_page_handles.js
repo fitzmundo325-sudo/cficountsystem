@@ -993,6 +993,7 @@ document.addEventListener('click', event => {
   showAdminCellInstructionOnce();
 }, true);
 
+
 function saveAdminCorrections() {
   let changes = [];
   adminOriginalValues.forEach((original, input) => {
@@ -1018,7 +1019,7 @@ function saveAdminCorrections() {
     let data = await response.json();
     if (!response.ok || !data.success) throw new Error(data.message || 'Unable to save changes.');
     notify(data.message, 'success');
-    window.location.reload();
+    // window.location.reload();
   })
   .catch(error => {
     notify(error.message, 'error');
