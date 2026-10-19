@@ -1003,6 +1003,11 @@ def get_price_history_by_product_id():
 # ================================
 # Clusters Section Start
 # ================================
+
+
+CLUSTER_VIEW_ROLES = ('Superadmin', 'Admin', 'General Manager')
+CLUSTER_MANAGE_ROLES = ('Superadmin', 'Admin')
+
 @api_handles.route('/clusters_list_admin', methods=['POST','GET'])
 @login_required
 def list_clusters_admin():
@@ -1269,6 +1274,260 @@ def clusters_managers_admin():
     except Exception as e:
         return jsonify({ 'type': 'error', 'message': f'Error loading managers: {str(e)}.' })
 
+
+
+# api for listing stores for a specified cluster
+@api_handles.route('/clusters_stores_list', methods=['POST', 'GET'])
+@login_required
+def clusters_stores_list():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    can_manage = current_user.role in ('Superadmin', 'Admin')
+
+    try:
+        current_page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        current_page = 1
+
+    per_page = post_per_page
+
+    # -- Cluster ID Extraction --------------------------------
+    cluster_id = request.form.get('cluster_id') or request.args.get('cluster_id')
+    if not cluster_id:
+        return jsonify({'type': 'error', 'message': 'cluster_id is required.'}), 400
+
+    try:
+        cluster_id = int(cluster_id)
+    except (ValueError, TypeError):
+        return jsonify({'type': 'error', 'message': 'Invalid cluster_id provided.'}), 400
+
+    cluster = Cluster.query.get_or_404(cluster_id)
+
+    # -- Base Query for Cluster Stores ------------------------
+    query = Store.query.filter(Store.cluster_id == cluster_id)
+
+    # -- Scope Filter (Starlink handling) ---------------------
+    scope = request.form.get('scope') or request.args.get('scope')
+    if scope == 'starlink':
+        query = query.filter(Store.name.ilike('%starlink%'))
+    else:
+        query = query.filter(~Store.name.ilike('%starlink%'))
+
+    # -- Search Stores ----------------------------------------
+    search = request.form.get('search')
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                Store.name.ilike(pattern),
+                Store.code.ilike(pattern) if hasattr(Store, 'code') else Store.name.ilike(pattern)
+            )
+        )
+
+    # -- Sorting ----------------------------------------------
+    sortby = request.form.get('sort')
+    order = request.form.get('order_by', 'asc').lower()
+
+    sortable_columns = {
+        'id': Store.id,
+        'name': Store.name,
+        'date_added': getattr(Store, 'date_added', Store.id)
+    }
+
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(Store.id.asc())
+
+    # -- Pagination -------------------------------------------
+    pagination = query.paginate(page=current_page, per_page=per_page, error_out=False)
+    results = pagination.items
+    total_pages = pagination.pages
+    total_results = pagination.total
+
+    # -- Serialize --------------------------------------------
+    stores_data = [
+        {
+            'id': s.id,
+            'name': s.name,
+            'code': getattr(s, 'code', None),
+            'cluster_id': s.cluster_id,
+            'address': getattr(s, 'address', None),
+            'date_added': s.date_added.strftime('%b %d, %Y') if getattr(s, 'date_added', None) else None,
+        }
+        for s in results
+    ]
+
+    return jsonify({
+        'type': 'success',
+        'data': {
+            'cluster': {
+                'id': cluster.id,
+                'name': cluster.name,
+            },
+            'stores': stores_data,
+            'can_manage': can_manage,
+        },
+        'pagination_data': {
+            'current_page': current_page,
+            'total_pages': total_pages,
+            'total_results': total_results,
+        }
+    })
+
+
+
+def _get_cluster_from_request():
+    try:
+        cluster_id = int(request.form.get('cluster_id') or request.args.get('cluster_id') or 0)
+    except (ValueError, TypeError):
+        cluster_id = 0
+    return db.session.get(Cluster, cluster_id)
+
+
+def _cluster_store_dict(store):
+    return {
+        'id': store.id,
+        'name': store.name,
+        'address': getattr(store, 'address', None)
+    }
+
+
+@api_handles.route('/get_cluster_manage_info', methods=['GET', 'POST'])
+@login_required
+def get_cluster_manage_info():
+    if current_user.role not in CLUSTER_VIEW_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    cluster = _get_cluster_from_request()
+    if not cluster:
+        return {'type': 'error', 'message': 'Cluster not found.'}
+
+    can_manage = current_user.role in CLUSTER_MANAGE_ROLES
+
+    manager = None
+    if cluster.manager:
+        manager = {'id': cluster.manager.id, 'full_name': cluster.manager.full_name}
+
+    data = {
+        'type': 'success',
+        'can_manage': can_manage,
+        'cluster': {
+            'id': cluster.id,
+            'name': cluster.name,
+            'description': cluster.description,
+            'store_count': Store.query.filter(Store.cluster_id == cluster.id).count(),
+            'manager': manager
+        },
+        'available_stores': [],
+        'available_managers': []
+    }
+
+    if can_manage:
+        available_stores = Store.query.filter(Store.cluster_id.is_(None)).order_by(Store.name).all()
+        available_managers = User.query.filter_by(role='Cluster Manager').order_by(User.full_name).all()
+        data['available_stores'] = [_cluster_store_dict(store) for store in available_stores]
+        data['available_managers'] = [
+            {'id': user.id, 'full_name': user.full_name, 'username': user.username}
+            for user in available_managers
+        ]
+
+    return data
+
+
+@api_handles.route('/add_cluster_stores', methods=['POST'])
+@login_required
+def add_cluster_stores():
+    if current_user.role not in CLUSTER_MANAGE_ROLES:
+        return {'type': 'error', 'message': 'You do not have permission to manage clusters.'}
+
+    cluster = _get_cluster_from_request()
+    if not cluster:
+        return {'type': 'error', 'message': 'Cluster not found.'}
+
+    store_ids = []
+    for raw_id in request.form.getlist('store_ids'):
+        try:
+            store_ids.append(int(raw_id))
+        except (ValueError, TypeError):
+            continue
+
+    if not store_ids:
+        return {'type': 'error', 'message': 'Select at least one store.'}
+
+    stores = Store.query.filter(Store.id.in_(store_ids), Store.cluster_id.is_(None)).all()
+    if not stores:
+        return {'type': 'error', 'message': 'The selected stores are no longer available.'}
+
+    try:
+        for store in stores:
+            store.cluster_id = cluster.id
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return {'type': 'error', 'message': 'Failed to add stores.'}
+
+    return {'type': 'success', 'message': str(len(stores)) + ' store(s) added to ' + cluster.name + '.'}
+
+
+@api_handles.route('/remove_cluster_store', methods=['POST'])
+@login_required
+def remove_cluster_store():
+    if current_user.role not in CLUSTER_MANAGE_ROLES:
+        return {'type': 'error', 'message': 'You do not have permission to manage clusters.'}
+
+    cluster = _get_cluster_from_request()
+    if not cluster:
+        return {'type': 'error', 'message': 'Cluster not found.'}
+
+    try:
+        store_id = int(request.form.get('store_id') or 0)
+    except (ValueError, TypeError):
+        store_id = 0
+
+    store = db.session.get(Store, store_id)
+    if not store or store.cluster_id != cluster.id:
+        return {'type': 'error', 'message': 'Store is not part of this cluster.'}
+
+    try:
+        store.cluster_id = None
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return {'type': 'error', 'message': 'Failed to remove store.'}
+
+    return {'type': 'success', 'message': store.name + ' removed from ' + cluster.name + '.'}
+
+
+@api_handles.route('/assign_cluster_manager', methods=['POST'])
+@login_required
+def assign_cluster_manager():
+    if current_user.role not in CLUSTER_MANAGE_ROLES:
+        return {'type': 'error', 'message': 'You do not have permission to manage clusters.'}
+
+    cluster = _get_cluster_from_request()
+    if not cluster:
+        return {'type': 'error', 'message': 'Cluster not found.'}
+
+    try:
+        manager_id = int(request.form.get('manager_id') or 0)
+    except (ValueError, TypeError):
+        manager_id = 0
+
+    manager = db.session.get(User, manager_id)
+    if not manager or manager.role != 'Cluster Manager':
+        return {'type': 'error', 'message': 'Select a valid Cluster Manager.'}
+
+    try:
+        cluster.manager_id = manager.id
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return {'type': 'error', 'message': 'Failed to assign manager.'}
+
+    return {'type': 'success', 'message': manager.full_name + ' assigned to ' + cluster.name + '.'}
 # ================================
 # Clusters Masterlist Section End
 # ================================

@@ -4064,6 +4064,9 @@ def manage_cluster(cluster_id):
         User.role == 'Cluster Manager',
         ~User.id.in_(assigned_manager_ids)
     ).all()
+    
+    
+    
     return render_template(
         'admin/cluster_manage.html',
         user=current_user,
