@@ -58,7 +58,7 @@ card.querySelector('[data-cell="description"]').textContent       = cluster.desc
 card.querySelector('[data-cell="manager-avatar"]').textContent    = cluster.manager_initial;
 card.querySelector('[data-cell="manager-name"]').textContent      = cluster.manager_name;
 card.querySelector('[data-cell="date-added"]').textContent        = cluster.date_added ? 'Added ' + cluster.date_added : '';
-card.querySelector('[data-cell="manage-link"]').href              = '/admin/clusters/' + cluster.id + '/manage';
+card.querySelector('[data-cell="manage-link"]').href              = '/admin/cluster_manage_v2?cluster_id=' + cluster.id;
 card.querySelector('[data-cell="manage-link"]').textContent       = canManage ? 'Manage Stores' : 'View Stores';
 
 

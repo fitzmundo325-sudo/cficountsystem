@@ -13828,6 +13828,21 @@ def invensync_v2():
     page = 'invensync'
     return render_template("admin/invensync_v2.html", user=current_user, page=page)
     
+  
+   
+#v2 of Cluster manager - Store Manager page
+@views.route('/admin/cluster_manage_v2', methods=['GET'])
+@login_required
+def cluster_manage_v2():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        abort(403)
+
+    cluster_id = request.args.get('cluster_id', type=int)
+    if not cluster_id:
+        return redirect(url_for('views.v2_main', m='clusters'))
+
+    page = 'clusters'
+    return render_template("cluster_manager/cluster_manage_v2.html", user=current_user, page=page)
 
 
 #v2 of the Inv Sync Details

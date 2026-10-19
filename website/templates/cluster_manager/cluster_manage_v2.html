@@ -1,0 +1,253 @@
+{% extends "base_headless.html" %}
+
+{% block title %}Manage Cluster{% endblock %}
+
+{% block content %}
+
+<script>
+let currentUserRole = {{ user.role|tojson }};
+let clusterId = {{ request.args.get('cluster_id', '')|tojson }};
+</script>
+
+<!-- Top Header -->
+<header class="sticky top-0 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between" style="z-index:99;">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <a href="clusters_v2">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m15 18-6-6 6-6"/>
+      </svg>
+    </a>
+
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <a href="{{ url_for('views.v2_main', m='clusters') }}" class="hover:text-slate-900">Clusters</a>
+      <span class="mx-2">/</span>
+      <span id="breadcrumbClusterName" class="text-slate-900">-</span>
+    </nav>
+  </div>
+
+  <div data-manage-only class="hidden">
+    <button id="addStoreBtn" class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 active:scale-95">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 5v14" />
+        <path d="M5 12h14" />
+      </svg>
+      <span>Add Stores</span>
+    </button>
+  </div>
+</header>
+
+<!-- Content -->
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <!-- Cluster Info Card -->
+  <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-lg p-6 text-white">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div class="flex items-center gap-4">
+        <div class="w-12 h-12 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center shrink-0">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="7" height="9" x="3" y="3" rx="1"/>
+            <rect width="7" height="5" x="14" y="3" rx="1"/>
+            <rect width="7" height="9" x="14" y="12" rx="1"/>
+            <rect width="7" height="5" x="3" y="16" rx="1"/>
+          </svg>
+        </div>
+        <div>
+          <h1 id="clusterName" class="text-xl font-bold">Loading...</h1>
+          <p id="clusterDescription" class="text-white/70 text-sm"></p>
+        </div>
+      </div>
+
+      <div class="flex gap-3">
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl px-4 py-2 text-center">
+          <div id="clusterStoreCount" class="text-2xl font-bold">0</div>
+          <div class="text-xs text-white/70">Stores</div>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl px-4 py-2">
+          <div class="text-xs text-white/70">Manager</div>
+          <div id="clusterManagerName" class="text-sm font-semibold">-</div>
+          <div id="assignManagerWrap" class="hidden">
+            <button id="assignManagerBtn" class="text-sm font-semibold text-white hover:text-white/80 flex items-center gap-1 border-2 border-red-500 rounded-lg px-2 py-1 animate-pulse shadow-lg shadow-red-500/50">
+              <span>Unassigned</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 5v14"/>
+                <path d="M5 12h14"/>
+              </svg>
+            </button>
+          </div>
+          <div id="managerUnassignedText" class="hidden text-sm font-semibold text-white/80">Unassigned</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stores in Cluster -->
+  <section>
+    <div class="flex items-center justify-between mb-6">
+      <h2 class="text-2xl font-bold text-slate-900">Stores in this Cluster</h2>
+    </div>
+
+    <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">ID</th>
+              <th class="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Store Name</th>
+              <th class="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Address</th>
+              <th class="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Date Added</th>
+              <th data-manage-only class="hidden px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="storesTableBody" class="divide-y divide-slate-100">
+            <tr>
+              <td colspan="4" class="px-6 py-12 text-center text-slate-400 text-sm">Loading stores...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div id="storesPagination" class="hidden border-t border-slate-100 bg-slate-50">
+        <div class="flex flex-col gap-2 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p id="storesPaginationInfo" class="text-xs text-slate-500"></p>
+          <div class="flex items-center gap-2">
+            <button type="button" id="storesPrevBtn" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition disabled:opacity-50 disabled:cursor-not-allowed">Previous</button>
+            <span id="storesPageLabel" class="text-xs font-medium text-slate-600"></span>
+            <button type="button" id="storesNextBtn" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- Add Stores Modal -->
+<div id="addStoreModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-lg font-bold text-slate-900">Add Stores to Cluster</h3>
+          <p class="text-xs text-slate-500 mt-1">Select stores to add to <span id="addStoreModalClusterName"></span></p>
+        </div>
+        <button data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <form id="addStoreForm" class="px-6 py-4">
+        <div class="space-y-2 max-h-80 overflow-y-auto pr-2">
+          <div id="availableStoresList" class="space-y-2"></div>
+          <div id="availableStoresEmpty" class="hidden text-center py-8 text-slate-400">
+            <p class="text-sm">No available stores to add. All stores are already assigned.</p>
+          </div>
+        </div>
+      </form>
+
+      <div class="flex items-center justify-end gap-3 px-6 py-3 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+        <button type="button" data-modal-close class="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 rounded-lg transition-all duration-200">Cancel</button>
+        <button type="submit" form="addStoreForm" class="px-4 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-all duration-200">Add Selected</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Assign Manager Modal -->
+<div id="assignManagerModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-lg font-bold text-slate-900">Assign Cluster Manager</h3>
+          <p class="text-xs text-slate-500 mt-1">Select a manager for <span id="assignManagerModalClusterName"></span></p>
+        </div>
+        <button data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <form id="assignManagerForm" class="px-6 py-4 space-y-4">
+        <div>
+          <label for="manager_id" class="block text-sm font-semibold text-slate-700 mb-2">
+            Select Cluster Manager <span class="text-red-500">*</span>
+          </label>
+          <select id="manager_id" name="manager_id" required class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-slate-500 focus:border-slate-500 outline-none transition-all duration-200 hover:border-slate-300">
+            <option value="">Select a manager</option>
+          </select>
+          <p class="text-xs text-slate-500 mt-1">Only users with "Cluster Manager" role are shown</p>
+        </div>
+      </form>
+
+      <div class="flex items-center justify-end gap-3 px-6 py-3 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+        <button type="button" data-modal-close class="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 rounded-lg transition-all duration-200">Cancel</button>
+        <button type="submit" form="assignManagerForm" class="px-4 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-all duration-200">Assign Manager</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<template id="storeRowTemplate">
+  <tr class="hover:bg-slate-50 transition-colors" data-cell="row">
+    <td class="px-6 py-4 text-sm text-slate-500 whitespace-nowrap" data-cell="id"></td>
+    <td class="px-6 py-4">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 shrink-0 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 font-bold text-sm">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+            <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+            <path d="M2 7h20"/>
+          </svg>
+        </div>
+        <p class="text-sm font-semibold text-slate-900" data-cell="name"></p>
+      </div>
+    </td>
+    <td class="px-6 py-4 text-sm text-slate-600" data-cell="address"></td>
+    <td class="px-6 py-4 text-sm text-slate-500 whitespace-nowrap" data-cell="dateAdded"></td>
+    <td data-manage-only class="hidden px-6 py-4 text-right whitespace-nowrap">
+      <button type="button" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition" data-cell="removeBtn">Remove</button>
+    </td>
+  </tr>
+</template>
+
+<template id="storeEmptyRowTemplate">
+  <tr data-cell="row">
+    <td class="px-6 py-12 text-center text-slate-400 text-sm" data-cell="message"></td>
+  </tr>
+</template>
+
+<template id="availableStoreTemplate">
+  <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer transition-all duration-200" data-cell="row">
+    <input type="checkbox" name="store_ids" class="mt-1 w-4 h-4 text-slate-900 border-slate-300 rounded focus:ring-2 focus:ring-slate-500" data-cell="checkbox">
+    <div class="flex-1 min-w-0">
+      <div class="text-sm font-semibold text-slate-900 truncate" data-cell="name"></div>
+      <div class="text-xs text-slate-500 truncate" data-cell="address"></div>
+    </div>
+  </label>
+</template>
+
+<script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+
+<script defer src="{{ url_for('static', filename='js/handles/cluster_manage_page_handles.js') }}"></script>
+
+{% endblock %}
