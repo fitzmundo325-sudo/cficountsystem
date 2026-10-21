@@ -1909,9 +1909,18 @@ function rowNeedsBeginningBeforeInput(row, sourceInput) {
 
   let beginningInput = row.querySelector('.beginning-input');
   if (!beginningInput) return false;
-
-  return String(beginningInput.value || '').trim() === '';
+	
+  if(beginningInput.readOnly){
+	  return false;  
+  }else{
+	if(beginningInput.value.length <= 0){
+		beginningInput.value = 0;
+		return false;
+	}
+  }
 }
+
+
 
 function rowHasBlankBeginningWithOtherValues(row) {
   if (!row) return false;
@@ -2269,6 +2278,8 @@ function startBeginningStockGuide(force = false) {
 if (!isInvenSyncGuideMode && localStorage.getItem(beginningGuideCompletionKey) === '1') {
   document.getElementById('first-time-modal')?.remove();
 }
+
+
 
 function showMissingBeginningPopup(row, options = {}) {
   if (missingBeginningNoticeOpen) return;
