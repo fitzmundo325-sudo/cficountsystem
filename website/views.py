@@ -392,6 +392,66 @@ def _get_latest_meaningful_invensync_by_store(store_ids=None):
     return inventory_by_store
 
 
+
+def _get_latest_meaningful_invensync_by_store_v2(store_ids=None):
+    """Return each store's latest finalized or non-empty InvenSync record using window functions."""
+    
+
+    item_has_value = or_(
+        *(
+            func.coalesce(getattr(DailyEndingInventoryItem, field_name), 0) != 0
+            for field_name in _INVENSYNC_MEANINGFUL_ITEM_FIELDS
+        ),
+        func.length(func.trim(func.coalesce(DailyEndingInventoryItem.remarks, ''))) > 0,
+    )
+
+    meaningful_item_exists = (
+        db.session.query(DailyEndingInventoryItem.id)
+        .filter(
+            DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id,
+            item_has_value,
+        )
+        .exists()
+    )
+
+    meaningful_inventory_filter = or_(
+        DailyEndingInventory.is_finalized.is_(True),
+        meaningful_item_exists,
+    )
+
+
+    rn_subquery = db.session.query(
+        DailyEndingInventory.id,
+        func.row_number().over(
+            partition_by=DailyEndingInventory.store_id,
+            order_by=[
+                DailyEndingInventory.inventory_date.desc(),
+                DailyEndingInventory.id.desc()
+            ]
+        ).label('rn')
+    ).filter(meaningful_inventory_filter)
+
+
+    if store_ids is not None:
+        normalized_store_ids = [int(store_id) for store_id in store_ids]
+        if not normalized_store_ids:
+            return {}
+        rn_subquery = rn_subquery.filter(DailyEndingInventory.store_id.in_(normalized_store_ids))
+
+    rn_subquery = rn_subquery.subquery()
+
+
+    inventory_records = (
+        DailyEndingInventory.query
+        .options(selectinload(DailyEndingInventory.items))
+        .join(rn_subquery, DailyEndingInventory.id == rn_subquery.c.id)
+        .filter(rn_subquery.c.rn == 1)
+        .all()
+    )
+
+    return {int(inv.store_id): inv for inv in inventory_records}
+
+
 def _get_invensync_data_state(inventory):
     if not inventory:
         return 'empty'

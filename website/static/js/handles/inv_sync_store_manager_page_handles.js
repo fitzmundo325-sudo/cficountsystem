@@ -4035,7 +4035,6 @@ function initInventoryPageAfterRender() {
 
   setTimeout(refreshBeginningSaveMode, 100);
 
-
   applyViewOnlyLockdown();
 }
 
