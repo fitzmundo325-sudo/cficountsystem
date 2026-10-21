@@ -14,6 +14,7 @@ from collections import OrderedDict
 import random, string, requests
 import pytz
 from werkzeug.utils import secure_filename
+from decimal import Decimal
 
 manila_tz = pytz.timezone("Asia/Manila")
 from dotenv import load_dotenv
@@ -21,6 +22,8 @@ from dotenv import load_dotenv
 from . import db, cache
 from datetime import datetime, date, timedelta
 from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem
+from calendar import monthrange
+
 
 from .admin import log_audit_event
 
@@ -1528,6 +1531,318 @@ def assign_cluster_manager():
         return {'type': 'error', 'message': 'Failed to assign manager.'}
 
     return {'type': 'success', 'message': manager.full_name + ' assigned to ' + cluster.name + '.'}
+    
+    
+    
+# -------- Cluster Data Sub Section    
+    
+
+CLUSTER_REPORT_FIELDS = (
+    'pos_gross_sales', 'ci_regular_gross_sales',
+    'gds_sales', 'gds_tc', 'grab_sales', 'grab_tc', 'foodpanda_sales', 'foodpanda_tc',
+    'boothselling_sales', 'boothselling_tc', 'bulk_order_sales', 'bulk_order_tc',
+    'reseller_sales', 'reseller_tc', 'tieup_sales', 'tieup_tc',
+    'gow_sales', 'gow_tc', 'ambulant_sales', 'ambulant_tc',
+    'senior_pwd_discount', 'promo_ldts_discount', 'bulk_orders_discount',
+    'pos_qty_gc', 'pos_qty_rolls', 'pos_qty_premium', 'pos_qty_cheesy_ensay',
+    'pos_qty_slices', 'pos_qty_mamon',
+    'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium',
+)
+
+CLUSTER_CALC_FIELDS = (
+    'total_gross_sales', 'vs_tgt', 'net_sales', 'ar', 'vs_ly', 'tc_total', 'ac',
+    'wastage_amount', 'wastage_percent', 'total_discount', 'discount_percent',
+)
+
+
+def _cd_num(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cd_clean(value):
+    if isinstance(value, dict):
+        return {str(key): _cd_clean(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_cd_clean(item) for item in value]
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
+
+
+def _cd_calc_value(calc, key):
+    if calc is None:
+        return 0.0
+    if isinstance(calc, dict):
+        return _cd_num(calc.get(key))
+    return _cd_num(getattr(calc, key, 0))
+
+
+def _cd_serialize_report(report):
+    item = {'id': report.id, 'status': report.status or ''}
+    for field in CLUSTER_REPORT_FIELDS:
+        item[field] = _cd_num(getattr(report, field, 0))
+    calc = getattr(report, 'calc', None)
+    item['calc'] = {key: _cd_calc_value(calc, key) for key in CLUSTER_CALC_FIELDS}
+    return item
+
+
+def _cd_resolve_scope():
+    from .models import Cluster, Store
+    from .views import _get_area_manager_cluster_ids, _apply_store_scope_filter
+
+    role = (current_user.role or '').strip()
+    
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+    
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'):
+        return None, {'type': 'error', 'message': 'Access denied. Only Cluster Managers, Area Managers, Admins, and General Managers can access this page.'}
+
+    cluster_id = request.form.get('cluster_id', type=int) or request.args.get('cluster_id', type=int)
+
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            return None, {'type': 'error', 'message': 'You are not assigned to any cluster yet.'}
+    else:
+        if not cluster_id:
+            return None, {'type': 'error', 'message': 'Please choose a cluster to view data.'}
+        if role == 'Area Manager' and cluster_id not in _get_area_manager_cluster_ids(current_user):
+            return None, {'type': 'error', 'message': 'Access denied. You are not assigned to this cluster.'}
+        cluster = Cluster.query.get(cluster_id)
+        if not cluster:
+            return None, {'type': 'error', 'message': 'Cluster not found.'}
+
+    stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    stores = _apply_store_scope_filter(stores, request)
+    cluster_store_ids = [store.id for store in stores]
+    store_ids = list(cluster_store_ids)
+
+    store_filter = (request.form.get('store_id') or request.args.get('store_id') or '').strip()
+    if store_filter:
+        try:
+            selected_store_id = int(store_filter)
+        except (TypeError, ValueError):
+            return None, {'type': 'error', 'message': 'Invalid store selection.'}
+        if selected_store_id not in cluster_store_ids:
+            return None, {'type': 'error', 'message': 'Selected store does not belong to this cluster.'}
+        store_ids = [selected_store_id]
+
+    scope = {
+        'role': role,
+        'cluster': cluster,
+        'stores': stores,
+        'store_ids': store_ids,
+        'store_filter': store_filter,
+    }
+    return scope, None
+
+
+@api_handles.route('/cluster_data_v2', methods=['GET', 'POST'])
+@login_required
+def cluster_data_v2():
+    from .models import DailyReport, StoreTarget
+    from .views import (
+        _coalesce_numeric_fields_for_reports,
+        _apply_pos_qty_from_pos_categories,
+        _apply_ending_inventory_from_invensync,
+        _apply_taf_wastage_amounts,
+        _consolidate_cluster_reports_by_date,
+        _aggregate_targets_by_day,
+        _build_acc_targets_by_day,
+        _build_acc_sales_by_day,
+        _build_mtd_metrics_by_day,
+        _attach_report_calc_fields,
+        _build_cluster_manager_summary,
+        _group_reports_by_date,
+        _get_team_name,
+    )
+
+    scope, error = _cd_resolve_scope()
+    if error:
+        return error
+
+    today = date.today()
+    try:
+        month_int = int(request.form.get('month') or request.args.get('month') or today.month)
+        year_int = int(request.form.get('year') or request.args.get('year') or today.year)
+        if month_int < 1 or month_int > 12:
+            raise ValueError('month')
+        date(year_int, month_int, 1)
+    except (ValueError, TypeError):
+        return {'type': 'error', 'message': 'Invalid month or year.'}
+
+    cluster = scope['cluster']
+    stores = scope['stores']
+    store_ids = scope['store_ids']
+
+    _, num_days = monthrange(year_int, month_int)
+    start_date = date(year_int, month_int, 1)
+    end_date = date(year_int, month_int, num_days)
+
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_ending_inventory_from_invensync(reports)
+    _apply_taf_wastage_amounts(reports)
+    consolidated_reports = _consolidate_cluster_reports_by_date(reports)
+
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+
+    daily_targets = _aggregate_targets_by_day(targets)
+    acc_daily_targets = _build_acc_targets_by_day(year_int, month_int, daily_targets)
+    acc_daily_sales = _build_acc_sales_by_day(year_int, month_int, consolidated_reports)
+    mtd_metrics_by_day = _build_mtd_metrics_by_day(year_int, month_int, acc_daily_sales, acc_daily_targets)
+    _attach_report_calc_fields(
+        consolidated_reports,
+        daily_targets,
+        prioritize_pending=True,
+        acc_targets_by_day=acc_daily_targets,
+        acc_sales_by_day=acc_daily_sales
+    )
+    summary = _build_cluster_manager_summary(consolidated_reports, targets)
+    reports_by_date = _group_reports_by_date(consolidated_reports)
+
+    team_name = _get_team_name(cluster)
+    selected_store_name = team_name
+    if scope['store_filter']:
+        for store in stores:
+            if str(store.id) == str(int(scope['store_filter'])):
+                selected_store_name = store.name
+                break
+
+    return {
+        'type': 'success',
+        'cluster': {'id': cluster.id, 'name': cluster.name},
+        'team_name': team_name,
+        'selected_store_name': selected_store_name,
+        'stores': [{'id': store.id, 'name': store.name} for store in stores],
+        'filters': {
+            'month': month_int,
+            'year': year_int,
+            'store_id': str(int(scope['store_filter'])) if scope['store_filter'] else '',
+        },
+        'today': {'year': today.year, 'month': today.month, 'day': today.day},
+        'days_in_month': num_days,
+        'summary': _cd_clean(summary),
+        'daily_targets': _cd_clean(daily_targets),
+        'acc_daily_targets': _cd_clean(acc_daily_targets),
+        'acc_daily_sales': _cd_clean(acc_daily_sales),
+        'mtd_metrics_by_day': _cd_clean(mtd_metrics_by_day),
+        'reports_by_date': {
+            str(date_key): [_cd_serialize_report(report) for report in day_reports]
+            for date_key, day_reports in reports_by_date.items()
+        },
+    }
+
+
+@api_handles.route('/cluster_data_pos_sold', methods=['GET', 'POST'])
+@login_required
+def cluster_data_pos_sold():
+    from . import db
+    from .models import DailyReport, PosSold
+    from .views import _is_grand_total_product_name
+
+    scope, error = _cd_resolve_scope()
+    if error:
+        return error
+
+    store_ids = scope['store_ids']
+    store_name_by_id = {int(store.id): (store.name or '') for store in scope['stores']}
+
+    years_rows = (
+        db.session.query(extract('year', DailyReport.report_date))
+        .select_from(DailyReport)
+        .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+        .filter(DailyReport.store_id.in_(store_ids))
+        .distinct()
+        .all()
+    )
+    years = sorted({int(row[0]) for row in years_rows if row[0] is not None})
+
+    latest_row = (
+        db.session.query(DailyReport.report_date)
+        .select_from(DailyReport)
+        .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+        .filter(DailyReport.store_id.in_(store_ids))
+        .order_by(DailyReport.report_date.desc())
+        .first()
+    )
+    latest_date = latest_row[0] if latest_row else None
+
+    raw_date = (request.form.get('date') or request.args.get('date') or '').strip()
+    if raw_date:
+        try:
+            target_date = datetime.strptime(raw_date, '%Y-%m-%d').date()
+        except ValueError:
+            return {'type': 'error', 'message': 'Invalid date.'}
+    else:
+        target_date = latest_date
+
+    scope_reports = []
+    if target_date:
+        scope_reports = (
+            DailyReport.query
+            .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+            .filter(DailyReport.store_id.in_(store_ids), DailyReport.report_date == target_date)
+            .group_by(DailyReport.id)
+            .order_by(DailyReport.id.desc())
+            .all()
+        )
+
+    report_ids = [int(report.id) for report in scope_reports]
+    items_by_report = {}
+    if report_ids:
+        pos_items = (
+            PosSold.query
+            .filter(PosSold.daily_report_id.in_(report_ids))
+            .order_by(PosSold.daily_report_id.asc(), PosSold.id.asc())
+            .all()
+        )
+        for item in pos_items:
+            if _is_grand_total_product_name(item.product_name):
+                continue
+            items_by_report.setdefault(int(item.daily_report_id), []).append({
+                'product_name': item.product_name,
+                'quantity': int(item.quantity or 0),
+                'net_sales': float(item.net_sales or 0.0),
+            })
+
+    reports = []
+    for report in scope_reports:
+        reports.append({
+            'report_id': int(report.id),
+            'store_id': int(report.store_id),
+            'store_name': store_name_by_id.get(int(report.store_id), f'Store {report.store_id}'),
+            'date': report.report_date.strftime('%Y-%m-%d') if report.report_date else '',
+            'label': report.report_date.strftime('%B %d, %Y') if report.report_date else '',
+            'items': items_by_report.get(int(report.id), []),
+        })
+
+    return {
+        'type': 'success',
+        'date': target_date.strftime('%Y-%m-%d') if target_date else '',
+        'latest_date': latest_date.strftime('%Y-%m-%d') if latest_date else '',
+        'years': years,
+        'reports': reports,
+    }
+    
+    
+    
+
 # ================================
 # Clusters Masterlist Section End
 # ================================
