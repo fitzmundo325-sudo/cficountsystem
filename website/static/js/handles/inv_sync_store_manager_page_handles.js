@@ -357,6 +357,7 @@ function renderTableHead(data) {
   thead.dataset.spacerColspan = totalVisible + (showAdjustCols ? 4 : 0);
 }
 
+
 async function renderTableBody(data) {
   let categoryGroups = data.category_groups;
   let config = data.global_config_data;
@@ -3880,6 +3881,7 @@ function applyViewOnlyLockdown() {
 
   document.querySelectorAll('#main-content tbody tr[data-product-id] [onchange]').forEach(function(el) {
     if (el.classList.contains('inv-adjust-only')) return;
+    if (el.getAttribute('noremove') == "true") return;
     el.removeAttribute('onchange');
   });
 }
