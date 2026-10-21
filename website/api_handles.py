@@ -3344,6 +3344,97 @@ def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
     }
 
 
+
+
+def _build_admin_invensync_update_status_v2(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return {
+            key: {
+                'is_up_to_date': False,
+                'missing_dates': [],
+                'missing_ranges': [],
+                'missing_count': 0,
+                'latest_date': None,
+            }
+            for key in ('inventory', 'pos_sold', 'delivery')
+        }
+
+    today = date.today()
+    previous_day_cutoff = min(cutoff_date, today - timedelta(days=1))
+
+    
+    finalized_dates = {
+        row[0] for row in db.session.query(DailyEndingInventory.inventory_date)
+        .filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= month_start,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).all()
+        if row[0]
+    }
+
+    pos_sold_dates = set()
+    delivery_dates = set()
+
+    if previous_day_cutoff >= month_start:
+        
+        q_daily_report = (
+            db.session.query(DailyReport.report_date)
+            .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+            .filter(
+                DailyReport.store_id == store_id,
+                DailyReport.report_date >= month_start,
+                DailyReport.report_date <= previous_day_cutoff,
+            )
+        )
+        
+        q_staging = (
+            db.session.query(PosSoldStaging.report_date)
+            .filter(
+                PosSoldStaging.store_id == store_id,
+                PosSoldStaging.report_date >= month_start,
+                PosSoldStaging.report_date <= previous_day_cutoff,
+            )
+        )
+        
+        q_inventory = (
+            db.session.query(DailyEndingInventory.inventory_date)
+            .join(DailyEndingInventoryItem, DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id)
+            .filter(
+                DailyEndingInventory.store_id == store_id,
+                DailyEndingInventory.inventory_date >= month_start,
+                DailyEndingInventory.inventory_date <= previous_day_cutoff,
+                func.coalesce(DailyEndingInventoryItem.quantity_sold, 0) > 0,
+            )
+        )
+        
+        # A SQL UNION inherently filters out duplicates, replacing distinct() and Python's |= operator
+        pos_sold_dates = {
+            row[0] for row in q_daily_report.union(q_staging).union(q_inventory).all() 
+            if row[0]
+        }
+
+        
+        delivery_dates = {
+            row[0] for row in db.session.query(RsoDelivery.report_date)
+            .filter(
+                RsoDelivery.store_id == store_id,
+                RsoDelivery.report_date >= month_start,
+                RsoDelivery.report_date <= previous_day_cutoff,
+            ).all()
+            if row[0]
+        }
+
+    return {
+        'inventory': _build_single_update_status(finalized_dates, today, month_start, cutoff_date, 'inventory'),
+        'pos_sold': _build_single_update_status(pos_sold_dates, today, month_start, previous_day_cutoff, 'pos_sold'),
+        'delivery': _build_single_update_status(delivery_dates, today, month_start, previous_day_cutoff, 'delivery'),
+    }
+    
+    
+    
+
 def _build_single_update_status(dates_set, today, month_start, cutoff_date, label):
     missing_date_values = []
     missing_dates = []
@@ -3444,17 +3535,18 @@ def _get_global_invensync_config():
     return config, config_data
 
 
-@api_handles.route('/get_invensync_data', methods=['GET'])
+
+@api_handles.route('/get_invensync_data', methods=['GET','POST'])
 @login_required
 def get_invensync_data():
-    """Fetch all data needed to render the Invensync admin page (v2)."""
+
     if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
         return {'type': 'error', 'message': 'Access denied.'}
 
     from .views import (
         _apply_store_scope_filter,
         _get_invensync_data_state,
-        _get_latest_meaningful_invensync_by_store,
+        _get_latest_meaningful_invensync_by_store_v2,
         _get_user_presence_states,
     )
 
@@ -3466,7 +3558,7 @@ def get_invensync_data():
         stores = Store.query.order_by(Store.name.asc()).all()
         stores = _apply_store_scope_filter(stores, request)
 
-        inventory_by_store = _get_latest_meaningful_invensync_by_store(
+        inventory_by_store = _get_latest_meaningful_invensync_by_store_v2(
             [store.id for store in stores]
         )
         manager_presence = _get_user_presence_states(store.manager_id for store in stores)
@@ -3475,7 +3567,7 @@ def get_invensync_data():
         for store in stores:
             inventory = inventory_by_store.get(store.id)
             data_state = _get_invensync_data_state(inventory)
-            update_status = _build_admin_invensync_update_status(store.id, month_start, update_cutoff_date)
+            update_status = _build_admin_invensync_update_status_v2(store.id, month_start, update_cutoff_date)
 
             store_summaries.append({
                 'store': {

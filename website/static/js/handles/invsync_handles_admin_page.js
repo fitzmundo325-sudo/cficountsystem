@@ -5,6 +5,7 @@ function loadInvenSyncData() {
     let storeScope = localStorage.getItem('storeScope') || 'official';
     const url = `/apis/get_invensync_data?store_scope=${encodeURIComponent(storeScope)}`;
 
+
     fetch(url, { credentials: 'same-origin' })
         .then(response => response.json())
         .then(data => {
@@ -21,9 +22,17 @@ function loadInvenSyncData() {
             renderForceBeginningWaiting(data.stores, data.global_invensync_config);
             filterInvensyncStores();
             document.getElementById('invensyncStoreLoading').style.display = 'none';
+			
+			try{
+				postMessageToParent("function:hideSpaLoading");
+			}catch(e){
+			 // ---	
+			}
+			
         })
         .catch(error => {
             toast.error(error.message || 'Failed to load Invensync data.');
+			postMessageToParent("function:hideSpaLoading");
         });
 }
 
@@ -649,8 +658,9 @@ function handleStoreScopeChanges(){
 	
 	let storeScope = localStorage.getItem('storeScope') || 'official';
 	
+	postMessageToParent("function:showSpaLoading");
 	loadInvenSyncData();
-
+	
 	if(hasFirstOpen){
 		return hasFirstOpen = false;
 	}
