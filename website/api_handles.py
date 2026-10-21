@@ -24,6 +24,7 @@ from datetime import datetime, date, timedelta
 from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem
 from calendar import monthrange
 
+from collections import defaultdict
 
 from .admin import log_audit_event
 
@@ -3534,7 +3535,78 @@ def _get_global_invensync_config():
 
     return config, config_data
 
+def _build_admin_invensync_update_status_bulk(store_ids, month_start, cutoff_date):
+    """Processes multiple stores in exactly 3 database queries total."""
+    if not store_ids or not month_start or not cutoff_date or cutoff_date < month_start:
+        return {}
 
+    today = date.today()
+    previous_day_cutoff = min(cutoff_date, today - timedelta(days=1))
+
+    # Initialize result dictionaries
+    finalized_dates_by_store = defaultdict(set)
+    pos_sold_dates_by_store = defaultdict(set)
+    delivery_dates_by_store = defaultdict(set)
+
+    # 1. Bulk Finalized Inventory Dates
+    finalized_rows = db.session.query(
+        DailyEndingInventory.store_id, DailyEndingInventory.inventory_date
+    ).filter(
+        DailyEndingInventory.store_id.in_(store_ids),
+        DailyEndingInventory.inventory_date >= month_start,
+        DailyEndingInventory.inventory_date <= cutoff_date,
+        DailyEndingInventory.is_finalized.is_(True),
+    ).all()
+    
+    for store_id, inv_date in finalized_rows:
+        if inv_date:
+            finalized_dates_by_store[store_id].add(inv_date)
+
+    if previous_day_cutoff >= month_start:
+        # 2. Bulk POS Sold Dates (UNION)
+        q_daily_report = db.session.query(DailyReport.store_id, DailyReport.report_date)\
+            .join(PosSold, PosSold.daily_report_id == DailyReport.id)\
+            .filter(DailyReport.store_id.in_(store_ids), DailyReport.report_date.between(month_start, previous_day_cutoff))
+            
+        q_staging = db.session.query(PosSoldStaging.store_id, PosSoldStaging.report_date)\
+            .filter(PosSoldStaging.store_id.in_(store_ids), PosSoldStaging.report_date.between(month_start, previous_day_cutoff))
+            
+        q_inventory = db.session.query(DailyEndingInventory.store_id, DailyEndingInventory.inventory_date)\
+            .join(DailyEndingInventoryItem, DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id)\
+            .filter(
+                DailyEndingInventory.store_id.in_(store_ids),
+                DailyEndingInventory.inventory_date.between(month_start, previous_day_cutoff),
+                func.coalesce(DailyEndingInventoryItem.quantity_sold, 0) > 0,
+            )
+            
+        pos_rows = q_daily_report.union(q_staging).union(q_inventory).all()
+        for store_id, rep_date in pos_rows:
+            if rep_date:
+                pos_sold_dates_by_store[store_id].add(rep_date)
+
+        # 3. Bulk Delivery Dates
+        delivery_rows = db.session.query(RsoDelivery.store_id, RsoDelivery.report_date)\
+            .filter(
+                RsoDelivery.store_id.in_(store_ids),
+                RsoDelivery.report_date.between(month_start, previous_day_cutoff)
+            ).all()
+            
+        for store_id, rep_date in delivery_rows:
+            if rep_date:
+                delivery_dates_by_store[store_id].add(rep_date)
+
+    # Build final payload per store
+    results = {}
+    for store_id in store_ids:
+        results[store_id] = {
+            'inventory': _build_single_update_status(finalized_dates_by_store.get(store_id, set()), today, month_start, cutoff_date, 'inventory'),
+            'pos_sold': _build_single_update_status(pos_sold_dates_by_store.get(store_id, set()), today, month_start, previous_day_cutoff, 'pos_sold'),
+            'delivery': _build_single_update_status(delivery_dates_by_store.get(store_id, set()), today, month_start, previous_day_cutoff, 'delivery'),
+        }
+
+    return results
+    
+    
 
 @api_handles.route('/get_invensync_data', methods=['GET','POST'])
 @login_required
@@ -3562,12 +3634,22 @@ def get_invensync_data():
             [store.id for store in stores]
         )
         manager_presence = _get_user_presence_states(store.manager_id for store in stores)
+        
+        store_ids = [store.id for store in stores]
+
+        bulk_update_statuses = _build_admin_invensync_update_status_bulk(
+            store_ids, 
+            month_start, 
+            update_cutoff_date
+        )
 
         store_summaries = []
         for store in stores:
             inventory = inventory_by_store.get(store.id)
             data_state = _get_invensync_data_state(inventory)
-            update_status = _build_admin_invensync_update_status_v2(store.id, month_start, update_cutoff_date)
+            
+            # 3. Retrieve from the pre-calculated dictionary (O(1) memory lookup, 0 DB queries)
+            update_status = bulk_update_statuses.get(store.id, {})
 
             store_summaries.append({
                 'store': {
