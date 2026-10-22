@@ -1,0 +1,901 @@
+{% extends "admin_base.html" %}
+
+{% block title %}Invensync - Admin Panel{% endblock %}
+
+{% block content %}
+
+{% macro upload_status_card(status, label) %}
+<div class="invensync-update-status rounded-xl border px-3 py-2 {% if status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
+  {% if status.is_up_to_date %}
+  {% set latest_date = status.latest_date.strftime('%b %d, %Y') if status.latest_date else 'N/A' %}
+  <div class="status-title flex items-center gap-2 text-sm font-semibold text-emerald-700">
+    <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+    {{ label }} up to date through {{ latest_date }}
+  </div>
+  {% else %}
+  <div class="status-title flex items-center gap-2 text-sm font-semibold text-amber-800">
+    <span class="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500"></span>
+    {{ label }} not uploaded
+  </div>
+  <p class="status-copy mt-1 text-xs text-amber-800/80">
+    {{ status.missing_count }} missing previous date{{ '' if status.missing_count == 1 else 's' }}.
+  </p>
+  {% if status.missing_dates %}
+  <div class="mt-2 flex flex-wrap gap-1.5">
+    {% if status.missing_count <= 3 %}
+      {% for missing_date in status.missing_dates %}
+      <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">{{ missing_date.label }}</span>
+      {% endfor %}
+    {% else %}
+      {% for missing_range in status.missing_ranges[:3] %}
+      <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">{{ missing_range.label }}</span>
+      {% endfor %}
+      {% if status.missing_ranges|length > 3 %}
+      <span class="status-pill rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200">+{{ status.missing_ranges|length - 3 }} more ranges</span>
+      {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+{% endmacro %}
+
+<style>
+  html.admin-dark .invensync-update-status.is-current {
+    border-color: rgba(52, 211, 153, 0.35) !important;
+    background: rgba(6, 95, 70, 0.28) !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing {
+    border-color: rgba(251, 191, 36, 0.4) !important;
+    background: rgba(120, 53, 15, 0.28) !important;
+  }
+
+  html.admin-dark .invensync-update-status .status-pill {
+    background: rgba(15, 23, 42, 0.78) !important;
+    border-color: rgba(251, 191, 36, 0.42) !important;
+    color: #fde68a !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-current .status-title {
+    color: #6ee7b7 !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-current .status-copy {
+    color: #a7f3d0 !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing .status-title {
+    color: #fde68a !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing .status-copy {
+    color: #fcd34d !important;
+  }
+
+  .invensync-card-status-scroll {
+    overflow-y: hidden !important;
+    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-width: thin;
+  }
+
+  .invensync-store-card.is-scroll-active .invensync-card-status-scroll {
+    overflow-y: auto !important;
+  }
+
+  .invensync-card-status-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .invensync-card-status-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+  }
+</style>
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Invensync</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <div class="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 8v5l3 3"/>
+        <circle cx="12" cy="12" r="10"/>
+      </svg>
+      <span>Showing latest records</span>
+    </div>
+  </div>
+</header>
+
+<!-- Content -->
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <!-- Page Header -->
+  <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Invensync Dashboard</h1>
+      <p class="mt-1 text-slate-600">Latest ending inventory overview for all stores</p>
+    </div>
+  </section>
+
+  <!-- Tabs -->
+  <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+    <div class="flex flex-wrap gap-2">
+      <button id="summaryTabBtn" onclick="switchAdminInvenSyncTab('summary')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'summary' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'summary' else 'false' }}">
+        Summary
+      </button>
+      {% if user.role not in ('General Manager', 'Auditor', 'Area Manager') %}
+      <button id="configTabBtn" onclick="switchAdminInvenSyncTab('config')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'config' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'config' else 'false' }}">
+        Global Config
+      </button>
+      <button id="storeConfigTabBtn" onclick="switchAdminInvenSyncTab('store_config')" class="px-4 py-2 rounded-full text-sm font-semibold transition focus:outline-none {% if selected_tab == 'store_config' %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-700{% endif %}" aria-pressed="{{ 'true' if selected_tab == 'store_config' else 'false' }}">
+        Store Config
+      </button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div id="summaryTab" style="display: {{ 'block' if selected_tab == 'summary' else 'none' }};">
+    <div class="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <label for="invensyncStoreSearch" class="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Search Store</label>
+      <div class="relative max-w-xl">
+        <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="m21 21-4.3-4.3"/>
+        </svg>
+        <input id="invensyncStoreSearch" type="search" placeholder="Search store name or ID..." autocomplete="off" class="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm font-medium text-slate-800 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10">
+      </div>
+    </div>
+
+    <!-- Store Cards Grid -->
+    <div id="invensyncStoreGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    {% for store_summary in store_summaries %}
+    <div class="invensync-store-card flex h-[36rem] flex-col bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-300" data-store-search="{{ (store_summary.store.name ~ ' ' ~ store_summary.store.id)|lower }}">
+      <!-- Card Header -->
+      <div class="shrink-0 bg-gradient-to-br from-slate-800 to-slate-900 px-6 py-4 rounded-t-2xl">
+        <div class="flex items-center justify-between">
+          <div class="flex min-w-0 flex-1 items-center gap-3">
+          <div class="invensync-presence-icon h-12 w-12 shrink-0 rounded-lg bg-white/10 backdrop-blur-sm flex items-center justify-center ring-2 {% if store_summary.presence_state == 'online' %}shadow-[0_0_20px_6px_rgba(52,211,153,0.45)] ring-emerald-400/50{% elif store_summary.presence_state == 'active' %}shadow-[0_0_20px_6px_rgba(56,189,248,0.45)] ring-sky-400/50{% elif store_summary.presence_state == 'idle' %}shadow-[0_0_20px_6px_rgba(148,163,184,0.4)] ring-slate-400/50{% else %}shadow-[0_0_20px_6px_rgba(248,113,113,0.45)] ring-red-400/50{% endif %}" data-store-id="{{ store_summary.store.id }}" title="{{ 'Online / Browsing' if store_summary.presence_state == 'online' else ('Typing / Inputting / Uploading' if store_summary.presence_state == 'active' else ('Idle / AFK' if store_summary.presence_state == 'idle' else 'Offline')) }}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+              <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+              <path d="M2 7h20"/>
+            </svg>
+          </div>
+          <div class="min-w-0">
+            {% set store_name_length = (store_summary.store.name or '')|length %}
+            <h3 class="font-bold text-white leading-tight break-words {% if store_scope|default('official') == 'starlink' and store_name_length > 32 %}text-xs{% elif store_scope|default('official') == 'starlink' and store_name_length > 22 %}text-sm{% else %}text-base{% endif %}">{{ store_summary.store.name }}</h3>
+            <p class="text-xs text-slate-300 font-medium">Store ID: {{ store_summary.store.id }}</p>
+          </div>
+          </div>
+          {% if store_summary.has_data %}
+          <a href="{{ url_for('views.invensync', date=store_summary.inventory.inventory_date.strftime('%Y-%m-%d'), store_id=store_summary.store.id) }}"
+             class="group ml-2 inline-flex shrink-0 items-center gap-1.5 text-white text-xs font-bold px-3 py-1.5 bg-white/10 rounded-lg ring-1 ring-white/10 hover:bg-white/20 transition-all">
+            <span>View Details</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:translate-x-0.5">
+              <path d="M5 12h14"/>
+              <path d="m12 5 7 7-7 7"/>
+            </svg>
+          </a>
+          {% else %}
+          <span class="ml-2 shrink-0 text-white text-xs font-semibold px-3 py-1.5 bg-white/10 rounded-lg ring-1 ring-white/10">
+            <span class="inline-flex items-center gap-1.5">
+              <span class="h-2 w-2 rounded-full bg-slate-400"></span>
+              No Data
+            </span>
+          </span>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Card Body -->
+      <div class="flex min-h-0 flex-1 flex-col px-6 py-4 space-y-3">
+
+        {% if store_summary.has_data %}
+          <!-- Inventory Info -->
+          {% if store_summary.inventory %}
+          <div class="text-xs text-slate-500">
+            <span><span class="font-medium">Inventory Date:</span> {{ store_summary.inventory.inventory_date.strftime('%b %d, %Y') if store_summary.inventory.inventory_date else 'N/A' }}</span>
+          </div>
+          {% endif %}
+        {% else %}
+          <div class="text-sm text-slate-600 py-2">
+            No invensync records available
+          </div>
+        {% endif %}
+
+        {% set update_status = store_summary.update_status %}
+        {% set inventory_status = update_status.inventory %}
+        {% set pos_sold_status = update_status.pos_sold %}
+        {% set delivery_status = update_status.delivery %}
+        <div class="invensync-card-status-scroll min-h-0 flex-1 space-y-2 pr-1" tabindex="-1" aria-label="Update status for {{ store_summary.store.name }}">
+          <div class="invensync-update-status rounded-xl border px-3 py-2 {% if inventory_status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
+            {% if inventory_status.is_up_to_date %}
+            {% set latest_date = inventory_status.latest_date.strftime('%b %d, %Y') if inventory_status.latest_date else 'N/A' %}
+            <div class="status-title flex items-center gap-2 text-sm font-semibold text-emerald-700">
+              <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+              Inventory up to date through {{ latest_date }}
+            </div>
+            {% else %}
+            <div class="status-title flex items-center gap-2 text-sm font-semibold text-amber-800">
+              <span class="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500"></span>
+              Inventory not updated
+            </div>
+            <p class="status-copy mt-1 text-xs text-amber-800/80">
+              {{ inventory_status.missing_count }} missing date{{ '' if inventory_status.missing_count == 1 else 's' }} this month.
+            </p>
+            {% if inventory_status.missing_dates %}
+            <div class="mt-2 flex flex-wrap gap-1.5">
+              {% if inventory_status.missing_count <= 3 %}
+              {% for missing_date in inventory_status.missing_dates %}
+              <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                {{ missing_date.label }}
+              </span>
+              {% endfor %}
+              {% else %}
+              {% for missing_range in inventory_status.missing_ranges[:3] %}
+              <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                {{ missing_range.label }}
+              </span>
+              {% endfor %}
+              {% if inventory_status.missing_ranges|length > 3 %}
+              <span class="status-pill rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200">
+                +{{ inventory_status.missing_ranges|length - 3 }} more range{{ '' if inventory_status.missing_ranges|length - 3 == 1 else 's' }}
+              </span>
+              {% endif %}
+              {% endif %}
+            </div>
+            {% endif %}
+            {% endif %}
+          </div>
+          {{ upload_status_card(pos_sold_status, 'POS Sold') }}
+          {{ upload_status_card(delivery_status, 'Delivery') }}
+        </div>
+      </div>
+
+      <!-- Card Footer -->
+      <div class="shrink-0 px-6 py-3 bg-slate-50 border-t border-slate-200 space-y-3">
+        <!-- Pricing Tier Selector -->
+        <div class="flex gap-2">
+          <button onclick="changePricingTier({{ store_summary.store.id }}, 'non_premium')" 
+            class="flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg transition {% if store_summary.store.store_group == 'non_premium' %}bg-amber-600 text-white{% else %}bg-slate-200 text-slate-700 hover:bg-slate-300{% endif %}"
+            id="tier-none-{{ store_summary.store.id }}">
+            NONE
+          </button>
+          <button onclick="changePricingTier({{ store_summary.store.id }}, 'premium')" 
+            class="flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg transition {% if store_summary.store.store_group == 'premium' %}bg-indigo-600 text-white{% else %}bg-slate-200 text-slate-700 hover:bg-slate-300{% endif %}"
+            id="tier-premium-{{ store_summary.store.id }}">
+            PREMIUM
+          </button>
+        </div>
+
+      </div>
+    </div>
+    {% endfor %}
+    </div>
+
+    <div id="invensyncStoreNoResults" class="hidden text-center py-12 bg-white rounded-2xl border border-slate-200">
+      <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-slate-300 mb-4">
+        <circle cx="11" cy="11" r="8"/>
+        <path d="m21 21-4.3-4.3"/>
+      </svg>
+      <h3 class="text-lg font-bold text-slate-900 mb-1">No matching stores</h3>
+      <p class="text-sm text-slate-600">Try another store name or ID.</p>
+    </div>
+
+    {% if store_summaries %}{% else %}
+      <div class="text-center py-12 bg-white rounded-2xl border border-slate-200">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-slate-300 mb-4">
+          <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+          <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+          <path d="M2 7h20"/>
+        </svg>
+        <h3 class="text-lg font-bold text-slate-900 mb-1">No Stores Found</h3>
+        <p class="text-sm text-slate-600">There are no stores in the system yet.</p>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if user.role not in ('General Manager', 'Auditor', 'Area Manager') %}
+  <div id="configTab" style="display: {{ 'block' if selected_tab == 'config' else 'none' }};">
+    <div class="grid gap-4">
+      <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">
+        <div>
+          <h2 class="text-xl font-bold text-slate-900">Global Invensync Configuration</h2>
+          <p class="mt-0.5 text-sm text-slate-600">Manage locking and visibility rules for store-level Invensync inputs across all stores.</p>
+        </div>
+
+        <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <h3 class="text-sm font-semibold text-amber-900 uppercase tracking-wide">Force Beginning Entry</h3>
+          <p class="mt-1 text-xs text-amber-800">Use this when a store never received the Beginning Inventory screen. The override is removed automatically after the store saves Beginning.</p>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <select id="forceBeginningStore" class="min-w-[240px] rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm text-slate-800">
+              <option value="">Select affected store</option>
+              {% for store in stores %}
+                <option value="{{ store.id }}">{{ store.name }}</option>
+              {% endfor %}
+            </select>
+            <button type="button" id="forceBeginningBtn" onclick="forceBeginningEntry()" class="rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 transition">
+              Force Beginning Entry
+            </button>
+            <span id="forceBeginningMessage" class="text-sm text-amber-900"></span>
+          </div>
+          {% set forced_store_ids = global_invensync_config.force_beginning_store_ids|default([]) %}
+          {% if forced_store_ids %}
+            <div class="mt-3 text-xs text-amber-900">
+              Waiting for Beginning save:
+              {% for store in stores if store.id in forced_store_ids %}
+                <span class="ml-1 inline-flex rounded-full bg-amber-200 px-2 py-1 font-semibold">{{ store.name }}</span>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+
+        <div class="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+          <h3 class="text-sm font-semibold text-blue-900 uppercase tracking-wide">Backfill POS Sold</h3>
+          <p class="mt-1 text-xs text-blue-800">Create missing <code>pos_sold</code> records from saved staging data. Use once after deployment to fix historical gaps where POS data was saved but never committed.</p>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <button type="button" id="backfillPosSoldBtn" onclick="backfillPosSold()" class="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition">
+              Run Backfill
+            </button>
+            <span id="backfillPosSoldMessage" class="text-sm text-blue-900"></span>
+          </div>
+        </div>
+
+        <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+          <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">Hidden, Locked &amp; Editable Columns</h3>
+          <table class="w-full text-sm text-slate-700">
+            <thead>
+              <tr class="text-xs text-slate-500 uppercase">
+                <th class="text-left pb-2 font-semibold">Column</th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Hidden
+                  <button type="button" onclick="toggleSelectAll('hidden-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Locked
+                  <button type="button" onclick="toggleSelectAll('locked-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Editable
+                  <button type="button" onclick="toggleSelectAll('editable-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+              {% for field in config_fields %}
+              <tr>
+                <td class="py-1.5">{{ field.label }}</td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="hidden-column-checkbox" {% if field.value in global_invensync_config.hidden_columns %}checked{% endif %}>
+                </td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="locked-column-checkbox" {% if field.value in global_invensync_config.locked_columns %}checked{% endif %}>
+                </td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="editable-column-checkbox" {% if field.value in global_invensync_config.editable_columns %}checked{% endif %}>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3">
+          <button type="button" id="saveConfigBtn" onclick="saveInvensyncConfig()" class="px-5 py-3 rounded-2xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition">
+            Save Global Config
+          </button>
+          <span id="configSaveMessage" class="text-sm text-slate-600"></span>
+        </div>
+
+        <div class="hidden">
+          <h3 class="text-sm font-semibold text-slate-700">Available Product IDs</h3>
+          <p class="text-xs text-slate-500 mt-2">Use product IDs when creating specific row or cell rules. Example: <code>42|quantity_sold</code>.</p>
+          <div class="grid gap-2 mt-3 text-[11px] text-slate-600 max-h-40 overflow-y-auto">
+            {% for product in products[:25] %}
+            <div>{{ product.id }} — {{ product.description }}</div>
+            {% endfor %}
+            {% if products|length > 25 %}
+              <div class="text-slate-400 italic">...and {{ products|length - 25 }} more products</div>
+            {% endif %}
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if user.role not in ('General Manager', 'Auditor', 'Area Manager') %}
+  <div id="storeConfigTab" style="display: {{ 'block' if selected_tab == 'store_config' else 'none' }};">
+    <div class="grid gap-4">
+      <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">
+        <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">Store Invensync Configuration</h2>
+            <p class="mt-0.5 text-sm text-slate-600">Apply hidden, locked, and editable column rules to one selected store.</p>
+          </div>
+          <div class="w-full md:w-auto">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+              <select id="storeConfigSelect" class="w-full sm:w-[220px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-800" onchange="loadStoreInvensyncConfig()">
+                <option value="">Select store</option>
+                {% for store in stores %}
+                  <option value="{{ store.id }}">{{ store.name }}</option>
+                {% endfor %}
+              </select>
+              <button type="button" id="saveStoreConfigBtn" onclick="saveStoreInvensyncConfig()" class="w-full sm:w-[120px] rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold leading-tight text-white hover:bg-slate-800 transition">
+                Save Store Config
+              </button>
+            </div>
+            <span id="storeConfigSaveMessage" class="mt-1 block min-h-5 text-xs text-slate-600"></span>
+          </div>
+        </div>
+
+        <div class="bg-slate-50 rounded-xl border border-slate-200 p-3">
+          <table class="w-full text-sm text-slate-700">
+            <thead>
+              <tr class="text-xs text-slate-500 uppercase">
+                <th class="text-left pb-2 font-semibold">Column</th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Hidden
+                  <button type="button" onclick="toggleSelectAll('store-hidden-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Locked
+                  <button type="button" onclick="toggleSelectAll('store-locked-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+                <th class="text-center pb-2 font-semibold w-24">
+                  Editable
+                  <button type="button" onclick="toggleSelectAll('store-editable-column-checkbox', this)" class="block mx-auto text-[10px] text-slate-400 hover:text-slate-900 underline font-normal">Select All</button>
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+              {% for field in config_fields %}
+              <tr>
+                <td class="py-1.5">{{ field.label }}</td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="store-hidden-column-checkbox">
+                </td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="store-locked-column-checkbox">
+                </td>
+                <td class="text-center py-1.5">
+                  <input type="checkbox" value="{{ field.value }}" class="store-editable-column-checkbox">
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+function switchAdminInvenSyncTab(tab) {
+    const summaryTab = document.getElementById('summaryTab');
+    const configTab = document.getElementById('configTab');
+    const storeConfigTab = document.getElementById('storeConfigTab');
+    const summaryBtn = document.getElementById('summaryTabBtn');
+    const configBtn = document.getElementById('configTabBtn');
+    const storeConfigBtn = document.getElementById('storeConfigTabBtn');
+
+    if (summaryTab) summaryTab.style.display = tab === 'summary' ? 'block' : 'none';
+    if (configTab) configTab.style.display = tab === 'config' ? 'block' : 'none';
+    if (storeConfigTab) storeConfigTab.style.display = tab === 'store_config' ? 'block' : 'none';
+
+    [
+        [summaryBtn, tab === 'summary'],
+        [configBtn, tab === 'config'],
+        [storeConfigBtn, tab === 'store_config']
+    ].forEach(([button, isActive]) => {
+        if (!button) return;
+        button.classList.toggle('bg-slate-900', isActive);
+        button.classList.toggle('text-white', isActive);
+        button.classList.toggle('bg-slate-100', !isActive);
+        button.classList.toggle('text-slate-700', !isActive);
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+}
+
+function filterInvensyncStores() {
+    const searchInput = document.getElementById('invensyncStoreSearch');
+    const query = String(searchInput?.value || '').trim().toLowerCase();
+    const cards = Array.from(document.querySelectorAll('.invensync-store-card'));
+    let visibleCount = 0;
+
+    cards.forEach((card) => {
+      const haystack = `${card.dataset.storeSearch || ''} ${card.textContent || ''}`.toLowerCase();
+        const isMatch = !query || haystack.includes(query);
+        card.classList.toggle('hidden', !isMatch);
+        if (isMatch) visibleCount += 1;
+    });
+
+    const noResults = document.getElementById('invensyncStoreNoResults');
+    if (noResults) {
+        noResults.classList.toggle('hidden', visibleCount !== 0);
+    }
+}
+
+const invensyncStoreSearch = document.getElementById('invensyncStoreSearch');
+invensyncStoreSearch?.addEventListener('input', filterInvensyncStores);
+invensyncStoreSearch?.addEventListener('search', filterInvensyncStores);
+filterInvensyncStores();
+
+function initializeInvensyncCardScrolling() {
+    const cards = Array.from(document.querySelectorAll('.invensync-store-card'));
+
+    const deactivateCards = (exceptCard = null) => {
+        cards.forEach((card) => {
+            if (card === exceptCard) return;
+            card.classList.remove('is-scroll-active');
+            card.querySelector('.invensync-card-status-scroll')?.setAttribute('tabindex', '-1');
+        });
+    };
+
+    cards.forEach((card) => {
+        card.addEventListener('click', () => {
+            const statusList = card.querySelector('.invensync-card-status-scroll');
+            if (!statusList) return;
+            deactivateCards(card);
+            card.classList.add('is-scroll-active');
+            statusList.setAttribute('tabindex', '0');
+            statusList.focus({preventScroll: true});
+        });
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!event.target.closest('.invensync-store-card')) deactivateCards();
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') deactivateCards();
+    });
+}
+
+initializeInvensyncCardScrolling();
+
+function saveInvensyncConfig() {
+    const url = `{{ url_for('admin.update_invensync_config') }}`;
+    const hiddenRows = {{ global_invensync_config.hidden_rows|default([])|tojson }};
+    const hiddenCells = {{ global_invensync_config.hidden_cells|default([])|tojson }};
+    const lockedRows = {{ global_invensync_config.locked_rows|default([])|tojson }};
+    const lockedCells = {{ global_invensync_config.locked_cells|default([])|tojson }};
+    const hiddenColumns = Array.from(document.querySelectorAll('.hidden-column-checkbox:checked')).map(el => el.value);
+    const lockedColumns = Array.from(document.querySelectorAll('.locked-column-checkbox:checked')).map(el => el.value);
+    const editableColumns = Array.from(document.querySelectorAll('.editable-column-checkbox:checked')).map(el => el.value);
+
+    const saveBtn = document.getElementById('saveConfigBtn');
+    const message = document.getElementById('configSaveMessage');
+    
+    // Disable button and show loading state
+    saveBtn.disabled = true;
+    saveBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    saveBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Saving...';
+    message.textContent = '';
+
+    fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({hidden_rows: hiddenRows, hidden_columns: hiddenColumns, hidden_cells: hiddenCells, locked_rows: lockedRows, locked_columns: lockedColumns, locked_cells: lockedCells, editable_columns: editableColumns})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            message.textContent = 'Global config saved.';
+            message.classList.remove('text-red-600');
+            message.classList.add('text-emerald-600');
+        } else {
+            message.textContent = data.message || 'Unable to save config.';
+            message.classList.remove('text-emerald-600');
+            message.classList.add('text-red-600');
+        }
+    })
+    .catch(error => {
+        console.error(error);
+        message.textContent = 'Error saving config.';
+        message.classList.remove('text-emerald-600');
+        message.classList.add('text-red-600');
+    })
+    .finally(() => {
+        // Re-enable button after request completes
+        saveBtn.disabled = false;
+        saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        saveBtn.innerHTML = 'Save Global Config';
+    });
+}
+
+const globalInvensyncColumnConfig = {
+    hidden_columns: {{ global_invensync_config.hidden_columns|default([])|tojson }},
+    locked_columns: {{ global_invensync_config.locked_columns|default([])|tojson }},
+    editable_columns: {{ global_invensync_config.editable_columns|default([])|tojson }}
+};
+const storeInvensyncConfigs = {{ store_invensync_configs|default({})|tojson }};
+
+function setCheckboxGroupValues(cls, values) {
+    const valueSet = new Set((values || []).map(value => String(value)));
+    document.querySelectorAll('.' + cls).forEach((checkbox) => {
+        checkbox.checked = valueSet.has(String(checkbox.value));
+    });
+}
+
+function getCheckboxGroupValues(cls) {
+    return Array.from(document.querySelectorAll('.' + cls + ':checked')).map(el => el.value);
+}
+
+function loadStoreInvensyncConfig() {
+    const storeSelect = document.getElementById('storeConfigSelect');
+    if (!storeSelect) return;
+    const storeId = storeSelect.value;
+    const saveBtn = document.getElementById('saveStoreConfigBtn');
+    const message = document.getElementById('storeConfigSaveMessage');
+    const storeConfig = storeId && storeInvensyncConfigs[String(storeId)]
+        ? storeInvensyncConfigs[String(storeId)]
+        : globalInvensyncColumnConfig;
+
+    setCheckboxGroupValues('store-hidden-column-checkbox', storeConfig.hidden_columns || []);
+    setCheckboxGroupValues('store-locked-column-checkbox', storeConfig.locked_columns || []);
+    setCheckboxGroupValues('store-editable-column-checkbox', storeConfig.editable_columns || []);
+    if (saveBtn) {
+        saveBtn.disabled = !storeId;
+        saveBtn.classList.toggle('opacity-50', !storeId);
+        saveBtn.classList.toggle('cursor-not-allowed', !storeId);
+    }
+    if (message) {
+        message.textContent = storeId ? 'Ready to save store-specific rules.' : 'Select a store to save store-specific rules.';
+        message.classList.remove('text-red-600', 'text-emerald-600');
+        message.classList.add('text-slate-600');
+    }
+}
+
+function saveStoreInvensyncConfig() {
+    const storeSelect = document.getElementById('storeConfigSelect');
+    if (!storeSelect) return;
+    const storeId = storeSelect.value;
+    const saveBtn = document.getElementById('saveStoreConfigBtn');
+    const message = document.getElementById('storeConfigSaveMessage');
+    const saveStartedAt = Date.now();
+    const minimumSaveDurationMs = 800;
+    if (!storeId) {
+        message.textContent = 'Please select a store.';
+        message.classList.remove('text-emerald-600');
+        message.classList.add('text-red-600');
+        return;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    saveBtn.textContent = 'Saving...';
+    message.textContent = '';
+
+    fetch(`{{ url_for('admin.update_store_invensync_config') }}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            store_id: Number(storeId),
+            hidden_columns: getCheckboxGroupValues('store-hidden-column-checkbox'),
+            locked_columns: getCheckboxGroupValues('store-locked-column-checkbox'),
+            editable_columns: getCheckboxGroupValues('store-editable-column-checkbox')
+        })
+    })
+    .then(response => response.text().then(text => {
+        let data = {};
+        try {
+            data = text ? JSON.parse(text) : {};
+        } catch (error) {
+            data = {message: text || 'Server returned an unreadable response.'};
+        }
+        return {ok: response.ok, data};
+    }))
+    .then(({ok, data}) => {
+        if (!ok || !data.success) throw new Error(data.message || 'Unable to save store config.');
+        storeInvensyncConfigs[String(storeId)] = {
+            hidden_columns: getCheckboxGroupValues('store-hidden-column-checkbox'),
+            locked_columns: getCheckboxGroupValues('store-locked-column-checkbox'),
+            editable_columns: getCheckboxGroupValues('store-editable-column-checkbox')
+        };
+        return {
+            type: 'success',
+            message: data.message || 'Store config saved.'
+        };
+    })
+    .catch(error => {
+        return {
+            type: 'error',
+            message: error.message
+        };
+    })
+    .then((result) => {
+        const elapsedMs = Date.now() - saveStartedAt;
+        const remainingMs = Math.max(0, minimumSaveDurationMs - elapsedMs);
+        setTimeout(() => {
+            message.textContent = result.message;
+            message.classList.remove('text-red-600', 'text-emerald-600');
+            message.classList.add(result.type === 'success' ? 'text-emerald-600' : 'text-red-600');
+            saveBtn.disabled = false;
+            saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            saveBtn.textContent = 'Save Store Config';
+        }, remainingMs);
+    });
+}
+
+loadStoreInvensyncConfig();
+
+function forceBeginningEntry() {
+    const storeId = document.getElementById('forceBeginningStore').value;
+    const button = document.getElementById('forceBeginningBtn');
+    const message = document.getElementById('forceBeginningMessage');
+    if (!storeId) {
+        message.textContent = 'Please select a store.';
+        return;
+    }
+
+    button.disabled = true;
+    button.classList.add('opacity-50', 'cursor-not-allowed');
+    message.textContent = 'Enabling...';
+    fetch(`{{ url_for('admin.force_invensync_beginning') }}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({store_id: Number(storeId)})
+    })
+    .then(response => response.json().then(data => ({ok: response.ok, data})))
+    .then(({ok, data}) => {
+        if (!ok || !data.success) throw new Error(data.message || 'Unable to enable Beginning entry.');
+        message.textContent = data.message;
+        setTimeout(() => window.location.reload(), 900);
+    })
+    .catch(error => {
+        message.textContent = error.message;
+        button.disabled = false;
+        button.classList.remove('opacity-50', 'cursor-not-allowed');
+    });
+}
+
+function backfillPosSold() {
+    const button = document.getElementById('backfillPosSoldBtn');
+    const message = document.getElementById('backfillPosSoldMessage');
+    button.disabled = true;
+    button.classList.add('opacity-50', 'cursor-not-allowed');
+    message.textContent = 'Running backfill...';
+    fetch(`{{ url_for('admin.backfill_pos_sold') }}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+    })
+    .then(response => response.json().then(data => ({ok: response.ok, data})))
+    .then(({ok, data}) => {
+        message.textContent = data.message || (data.success ? 'Backfill complete.' : 'Backfill failed.');
+        button.disabled = false;
+        button.classList.remove('opacity-50', 'cursor-not-allowed');
+    })
+    .catch(error => {
+        message.textContent = error.message || 'Request failed.';
+        button.disabled = false;
+        button.classList.remove('opacity-50', 'cursor-not-allowed');
+    });
+}
+
+function toggleSelectAll(cls, btn) {
+    const checkboxes = document.querySelectorAll('.' + cls);
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    checkboxes.forEach(cb => cb.checked = !allChecked);
+    btn.textContent = allChecked ? 'Select All' : 'Deselect All';
+}
+
+// Change pricing tier for store
+function changePricingTier(storeId, tier) {
+    const url = `{{ url_for('admin.update_store_pricing') }}`;
+    
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            store_id: storeId,
+            tier: tier
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            // Update button colors
+            const noneBtn = document.getElementById(`tier-none-${storeId}`);
+            const premiumBtn = document.getElementById(`tier-premium-${storeId}`);
+            
+            if (tier === 'non_premium') {
+                noneBtn.className = 'flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg transition bg-amber-600 text-white';
+                premiumBtn.className = 'flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg transition bg-slate-200 text-slate-700 hover:bg-slate-300';
+            } else {
+                noneBtn.className = 'flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg transition bg-slate-200 text-slate-700 hover:bg-slate-300';
+                premiumBtn.className = 'flex-1 text-center px-3 py-2 text-xs font-medium rounded-lg transition bg-indigo-600 text-white';
+            }
+            
+            // Show success message
+            showToast(`Pricing tier updated to ${tier === 'premium' ? 'PREMIUM' : 'NONE'}!`);
+        } else {
+            showToast(data.message || 'Error updating pricing tier', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error updating pricing tier: ' + error.message, 'error');
+    });
+}
+
+// Simple toast notification
+function showToast(message, type = 'success') {
+    const toast = document.createElement('div');
+    toast.className = `fixed bottom-4 right-4 px-4 py-2 rounded-lg text-white text-sm z-50 ${
+        type === 'success' ? 'bg-emerald-600' : 'bg-red-600'
+    }`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+let presenceRefreshInFlight = false;
+function refreshInvensyncPresence() {
+    if (presenceRefreshInFlight) return;
+    presenceRefreshInFlight = true;
+    fetch({{ url_for('views.store_presence')|tojson }}, {
+        credentials: 'same-origin',
+        cache: 'no-store'
+    })
+        .then(response => response.ok ? response.json() : Promise.reject(new Error('Presence unavailable')))
+        .then(data => {
+            const statuses = data.stores || {};
+            document.querySelectorAll('.invensync-presence-icon').forEach(icon => {
+                const state = statuses[String(icon.dataset.storeId)] || 'offline';
+                icon.classList.remove(
+                    'shadow-[0_0_20px_6px_rgba(52,211,153,0.45)]', 'ring-emerald-400/50',
+                    'shadow-[0_0_20px_6px_rgba(56,189,248,0.45)]', 'ring-sky-400/50',
+                    'shadow-[0_0_20px_6px_rgba(148,163,184,0.4)]', 'ring-slate-400/50',
+                    'shadow-[0_0_20px_6px_rgba(248,113,113,0.45)]', 'ring-red-400/50'
+                );
+                const classes = state === 'online'
+                    ? ['shadow-[0_0_20px_6px_rgba(52,211,153,0.45)]', 'ring-emerald-400/50']
+                    : state === 'active'
+                        ? ['shadow-[0_0_20px_6px_rgba(56,189,248,0.45)]', 'ring-sky-400/50']
+                        : state === 'idle'
+                            ? ['shadow-[0_0_20px_6px_rgba(148,163,184,0.4)]', 'ring-slate-400/50']
+                            : ['shadow-[0_0_20px_6px_rgba(248,113,113,0.45)]', 'ring-red-400/50'];
+                icon.classList.add(...classes);
+                icon.title = state === 'online' ? 'Online / Browsing' : (state === 'active' ? 'Typing / Inputting / Uploading' : (state === 'idle' ? 'Idle / AFK' : 'Offline'));
+            });
+        })
+        .catch(() => {})
+        .finally(() => { presenceRefreshInFlight = false; });
+}
+
+refreshInvensyncPresence();
+window.setInterval(refreshInvensyncPresence, 5000);
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshInvensyncPresence();
+});
+
+</script>
+{% endblock %}

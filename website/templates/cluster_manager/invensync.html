@@ -1,0 +1,446 @@
+{% extends "base.html" %}
+
+{% block title %}InvenSync - {{ cluster.name }}{% endblock %}
+
+{% block content %}
+
+{% macro upload_status_card(status, label) %}
+<div class="invensync-update-status rounded-xl border px-3.5 py-2.5 {% if status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
+  <div class="flex items-center justify-between gap-3">
+    <div class="flex min-w-0 items-center gap-2">
+      <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg {% if status.is_up_to_date %}bg-emerald-100{% else %}bg-amber-100{% endif %}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="{% if status.is_up_to_date %}text-emerald-700{% else %}text-amber-700{% endif %}">
+          <path d="M12 3v12"></path>
+          <path d="m7 10 5 5 5-5"></path>
+          <path d="M5 21h14"></path>
+        </svg>
+      </div>
+      <div class="min-w-0">
+        {% if status.is_up_to_date %}
+        {% set latest_date = status.latest_date.strftime('%b %d, %Y') if status.latest_date else none %}
+        <div class="status-title text-sm font-bold text-emerald-700">{{ label }} uploads complete</div>
+        <p class="status-copy mt-0.5 text-[11px] font-semibold text-emerald-600/80">
+          {% if latest_date %}Through {{ latest_date }}{% else %}No previous dates to check{% endif %}
+        </p>
+        {% else %}
+        <div class="status-title flex items-center gap-1.5 text-sm font-bold text-amber-800">
+          <span class="inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
+          {{ label }} not uploaded
+        </div>
+        <p class="status-copy mt-0.5 text-[11px] font-semibold text-amber-700/80">{{ status.missing_count }} missing previous date{{ '' if status.missing_count == 1 else 's' }}</p>
+        {% endif %}
+      </div>
+    </div>
+    {% if status.is_up_to_date %}
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-emerald-600"><path d="M20 6 9 17l-5-5"/></svg>
+    {% else %}
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-amber-600"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+    {% endif %}
+  </div>
+  {% if not status.is_up_to_date and status.missing_dates %}
+  <div class="mt-2.5 flex flex-wrap gap-1.5">
+    {% if status.missing_count <= 3 %}
+      {% for missing_date in status.missing_dates %}
+      <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-bold text-amber-800 ring-1 ring-amber-200">{{ missing_date.label }}</span>
+      {% endfor %}
+    {% else %}
+      {% for missing_range in status.missing_ranges[:3] %}
+      <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-bold text-amber-800 ring-1 ring-amber-200">{{ missing_range.label }}</span>
+      {% endfor %}
+      {% if status.missing_ranges|length > 3 %}
+      <span class="status-pill rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900 ring-1 ring-amber-200">+{{ status.missing_ranges|length - 3 }} more</span>
+      {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+<style>
+  html.admin-dark .invensync-update-status.is-current {
+    border-color: rgba(52, 211, 153, 0.35) !important;
+    background: rgba(6, 95, 70, 0.28) !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing {
+    border-color: rgba(251, 191, 36, 0.4) !important;
+    background: rgba(120, 53, 15, 0.28) !important;
+  }
+
+  html.admin-dark .invensync-update-status .status-pill {
+    background: rgba(15, 23, 42, 0.78) !important;
+    border-color: rgba(251, 191, 36, 0.42) !important;
+    color: #fde68a !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-current .status-title {
+    color: #6ee7b7 !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-current .status-copy {
+    color: #a7f3d0 !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing .status-title {
+    color: #fde68a !important;
+  }
+
+  html.admin-dark .invensync-update-status.is-missing .status-copy {
+    color: #fcd34d !important;
+  }
+
+  .invensync-card-enter {
+    animation: invensyncFadeIn 0.4s ease-out both;
+  }
+
+  @keyframes invensyncFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .invensync-stat-pill {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .invensync-stat-pill:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  }
+
+  .invensync-card-status-scroll {
+    overflow-y: hidden !important;
+    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-width: thin;
+  }
+
+  .invensync-store-card.is-scroll-active .invensync-card-status-scroll {
+    overflow-y: auto !important;
+  }
+
+  .invensync-card-status-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .invensync-card-status-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+  }
+</style>
+
+<div class="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
+  <!-- Top Header -->
+  <header class="sticky top-0 z-20 bg-white/70 backdrop-blur-xl border-b border-slate-200/80 px-6 h-20 flex items-center justify-between">
+    <div class="flex items-center gap-4">
+      <button id="toggle-mobile" class="lg:hidden p-2 rounded-xl hover:bg-slate-100 text-slate-600 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" x2="20" y1="12" y2="12" />
+          <line x1="4" x2="20" y1="6" y2="6" />
+          <line x1="4" x2="20" y1="18" y2="18" />
+        </svg>
+      </button>
+
+      <nav class="hidden sm:flex text-sm font-semibold text-slate-500">
+        <span class="hover:text-slate-900 cursor-pointer transition-colors">Cluster Manager</span>
+        <span class="mx-2 text-slate-300">/</span>
+        <span class="text-slate-900">InvenSync</span>
+      </nav>
+    </div>
+
+    {% if user and user.role in ['Superadmin', 'General Manager', 'Area Manager'] and force_cluster_sidebar|default(false) %}
+    <a href="/admin/clusters" class="hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold shadow-md shadow-amber-500/30 hover:bg-amber-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m15 18-6-6 6-6"></path>
+      </svg>
+      <span>Back to Clusters</span>
+    </a>
+    {% endif %}
+
+    <div class="flex items-center gap-3">
+      <div class="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-600">
+          <path d="M12 8v5l3 3"/>
+          <circle cx="12" cy="12" r="10"/>
+        </svg>
+        <span>Live Overview</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="px-6 pt-8 pb-10 md:px-8 md:pt-10 md:pb-12 max-w-7xl w-full mx-auto space-y-8">
+
+    <!-- Page Header -->
+    <section class="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+      <div class="space-y-1">
+        <div class="flex items-center gap-3">
+          <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-lg shadow-slate-900/20">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+              <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+              <path d="M2 7h20"/>
+            </svg>
+          </div>
+          <div>
+            <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Invensync Dashboard</h1>
+            <p class="text-sm text-slate-500 font-medium">Ending inventory overview for <span class="text-slate-900">{{ cluster.name }}</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <div class="invensync-stat-pill flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
+          <span class="flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+          <span class="text-xs font-bold uppercase tracking-wide text-slate-500">Stores</span>
+          <span class="text-sm font-bold text-slate-900">{{ store_summaries|length }}</span>
+        </div>
+        <div class="invensync-stat-pill flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
+          <span class="flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+          <span class="text-xs font-bold uppercase tracking-wide text-slate-500">Checks current</span>
+          <span class="text-sm font-bold text-slate-900">{{ store_summaries|selectattr('update_status.inventory.is_up_to_date')|list|length + store_summaries|selectattr('update_status.pos_sold.is_up_to_date')|list|length + store_summaries|selectattr('update_status.delivery.is_up_to_date')|list|length }}/{{ store_summaries|length * 3 }}</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Store Cards Grid -->
+    <div id="invensyncStoreGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+    {% for store_summary in store_summaries %}
+    <div class="invensync-store-card flex h-[36rem] flex-col bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-slate-300 transition-all duration-300">
+      <!-- Card Header -->
+      <div class="shrink-0 bg-gradient-to-br from-slate-800 to-slate-900 px-6 py-4 rounded-t-2xl">
+        <div class="flex items-center justify-between">
+          <div class="flex min-w-0 flex-1 items-center gap-3">
+            <div class="invensync-presence-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/10 backdrop-blur-sm ring-2 {% if store_summary.presence_state == 'online' %}shadow-[0_0_20px_6px_rgba(52,211,153,0.45)] ring-emerald-400/50{% elif store_summary.presence_state == 'active' %}shadow-[0_0_20px_6px_rgba(56,189,248,0.45)] ring-sky-400/50{% elif store_summary.presence_state == 'idle' %}shadow-[0_0_20px_6px_rgba(148,163,184,0.4)] ring-slate-400/50{% else %}shadow-[0_0_20px_6px_rgba(248,113,113,0.45)] ring-red-400/50{% endif %}" data-store-id="{{ store_summary.store.id }}" title="{{ 'Online / Browsing' if store_summary.presence_state == 'online' else ('Typing / Inputting / Uploading' if store_summary.presence_state == 'active' else ('Idle / AFK' if store_summary.presence_state == 'idle' else 'Offline')) }}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+                <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+                <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+                <path d="M2 7h20"/>
+              </svg>
+            </div>
+            <div class="min-w-0">
+              {% set store_name_length = (store_summary.store.name or '')|length %}
+              {% set is_starlink_store = 'starlink' in (store_summary.store.name or '')|lower %}
+              <h3 class="font-bold text-white leading-tight break-words {% if is_starlink_store and store_name_length > 32 %}text-xs{% elif is_starlink_store and store_name_length > 22 %}text-sm{% else %}text-base{% endif %}">{{ store_summary.store.name }}</h3>
+              <p class="text-xs text-slate-300 font-medium">Store ID: {{ store_summary.store.id }}</p>
+            </div>
+          </div>
+          {% if store_summary.has_data %}
+          <a href="{{ url_for('views.invensync', date=store_summary.inventory.inventory_date.strftime('%Y-%m-%d'), store_id=store_summary.store.id) }}"
+             class="group ml-2 inline-flex shrink-0 items-center gap-1.5 text-white text-xs font-bold px-3 py-1.5 bg-white/10 rounded-lg ring-1 ring-white/10 hover:bg-white/20 transition-all">
+            <span>View Details</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:translate-x-0.5">
+              <path d="M5 12h14"/>
+              <path d="m12 5 7 7-7 7"/>
+            </svg>
+          </a>
+          {% else %}
+          <span class="ml-2 shrink-0 text-white text-xs font-semibold px-3 py-1.5 bg-white/10 rounded-lg ring-1 ring-white/10">
+            <span class="inline-flex items-center gap-1.5">
+              <span class="h-2 w-2 rounded-full bg-slate-400"></span>
+              No Data
+            </span>
+          </span>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Card Body -->
+      <div class="flex min-h-0 flex-1 flex-col px-6 py-5 space-y-4">
+        {% if store_summary.has_data %}
+          {% if store_summary.inventory %}
+          <div class="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2">
+            <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Latest Inventory</span>
+            <div class="flex items-center justify-end">
+              <span class="text-xs font-bold text-slate-900">{{ store_summary.inventory.inventory_date.strftime('%b %d, %Y') if store_summary.inventory.inventory_date else 'N/A' }}</span>
+            </div>
+          </div>
+          {% endif %}
+        {% else %}
+          <div class="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 8v4"/>
+              <path d="M12 16h.01"/>
+            </svg>
+            <span class="text-xs font-semibold text-slate-500">No invensync records available</span>
+          </div>
+        {% endif %}
+
+        {% set update_status = store_summary.update_status %}
+        {% set inventory_status = update_status.inventory %}
+        {% set pos_sold_status = update_status.pos_sold %}
+        {% set delivery_status = update_status.delivery %}
+        <div class="invensync-card-status-scroll min-h-0 flex-1 space-y-2.5 pr-1" tabindex="-1" aria-label="Update status for {{ store_summary.store.name }}">
+          <!-- Inventory Status -->
+          <div class="invensync-update-status rounded-xl border px-3.5 py-2.5 {% if inventory_status.is_up_to_date %}is-current border-emerald-200 bg-emerald-50{% else %}is-missing border-amber-200 bg-amber-50{% endif %}">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <div class="flex h-7 w-7 items-center justify-center rounded-lg {% if inventory_status.is_up_to_date %}bg-emerald-100{% else %}bg-amber-100{% endif %}">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="{% if inventory_status.is_up_to_date %}text-emerald-700{% else %}text-amber-700{% endif %}">
+                    <path d="M3 3v16a2 2 0 0 0 2 2h16"/>
+                    <path d="M18 17V7"/>
+                    <path d="M13 17V5"/>
+                    <path d="M8 17v-3"/>
+                  </svg>
+                </div>
+                <div>
+                  {% if inventory_status.is_up_to_date %}
+                  {% set latest_date = inventory_status.latest_date.strftime('%b %d, %Y') if inventory_status.latest_date else 'N/A' %}
+                  <div class="status-title flex items-center gap-1.5 text-sm font-bold text-emerald-700">
+                    Inventory up to date
+                  </div>
+                  <p class="status-copy text-[11px] font-semibold text-emerald-600/80 mt-0.5">Through {{ latest_date }}</p>
+                  {% else %}
+                  <div class="status-title flex items-center gap-1.5 text-sm font-bold text-amber-800">
+                    <span class="inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
+                    Inventory not updated
+                  </div>
+                  <p class="status-copy text-[11px] font-semibold text-amber-700/80 mt-0.5">{{ inventory_status.missing_count }} missing date{{ '' if inventory_status.missing_count == 1 else 's' }}</p>
+                  {% endif %}
+                </div>
+              </div>
+              {% if inventory_status.is_up_to_date %}
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-600">
+                <path d="M20 6 9 17l-5-5"/>
+              </svg>
+              {% else %}
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 8v4"/>
+                <path d="M12 16h.01"/>
+              </svg>
+              {% endif %}
+            </div>
+            {% if not inventory_status.is_up_to_date and inventory_status.missing_dates %}
+            <div class="mt-2.5 flex flex-wrap gap-1.5">
+              {% if inventory_status.missing_count <= 3 %}
+                {% for missing_date in inventory_status.missing_dates %}
+                <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-bold text-amber-800 ring-1 ring-amber-200">
+                  {{ missing_date.label }}
+                </span>
+                {% endfor %}
+              {% else %}
+                {% for missing_range in inventory_status.missing_ranges[:3] %}
+                <span class="status-pill rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-bold text-amber-800 ring-1 ring-amber-200">
+                  {{ missing_range.label }}
+                </span>
+                {% endfor %}
+                {% if inventory_status.missing_ranges|length > 3 %}
+                <span class="status-pill rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900 ring-1 ring-amber-200">
+                  +{{ inventory_status.missing_ranges|length - 3 }} more
+                </span>
+                {% endif %}
+              {% endif %}
+            </div>
+            {% endif %}
+          </div>
+          {{ upload_status_card(pos_sold_status, 'POS Sold') }}
+          {{ upload_status_card(delivery_status, 'Delivery') }}
+        </div>
+      </div>
+
+
+    </div>
+    {% endfor %}
+    </div>
+
+    {% if not store_summaries %}
+    <div class="text-center py-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
+      <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400">
+          <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+          <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+          <path d="M2 7h20"/>
+        </svg>
+      </div>
+      <h3 class="text-lg font-bold text-slate-900 mb-1">No Stores Found</h3>
+      <p class="text-sm text-slate-500">There are no stores assigned to this cluster yet.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+function initializeInvensyncCardScrolling() {
+  const cards = Array.from(document.querySelectorAll('.invensync-store-card'));
+
+  const deactivateCards = (exceptCard = null) => {
+    cards.forEach((card) => {
+      if (card === exceptCard) return;
+      card.classList.remove('is-scroll-active');
+      card.querySelector('.invensync-card-status-scroll')?.setAttribute('tabindex', '-1');
+    });
+  };
+
+  cards.forEach((card) => {
+    card.addEventListener('click', () => {
+      const statusList = card.querySelector('.invensync-card-status-scroll');
+      if (!statusList) return;
+      deactivateCards(card);
+      card.classList.add('is-scroll-active');
+      statusList.setAttribute('tabindex', '0');
+      statusList.focus({preventScroll: true});
+    });
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.invensync-store-card')) deactivateCards();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') deactivateCards();
+  });
+}
+
+initializeInvensyncCardScrolling();
+
+let presenceRefreshInFlight = false;
+function refreshInvensyncPresence() {
+  if (presenceRefreshInFlight) return;
+  presenceRefreshInFlight = true;
+  fetch({{ url_for('views.store_presence')|tojson }}, {
+    credentials: 'same-origin',
+    cache: 'no-store'
+  })
+    .then(response => response.ok ? response.json() : Promise.reject(new Error('Presence unavailable')))
+    .then(data => {
+      const statuses = data.stores || {};
+      document.querySelectorAll('.invensync-presence-icon').forEach(icon => {
+        const state = statuses[String(icon.dataset.storeId)] || 'offline';
+        icon.classList.remove(
+          'shadow-[0_0_20px_6px_rgba(52,211,153,0.45)]', 'ring-emerald-400/50',
+          'shadow-[0_0_20px_6px_rgba(56,189,248,0.45)]', 'ring-sky-400/50',
+          'shadow-[0_0_20px_6px_rgba(148,163,184,0.4)]', 'ring-slate-400/50',
+          'shadow-[0_0_20px_6px_rgba(248,113,113,0.45)]', 'ring-red-400/50'
+        );
+        const classes = state === 'online'
+          ? ['shadow-[0_0_20px_6px_rgba(52,211,153,0.45)]', 'ring-emerald-400/50']
+          : state === 'active'
+            ? ['shadow-[0_0_20px_6px_rgba(56,189,248,0.45)]', 'ring-sky-400/50']
+            : state === 'idle'
+              ? ['shadow-[0_0_20px_6px_rgba(148,163,184,0.4)]', 'ring-slate-400/50']
+              : ['shadow-[0_0_20px_6px_rgba(248,113,113,0.45)]', 'ring-red-400/50'];
+        icon.classList.add(...classes);
+        icon.title = state === 'online' ? 'Online / Browsing' : (state === 'active' ? 'Typing / Inputting / Uploading' : (state === 'idle' ? 'Idle / AFK' : 'Offline'));
+      });
+    })
+    .catch(() => {})
+    .finally(() => { presenceRefreshInFlight = false; });
+}
+
+refreshInvensyncPresence();
+window.setInterval(refreshInvensyncPresence, 5000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshInvensyncPresence();
+});
+</script>
+
+{% endblock %}

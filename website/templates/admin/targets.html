@@ -1,0 +1,527 @@
+{% extends "admin_base.html" %}
+{% block title %}Store Targets{% endblock %}
+
+<!-- Include Modal.js -->
+{% block extra_head %}
+<script src="{{ url_for('static', filename='js/modal.js') }}"></script>
+<style>
+  .target-sheet-input::-webkit-outer-spin-button,
+  .target-sheet-input::-webkit-inner-spin-button {
+    margin: 0;
+    -webkit-appearance: none;
+  }
+
+  .target-sheet-input {
+    -moz-appearance: textfield;
+  }
+
+  .target-sheet-input.is-selected {
+    border-color: #6366f1;
+    background: #eef2ff;
+    box-shadow: inset 0 0 0 1px #6366f1;
+  }
+  .target-sheet-input.is-range-selected {
+    border-color: #818cf8;
+    background: #eef2ff;
+  }
+  .target-sheet-cell.is-selected,
+  .target-sheet-cell.is-range-selected {
+    background: #eef2ff;
+  }
+  .target-sheet-header.is-selected {
+    background: #e0e7ff;
+    color: #3730a3;
+  }
+  html.admin-dark .target-sheet-input.is-selected {
+    border-color: #a78bfa !important;
+    background: rgba(124, 58, 237, 0.28) !important;
+    color: #f8fafc !important;
+    box-shadow: inset 0 0 0 1px #a78bfa, 0 0 0 1px rgba(167, 139, 250, 0.25) !important;
+  }
+  html.admin-dark .target-sheet-input.is-range-selected {
+    border-color: #818cf8 !important;
+    background: rgba(79, 70, 229, 0.22) !important;
+    color: #f8fafc !important;
+  }
+  html.admin-dark .target-sheet-cell.is-selected {
+    background: rgba(124, 58, 237, 0.42) !important;
+    box-shadow: inset 0 0 0 1px #a78bfa !important;
+  }
+  html.admin-dark .target-sheet-cell.is-range-selected {
+    background: rgba(79, 70, 229, 0.3) !important;
+    box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.75) !important;
+  }
+  html.admin-dark .target-sheet-header.is-selected {
+    background: #312e81 !important;
+    color: #e0e7ff !important;
+    box-shadow: inset 0 0 0 1px #818cf8 !important;
+  }
+  html.admin-dark .target-sheet-row:has(.target-sheet-input.is-selected),
+  html.admin-dark .target-sheet-row:has(.target-sheet-input.is-range-selected) {
+    background: rgba(30, 41, 59, 0.95) !important;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Top Header -->
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Admin</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Store Targets</span>
+    </nav>
+  </div>
+  <div class="flex items-center gap-4">
+    <button class="p-2 text-slate-400 hover:text-slate-600 relative rounded-full hover:bg-slate-100 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+      </svg>
+      <span class="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+    </button>
+    <a href="/logout" class="hidden sm:flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-red-700 transition-all shadow-lg shadow-red-600/10 active:scale-95">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+        <polyline points="16 17 21 12 16 7"></polyline>
+        <line x1="21" y1="12" x2="9" y2="12"></line>
+      </svg>
+      <span>Logout</span>
+    </a>
+  </div>
+</header>
+
+<!-- Main Content -->
+<div class="p-6 md:p-8 bg-slate-50 min-h-screen">
+  
+  <!-- Page Header & Filter Section Combined -->
+  <div class="mb-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">Store Targets</h1>
+        <p class="text-sm text-slate-600 mt-1">View and edit target data by cluster and store</p>
+      </div>
+    </div>
+
+    <!-- Compact Filter Card -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+      <form id="target-save-form" action="/admin/targets/save" method="POST">
+        <div class="flex flex-col md:flex-row gap-3">
+
+          <!-- Cluster Selection -->
+          <div class="flex-1">
+            <label class="block text-xs font-medium text-slate-700 mb-1.5">Select Cluster</label>
+            <select name="cluster_id" id="cluster-select" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" onchange="window.location.href='/admin/targets?cluster_id=' + encodeURIComponent(this.value) + '&target_month=' + encodeURIComponent(document.getElementById('target-month-select').value || '')">
+              <option value="">-- All Clusters --</option>
+              {% for cluster in clusters %}
+              <option value="{{ cluster.id }}" {% if selected_cluster_id == cluster.id %}selected{% endif %}>{{ cluster.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <!-- Store Selection -->
+          <div class="flex-1">
+            <label class="block text-xs font-medium text-slate-700 mb-1.5">Select Store</label>
+            <select name="store_id" id="store-select" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" required onchange="window.location.href='/admin/targets?cluster_id=' + encodeURIComponent(document.getElementById('cluster-select').value || '') + '&store_id=' + encodeURIComponent(this.value) + '&target_month=' + encodeURIComponent(document.getElementById('target-month-select').value || '')">
+              <option value="">-- Choose a Store --</option>
+              {% for store in stores %}
+              <option value="{{ store.id }}" {% if selected_store_id == store.id %}selected{% endif %}>{{ store.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <!-- Month Selection -->
+          <div class="flex-1">
+            <label class="block text-xs font-medium text-slate-700 mb-1.5">Select Month</label>
+            <input type="month" name="target_month" id="target-month-select" value="{{ selected_month or '' }}" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" onchange="window.location.href='/admin/targets?cluster_id=' + encodeURIComponent(document.getElementById('cluster-select').value || '') + '&store_id=' + encodeURIComponent(document.getElementById('store-select').value || '') + '&target_month=' + encodeURIComponent(this.value || '')">
+          </div>
+
+          <!-- Save Button -->
+          <div class="flex items-end">
+            <button type="submit" class="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors shadow-sm active:scale-95">
+              Save
+            </button>
+          </div>
+
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if selected_store_id %}
+  <div class="mb-6 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200 bg-slate-50">
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900">Target Data for {{ stores|selectattr('id', 'equalto', selected_store_id)|map(attribute='name')|first }}</h2>
+          <p class="text-xs text-slate-600 mt-1">{{ selected_month }} monthly target sheet. Saved values reflect in Cluster Data by date and selected store.</p>
+        </div>
+        <div class="flex items-center gap-2 self-start md:self-auto">
+          {% if target_cluster_data_url %}
+          <a href="{{ target_cluster_data_url }}" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100">
+            View Cluster Data
+          </a>
+          {% endif %}
+          <span id="undo-target-sheet-change" class="px-1 text-xs font-semibold text-slate-700">
+            Use Ctrl + Z to Undo
+          </span>
+          <button type="button" id="clear-selected-target-cell" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100">
+            Clear Selected
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse text-sm">
+        <thead class="bg-slate-100 border-b border-slate-300">
+          <tr>
+            <th data-all-header tabindex="0" class="target-sheet-header w-48 cursor-pointer border-r border-slate-300 px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select all target cells">Date</th>
+            <th data-col-header="0" tabindex="0" class="target-sheet-header cursor-pointer border-r border-slate-300 px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select TARGET (NET) column">TARGET (NET)</th>
+            <th data-col-header="1" tabindex="0" class="target-sheet-header cursor-pointer border-r border-slate-300 px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select LAST YEAR (NET) column">LAST YEAR (NET)</th>
+            <th data-col-header="2" tabindex="0" class="target-sheet-header cursor-pointer px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider" title="Select GBI TARGET column">GBI TARGET</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-200 bg-white">
+          {% for row in target_rows %}
+          <tr class="target-sheet-row hover:bg-slate-50" data-target-row="{{ loop.index0 }}">
+            <td data-row-header="{{ loop.index0 }}" tabindex="0" class="target-sheet-header cursor-pointer border-r border-slate-200 px-4 py-2 font-medium text-slate-800" title="Select this row">
+              <input type="hidden" name="target_date[]" value="{{ row.date.strftime('%Y-%m-%d') }}" form="target-save-form">
+              {{ row.date.strftime('%b %d, %Y') }}
+            </td>
+            <td class="target-sheet-cell border-r border-slate-200 px-2 py-1">
+              <input type="number" min="0" step="0.01" name="target_net[]" value="{{ '%.2f'|format(row.target_net) if row.target_net else '' }}" form="target-save-form" data-row="{{ loop.index0 }}" data-col="0" class="target-sheet-input w-full rounded-md border border-transparent bg-transparent px-3 py-2 text-right text-sm font-semibold text-slate-900 outline-none hover:border-slate-300 focus:border-indigo-500 focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-100">
+            </td>
+            <td class="target-sheet-cell border-r border-slate-200 px-2 py-1">
+              <input type="number" min="0" step="0.01" name="last_year_net[]" value="{{ '%.2f'|format(row.last_year_net) if row.last_year_net else '' }}" form="target-save-form" data-row="{{ loop.index0 }}" data-col="1" class="target-sheet-input w-full rounded-md border border-transparent bg-transparent px-3 py-2 text-right text-sm text-slate-800 outline-none hover:border-slate-300 focus:border-indigo-500 focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-100">
+            </td>
+            <td class="target-sheet-cell px-2 py-1">
+              <input type="number" min="0" step="0.01" name="gbi_target[]" value="{{ '%.2f'|format(row.gbi_target) if row.gbi_target else '' }}" form="target-save-form" data-row="{{ loop.index0 }}" data-col="2" class="target-sheet-input w-full rounded-md border border-transparent bg-transparent px-3 py-2 text-right text-sm text-slate-800 outline-none hover:border-slate-300 focus:border-indigo-500 focus:bg-indigo-50 focus:ring-2 focus:ring-indigo-100">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const cells = Array.from(document.querySelectorAll('.target-sheet-input'));
+      const clearButton = document.getElementById('clear-selected-target-cell');
+      const draftKey = [
+        'admin-target-sheet-draft',
+        {{ selected_store_id|tojson }},
+        {{ selected_month|tojson }}
+      ].join(':');
+      const shouldClearSavedDraft = {{ clear_target_draft|tojson }};
+      let selectedCell = null;
+      let selectedCells = [];
+      const undoStack = [];
+
+      function displaySheetValue(value) {
+        const rawValue = String(value ?? '').trim();
+        if (!rawValue) return '';
+        const numberValue = Number(rawValue.replace(/,/g, ''));
+        return Number.isFinite(numberValue) && numberValue === 0 ? '' : rawValue;
+      }
+
+      function getDraftPayload() {
+        return {
+          storeId: {{ selected_store_id|tojson }},
+          targetMonth: {{ selected_month|tojson }},
+          savedAt: new Date().toISOString(),
+          values: cells.map((cell) => ({
+            row: cell.dataset.row,
+            col: cell.dataset.col,
+            name: cell.name,
+            value: displaySheetValue(cell.value),
+          })),
+        };
+      }
+
+      function saveDraft() {
+        try {
+          localStorage.setItem(draftKey, JSON.stringify(getDraftPayload()));
+        } catch (error) {
+          // Ignore storage failures so editing still works in private/restricted browsers.
+        }
+      }
+
+      function restoreDraft() {
+        if (shouldClearSavedDraft) {
+          localStorage.removeItem(draftKey);
+          const cleanUrl = new URL(window.location.href);
+          cleanUrl.searchParams.delete('saved');
+          window.history.replaceState({}, '', cleanUrl.toString());
+          return;
+        }
+
+        let payload = null;
+        try {
+          payload = JSON.parse(localStorage.getItem(draftKey) || 'null');
+        } catch (error) {
+          payload = null;
+        }
+        if (!payload || !Array.isArray(payload.values)) return;
+
+        payload.values.forEach((item) => {
+          const cell = getCell(item.row, item.col);
+          if (cell && typeof item.value !== 'undefined') {
+            cell.value = displaySheetValue(item.value);
+          }
+        });
+      }
+
+      function removeZeroPlaceholders() {
+        cells.forEach((cell) => {
+          cell.value = displaySheetValue(cell.value);
+        });
+      }
+
+      function normalizeNumber(value) {
+        const cleaned = String(value || '')
+          .replace(/[,\s₱$]/g, '')
+          .replace(/[^\d.-]/g, '');
+        if (!cleaned || cleaned === '-' || cleaned === '.') return '';
+        const numberValue = Number(cleaned);
+        if (!Number.isFinite(numberValue) || numberValue < 0 || numberValue === 0) return '';
+        return numberValue.toFixed(2);
+      }
+
+      function getCell(row, col) {
+        return document.querySelector(`.target-sheet-input[data-row="${row}"][data-col="${col}"]`);
+      }
+
+      function getCellsForRow(row) {
+        return cells.filter((cell) => Number(cell.dataset.row || -1) === Number(row));
+      }
+
+      function getCellsForColumn(col) {
+        return cells.filter((cell) => Number(cell.dataset.col || -1) === Number(col));
+      }
+
+      function pushUndo(changes) {
+        const normalizedChanges = (changes || []).filter((change) => change.cell && change.before !== change.after);
+        if (!normalizedChanges.length) return;
+        undoStack.push(normalizedChanges);
+      }
+
+      function undoLastChange() {
+        const changes = undoStack.pop();
+        if (!changes) return;
+        changes.forEach((change) => {
+          change.cell.value = displaySheetValue(change.before);
+          change.cell.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        saveDraft();
+        changes[0]?.cell?.focus();
+      }
+
+      function clearSelectionStyles() {
+        cells.forEach((cell) => cell.classList.remove('is-selected', 'is-range-selected'));
+        document.querySelectorAll('.target-sheet-cell.is-selected, .target-sheet-cell.is-range-selected').forEach((cell) => {
+          cell.classList.remove('is-selected', 'is-range-selected');
+        });
+        document.querySelectorAll('.target-sheet-header.is-selected').forEach((header) => {
+          header.classList.remove('is-selected');
+        });
+      }
+
+      function selectCells(nextCells, primaryCell, header) {
+        clearSelectionStyles();
+        selectedCells = (nextCells || []).filter(Boolean);
+        selectedCell = primaryCell || selectedCells[0] || null;
+        selectedCells.forEach((cell) => {
+          const selectedClass = cell === selectedCell ? 'is-selected' : 'is-range-selected';
+          cell.classList.add(selectedClass);
+          cell.closest('.target-sheet-cell')?.classList.add(selectedClass);
+        });
+        header?.classList.add('is-selected');
+      }
+
+      function selectCell(cell) {
+        if (!cell) return;
+        selectCells([cell], cell);
+      }
+
+      function selectRow(row, header) {
+        const rowCells = getCellsForRow(row);
+        selectCells(rowCells, rowCells[0], header);
+      }
+
+      function selectColumn(col, header) {
+        const columnCells = getCellsForColumn(col);
+        selectCells(columnCells, columnCells[0], header);
+      }
+
+      function selectAllTargets(header) {
+        selectCells(cells, cells[0], header);
+      }
+
+      function bindHeaderSelection(header, selectFn) {
+        if (!header) return;
+        header.addEventListener('click', selectFn);
+        header.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          selectFn();
+        });
+      }
+
+      function clearCells(cellsToClear) {
+        const changes = [];
+        (cellsToClear || []).forEach((cell) => {
+          if (!cell) return;
+          const before = cell.value;
+          cell.value = '';
+          cell.dispatchEvent(new Event('input', { bubbles: true }));
+          changes.push({ cell, before, after: cell.value });
+        });
+        saveDraft();
+        pushUndo(changes);
+      }
+
+      function clearSelection() {
+        clearCells(selectedCells.length ? selectedCells : [selectedCell]);
+      }
+
+      function pasteTable(startCell, clipboardText) {
+        const startRow = Number(startCell.dataset.row || 0);
+        const startCol = Number(startCell.dataset.col || 0);
+        const rows = String(clipboardText || '')
+          .replace(/\r/g, '')
+          .split('\n')
+          .filter((row, index, list) => row.length || index < list.length - 1)
+          .map(row => row.split('\t'));
+
+        const changes = [];
+        rows.forEach((rowValues, rowOffset) => {
+          rowValues.forEach((value, colOffset) => {
+            const cell = getCell(startRow + rowOffset, startCol + colOffset);
+            if (cell) {
+              const before = cell.value;
+              const after = normalizeNumber(value);
+              cell.value = after;
+              cell.dispatchEvent(new Event('input', { bubbles: true }));
+              changes.push({ cell, before, after });
+            }
+          });
+        });
+        saveDraft();
+        pushUndo(changes);
+      }
+
+      restoreDraft();
+      removeZeroPlaceholders();
+      saveDraft();
+
+      cells.forEach((cell) => {
+        cell.addEventListener('input', saveDraft);
+
+        cell.addEventListener('focus', () => {
+          cell.dataset.undoValue = cell.value;
+        });
+
+        cell.addEventListener('change', () => {
+          const before = cell.dataset.undoValue || '';
+          const after = cell.value;
+          pushUndo([{ cell, before, after }]);
+          cell.dataset.undoValue = after;
+        });
+
+        cell.addEventListener('focus', () => {
+          selectCell(cell);
+          cell.select();
+        });
+
+        cell.addEventListener('click', () => selectCell(cell));
+
+        cell.addEventListener('paste', (event) => {
+          const text = event.clipboardData?.getData('text/plain') || '';
+          if (!text.includes('\t') && !text.includes('\n')) {
+            return;
+          }
+          event.preventDefault();
+          selectCell(cell);
+          pasteTable(cell, text);
+        });
+
+        cell.addEventListener('keydown', (event) => {
+          const row = Number(cell.dataset.row || 0);
+          const col = Number(cell.dataset.col || 0);
+
+          if ((event.key === 'Delete' || event.key === 'Backspace') && cell.selectionStart === 0 && cell.selectionEnd === cell.value.length) {
+            event.preventDefault();
+            clearSelection();
+            return;
+          }
+
+          if (event.key === 'Enter' || event.key === 'ArrowDown') {
+            event.preventDefault();
+            getCell(row + 1, col)?.focus();
+          } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            getCell(row - 1, col)?.focus();
+          } else if (event.key === 'ArrowRight' && cell.selectionStart === cell.value.length) {
+            getCell(row, col + 1)?.focus();
+          } else if (event.key === 'ArrowLeft' && cell.selectionStart === 0) {
+            getCell(row, col - 1)?.focus();
+          }
+        });
+      });
+
+      document.querySelectorAll('[data-row-header]').forEach((header) => {
+        bindHeaderSelection(header, () => {
+          selectRow(header.dataset.rowHeader, header);
+          header.focus();
+        });
+      });
+
+      document.querySelectorAll('[data-col-header]').forEach((header) => {
+        bindHeaderSelection(header, () => {
+          selectColumn(header.dataset.colHeader, header);
+          header.focus();
+        });
+      });
+
+      bindHeaderSelection(document.querySelector('[data-all-header]'), () => {
+        const header = document.querySelector('[data-all-header]');
+        selectAllTargets(header);
+        header?.focus();
+      });
+
+      clearButton?.addEventListener('click', () => {
+        clearSelection();
+        selectedCell?.focus();
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          undoLastChange();
+          return;
+        }
+
+        if ((event.key === 'Delete' || event.key === 'Backspace') && selectedCells.length > 1 && !event.target?.classList?.contains('target-sheet-input')) {
+          event.preventDefault();
+          clearSelection();
+        }
+      });
+
+    })();
+  </script>
+  {% endif %}
+
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,261 @@
+/*
+═══════════════════════════════════════
+
+██╗   ██╗  ██████╗                 
+██║   ██║       ╚██╗   	  ██████╗  
+██║   ██║   █████╔╝    	 ██╔═══██╗ 
+╚██╗ ██╔╝  ██╔═══╝     	 ██║   ██║ 
+ ╚████╔╝   ███████╗  ██  ╚██████╔╝ 
+  ╚═══╝    ╚══════╝       ╚═════╝    
+ 
+═══════════════════════════════════════
+
+*/
+
+// --------------------------------------------------
+function activate(elm){
+	let parent_elm = elm.parentNode.parentNode;
+	let all_active = parent_elm.getElementsByClassName("active_nav");
+
+	
+	for(each of all_active){
+		each.classList.remove("active_nav");
+	}
+	
+	
+	elm.classList.add("active_nav");
+	
+	let clickable_id = elm.getAttribute("id").replace(/^_/, '');
+	
+	let url = new URL(window.location.href);
+    url.searchParams.set('m', clickable_id);
+    
+	
+	if(getparam("q")){
+		localStorage.setItem("search_term",getparam("q"));
+	}else{
+		localStorage.removeItem("search_term");
+	}
+	
+	
+    history.pushState(null, '', url);
+	
+	
+};
+
+
+
+// ====================================
+// Administration Section
+
+
+function showUsersAdminView(elm){
+	activate(elm);
+
+	let page = open_modal("users_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+
+	
+}
+
+
+function showProductMasterList(elm){
+	activate(elm);
+
+	let page = open_modal("product_masterlist", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,true);
+	hideDashboardContents(true);
+	
+
+	
+}
+
+
+
+function showClusterPageAdmin(elm){
+	activate(elm);
+
+	let page = open_modal("clusters_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+
+	
+}
+
+
+function showStoresPageAdmin(elm){
+	activate(elm);
+
+	let page = open_modal("stores_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
+
+
+function showStoresTargetPageAdmin(elm){
+	activate(elm);
+
+	let page = open_modal("targets_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
+
+
+function showSupplyMangPageAdmin(elm){
+	activate(elm);
+
+	let page = open_modal("supply_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
+
+
+function showSysAlayzerPageAdmin(elm){
+	activate(elm);
+
+	let page = open_modal("system_analyzer", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
+
+
+function showInvSyncPageAdmin(elm){
+	activate(elm);
+
+	let page = open_modal("invensync_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
+
+// Administration Section END
+// ====================================
+
+
+//Store Manager ===============
+
+function showInvSyncStoreUser(elm){
+	activate(elm);
+
+	let page = open_modal("/store-manager/invensync_details_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
+
+
+
+function showOracleStoreUser(elm){
+	activate(elm);
+
+	let page = open_modal("/store-manager/oracle_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
+
+
+
+function showHelpPage(elm){
+	activate(elm);
+
+	let page = open_modal("/store-manager/help_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
+
+
+// Utilities
+async function hideDashboardContents(hide=false){
+	
+	if(hide){
+	_('header_title').classList.add("slideOut");
+	await sleep(200);
+	
+	_('header_title').classList.add("hide_main_con");
+	// _('dash_title_top').classList.add("hide_from_view");
+		
+	}else{
+		_('header_title').classList.remove("slideOut");
+		_('header_title').classList.remove("hide_main_con");
+		// _('dash_title_top').classList.remove("hide_from_view");
+		
+	}
+
+}
+
+
+function closeAllPages(exclude=undefined,retain_elements=false){
+	forceResize = true;
+	
+	let containment = _('general_container').getElementsByClassName('page_containment');
+	
+	try{
+		hideDashboardContents(false);
+	}catch(e){
+		//--
+	}
+	for(each of containment){
+		if(exclude){
+			if(each.id == exclude.id){
+				continue;
+			}
+		}
+	
+		let close_link = (each.getElementsByClassName("close_modal_rev")[0]);
+		
+		if(retain_elements){
+			minimize_modalizer(close_link);
+		}else{
+			close_modalizer(close_link);
+		}
+		
+	}
+	
+	try{
+		closeSidebar();
+	}catch(e){
+		//---
+	}
+	
+}
+
+	
+
+function closeSidebar(){
+	document.documentElement.classList.remove('sidebar-open');
+}
+
+
+function toggleSidebarCollapse(){
+	console.log("Element");
+	
+	
+	toggleMobileSidebar();
+}
+
+

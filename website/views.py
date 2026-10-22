@@ -1,0 +1,14116 @@
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file, current_app
+from flask_login import login_required, current_user
+from sqlalchemy.orm import selectinload
+from .models import (
+    User,
+    Store,
+    Cluster,
+    DailyReport,
+    PosSold,
+    PosSoldStaging,
+    PosSoldDraft,
+    ProductMaster,
+    ProductAlias,
+    RsoDelivery,
+    RsoDeliveryDraft,
+    TafTransfer,
+    TafTransferItem,
+    DailyEndingInventory,
+    DailyEndingInventoryItem,
+    StoreTarget,
+    StoreProductBuffer,
+    GlobalInvenSyncConfig,
+    SupplyItem,
+    SupplyRequest,
+    SupplyRequestItem,
+    DeliveryReconciliation,
+    OracleOrder,
+)
+from . import db
+from .audit import log_audit_event
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
+import math
+import re
+import base64
+import binascii
+import json
+import io
+import os
+import urllib.error
+import urllib.request
+from difflib import SequenceMatcher
+from collections import OrderedDict
+from types import SimpleNamespace
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.sqltypes import Integer as SAInteger, Float as SAFloat, Numeric as SANumeric
+
+views = Blueprint('views', __name__)
+
+
+@views.route('/presence/ping', methods=['POST'])
+@login_required
+def presence_ping():
+    now = datetime.now(ZoneInfo('UTC'))
+    payload = request.get_json(silent=True) or {}
+    activity_type = str(payload.get('activity_type') or 'browsing').strip().lower()
+    current_user.last_activity_at = now
+    current_user.last_interaction_at = now if activity_type in ('typing', 'uploading') else None
+    session['_presence_touch_epoch'] = now.timestamp()
+    db.session.commit()
+    return ('', 204)
+
+
+@views.route('/presence/stores')
+@login_required
+def store_presence():
+    role = str(current_user.role or '').strip()
+    if role in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
+        stores = _apply_store_scope_filter(Store.query.all(), request)
+    elif role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        stores = (
+            _apply_store_scope_filter(
+                Store.query.filter_by(cluster_id=cluster.id).all(),
+                request,
+            )
+            if cluster else []
+        )
+    else:
+        return jsonify({'error': 'Access denied.'}), 403
+
+    manager_presence = _get_user_presence_states(store.manager_id for store in stores)
+    return jsonify({
+        'stores': {
+            str(store.id): manager_presence.get(store.manager_id, 'offline')
+            for store in stores
+        }
+    })
+
+
+@views.route('/starlink')
+@login_required
+def starlink():
+    role = (current_user.role or '').strip()
+    if role not in ('Admin', 'Superadmin', 'General Manager', 'Cluster Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+    if role in ('Admin', 'Superadmin', 'General Manager'):
+        return redirect(url_for('admin.dashboard'))
+
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        stores = (
+            Store.query.filter_by(cluster_id=cluster.id).order_by(Store.name.asc()).all()
+            if cluster else []
+        )
+    else:
+        stores = Store.query.order_by(Store.name.asc()).all()
+
+    stores = [
+        store for store in stores
+        if 'starlink' in str(store.name or '').strip().lower()
+    ]
+
+    month_start = date.today().replace(day=1)
+    store_ids = [store.id for store in stores]
+    reports = (
+        DailyReport.query
+        .filter(
+            DailyReport.store_id.in_(store_ids),
+            DailyReport.report_date >= month_start,
+            DailyReport.report_date <= date.today(),
+        )
+        .all()
+        if store_ids else []
+    )
+    reports_by_store = {}
+    for report in reports:
+        reports_by_store.setdefault(report.store_id, []).append(report)
+
+    starlink_rows = []
+    for store in stores:
+        store_reports = reports_by_store.get(store.id, [])
+        net_sales = sum(
+            float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+            for report in store_reports
+        )
+        transaction_count = sum(
+            int(report.pos_tc or 0) + int(report.ci_tc or 0)
+            for report in store_reports
+        )
+        starlink_rows.append({
+            'store': store,
+            'net_sales': net_sales,
+            'transaction_count': transaction_count,
+            'ads': net_sales / 31,
+            'adtc': transaction_count / 31,
+        })
+
+    return render_template(
+        'starlink.html',
+        user=current_user,
+        starlink_rows=starlink_rows,
+        period_label=month_start.strftime('%B %Y'),
+    )
+
+
+def _safe_ratio(numerator, denominator):
+    return (numerator / denominator) if denominator else 0.0
+
+
+def _get_wastage_amount_from_components(report):
+    taf_wastage_amount = getattr(report, '_taf_wastage_amount', None)
+    if taf_wastage_amount is not None:
+        return float(taf_wastage_amount or 0)
+    return (
+        float(getattr(report, 'spoilage_gc', 0) or 0)
+        + float(getattr(report, 'spoilage_rolls', 0) or 0)
+        + float(getattr(report, 'spoilage_premium', 0) or 0)
+        + float(getattr(report, 'spoilage_others', 0) or 0)
+    )
+
+
+def _apply_taf_wastage_amounts(reports):
+    """Attach Wastage Transfer TAF totals to matching daily report rows."""
+    report_keys = {
+        (int(report.store_id), report.report_date)
+        for report in reports
+        if getattr(report, 'store_id', None) and getattr(report, 'report_date', None)
+    }
+    if not report_keys:
+        return
+
+    store_ids = {store_id for store_id, _ in report_keys}
+    report_dates = {report_date for _, report_date in report_keys}
+    taf_totals = {
+        (int(store_id), transaction_date): float(total_amount or 0)
+        for store_id, transaction_date, total_amount in (
+            db.session.query(
+                TafTransfer.store_id,
+                TafTransfer.transaction_date,
+                func.sum(TafTransfer.grand_total),
+            )
+            .filter(TafTransfer.store_id.in_(store_ids))
+            .filter(TafTransfer.transaction_date.in_(report_dates))
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer')
+            .group_by(TafTransfer.store_id, TafTransfer.transaction_date)
+            .all()
+        )
+    }
+
+    for report in reports:
+        key = (int(report.store_id), report.report_date)
+        if key in taf_totals:
+            setattr(report, '_taf_wastage_amount', taf_totals[key])
+
+
+def _classify_store_status(ar_tgt_percent, growth_ratio=None):
+    """
+    Classify per-store status using AR-only criteria:
+    - Excellent: AR >= +0.1
+    - Critical: AR < -3
+    - ICU Critical: AR < -10
+    Remaining bands:
+    - Recovery: -3 <= AR < 0
+    - Good: 0 <= AR < 0.1
+
+    Override requested:
+    - If AR is below -3 (but not ICU) and %Gr is >= -3%, classify as Recovery.
+    """
+    gr_percent = (growth_ratio * 100.0) if growth_ratio is not None else None
+
+    if ar_tgt_percent < -10:
+        return 'ICU Critical'
+    if ar_tgt_percent < -3:
+        if gr_percent is not None and gr_percent >= -3.0:
+            return 'Recovery'
+        return 'Critical'
+    if ar_tgt_percent < 0:
+        return 'Recovery'
+    if ar_tgt_percent < 0.1:
+        return 'Good'
+    return 'Excellent'
+
+
+def _get_team_name(cluster):
+    manager = getattr(cluster, 'manager', None)
+    full_name = (manager.full_name or '').strip() if manager else ''
+    if full_name:
+        first_name = full_name.split()[0]
+        return f'Team {first_name}'
+    cluster_name = (cluster.name or '').strip() if cluster else ''
+    return f'Team {cluster_name}' if cluster_name else 'Team'
+
+
+def _build_cluster_sidebar_stores(stores, start_date=None, end_date=None):
+    store_ids = [store.id for store in stores]
+    if not store_ids:
+        return []
+
+    pending_query = (
+        db.session.query(DailyReport.store_id, func.count(DailyReport.id))
+        .filter(
+            DailyReport.store_id.in_(store_ids),
+            DailyReport.status == 'Pending',
+        )
+    )
+    if start_date:
+        pending_query = pending_query.filter(DailyReport.report_date >= start_date)
+    if end_date:
+        pending_query = pending_query.filter(DailyReport.report_date <= end_date)
+
+    pending_counts = {
+        int(store_id): int(count or 0)
+        for store_id, count in pending_query.group_by(DailyReport.store_id).all()
+    }
+
+    return [
+        {
+            'id': store.id,
+            'name': store.name,
+            'pending_count': pending_counts.get(store.id, 0),
+        }
+        for store in stores
+    ]
+
+
+def _get_store_scope_from_request(req):
+    """Read the global Official/Starlink store scope set by the sidebar toggle.
+
+    Returns 'starlink' or 'official'.
+    """
+    scope = (req.cookies.get('store_scope') or req.args.get('store_scope') or 'official').lower()
+    if scope not in ('starlink', 'official'):
+        scope = 'official'
+    return scope
+
+
+def _apply_store_scope_filter(stores, req):
+    """Filter a list of Store objects by the active global store scope.
+
+    'official' -> stores whose name does NOT contain 'starlink'
+    'starlink' -> stores whose name contains 'starlink'
+    """
+    scope = _get_store_scope_from_request(req)
+    if not stores:
+        return stores
+    if scope == 'starlink':
+        return [s for s in stores if 'starlink' in (s.name or '').lower()]
+    return [s for s in stores if 'starlink' not in (s.name or '').lower()]
+
+
+def _get_area_manager_cluster_ids(user):
+    """Return the set of cluster ids an Area Manager is assigned to, or None for other roles."""
+    if getattr(user, 'role', None) != 'Area Manager':
+        return None
+    return {int(cluster.id) for cluster in (user.assigned_clusters or [])}
+
+
+_INVENSYNC_MEANINGFUL_ITEM_FIELDS = (
+    'beginning_qty',
+    'delivery_qty',
+    'trans_in_qty',
+    'bo_qty',
+    'adv_del_qty',
+    'trans_out_qty',
+    'wastage_qty',
+    'wastage_amount',
+    'csi_qty',
+    'quantity_sold',
+    'ending_d5_qty',
+    'ending_d4_qty',
+    'ending_d3_qty',
+    'total_ending_qty',
+    'total_peso_srp',
+    'theo_ending_qty',
+    'variance_qty',
+    'variance_peso',
+)
+
+
+def _get_latest_meaningful_invensync_by_store(store_ids=None):
+    """Return each store's latest finalized or non-empty InvenSync record."""
+    item_has_value = or_(
+        *(
+            func.coalesce(getattr(DailyEndingInventoryItem, field_name), 0) != 0
+            for field_name in _INVENSYNC_MEANINGFUL_ITEM_FIELDS
+        ),
+        func.length(func.trim(func.coalesce(DailyEndingInventoryItem.remarks, ''))) > 0,
+    )
+    meaningful_item_exists = (
+        db.session.query(DailyEndingInventoryItem.id)
+        .filter(
+            DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id,
+            item_has_value,
+        )
+        .exists()
+    )
+    meaningful_inventory_filter = or_(
+        DailyEndingInventory.is_finalized.is_(True),
+        meaningful_item_exists,
+    )
+
+    latest_dates_query = db.session.query(
+        DailyEndingInventory.store_id.label('store_id'),
+        func.max(DailyEndingInventory.inventory_date).label('latest_date'),
+    ).filter(meaningful_inventory_filter)
+    if store_ids is not None:
+        normalized_store_ids = [int(store_id) for store_id in store_ids]
+        if not normalized_store_ids:
+            return {}
+        latest_dates_query = latest_dates_query.filter(
+            DailyEndingInventory.store_id.in_(normalized_store_ids)
+        )
+
+    latest_inventory_dates = (
+        latest_dates_query
+        .group_by(DailyEndingInventory.store_id)
+        .subquery()
+    )
+    inventory_records = (
+        DailyEndingInventory.query
+        .options(selectinload(DailyEndingInventory.items))
+        .join(
+            latest_inventory_dates,
+            (DailyEndingInventory.store_id == latest_inventory_dates.c.store_id)
+            & (DailyEndingInventory.inventory_date == latest_inventory_dates.c.latest_date),
+        )
+        .filter(meaningful_inventory_filter)
+        .order_by(DailyEndingInventory.store_id.asc(), DailyEndingInventory.id.desc())
+        .all()
+    )
+
+    inventory_by_store = {}
+    for inventory in inventory_records:
+        inventory_by_store.setdefault(int(inventory.store_id), inventory)
+    return inventory_by_store
+
+
+def _get_invensync_data_state(inventory):
+    if not inventory:
+        return 'empty'
+    if inventory.is_finalized:
+        return 'finalized'
+    return 'draft'
+
+
+def _get_user_presence_states(user_ids, idle_minutes=5, working_seconds=60):
+    normalized_ids = {int(user_id) for user_id in user_ids if user_id}
+    if not normalized_ids:
+        return {}
+
+    now = datetime.now(ZoneInfo('UTC'))
+    idle_cutoff = now - timedelta(minutes=idle_minutes)
+    working_cutoff = now - timedelta(seconds=working_seconds)
+    states = {}
+    for user_id, last_activity_at, last_interaction_at in (
+        db.session.query(User.id, User.last_activity_at, User.last_interaction_at)
+        .filter(User.id.in_(normalized_ids))
+        .all()
+    ):
+        if last_activity_at is None:
+            state = 'offline'
+        else:
+            comparable_activity = last_activity_at
+            if comparable_activity.tzinfo is None:
+                comparable_activity = comparable_activity.replace(tzinfo=ZoneInfo('UTC'))
+            comparable_interaction = last_interaction_at
+            if comparable_interaction is not None and comparable_interaction.tzinfo is None:
+                comparable_interaction = comparable_interaction.replace(tzinfo=ZoneInfo('UTC'))
+            if comparable_interaction is not None and comparable_interaction >= working_cutoff:
+                state = 'active'
+            elif comparable_activity >= idle_cutoff:
+                state = 'online'
+            else:
+                state = 'idle'
+        states[int(user_id)] = state
+    return states
+
+
+
+def _aggregate_targets_by_day(targets):
+    targets_by_day = {}
+    for target in targets:
+        date_key = target.target_date.strftime('%Y-%m-%d')
+        day_target = targets_by_day.setdefault(date_key, {'target_net': 0.0, 'last_year_net': 0.0, 'gbi_target': 0.0})
+        day_target['target_net'] += float(target.target_net or 0)
+        day_target['last_year_net'] += float(target.last_year_net or 0)
+        day_target['gbi_target'] += float(target.gbi_target or 0)
+    return targets_by_day
+
+
+def _build_wastage_performance(reports, start_date, end_date, store_lookup=None):
+    from calendar import monthrange
+
+    if not start_date or not end_date:
+        return {
+            'month_label': '',
+            'title_label': 'Wastage Performance',
+            'rows': [],
+            'mtd': {'label': 'MTD', 'gross_sales': 0.0, 'wastage': 0.0, 'percent': 0.0},
+            'per_store': {
+                'title_label': 'MTD Wastage Performance Per Store',
+                'rows': [],
+                'total': {'gross_sales': 0.0, 'wastage': 0.0, 'percent': 0.0},
+            },
+        }
+
+    month_start = date(start_date.year, start_date.month, 1)
+    _, month_days = monthrange(start_date.year, start_date.month)
+    month_end = date(start_date.year, start_date.month, month_days)
+
+    buckets = [
+        (1, 6),
+        (7, 13),
+        (14, 20),
+        (21, 27),
+        (28, month_days),
+    ]
+
+    month_abbr = month_start.strftime('%b')
+    rows = []
+    mtd_gross = 0.0
+    mtd_wastage = 0.0
+
+    for day_start, day_end in buckets:
+        bucket_start = date(start_date.year, start_date.month, day_start)
+        bucket_end = date(start_date.year, start_date.month, day_end)
+        effective_start = max(bucket_start, start_date, month_start)
+        effective_end = min(bucket_end, end_date, month_end)
+
+        gross_total = 0.0
+        wastage_total = 0.0
+        if effective_start <= effective_end:
+            for report in reports:
+                report_date = getattr(report, 'report_date', None)
+                if not report_date or report_date < effective_start or report_date > effective_end:
+                    continue
+                gross_total += float(getattr(report, 'pos_gross_sales', 0) or 0) + float(getattr(report, 'ci_regular_gross_sales', 0) or 0)
+                wastage_total += _get_wastage_amount_from_components(report)
+
+        percent = (wastage_total / gross_total * 100.0) if gross_total > 0 else 0.0
+        rows.append({
+            'label': f'{month_abbr} {day_start} - {day_end}',
+            'gross_sales': gross_total,
+            'wastage': wastage_total,
+            'percent': percent,
+        })
+        mtd_gross += gross_total
+        mtd_wastage += wastage_total
+
+    store_totals = {}
+    for report in reports:
+        report_date = getattr(report, 'report_date', None)
+        if not report_date or report_date < start_date or report_date > end_date:
+            continue
+        store_id = int(getattr(report, 'store_id', 0) or 0)
+        if not store_id:
+            continue
+        if store_id not in store_totals:
+            store_name = (store_lookup or {}).get(store_id)
+            store_totals[store_id] = {
+                'store_id': store_id,
+                'store_name': (store_name or f'Store {store_id}'),
+                'gross_sales': 0.0,
+                'wastage': 0.0,
+            }
+        store_totals[store_id]['gross_sales'] += float(getattr(report, 'pos_gross_sales', 0) or 0) + float(getattr(report, 'ci_regular_gross_sales', 0) or 0)
+        store_totals[store_id]['wastage'] += _get_wastage_amount_from_components(report)
+
+    per_store_rows = []
+    for item in store_totals.values():
+        gross_sales = float(item.get('gross_sales', 0) or 0)
+        wastage = float(item.get('wastage', 0) or 0)
+        per_store_rows.append({
+            'store_id': item.get('store_id'),
+            'store_name': item.get('store_name') or 'Unknown Store',
+            'gross_sales': gross_sales,
+            'wastage': wastage,
+            'percent': ((wastage / gross_sales) * 100.0) if gross_sales > 0 else 0.0,
+        })
+    per_store_rows = sorted(
+        per_store_rows,
+        key=lambda row: (row.get('store_name') or '').lower()
+    )
+
+    per_store_total_gross = sum(float(row.get('gross_sales', 0) or 0) for row in per_store_rows)
+    per_store_total_wastage = sum(float(row.get('wastage', 0) or 0) for row in per_store_rows)
+    per_store_total_percent = ((per_store_total_wastage / per_store_total_gross) * 100.0) if per_store_total_gross > 0 else 0.0
+    mtd_percent = (mtd_wastage / mtd_gross * 100.0) if mtd_gross > 0 else 0.0
+    return {
+        'month_label': month_abbr,
+        'title_label': f'{month_abbr} Wastage Performance',
+        'rows': rows,
+        'mtd': {
+            'label': f'{month_abbr} MTD',
+            'gross_sales': mtd_gross,
+            'wastage': mtd_wastage,
+            'percent': mtd_percent,
+        },
+        'per_store': {
+            'title_label': f'{month_abbr} MTD Wastage Performance Per Store',
+            'rows': per_store_rows,
+            'total': {
+                'gross_sales': per_store_total_gross,
+                'wastage': per_store_total_wastage,
+                'percent': per_store_total_percent,
+            },
+        },
+    }
+
+
+def _build_discount_performance(reports, start_date, end_date):
+    if not start_date or not end_date:
+        return {
+            'month_label': '',
+            'title_label': 'Discount Performance Breakdown',
+            'rows': [],
+            'mtd': {'label': 'MTD', 'amount': 0.0, 'percent': 0.0},
+        }
+
+    month_abbr = start_date.strftime('%b')
+    gross_sales_total = 0.0
+    senior_pwd_total = 0.0
+    promo_ldts_total = 0.0
+    bulk_order_total = 0.0
+
+    for report in reports:
+        report_date = getattr(report, 'report_date', None)
+        if not report_date or report_date < start_date or report_date > end_date:
+            continue
+
+        gross_sales_total += float(getattr(report, 'pos_gross_sales', 0) or 0) + float(getattr(report, 'ci_regular_gross_sales', 0) or 0)
+        senior_pwd_total += float(getattr(report, 'senior_pwd_discount', 0) or 0)
+        promo_ldts_total += float(getattr(report, 'promo_ldts_discount', 0) or 0)
+        bulk_order_total += float(getattr(report, 'bulk_orders_discount', 0) or 0)
+
+    def _percent_of_gross(amount):
+        return (float(amount or 0.0) / gross_sales_total * 100.0) if gross_sales_total > 0 else 0.0
+
+    rows = [
+        {
+            'label': 'Senior / PWD',
+            'amount': senior_pwd_total,
+            'percent': _percent_of_gross(senior_pwd_total),
+        },
+        {
+            'label': 'Promo (LDTS)',
+            'amount': promo_ldts_total,
+            'percent': _percent_of_gross(promo_ldts_total),
+        },
+        {
+            'label': 'Bulk Order',
+            'amount': bulk_order_total,
+            'percent': _percent_of_gross(bulk_order_total),
+        },
+    ]
+
+    mtd_amount = senior_pwd_total + promo_ldts_total + bulk_order_total
+    return {
+        'month_label': month_abbr,
+        'title_label': f'{month_abbr} Discount Performance Breakdown',
+        'rows': rows,
+        'mtd': {
+            'label': f'{month_abbr} MTD',
+            'amount': mtd_amount,
+            'percent': _percent_of_gross(mtd_amount),
+        },
+    }
+
+
+def _build_acc_targets_by_day(year, month, targets_by_day):
+    from calendar import monthrange
+
+    _, total_days = monthrange(year, month)
+    acc_target_net = 0.0
+    acc_ly_net = 0.0
+    acc_gbi = 0.0
+    acc_targets_by_day = {}
+
+    for day in range(1, total_days + 1):
+        date_key = f'{year:04d}-{month:02d}-{day:02d}'
+        target_data = targets_by_day.get(date_key, {'target_net': 0.0, 'last_year_net': 0.0, 'gbi_target': 0.0})
+
+        acc_target_net += float(target_data.get('target_net', 0) or 0)
+        acc_ly_net += float(target_data.get('last_year_net', 0) or 0)
+        acc_gbi += float(target_data.get('gbi_target', 0) or 0)
+
+        acc_targets_by_day[date_key] = {
+            'target_net': acc_target_net,
+            'last_year_net': acc_ly_net,
+            'gbi_target': acc_gbi,
+        }
+
+    return acc_targets_by_day
+
+
+def _build_acc_sales_by_day(year, month, reports):
+    from calendar import monthrange
+
+    _, total_days = monthrange(year, month)
+    daily_sales = {}
+    for report in reports:
+        date_key = report.report_date.strftime('%Y-%m-%d')
+        net_sales = float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+        daily_sales[date_key] = float(daily_sales.get(date_key, 0) or 0) + net_sales
+
+    acc_sales = 0.0
+    acc_sales_by_day = {}
+    for day in range(1, total_days + 1):
+        date_key = f'{year:04d}-{month:02d}-{day:02d}'
+        acc_sales += float(daily_sales.get(date_key, 0) or 0)
+        acc_sales_by_day[date_key] = {'net_sales': acc_sales}
+
+    return acc_sales_by_day
+
+
+def _build_mtd_metrics_by_day(year, month, acc_sales_by_day, acc_targets_by_day):
+    from calendar import monthrange
+
+    _, total_days = monthrange(year, month)
+    metrics_by_day = {}
+
+    for day in range(1, total_days + 1):
+        date_key = f'{year:04d}-{month:02d}-{day:02d}'
+        acc_net_sales = float(acc_sales_by_day.get(date_key, {}).get('net_sales', 0) or 0)
+        acc_target_net = float(acc_targets_by_day.get(date_key, {}).get('target_net', 0) or 0)
+        acc_ly_net = float(acc_targets_by_day.get(date_key, {}).get('last_year_net', 0) or 0)
+
+        metrics_by_day[date_key] = {
+            'mtd_vs_tgt': (((acc_net_sales / acc_target_net) - 1.0) * 100) if acc_target_net > 0 else None,
+            'mtd_vs_ly': (((acc_net_sales / acc_ly_net) - 1.0) * 100) if acc_ly_net > 0 else None,
+        }
+
+    return metrics_by_day
+
+
+def _build_ytd_overview(end_date, store_ids=None):
+    if not end_date:
+        return {
+            'ytd_sales': 0.0,
+            'ytd_target': 0.0,
+            'ytd_variance_amount': 0.0,
+            'ytd_variance_percent': 0.0,
+        }
+
+    ytd_start = date(end_date.year, 1, 1)
+
+    report_query = DailyReport.query.filter(
+        DailyReport.report_date >= ytd_start,
+        DailyReport.report_date <= end_date,
+        DailyReport.status == 'Approved',
+    )
+
+    from .models import StoreTarget
+    target_query = StoreTarget.query.filter(
+        StoreTarget.target_date >= ytd_start,
+        StoreTarget.target_date <= end_date,
+    )
+
+    if store_ids is not None:
+        if not store_ids:
+            return {
+                'ytd_sales': 0.0,
+                'ytd_target': 0.0,
+                'ytd_variance_amount': 0.0,
+                'ytd_variance_percent': 0.0,
+            }
+        report_query = report_query.filter(DailyReport.store_id.in_(store_ids))
+        target_query = target_query.filter(StoreTarget.store_id.in_(store_ids))
+
+    ytd_reports = report_query.all()
+    ytd_targets = target_query.all()
+
+    ytd_sales = sum(
+        float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+        for report in ytd_reports
+    )
+    ytd_target = sum(float(target.target_net or 0) for target in ytd_targets)
+
+    return {
+        'ytd_sales': ytd_sales,
+        'ytd_target': ytd_target,
+        'ytd_variance_amount': ytd_sales - ytd_target,
+        'ytd_variance_percent': ((_safe_ratio(ytd_sales, ytd_target) - 1.0) * 100) if ytd_target > 0 else 0.0,
+    }
+
+
+def _group_reports_by_date(reports):
+    reports_by_date = {}
+    for report in sorted(reports, key=lambda r: (r.report_date, r.id)):
+        date_key = report.report_date.strftime('%Y-%m-%d')
+        reports_by_date.setdefault(date_key, []).append(report)
+    return reports_by_date
+
+
+def _consolidate_cluster_reports_by_date(reports):
+    if not reports:
+        return []
+
+    numeric_field_names = []
+    integer_field_names = set()
+    for column in DailyReport.__table__.columns:
+        if isinstance(column.type, (SAInteger, SAFloat, SANumeric)):
+            if column.name in ('id', 'store_id', 'submitted_by'):
+                continue
+            numeric_field_names.append(column.name)
+            if isinstance(column.type, SAInteger):
+                integer_field_names.add(column.name)
+
+    # POS-derived computed sold fields (not DB columns).
+    computed_pos_fields = [
+        'pos_qty_gc',
+        'pos_qty_rolls',
+        'pos_qty_premium',
+        'pos_qty_cheesy_ensay',
+        'pos_qty_slices',
+        'pos_qty_mamon',
+    ]
+
+    day_map = {}
+    for report in reports:
+        date_key = report.report_date.strftime('%Y-%m-%d')
+        day_row = day_map.get(date_key)
+        if not day_row:
+            day_row = SimpleNamespace()
+            day_row.id = int(-report.report_date.toordinal())
+            day_row.report_date = report.report_date
+            day_row.status = 'Approved'
+            day_row.store_name = 'All Stores'
+            for field_name in numeric_field_names:
+                setattr(day_row, field_name, 0)
+            for field_name in computed_pos_fields:
+                setattr(day_row, field_name, 0)
+            day_row._taf_wastage_amount = 0.0
+            day_map[date_key] = day_row
+
+        for field_name in numeric_field_names:
+            running_value = float(getattr(day_row, field_name, 0) or 0)
+            source_value = float(getattr(report, field_name, 0) or 0)
+            merged_value = running_value + source_value
+            if field_name in integer_field_names:
+                setattr(day_row, field_name, int(round(merged_value)))
+            else:
+                setattr(day_row, field_name, merged_value)
+        for field_name in computed_pos_fields:
+            setattr(
+                day_row,
+                field_name,
+                (int(getattr(day_row, field_name, 0) or 0) + int(getattr(report, field_name, 0) or 0))
+            )
+        day_row._taf_wastage_amount = float(getattr(day_row, '_taf_wastage_amount', 0) or 0) + float(getattr(report, '_taf_wastage_amount', 0) or 0)
+
+    return sorted(day_map.values(), key=lambda r: (r.report_date, r.id))
+
+
+def _attach_report_calc_fields(reports, targets_by_day, prioritize_pending=False, acc_targets_by_day=None, acc_sales_by_day=None):
+    reports_sorted = sorted(reports, key=lambda r: (r.report_date, r.id))
+
+    if prioritize_pending:
+        pending = [r for r in reports_sorted if (r.status or '') == 'Pending']
+        approved_or_rejected = [r for r in reports_sorted if (r.status or '') in ('Approved', 'Rejected')]
+        others = [r for r in reports_sorted if r not in pending and r not in approved_or_rejected]
+        traversal = pending + approved_or_rejected + others
+    else:
+        traversal = reports_sorted
+
+    acc_net_sales = 0.0
+    acc_target_net = 0.0
+    acc_ly_net = 0.0
+    acc_gbi = 0.0
+
+    for report in traversal:
+        date_key = report.report_date.strftime('%Y-%m-%d')
+        target_data = targets_by_day.get(date_key, {'target_net': 0.0, 'last_year_net': 0.0, 'gbi_target': 0.0})
+
+        pos_gross = float(report.pos_gross_sales or 0)
+        ci_gross = float(report.ci_regular_gross_sales or 0)
+        total_gross = pos_gross + ci_gross
+        net_sales = float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+
+        target_net = float(target_data.get('target_net', 0) or 0)
+        last_year_net = float(target_data.get('last_year_net', 0) or 0)
+        gbi_target = float(target_data.get('gbi_target', 0) or 0)
+
+        if acc_sales_by_day:
+            acc_sales_for_date = acc_sales_by_day.get(date_key, {})
+            acc_net_sales = float(acc_sales_for_date.get('net_sales', 0) or 0)
+        else:
+            acc_net_sales += net_sales
+        if acc_targets_by_day:
+            acc_target_for_date = acc_targets_by_day.get(date_key, {})
+            acc_target_net = float(acc_target_for_date.get('target_net', 0) or 0)
+            acc_ly_net = float(acc_target_for_date.get('last_year_net', 0) or 0)
+            acc_gbi = float(acc_target_for_date.get('gbi_target', 0) or 0)
+        else:
+            acc_target_net += target_net
+            acc_ly_net += last_year_net
+            acc_gbi += gbi_target
+
+        tc_total = int((report.pos_tc or 0) + (report.ci_tc or 0))
+
+        wastage_amount = _get_wastage_amount_from_components(report)
+        total_discount = float(report.senior_pwd_discount or 0) + float(report.promo_ldts_discount or 0) + float(report.bulk_orders_discount or 0)
+
+        calc = {
+            'target_net': target_net,
+            'last_year_net': last_year_net,
+            'gbi_target': gbi_target,
+            'total_gross_sales': total_gross,
+            'net_sales': net_sales,
+            'acc_net_sales': acc_net_sales,
+            'acc_target_net': acc_target_net,
+            'acc_ly_net': acc_ly_net,
+            'acc_gbi': acc_gbi,
+            'vs_tgt': (((net_sales / target_net) - 1.0) * 100) if target_net > 0 else 0.0,
+            'mtd_vs_tgt': (((acc_net_sales / acc_target_net) - 1.0) * 100) if acc_target_net > 0 else 0.0,
+            'mtd_vs_ly': (((acc_net_sales / acc_ly_net) - 1.0) * 100) if acc_ly_net > 0 else 0.0,
+            'ar': ((acc_net_sales / acc_gbi) * 100) if acc_gbi > 0 else 0.0,
+            'vs_ly': (((net_sales / last_year_net) - 1.0) * 100) if last_year_net > 0 else 0.0,
+            'tc_total': tc_total,
+            'ac': ((net_sales / tc_total) if tc_total > 0 else 0.0),
+            'total_agg_sales': float(report.gds_sales or 0) + float(report.grab_sales or 0) + float(report.foodpanda_sales or 0),
+            'total_agg_tc': int(report.gds_tc or 0) + int(report.grab_tc or 0) + int(report.foodpanda_tc or 0),
+            'total_sbi_sales': float(report.boothselling_sales or 0) + float(report.bulk_order_sales or 0) + float(report.reseller_sales or 0) + float(report.tieup_sales or 0) + float(report.gow_sales or 0) + float(report.ambulant_sales or 0),
+            'total_sbi_tc': int(report.boothselling_tc or 0) + int(report.bulk_order_tc or 0) + int(report.reseller_tc or 0) + int(report.tieup_tc or 0) + int(report.gow_tc or 0) + int(report.ambulant_tc or 0),
+            'wastage_amount': wastage_amount,
+            'wastage_percent': ((wastage_amount / total_gross) * 100) if total_gross > 0 else 0.0,
+            'total_discount': total_discount,
+            'discount_percent': ((total_discount / total_gross) * 100) if total_gross > 0 else 0.0,
+        }
+
+        setattr(report, 'calc', calc)
+
+def _build_cluster_manager_summary(reports, targets):
+    # Aggregate targets per day so sales calculations can use the matching date target.
+    targets_by_day = {}
+    for target in targets:
+        date_key = target.target_date.strftime('%Y-%m-%d')
+        day_target = targets_by_day.setdefault(date_key, {'target_net': 0.0, 'last_year_net': 0.0, 'gbi_target': 0.0})
+        day_target['target_net'] += float(target.target_net or 0)
+        day_target['last_year_net'] += float(target.last_year_net or 0)
+        day_target['gbi_target'] += float(target.gbi_target or 0)
+
+    reports_sorted = sorted(reports, key=lambda r: (r.report_date, r.id))
+
+    sales = {
+        'gross_sales': 0.0,
+        'ci_sales': 0.0,
+        'total_gross_sales': 0.0,
+        'target_net': 0.0,
+        'last_year_net': 0.0,
+        'net_sales': 0.0,
+        'acc_net_sales': 0.0,
+        'acc_target_net': 0.0,
+        'acc_ly_net': 0.0,
+        'gbi_target': 0.0,
+        'acc_gbi': 0.0,
+        'tc': 0,
+        'ac': 0,
+        'vs_tgt_percent': 0.0,
+        'mtd_vs_tgt_percent': 0.0,
+        'mtd_vs_ly_percent': 0.0,
+        'ar_percent': 0.0,
+        'vs_ly_percent': 0.0,
+    }
+
+    aggregators = {
+        'gds_sales': 0.0, 'gds_tc': 0,
+        'grab_sales': 0.0, 'grab_tc': 0,
+        'foodpanda_sales': 0.0, 'foodpanda_tc': 0,
+        'maxim_sales': 0.0, 'maxim_tc': 0,
+        'total_agg_sales': 0.0, 'total_agg_tc': 0,
+    }
+
+    sbi = {
+        'boothselling_sales': 0.0, 'boothselling_tc': 0,
+        'bulk_order_sales': 0.0, 'bulk_order_tc': 0,
+        'reseller_sales': 0.0, 'reseller_tc': 0,
+        'tieup_sales': 0.0, 'tieup_tc': 0,
+        'ambulant_sales': 0.0, 'ambulant_tc': 0,
+        'gow_sales': 0.0, 'gow_tc': 0,
+        'other_sbi_sales': 0.0, 'other_sbi_tc': 0,
+        'total_sbi_sales': 0.0, 'total_sbi_tc': 0,
+    }
+
+    inventory = {
+        'pos_qty_gc': 0, 'pos_qty_rolls': 0, 'pos_qty_premium': 0, 'pos_qty_cheesy_ensay': 0,
+        'pos_qty_slices': 0, 'pos_qty_mamon': 0,
+        'ending_inv_gc': 0, 'ending_inv_rolls': 0, 'ending_inv_premium': 0,
+    }
+
+    cost = {
+        'wastage_amount': 0.0,
+        'wastage_daily_percent': 0.0,
+        'senior_pwd_discount': 0.0,
+        'promo_ldts_discount': 0.0,
+        'bulk_orders_discount': 0.0,
+        'total_discount': 0.0,
+        'discount_daily_percent': 0.0,
+    }
+
+    acc_net_sales = 0.0
+    acc_target_net = 0.0
+    acc_ly_net = 0.0
+    acc_gbi = 0.0
+    ar_running_values = []
+    vs_ly_last = 0.0
+
+    for report in reports_sorted:
+        date_key = report.report_date.strftime('%Y-%m-%d')
+        target_data = targets_by_day.get(date_key, {'target_net': 0.0, 'last_year_net': 0.0, 'gbi_target': 0.0})
+
+        pos_gross = float(report.pos_gross_sales or 0)
+        ci_gross = float(report.ci_regular_gross_sales or 0)
+        total_gross = pos_gross + ci_gross
+        net_sales = float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+        target_net = float(target_data['target_net'] or 0)
+        last_year_net = float(target_data['last_year_net'] or 0)
+        gbi_target = float(target_data['gbi_target'] or 0)
+
+        sales['gross_sales'] += pos_gross
+        sales['ci_sales'] += ci_gross
+        sales['total_gross_sales'] += total_gross
+        sales['net_sales'] += net_sales
+
+        acc_net_sales += net_sales
+
+        sales['acc_net_sales'] = acc_net_sales
+
+        if last_year_net > 0:
+            vs_ly_last = ((net_sales / last_year_net) - 1.0) * 100
+
+        # Preserve existing running AR behavior during report traversal using report-date targets.
+        acc_target_net += target_net
+        acc_ly_net += last_year_net
+        acc_gbi += gbi_target
+        ar_running_values.append(_safe_ratio(acc_net_sales, acc_gbi) * 100 if acc_gbi > 0 else 0.0)
+
+        tc_total = int((report.pos_tc or 0) + (report.ci_tc or 0))
+        sales['tc'] += tc_total
+
+        # Aggregators totals
+        aggregators['gds_sales'] += float(report.gds_sales or 0)
+        aggregators['gds_tc'] += int(report.gds_tc or 0)
+        aggregators['grab_sales'] += float(report.grab_sales or 0)
+        aggregators['grab_tc'] += int(report.grab_tc or 0)
+        aggregators['foodpanda_sales'] += float(report.foodpanda_sales or 0)
+        aggregators['foodpanda_tc'] += int(report.foodpanda_tc or 0)
+        aggregators['total_agg_sales'] += float(report.gds_sales or 0) + float(report.grab_sales or 0) + float(report.foodpanda_sales or 0)
+        aggregators['total_agg_tc'] += int(report.gds_tc or 0) + int(report.grab_tc or 0) + int(report.foodpanda_tc or 0)
+
+        # SBI totals
+        sbi_fields = [
+            ('boothselling_sales', 'boothselling_tc'),
+            ('bulk_order_sales', 'bulk_order_tc'),
+            ('reseller_sales', 'reseller_tc'),
+            ('tieup_sales', 'tieup_tc'),
+            ('gow_sales', 'gow_tc'),
+            ('ambulant_sales', 'ambulant_tc'),
+        ]
+        sbi_sales_total = 0.0
+        sbi_tc_total = 0
+        for sales_field, tc_field in sbi_fields:
+            s_value = float(getattr(report, sales_field, 0) or 0)
+            t_value = int(getattr(report, tc_field, 0) or 0)
+            sbi[sales_field] += s_value
+            sbi[tc_field] += t_value
+            sbi_sales_total += s_value
+            sbi_tc_total += t_value
+
+        sbi['total_sbi_sales'] += sbi_sales_total
+        sbi['total_sbi_tc'] += sbi_tc_total
+
+        # Inventory totals
+        for field in inventory.keys():
+            inventory[field] += int(getattr(report, field, 0) or 0)
+
+        # Cost totals
+        wastage_amount = _get_wastage_amount_from_components(report)
+        total_discount = float(report.senior_pwd_discount or 0) + float(report.promo_ldts_discount or 0) + float(report.bulk_orders_discount or 0)
+
+        cost['wastage_amount'] += wastage_amount
+        cost['senior_pwd_discount'] += float(report.senior_pwd_discount or 0)
+        cost['promo_ldts_discount'] += float(report.promo_ldts_discount or 0)
+        cost['bulk_orders_discount'] += float(report.bulk_orders_discount or 0)
+        cost['total_discount'] += total_discount
+
+    # Target-based cumulative fields should be based on per-day targets, not per-report rows.
+    sales['target_net'] = sum(float(v.get('target_net', 0) or 0) for v in targets_by_day.values())
+    sales['last_year_net'] = sum(float(v.get('last_year_net', 0) or 0) for v in targets_by_day.values())
+    sales['gbi_target'] = sum(float(v.get('gbi_target', 0) or 0) for v in targets_by_day.values())
+    sales['acc_target_net'] = sales['target_net']
+    sales['acc_ly_net'] = sales['last_year_net']
+    sales['acc_gbi'] = sales['gbi_target']
+
+    acc_target_net = sales['acc_target_net']
+    acc_ly_net = sales['acc_ly_net']
+    acc_gbi = sales['acc_gbi']
+
+    sales['vs_tgt_percent'] = ((_safe_ratio(sales['total_gross_sales'], sales['target_net']) - 1.0) * 100) if sales['target_net'] > 0 else 0.0
+    sales['mtd_vs_tgt_percent'] = ((_safe_ratio(acc_net_sales, acc_target_net) - 1.0) * 100) if acc_target_net > 0 else 0.0
+    sales['mtd_vs_ly_percent'] = ((_safe_ratio(acc_net_sales, acc_ly_net) - 1.0) * 100) if acc_ly_net > 0 else 0.0
+    sales['ar_percent'] = (sum(ar_running_values) / len(ar_running_values)) if ar_running_values else 0.0
+    sales['vs_ly_percent'] = vs_ly_last
+    sales['ac'] = ((_safe_ratio(sales['net_sales'], sales['tc'])) if sales['tc'] > 0 else 0.0)
+
+    total_gross_sales = sales['total_gross_sales']
+    cost['wastage_daily_percent'] = _safe_ratio(cost['wastage_amount'], total_gross_sales) * 100
+    cost['discount_daily_percent'] = _safe_ratio(cost['total_discount'], total_gross_sales) * 100
+
+    overview = {
+        'mtd_sales': sales['net_sales'],
+        'total_target': sales['target_net'],
+        'variance_amount': sales['net_sales'] - sales['target_net'],
+        'variance_percent': ((_safe_ratio(sales['net_sales'], sales['target_net']) - 1.0) * 100) if sales['target_net'] > 0 else 0.0,
+        'total_gross_sales': total_gross_sales,
+        'sbi_sales': sbi['total_sbi_sales'],
+        'sbi_percent': _safe_ratio(sbi['total_sbi_sales'], total_gross_sales) * 100,
+        'wastage_amount': cost['wastage_amount'],
+        'wastage_percent': _safe_ratio(cost['wastage_amount'], total_gross_sales) * 100,
+        'discount_amount': cost['total_discount'],
+        'discount_percent': _safe_ratio(cost['total_discount'], total_gross_sales) * 100,
+    }
+
+    return {
+        'overview': overview,
+        'sales': sales,
+        'aggregators': aggregators,
+        'sbi': sbi,
+        'inventory': inventory,
+        'cost': cost,
+    }
+
+
+def _build_top_products_from_reports(reports):
+    product_map = [
+        ('GC', 'pos_qty_gc', 'bg-indigo-500', 'bg-indigo-100 text-indigo-700'),
+        ('Rolls', 'pos_qty_rolls', 'bg-slate-600', 'bg-slate-200 text-slate-700'),
+        ('Premium', 'pos_qty_premium', 'bg-emerald-500', 'bg-emerald-100 text-emerald-700'),
+        ('Cheesy Ensay', 'pos_qty_cheesy_ensay', 'bg-rose-500', 'bg-rose-100 text-rose-700'),
+        ('Slices', 'pos_qty_slices', 'bg-slate-400', 'bg-slate-200 text-slate-700'),
+        ('Mamon Sold', 'pos_qty_mamon', 'bg-amber-500', 'bg-amber-100 text-amber-700'),
+    ]
+
+    products = []
+    for name, field, bar_class, badge_class in product_map:
+        units = sum(int(getattr(report, field, 0) or 0) for report in reports)
+        products.append({
+            'name': name,
+            'units': units,
+            'bar_class': bar_class,
+            'badge_class': badge_class,
+        })
+
+    products = sorted(products, key=lambda item: item['units'], reverse=True)
+    max_units = max((item['units'] for item in products), default=0)
+    total_units = sum(item['units'] for item in products)
+
+    for rank, item in enumerate(products, start=1):
+        item['rank'] = rank
+        item['bar_percent'] = (float(item['units']) / float(max_units) * 100.0) if max_units > 0 else 0.0
+        item['share_percent'] = (float(item['units']) / float(total_units) * 100.0) if total_units > 0 else 0.0
+
+    return products
+
+
+def _build_store_product_mix_from_reports(reports, stores=None):
+    def _normalize_product_text(value):
+        return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+    def _resolve_product_category(product_name, master_rows, cache, similarity_threshold=0.90):
+        normalized_name = _normalize_product_text(product_name)
+        if not normalized_name:
+            return 'Uncategorized'
+        if normalized_name in cache:
+            return cache[normalized_name]
+
+        best_score = 0.0
+        best_category = 'Uncategorized'
+        for normalized_master, _, master_category in master_rows:
+            if not normalized_master:
+                continue
+            if normalized_name == normalized_master:
+                cache[normalized_name] = master_category
+                return master_category
+            similarity = SequenceMatcher(None, normalized_name, normalized_master).ratio()
+            if similarity > best_score:
+                best_score = similarity
+                best_category = master_category
+
+        resolved_category = best_category if best_score >= similarity_threshold else 'Uncategorized'
+        cache[normalized_name] = resolved_category
+        return resolved_category
+
+    palette = [
+        '#6366f1', '#10b981', '#f59e0b', '#e11d48', '#0ea5e9',
+        '#14b8a6', '#84cc16', '#f97316', '#8b5cf6', '#64748b',
+    ]
+
+    store_lookup = {}
+    if stores:
+        for store in stores:
+            store_lookup[int(store.id)] = store.name
+
+    per_store = {
+        store_id: {
+            'store_id': store_id,
+            'store_name': store_name,
+            'segments': [],
+            'products': [],
+            'total_units': 0,
+        }
+        for store_id, store_name in store_lookup.items()
+    }
+
+    product_masters = (
+        ProductMaster.query
+        .with_entities(ProductMaster.description, ProductMaster.category)
+        .all()
+    )
+    master_rows = [
+        (
+            _normalize_product_text(description),
+            (description or '').strip(),
+            (category or '').strip() or 'Uncategorized',
+        )
+        for description, category in product_masters
+    ]
+    category_cache = {}
+    alias_lookup = {
+        str(normalized_alias or '').strip(): (description or '').strip()
+        for normalized_alias, description in (
+            db.session.query(ProductAlias.normalized_alias, ProductMaster.description)
+            .join(ProductMaster, ProductMaster.id == ProductAlias.product_master_id)
+            .all()
+        )
+        if str(normalized_alias or '').strip() and (description or '').strip()
+    }
+
+    report_ids = [int(report.id) for report in reports if getattr(report, 'id', None)]
+    if report_ids:
+        pos_rows = (
+            db.session.query(
+                DailyReport.store_id,
+                PosSold.product_name,
+                func.sum(PosSold.quantity).label('total_qty'),
+                func.sum(PosSold.net_sales).label('total_net_sales'),
+            )
+            .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+            .filter(PosSold.daily_report_id.in_(report_ids))
+            .group_by(DailyReport.store_id, PosSold.product_name)
+            .all()
+        )
+
+        category_totals_by_store = {}
+        for store_id, product_name, total_qty, total_net_sales in pos_rows:
+            sid = int(store_id)
+            qty = int(total_qty or 0)
+            if qty <= 0:
+                continue
+
+            clean_name = (product_name or '').strip() or 'Unnamed Product'
+            if _is_grand_total_product_name(clean_name):
+                continue
+
+            canonical_name = alias_lookup.get(_normalize_product_text(clean_name), clean_name)
+            resolved_category = _resolve_product_category(canonical_name, master_rows, category_cache, similarity_threshold=0.90)
+            if sid not in category_totals_by_store:
+                category_totals_by_store[sid] = {}
+            category_totals_by_store[sid][resolved_category] = int(category_totals_by_store[sid].get(resolved_category, 0) or 0) + qty
+
+            if sid not in per_store:
+                per_store[sid] = {
+                    'store_id': sid,
+                    'store_name': store_lookup.get(sid, f'Store {sid}'),
+                    'segments': [],
+                    'products': [],
+                    'total_units': 0,
+                }
+            existing_product = next(
+                (product for product in per_store[sid]['products'] if (product.get('name') or '') == canonical_name),
+                None
+            )
+            if existing_product:
+                existing_product['qty'] = int(existing_product.get('qty', 0) or 0) + qty
+                existing_product['net_sales'] = float(existing_product.get('net_sales', 0.0) or 0.0) + float(total_net_sales or 0.0)
+            else:
+                per_store[sid]['products'].append({
+                    'name': canonical_name,
+                    'qty': qty,
+                    'net_sales': float(total_net_sales or 0.0),
+                    'category': resolved_category,
+                })
+
+        for sid, category_totals in category_totals_by_store.items():
+            if sid not in per_store:
+                per_store[sid] = {
+                    'store_id': sid,
+                    'store_name': store_lookup.get(sid, f'Store {sid}'),
+                    'segments': [],
+                    'products': [],
+                    'total_units': 0,
+                }
+
+            sorted_categories = sorted(
+                category_totals.items(),
+                key=lambda item: (-int(item[1] or 0), (item[0] or '').lower())
+            )
+            per_store[sid]['segments'] = [
+                {
+                    'label': category_name,
+                    'value': int(category_value or 0),
+                    'color': palette[idx % len(palette)],
+                }
+                for idx, (category_name, category_value) in enumerate(sorted_categories)
+            ]
+            per_store[sid]['products'] = sorted(
+                per_store[sid].get('products', []),
+                key=lambda item: (-int(item.get('qty', 0) or 0), (item.get('name') or '').lower())
+            )
+            per_store[sid]['total_units'] = sum(int(product.get('qty', 0) or 0) for product in per_store[sid]['products'])
+
+    store_mix = sorted(per_store.values(), key=lambda item: (item['store_name'] or '').lower())
+    return store_mix
+
+
+def _build_pos_sold_products_by_store(reports, stores=None):
+    def _normalize_product_text(value):
+        return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+    def _resolve_product_category(product_name, master_rows, cache, similarity_threshold=0.90):
+        normalized_name = _normalize_product_text(product_name)
+        if not normalized_name:
+            return 'Uncategorized'
+        if normalized_name in cache:
+            return cache[normalized_name]
+
+        best_score = 0.0
+        best_category = 'Uncategorized'
+        for normalized_master, _, master_category in master_rows:
+            if not normalized_master:
+                continue
+            if normalized_name == normalized_master:
+                cache[normalized_name] = master_category
+                return master_category
+            similarity = SequenceMatcher(None, normalized_name, normalized_master).ratio()
+            if similarity > best_score:
+                best_score = similarity
+                best_category = master_category
+
+        resolved_category = best_category if best_score >= similarity_threshold else 'Uncategorized'
+        cache[normalized_name] = resolved_category
+        return resolved_category
+
+    product_masters = (
+        ProductMaster.query
+        .with_entities(ProductMaster.description, ProductMaster.category)
+        .all()
+    )
+    master_rows = [
+        (
+            _normalize_product_text(description),
+            (description or '').strip(),
+            (category or '').strip() or 'Uncategorized',
+        )
+        for description, category in product_masters
+    ]
+    category_cache = {}
+    alias_lookup = {
+        str(normalized_alias or '').strip(): (description or '').strip()
+        for normalized_alias, description in (
+            db.session.query(ProductAlias.normalized_alias, ProductMaster.description)
+            .join(ProductMaster, ProductMaster.id == ProductAlias.product_master_id)
+            .all()
+        )
+        if str(normalized_alias or '').strip() and (description or '').strip()
+    }
+
+    store_lookup = {}
+    if stores:
+        for store in stores:
+            store_lookup[int(store.id)] = store.name
+
+    per_store = {
+        store_id: {
+            'store_id': store_id,
+            'store_name': store_name,
+            'products': [],
+            'total_units': 0,
+        }
+        for store_id, store_name in store_lookup.items()
+    }
+
+    report_ids = [int(report.id) for report in reports if getattr(report, 'id', None)]
+    if report_ids:
+        pos_rows = (
+            db.session.query(
+                DailyReport.store_id,
+                PosSold.product_name,
+                func.sum(PosSold.quantity).label('total_qty'),
+                func.sum(PosSold.net_sales).label('total_net_sales'),
+            )
+            .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+            .filter(PosSold.daily_report_id.in_(report_ids))
+            .group_by(DailyReport.store_id, PosSold.product_name)
+            .all()
+        )
+
+        for store_id, product_name, total_qty, total_net_sales in pos_rows:
+            sid = int(store_id)
+            if sid not in per_store:
+                per_store[sid] = {
+                    'store_id': sid,
+                    'store_name': store_lookup.get(sid, f'Store {sid}'),
+                    'products': [],
+                    'total_units': 0,
+                }
+
+            qty = int(total_qty or 0)
+            if qty <= 0:
+                continue
+
+            clean_name = (product_name or '').strip() or 'Unnamed Product'
+            if _is_grand_total_product_name(clean_name):
+                continue
+            canonical_name = alias_lookup.get(_normalize_product_text(clean_name), clean_name)
+            resolved_category = _resolve_product_category(canonical_name, master_rows, category_cache, similarity_threshold=0.90)
+            existing_product = next(
+                (product for product in per_store[sid]['products'] if (product.get('name') or '') == canonical_name),
+                None
+            )
+            if existing_product:
+                existing_product['qty'] = int(existing_product.get('qty', 0) or 0) + qty
+                existing_product['net_sales'] = float(existing_product.get('net_sales', 0.0) or 0.0) + float(total_net_sales or 0.0)
+            else:
+                per_store[sid]['products'].append({
+                    'name': canonical_name,
+                    'qty': qty,
+                    'net_sales': float(total_net_sales or 0.0),
+                    'category': resolved_category,
+                })
+
+    store_products = sorted(per_store.values(), key=lambda item: (item.get('store_name') or '').lower())
+    for item in store_products:
+        item['products'] = sorted(
+            item.get('products', []),
+            key=lambda product: (-int(product.get('qty', 0) or 0), (product.get('name') or '').lower())
+        )
+        item['total_units'] = sum(int(product.get('qty', 0) or 0) for product in item['products'])
+
+    return store_products
+
+
+def _apply_pos_qty_from_pos_categories(reports):
+    if not reports:
+        return
+
+    report_map = {int(report.id): report for report in reports if getattr(report, 'id', None)}
+    if not report_map:
+        return
+
+    for report in report_map.values():
+        report.pos_qty_gc = 0
+        report.pos_qty_rolls = 0
+        report.pos_qty_premium = 0
+        report.pos_qty_cheesy_ensay = 0
+        report.pos_qty_slices = 0
+        report.pos_qty_mamon = 0
+
+    def _normalize(value):
+        return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+    alias_lookup = {
+        str(normalized_alias or '').strip(): (description or '').strip()
+        for normalized_alias, description in (
+            db.session.query(ProductAlias.normalized_alias, ProductMaster.description)
+            .join(ProductMaster, ProductMaster.id == ProductAlias.product_master_id)
+            .all()
+        )
+        if str(normalized_alias or '').strip() and (description or '').strip()
+    }
+    master_rows = (
+        ProductMaster.query
+        .with_entities(ProductMaster.description, ProductMaster.category, ProductMaster.sub_category)
+        .all()
+    )
+    master_meta_by_normalized_name = {
+        _normalize(description): {
+            'category': (category or '').strip() or 'Uncategorized',
+            'sub_category': (sub_category or '').strip() or '',
+        }
+        for description, category, sub_category in master_rows
+        if _normalize(description)
+    }
+
+    def _resolve_bucket(category_value):
+        normalized_category = _normalize(category_value)
+        if not normalized_category:
+            return None
+        if 'greetingcake' in normalized_category or normalized_category == 'gc':
+            return 'gc'
+        if 'roll' in normalized_category:
+            return 'rolls'
+        if 'premium' in normalized_category:
+            return 'premium'
+        return None
+
+    def _is_cake_slices_sub_category(sub_category_value):
+        normalized_sub = _normalize(sub_category_value)
+        if not normalized_sub:
+            return False
+        return normalized_sub == 'cakeslices' or ('cake' in normalized_sub and 'slice' in normalized_sub)
+
+    def _is_mamon_sub_category(sub_category_value):
+        normalized_sub = _normalize(sub_category_value)
+        if not normalized_sub:
+            return False
+        return normalized_sub == 'mamon' or 'mamon' in normalized_sub
+
+    pos_rows = (
+        db.session.query(
+            PosSold.daily_report_id,
+            PosSold.product_name,
+            func.sum(PosSold.quantity).label('total_qty'),
+        )
+        .filter(PosSold.daily_report_id.in_(list(report_map.keys())))
+        .group_by(PosSold.daily_report_id, PosSold.product_name)
+        .all()
+    )
+
+    for daily_report_id, product_name, total_qty in pos_rows:
+        report = report_map.get(int(daily_report_id))
+        if not report:
+            continue
+        clean_name = (product_name or '').strip() or 'Unnamed Product'
+        if _is_grand_total_product_name(clean_name):
+            continue
+        normalized_clean = _normalize(clean_name)
+        canonical_name = alias_lookup.get(normalized_clean, clean_name)
+        master_meta = master_meta_by_normalized_name.get(_normalize(canonical_name), {})
+        category_value = master_meta.get('category', 'Uncategorized')
+        sub_category_value = master_meta.get('sub_category', '')
+        bucket = _resolve_bucket(category_value)
+        qty = int(total_qty or 0)
+        if qty <= 0:
+            continue
+        if _is_cake_slices_sub_category(sub_category_value):
+            report.pos_qty_slices = int(report.pos_qty_slices or 0) + qty
+            continue
+        if _is_mamon_sub_category(sub_category_value):
+            report.pos_qty_mamon = int(report.pos_qty_mamon or 0) + qty
+            continue
+        if not bucket:
+            continue
+        if bucket == 'gc':
+            report.pos_qty_gc = int(report.pos_qty_gc or 0) + qty
+        elif bucket == 'rolls':
+            report.pos_qty_rolls = int(report.pos_qty_rolls or 0) + qty
+        elif bucket == 'premium':
+            report.pos_qty_premium = int(report.pos_qty_premium or 0) + qty
+
+
+def _apply_ending_inventory_from_invensync(reports):
+    if not reports:
+        return
+
+    report_keys = {
+        (int(report.store_id), report.report_date)
+        for report in reports
+        if getattr(report, 'store_id', None) and getattr(report, 'report_date', None)
+    }
+    if not report_keys:
+        return
+
+    for report in reports:
+        report.ending_inv_gc = 0
+        report.ending_inv_rolls = 0
+        report.ending_inv_premium = 0
+
+    store_ids = sorted({store_id for store_id, _ in report_keys})
+    report_dates = sorted({report_date for _, report_date in report_keys})
+
+    inventories = (
+        DailyEndingInventory.query
+        .filter(
+            DailyEndingInventory.store_id.in_(store_ids),
+            DailyEndingInventory.inventory_date.in_(report_dates),
+        )
+        .all()
+    )
+    inventory_ids = [inventory.id for inventory in inventories]
+    if not inventory_ids:
+        return
+
+    product_meta_by_id = {
+        int(product_id): {
+            'description': description or '',
+            'category': category or '',
+            'sub_category': sub_category or '',
+        }
+        for product_id, description, category, sub_category in (
+            ProductMaster.query
+            .with_entities(
+                ProductMaster.id,
+                ProductMaster.description,
+                ProductMaster.category,
+                ProductMaster.sub_category,
+            )
+            .all()
+        )
+    }
+
+    def _normalize(value):
+        return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+    product_meta_by_description = {
+        _normalize(meta['description']): meta
+        for meta in product_meta_by_id.values()
+        if _normalize(meta.get('description'))
+    }
+
+    def _resolve_bucket(item):
+        meta = product_meta_by_id.get(int(item.product_master_id or 0))
+        if not meta:
+            meta = product_meta_by_description.get(_normalize(item.product_description), {})
+        category = _normalize(meta.get('category', ''))
+        sub_category = _normalize(meta.get('sub_category', ''))
+        product_text = _normalize(item.product_description)
+        combined = f'{category} {sub_category} {product_text}'
+        if 'greetingcake' in combined or category == 'gc':
+            return 'gc'
+        # Premium must be based on the Product Master category, not on a
+        # product description that happens to contain the word "premium".
+        if category == 'premium':
+            return 'premium'
+        if 'roll' in combined:
+            return 'rolls'
+        return None
+
+    totals_by_key = {}
+    inventory_key_by_id = {
+        inventory.id: (int(inventory.store_id), inventory.inventory_date)
+        for inventory in inventories
+    }
+
+    items = (
+        DailyEndingInventoryItem.query
+        .filter(DailyEndingInventoryItem.inventory_id.in_(inventory_ids))
+        .all()
+    )
+    for item in items:
+        key = inventory_key_by_id.get(item.inventory_id)
+        if not key:
+            continue
+        bucket = _resolve_bucket(item)
+        if not bucket:
+            continue
+        # Cluster totals must use the item's persisted Total Ending Inventory
+        # value.  In particular, zero is a valid total and must not fall back
+        # to the component columns, otherwise the Premium total is overstated.
+        ending_qty = int(item.total_ending_qty or 0)
+        bucket_totals = totals_by_key.setdefault(key, {'gc': 0, 'rolls': 0, 'premium': 0})
+        bucket_totals[bucket] += ending_qty
+
+    for report in reports:
+        key = (int(report.store_id), report.report_date)
+        totals = totals_by_key.get(key, {})
+        report.ending_inv_gc = int(totals.get('gc', 0) or 0)
+        report.ending_inv_rolls = int(totals.get('rolls', 0) or 0)
+        report.ending_inv_premium = int(totals.get('premium', 0) or 0)
+
+
+def _resolve_scope_month_year(month_arg, year_arg, store_ids=None):
+    if month_arg and year_arg:
+        return int(year_arg), int(month_arg)
+
+    query = DailyReport.query.filter(DailyReport.status == 'Approved')
+    if store_ids is not None:
+        if not store_ids:
+            today = date.today()
+            return today.year, today.month
+        query = query.filter(DailyReport.store_id.in_(store_ids))
+
+    latest_report = query.order_by(DailyReport.report_date.desc()).first()
+    base_date = latest_report.report_date if latest_report else date.today()
+    return int(base_date.year), int(base_date.month)
+
+
+def _parse_iso_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _get_or_create_global_invensync_config():
+    default_data = {
+        'hidden_rows': [],
+        'hidden_columns': [],
+        'hidden_cells': [],
+        'locked_rows': [],
+        'locked_columns': [],
+        'locked_cells': [],
+        'editable_columns': [],
+        'force_beginning_store_ids': [],
+        'store_configs': {},
+        'admin_unlocks': {},
+    }
+    config = GlobalInvenSyncConfig.query.first()
+    if not config:
+        config = GlobalInvenSyncConfig(config_data=json.dumps(default_data))
+        db.session.add(config)
+        return config, default_data
+
+    try:
+        config_data = json.loads(config.config_data or '{}')
+    except ValueError:
+        config_data = {}
+
+    for key, value in default_data.items():
+        expected_type = dict if isinstance(value, dict) else list
+        if key not in config_data or not isinstance(config_data.get(key), expected_type):
+            config_data[key] = dict(value) if isinstance(value, dict) else list(value)
+
+    return config, config_data
+
+
+def _get_effective_invensync_config(global_config_data, store_id):
+    effective_config = dict(global_config_data or {})
+    store_configs = effective_config.get('store_configs', {})
+    store_config = store_configs.get(str(store_id), {}) if isinstance(store_configs, dict) else {}
+    if not isinstance(store_config, dict):
+        store_config = {}
+
+    for key in ['hidden_columns', 'locked_columns', 'editable_columns']:
+        if key in store_config and isinstance(store_config.get(key), list):
+            effective_config[key] = store_config.get(key, [])
+
+    return effective_config
+
+
+def _is_operational_day_finalized(store_id, report_date):
+    """Return True when the store/date InvenSync day is finalized (End of Day done).
+
+    A missing inventory row is treated as not finalized so store managers can
+    keep editing source data (POS Sold, RSO Delivery, Wastage) until the day is
+    finalized. Admin must unfinalize the day to reopen edits afterwards.
+    """
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store_id,
+        inventory_date=report_date,
+    ).first()
+    return bool(inventory and inventory.is_finalized)
+
+
+def _get_invensync_admin_unlock(global_config_data, store_id, inventory_date):
+    admin_unlocks = (global_config_data or {}).get('admin_unlocks', {})
+    if not isinstance(admin_unlocks, dict):
+        return {'all': False, 'cells': []}
+
+    store_unlocks = admin_unlocks.get(str(store_id), {})
+    if not isinstance(store_unlocks, dict):
+        return {'all': False, 'cells': []}
+
+    date_key = inventory_date.isoformat() if hasattr(inventory_date, 'isoformat') else str(inventory_date or '')
+    unlock_data = store_unlocks.get(date_key, {})
+    if not isinstance(unlock_data, dict):
+        return {'all': False, 'cells': []}
+
+    return {
+        'all': bool(unlock_data.get('all')),
+        'cells': [str(item).strip() for item in unlock_data.get('cells', []) if str(item).strip()],
+    }
+
+
+def _is_invensync_admin_unlocked(admin_unlock_scope, item_id, field_name):
+    if not isinstance(admin_unlock_scope, dict):
+        return False
+    if admin_unlock_scope.get('all'):
+        return True
+    cell_key = f'{item_id}|{field_name}'
+    return cell_key in set(admin_unlock_scope.get('cells') or [])
+
+
+def _lock_global_invensync_column(column_name):
+    config, config_data = _get_or_create_global_invensync_config()
+    locked_columns = [str(item).strip() for item in config_data.get('locked_columns', []) if str(item).strip()]
+    if column_name not in locked_columns:
+        locked_columns.append(column_name)
+        config_data['locked_columns'] = locked_columns
+        config.config_data = json.dumps(config_data)
+    return config_data
+
+
+def _build_missing_report_dates(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return []
+
+    first_report_date = (
+        DailyReport.query
+        .filter(DailyReport.store_id == store_id)
+        .with_entities(func.min(DailyReport.report_date))
+        .scalar()
+    )
+    if not first_report_date or first_report_date > cutoff_date:
+        return []
+
+    start_date = max(month_start, first_report_date)
+    existing_dates = {
+        row.report_date for row in DailyReport.query.filter(
+            DailyReport.store_id == store_id,
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= cutoff_date,
+        ).all()
+        if row.report_date
+    }
+
+    missing_dates = []
+    cursor = start_date
+    while cursor <= cutoff_date:
+        if cursor not in existing_dates:
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+    return missing_dates
+
+
+def _build_missing_invensync_dates(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return []
+
+    first_inventory_date = (
+        DailyEndingInventory.query
+        .filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.is_finalized.is_(True),
+        )
+        .with_entities(func.min(DailyEndingInventory.inventory_date))
+        .scalar()
+    )
+    if not first_inventory_date or first_inventory_date > cutoff_date:
+        return []
+
+    start_date = max(month_start, first_inventory_date)
+    existing_dates = {
+        row.inventory_date for row in DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= start_date,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).all()
+        if row.inventory_date
+    }
+
+    missing_dates = []
+    cursor = start_date
+    while cursor <= cutoff_date:
+        if cursor not in existing_dates:
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+    return missing_dates
+
+
+def _build_single_update_status(dates_set, today, month_start, cutoff_date, label):
+    missing_date_values = []
+    missing_dates = []
+    cursor = month_start
+    while cursor <= cutoff_date:
+        if cursor == today:
+            cursor += timedelta(days=1)
+            continue
+        if cursor not in dates_set:
+            missing_date_values.append(cursor)
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+
+    def format_missing_range(start, end):
+        if start == end:
+            return f"{start.strftime('%b')} {start.day}, {start.year}"
+        if start.year == end.year and start.month == end.month:
+            return f"{start.strftime('%b')} {start.day}-{end.day}, {start.year}"
+        if start.year == end.year:
+            return f"{start.strftime('%b')} {start.day} - {end.strftime('%b')} {end.day}, {start.year}"
+        return f"{start.strftime('%b')} {start.day}, {start.year} - {end.strftime('%b')} {end.day}, {end.year}"
+
+    missing_ranges = []
+    if missing_date_values:
+        range_start = missing_date_values[0]
+        previous = missing_date_values[0]
+        for missing_date in missing_date_values[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            missing_ranges.append({
+                'start': range_start.strftime('%Y-%m-%d'),
+                'end': previous.strftime('%Y-%m-%d'),
+                'label': format_missing_range(range_start, previous),
+            })
+            range_start = missing_date
+            previous = missing_date
+        missing_ranges.append({
+            'start': range_start.strftime('%Y-%m-%d'),
+            'end': previous.strftime('%Y-%m-%d'),
+            'label': format_missing_range(range_start, previous),
+        })
+
+    latest_date = max(dates_set) if dates_set else None
+    return {
+        'is_up_to_date': len(missing_dates) == 0,
+        'missing_dates': missing_dates,
+        'missing_ranges': missing_ranges,
+        'missing_count': len(missing_dates),
+        'latest_date': latest_date,
+    }
+
+
+def _build_cluster_invensync_update_status(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return {
+            'inventory': {
+                'is_up_to_date': False,
+                'missing_dates': [],
+                'missing_ranges': [],
+                'missing_count': 0,
+                'latest_date': None,
+            },
+            'pos_sold': {
+                'is_up_to_date': False,
+                'missing_dates': [],
+                'missing_ranges': [],
+                'missing_count': 0,
+                'latest_date': None,
+            },
+            'delivery': {
+                'is_up_to_date': False,
+                'missing_dates': [],
+                'missing_ranges': [],
+                'missing_count': 0,
+                'latest_date': None,
+            },
+        }
+
+    today = date.today()
+    previous_day_cutoff = min(cutoff_date, today - timedelta(days=1))
+    finalized_dates = {
+        row.inventory_date for row in DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= month_start,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).with_entities(DailyEndingInventory.inventory_date).all()
+        if row.inventory_date
+    }
+
+    pos_sold_dates = set()
+    delivery_dates = set()
+    if previous_day_cutoff >= month_start:
+        pos_sold_dates = {
+            row.report_date for row in (
+                db.session.query(DailyReport.report_date)
+                .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+                .filter(
+                    DailyReport.store_id == store_id,
+                    DailyReport.report_date >= month_start,
+                    DailyReport.report_date <= previous_day_cutoff,
+                )
+                .distinct()
+                .all()
+            )
+            if row.report_date
+        }
+        staged_pos_dates = {
+            row.report_date for row in PosSoldStaging.query.filter(
+                PosSoldStaging.store_id == store_id,
+                PosSoldStaging.report_date >= month_start,
+                PosSoldStaging.report_date <= previous_day_cutoff,
+            ).with_entities(PosSoldStaging.report_date).distinct().all()
+            if row.report_date
+        }
+        pos_sold_dates |= staged_pos_dates
+        inv_item_pos_dates = {
+            row.inventory_date for row in (
+                db.session.query(DailyEndingInventory.inventory_date)
+                .join(DailyEndingInventoryItem, DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id)
+                .filter(
+                    DailyEndingInventory.store_id == store_id,
+                    DailyEndingInventory.inventory_date >= month_start,
+                    DailyEndingInventory.inventory_date <= previous_day_cutoff,
+                    func.coalesce(DailyEndingInventoryItem.quantity_sold, 0) > 0,
+                )
+                .distinct()
+                .all()
+            )
+            if row.inventory_date
+        }
+        pos_sold_dates |= inv_item_pos_dates
+        delivery_dates = {
+            row.report_date for row in (
+                db.session.query(RsoDelivery.report_date)
+                .filter(
+                    RsoDelivery.store_id == store_id,
+                    RsoDelivery.report_date >= month_start,
+                    RsoDelivery.report_date <= previous_day_cutoff,
+                )
+                .distinct()
+                .all()
+            )
+            if row.report_date
+        }
+
+    inventory_status = _build_single_update_status(finalized_dates, today, month_start, cutoff_date, 'inventory')
+    pos_sold_status = _build_single_update_status(pos_sold_dates, today, month_start, previous_day_cutoff, 'pos_sold')
+    delivery_status = _build_single_update_status(delivery_dates, today, month_start, previous_day_cutoff, 'delivery')
+    return {
+        'inventory': inventory_status,
+        'pos_sold': pos_sold_status,
+        'delivery': delivery_status,
+    }
+
+
+def _store_has_operational_data(store_id):
+    if not store_id:
+        return False
+
+    has_daily_report = DailyReport.query.filter_by(store_id=store_id).first() is not None
+    if has_daily_report:
+        return True
+
+    has_pos_sold = (
+        PosSold.query
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(DailyReport.store_id == store_id)
+        .first()
+        is not None
+    )
+    if has_pos_sold:
+        return True
+
+    if PosSoldStaging.query.filter_by(store_id=store_id).first() is not None:
+        return True
+    if PosSoldDraft.query.filter_by(store_id=store_id).first() is not None:
+        return True
+
+    has_inventory = DailyEndingInventory.query.filter(
+        DailyEndingInventory.store_id == store_id,
+        (
+            DailyEndingInventory.is_beginning_finalized.is_(True)
+            | DailyEndingInventory.is_finalized.is_(True)
+        ),
+    ).first() is not None
+    return has_inventory
+
+
+def _format_header_date(date_value):
+    if not date_value:
+        return ''
+    return f"{date_value.strftime('%b')}. {date_value.day}, {date_value.year}"
+
+
+def _coalesce_numeric_fields_for_reports(reports):
+    if not reports:
+        return
+
+    numeric_field_names = []
+    for column in DailyReport.__table__.columns:
+        if isinstance(column.type, (SAInteger, SAFloat, SANumeric)):
+            # Keep identifiers untouched; only coalesce report metrics.
+            if column.name in ('id', 'store_id', 'submitted_by'):
+                continue
+            numeric_field_names.append(column.name)
+
+    for report in reports:
+        for field_name in numeric_field_names:
+            if getattr(report, field_name, None) is None:
+                setattr(report, field_name, 0)
+
+
+_ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
+
+
+def _is_allowed_image_filename(filename):
+    if not filename or '.' not in filename:
+        return False
+    return filename.rsplit('.', 1)[1].lower() in _ALLOWED_IMAGE_EXTENSIONS
+
+
+def _extract_drive_file_id(file_url):
+    raw_url = str(file_url or '').strip()
+    if not raw_url:
+        return ''
+
+    file_match = re.search(r'/file/d/([A-Za-z0-9_-]+)', raw_url)
+    if file_match:
+        return file_match.group(1)
+
+    query_match = re.search(r'[?&]id=([A-Za-z0-9_-]+)', raw_url)
+    if query_match:
+        return query_match.group(1)
+
+    return ''
+
+
+def _build_drive_image_preview_url(file_url):
+    raw_url = str(file_url or '').strip()
+    if not raw_url:
+        return ''
+
+    file_id = _extract_drive_file_id(raw_url)
+    if not file_id:
+        return raw_url
+
+    return f'https://drive.google.com/thumbnail?id={file_id}&sz=w1600'
+
+
+def _upload_z_reading_bytes_to_google_drive(file_bytes, original_name, mime_type, store, report_date):
+    script_url = os.getenv('GOOGLE_APPS_SCRIPT_UPLOAD_URL', '').strip()
+    script_token = os.getenv('GOOGLE_APPS_SCRIPT_TOKEN', '').strip()
+    if not script_url:
+        raise ValueError('Google Apps Script is not configured. Set GOOGLE_APPS_SCRIPT_UPLOAD_URL.')
+    if 'script.googleusercontent.com/macros/echo' in script_url or 'lib=' in script_url:
+        raise ValueError(
+            'Invalid Apps Script URL. Use the Web App deployment URL ending in /exec '
+            '(format: https://script.google.com/macros/s/.../exec), not a macros/echo or lib URL.'
+        )
+
+    original_name = str(original_name or 'z_reading_image').strip()
+    extension = original_name.rsplit('.', 1)[1].lower() if '.' in original_name else 'jpg'
+    safe_store = re.sub(r'[^A-Za-z0-9_-]+', '_', (store.name or f'store_{store.id}')).strip('_') or f'store_{store.id}'
+    upload_name = f'zreading_{safe_store}_{report_date.strftime("%Y%m%d")}.{extension}'
+
+    content_base64 = base64.b64encode(file_bytes).decode('ascii')
+    payload = {
+        'token': script_token,
+        'filename': upload_name,
+        'fileName': upload_name,
+        'mime_type': (mime_type or 'application/octet-stream'),
+        'mimeType': (mime_type or 'application/octet-stream'),
+        'content_base64': content_base64,
+        'base64Data': content_base64,
+        'meta': {
+            'store_id': int(store.id),
+            'store_name': store.name or '',
+            'report_date': report_date.strftime('%Y-%m-%d'),
+            'source': 'cm-app-pos-sold',
+        },
+    }
+
+    request_obj = urllib.request.Request(
+        script_url,
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(request_obj, timeout=90) as response:
+            response_body = response.read().decode('utf-8', errors='replace')
+            status_code = int(getattr(response, 'status', 200) or 200)
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode('utf-8', errors='replace')
+        raise ValueError(f'Apps Script upload failed ({exc.code}): {error_body}') from exc
+    except Exception as exc:
+        raise ValueError(f'Apps Script upload failed: {str(exc)}') from exc
+
+    if status_code >= 400:
+        raise ValueError(f'Apps Script upload failed ({status_code}): {response_body}')
+
+    try:
+        result = json.loads(response_body) if response_body else {}
+    except Exception:
+        result = {'raw': response_body}
+
+    if isinstance(result, dict) and result.get('success') is False:
+        raise ValueError(str(result.get('error') or 'Apps Script returned success=false'))
+
+    file_id = ''
+    file_url = ''
+    if isinstance(result, dict):
+        file_id = str(result.get('file_id') or result.get('id') or '').strip()
+        file_url = str(
+            result.get('file_url')
+            or result.get('url')
+            or result.get('webViewLink')
+            or result.get('webContentLink')
+            or ''
+        ).strip()
+
+    return {
+        'file_id': file_id,
+        'name': upload_name,
+        'web_view_link': file_url,
+        'web_content_link': file_url,
+    }
+
+
+def _upload_z_reading_to_google_drive(upload_file, store, report_date):
+    file_bytes = upload_file.read()
+    upload_file.stream.seek(0)
+    return _upload_z_reading_bytes_to_google_drive(
+        file_bytes=file_bytes,
+        original_name=(upload_file.filename or 'z_reading_image'),
+        mime_type=(upload_file.mimetype or 'application/octet-stream'),
+        store=store,
+        report_date=report_date,
+    )
+
+
+def _normalize_pos_quantity(raw_value):
+    if pd.isna(raw_value):
+        return None
+
+    if isinstance(raw_value, str):
+        cleaned = raw_value.replace(',', '').strip()
+        if not cleaned:
+            return None
+    else:
+        cleaned = raw_value
+
+    try:
+        numeric_value = float(cleaned)
+    except (TypeError, ValueError):
+        return None
+
+    if math.isnan(numeric_value) or numeric_value < 0:
+        return None
+    if not numeric_value.is_integer():
+        return None
+
+    return int(numeric_value)
+
+
+def _normalize_pos_amount(raw_value):
+    if raw_value is None:
+        return None
+
+    if isinstance(raw_value, str):
+        cleaned = raw_value.strip()
+        if not cleaned:
+            return None
+        cleaned = cleaned.replace(',', '').replace('PHP', '').replace('php', '').replace('P', '').strip()
+        if cleaned.startswith('(') and cleaned.endswith(')'):
+            cleaned = f'-{cleaned[1:-1]}'
+    else:
+        cleaned = raw_value
+
+    try:
+        numeric_value = float(cleaned)
+    except (TypeError, ValueError):
+        return None
+
+    if math.isnan(numeric_value) or numeric_value < 0:
+        return None
+
+    return float(numeric_value)
+
+
+def _normalize_pos_net_sales(raw_value):
+    return _normalize_pos_amount(raw_value)
+
+
+def _is_grand_total_product_name(product_name):
+    normalized = re.sub(r'[^a-z0-9]+', '', str(product_name or '').strip().lower())
+    return normalized.startswith('grandtotal')
+
+
+def _sanitize_pos_sold_items(items):
+    if not isinstance(items, list):
+        return []
+
+    aggregated_items = OrderedDict()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        product_name = str(item.get('product_name', '')).strip()
+        if not product_name or _is_grand_total_product_name(product_name):
+            continue
+
+        quantity = _normalize_pos_quantity(item.get('quantity'))
+        if quantity is None or quantity <= 0:
+            continue
+
+        gross_sales = _normalize_pos_amount(item.get('gross_sales'))
+        if gross_sales is None:
+            gross_sales = 0.0
+
+        discount = _normalize_pos_amount(item.get('discount'))
+        if discount is None:
+            discount = 0.0
+
+        net_sales = _normalize_pos_net_sales(item.get('net_sales'))
+        if net_sales is None:
+            net_sales = 0.0
+
+        if product_name not in aggregated_items:
+            aggregated_items[product_name] = {
+                'quantity': 0,
+                'gross_sales': 0.0,
+                'discount': 0.0,
+                'net_sales': 0.0
+            }
+        aggregated_items[product_name]['quantity'] = int(aggregated_items[product_name]['quantity'] or 0) + quantity
+        aggregated_items[product_name]['gross_sales'] = float(aggregated_items[product_name]['gross_sales'] or 0.0) + float(gross_sales)
+        aggregated_items[product_name]['discount'] = float(aggregated_items[product_name]['discount'] or 0.0) + float(discount)
+        aggregated_items[product_name]['net_sales'] = float(aggregated_items[product_name]['net_sales'] or 0.0) + float(net_sales)
+
+    return [
+        {
+            'product_name': product_name,
+            'quantity': int(item_values.get('quantity', 0) or 0),
+            'gross_sales': float(item_values.get('gross_sales', 0.0) or 0.0),
+            'discount': float(item_values.get('discount', 0.0) or 0.0),
+            'net_sales': float(item_values.get('net_sales', 0.0) or 0.0),
+        }
+        for product_name, item_values in aggregated_items.items()
+    ]
+
+
+def _build_pos_sales_autofill_totals(pos_items):
+    total_gross_after_discount = 0.0
+    total_net_sales = 0.0
+    row_count = 0
+
+    for item in pos_items or []:
+        if isinstance(item, dict):
+            gross_sales = float(item.get('gross_sales', 0.0) or 0.0)
+            discount = float(item.get('discount', 0.0) or 0.0)
+            net_sales = float(item.get('net_sales', 0.0) or 0.0)
+        else:
+            gross_sales = float(getattr(item, 'gross_sales', 0.0) or 0.0)
+            discount = float(getattr(item, 'discount', 0.0) or 0.0)
+            net_sales = float(getattr(item, 'net_sales', 0.0) or 0.0)
+
+        gross_after_discount = gross_sales - discount
+        if gross_after_discount < 0:
+            gross_after_discount = 0.0
+
+        total_gross_after_discount += gross_after_discount
+        total_net_sales += net_sales
+        row_count += 1
+
+    return {
+        'pos_gross_sales': round(float(total_gross_after_discount), 2),
+        'pos_net_sales': round(float(total_net_sales), 2),
+        'rows_count': int(row_count),
+    }
+
+
+def _read_uploaded_excel(uploaded_file, upload_label):
+    filename = (getattr(uploaded_file, 'filename', '') or '').lower()
+    extension = ''
+    for ext in ('.xls', '.xlsx', '.xlsm', '.xltx', '.xltm'):
+        if filename.endswith(ext):
+            extension = ext
+            break
+
+    read_kwargs = {'header': None}
+    if extension == '.xls':
+        read_kwargs['engine'] = 'xlrd'
+    elif extension in ('.xlsx', '.xlsm', '.xltx', '.xltm'):
+        read_kwargs['engine'] = 'openpyxl'
+
+    try:
+        if hasattr(uploaded_file, 'stream') and hasattr(uploaded_file.stream, 'seek'):
+            uploaded_file.stream.seek(0)
+    except Exception:
+        pass
+
+    try:
+        return pd.read_excel(uploaded_file, **read_kwargs)
+    except ImportError as exc:
+        error_text = str(exc).lower()
+        if extension == '.xls' or 'xlrd' in error_text:
+            raise ValueError(
+                f'{upload_label} upload needs xlrd installed to read .xls files. '
+                'Please install xlrd or upload a .xlsx file.'
+            ) from exc
+        if extension in ('.xlsx', '.xlsm', '.xltx', '.xltm') or 'openpyxl' in error_text:
+            raise ValueError(
+                f'{upload_label} upload needs openpyxl installed to read .xlsx files. '
+                'Please install openpyxl and try again.'
+            ) from exc
+        raise ValueError(
+            'Unable to read this Excel file due to a missing dependency. '
+            'Please re-save it as .xlsx from Excel and upload again.'
+        ) from exc
+    except Exception as exc:
+        raise ValueError(
+            'Unable to read this Excel file. Please re-save it as .xlsx from Excel and upload again.'
+        ) from exc
+
+
+def _parse_delivery_receipt_excel(uploaded_file, upload_label="Delivery Receipt"):
+    import pandas as pd
+    df = _read_uploaded_excel(uploaded_file, upload_label)
+    if df is None or df.empty:
+        raise ValueError("The uploaded Excel file is empty.")
+
+    target_keys = {
+        'date': ['date', 'report date', 'delivery date', 'txn date'],
+        'invoice_no': ['invoice no.', 'invoice no', 'invoice', 'inv no', 'inv_no', 'invoice_no'],
+        'store': ['store', 'store name', 'outlet', 'branch'],
+        'cus_po': ['cus po', 'cus_po', 'customer po', 'po no', 'po', 'rso no', 'rso_no', 'rso'],
+        'item_code': ['item code', 'item_code', 'product code', 'code', 'sku'],
+        'item_description': ['item description', 'item_description', 'description', 'product name', 'product_name', 'item name'],
+        'quantity': ['quantity', 'qty', 'delivered qty', 'received qty', 'pcs'],
+        'amount': ['amount', 'total amount', 'total', 'net amount', 'price', 'val', 'cost']
+    }
+
+    header_idx = None
+    col_mapping = {}
+
+    for row_i in range(min(30, df.shape[0])):
+        row_vals = [str(val).strip().lower() if pd.notna(val) else '' for val in df.iloc[row_i].values]
+        matched = {}
+        for key, aliases in target_keys.items():
+            for col_i, val_str in enumerate(row_vals):
+                if any(alias == val_str or alias in val_str for alias in aliases):
+                    if key not in matched:
+                        matched[key] = col_i
+        if len(matched) >= 2 and ('cus_po' in matched or 'item_description' in matched or 'item_code' in matched):
+            header_idx = row_i
+            col_mapping = matched
+            break
+
+    if header_idx is None:
+        header_idx = 0
+        first_row_vals = [str(val).strip().lower() if pd.notna(val) else '' for val in df.iloc[0].values]
+        for key, aliases in target_keys.items():
+            for col_i, val_str in enumerate(first_row_vals):
+                if any(alias in val_str for alias in aliases):
+                    if key not in col_mapping:
+                        col_mapping[key] = col_i
+
+    data_rows = df.iloc[header_idx + 1:]
+    parsed_items = []
+    for _, row in data_rows.iterrows():
+        raw_date = row.iloc[col_mapping['date']] if 'date' in col_mapping and col_mapping['date'] < len(row) else None
+        raw_invoice = row.iloc[col_mapping['invoice_no']] if 'invoice_no' in col_mapping and col_mapping['invoice_no'] < len(row) else None
+        raw_store = row.iloc[col_mapping['store']] if 'store' in col_mapping and col_mapping['store'] < len(row) else None
+        raw_cus_po = row.iloc[col_mapping['cus_po']] if 'cus_po' in col_mapping and col_mapping['cus_po'] < len(row) else None
+        raw_code = row.iloc[col_mapping['item_code']] if 'item_code' in col_mapping and col_mapping['item_code'] < len(row) else None
+        raw_desc = row.iloc[col_mapping['item_description']] if 'item_description' in col_mapping and col_mapping['item_description'] < len(row) else None
+        raw_qty = row.iloc[col_mapping['quantity']] if 'quantity' in col_mapping and col_mapping['quantity'] < len(row) else None
+        raw_amt = row.iloc[col_mapping['amount']] if 'amount' in col_mapping and col_mapping['amount'] < len(row) else None
+
+        desc_str = str(raw_desc).strip() if pd.notna(raw_desc) else ''
+        code_str = str(raw_code).strip() if pd.notna(raw_code) else ''
+        cus_po_str = str(raw_cus_po).strip() if pd.notna(raw_cus_po) else ''
+        invoice_str = str(raw_invoice).strip() if pd.notna(raw_invoice) else ''
+        store_str = str(raw_store).strip() if pd.notna(raw_store) else ''
+
+        if not desc_str and not code_str and not cus_po_str:
+            continue
+
+        try:
+            qty_val = int(float(str(raw_qty).replace(',', ''))) if pd.notna(raw_qty) else 0
+        except (ValueError, TypeError):
+            qty_val = 0
+
+        try:
+            amt_val = float(str(raw_amt).replace(',', '').replace('$', '').replace('₱', '')) if pd.notna(raw_amt) else 0.0
+        except (ValueError, TypeError):
+            amt_val = 0.0
+
+        date_str = ''
+        if pd.notna(raw_date):
+            if isinstance(raw_date, (datetime, date)):
+                date_str = raw_date.strftime('%Y-%m-%d')
+            else:
+                d_str = str(raw_date).strip().split(' ')[0]
+                try:
+                    dt = pd.to_datetime(d_str)
+                    date_str = dt.strftime('%Y-%m-%d')
+                except Exception:
+                    date_str = d_str
+
+        parsed_items.append({
+            'date': date_str,
+            'invoice_no': invoice_str,
+            'store': store_str,
+            'cus_po': cus_po_str,
+            'item_code': code_str,
+            'item_description': desc_str,
+            'quantity': qty_val,
+            'amount': round(amt_val, 2),
+        })
+
+    return parsed_items
+
+
+_POS_HEADER_KEYWORDS = {
+    'product_name': ['product name', 'product', 'item', 'description', 'particulars', 'item name', 'product description', 'menu item'],
+    'quantity': ['qty', 'quantity', 'qty sold', 'no. of items', 'items sold', 'sold qty', 'total qty', 'pieces'],
+    'price': ['price', 'unit price', 'srp', 'unit price (p)', 'unit cost'],
+    'gross_sales': ['gross sales', 'gross', 'gross amount', 'amount', 'subtotal'],
+    'discount': ['discount', 'disc amount', 'disc', 'discount amount', 'less discount', 'discounted amount'],
+    'net_sales': ['net sales', 'net amount', 'net total', 'net'],
+}
+
+def _auto_detect_pos_column_headers(df):
+    for row_index in range(min(20, df.shape[0])):
+        row_vals = {}
+        for c in range(df.shape[1]):
+            v = df.iat[row_index, c]
+            row_vals[c] = str(v).strip().lower() if not pd.isna(v) and str(v).strip() != '' else None
+        detected = {}
+        for field, keywords in _POS_HEADER_KEYWORDS.items():
+            for ci in sorted(row_vals.keys()):
+                val = row_vals[ci]
+                if val is None:
+                    continue
+                for kw in keywords:
+                    if val == kw or (len(kw) >= 3 and val.startswith(kw)):
+                        if field not in detected:
+                            detected[field] = ci
+                            break
+                if field in detected:
+                    break
+        if 'product_name' in detected and 'quantity' in detected and ('gross_sales' in detected or 'net_sales' in detected):
+            return detected, row_index
+    return None, None
+
+
+def _auto_detect_pos_date(df, header_row_index):
+    for row_index in range(min(header_row_index, df.shape[0])):
+        for col_index in range(min(5, df.shape[1])):
+            cell = df.iat[row_index, col_index]
+            if pd.isna(cell):
+                continue
+            cell_str = str(cell).strip()
+
+            match = re.search(r'([A-Za-z]+\s+\d{1,2},\s*\d{4})', cell_str)
+            if match:
+                try:
+                    return datetime.strptime(match.group(1), '%B %d, %Y').date()
+                except ValueError:
+                    pass
+
+            match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', cell_str)
+            if match:
+                try:
+                    return datetime.strptime(match.group(1), '%m/%d/%Y').date()
+                except ValueError:
+                    pass
+
+            match = re.search(r'(\d{4}-\d{2}-\d{2})', cell_str)
+            if match:
+                try:
+                    return datetime.strptime(match.group(1), '%Y-%m-%d').date()
+                except ValueError:
+                    pass
+    return None
+
+
+def _is_pos_total_row(product_name):
+    normalized = re.sub(r'[^a-z0-9]+', '', str(product_name or '').strip().lower())
+    return normalized in ('total', 'grandtotal', 'grandtotal:', 'totalamount', 'totalsales')
+
+
+def _extract_pos_sold_items_from_excel(uploaded_file, store=None, expected_report_date=None):
+    df = _read_uploaded_excel(uploaded_file, 'POS')
+
+    if df.shape[0] < 3:
+        raise ValueError('POS file must have at least 3 rows.')
+    if df.shape[1] < 3:
+        raise ValueError('POS file must have at least 3 columns.')
+
+    column_map, header_row_index = _auto_detect_pos_column_headers(df)
+
+    if column_map is None:
+        if df.shape[0] < 8:
+            raise ValueError('Excel file must have at least 8 rows; data should start on row 8.')
+        if df.shape[1] < 6:
+            raise ValueError('Excel file must include product (A), quantity (B), gross (C), discount (D), and net sales (F).')
+        column_map = {'product_name': 0, 'quantity': 1, 'gross_sales': 2, 'discount': 3, 'net_sales': 4}
+        header_row_index = 6
+
+    parsed_date = _auto_detect_pos_date(df, header_row_index)
+
+    period_dates = None
+    if parsed_date is None:
+        for row_index in range(min(header_row_index, df.shape[0])):
+            cell = df.iat[row_index, 0] if df.shape[1] > 0 else None
+            if pd.isna(cell):
+                continue
+            cell_str = str(cell).strip()
+            dates = re.findall(r'(\d{1,2}/\d{1,2}/\d{4})', cell_str)
+            if len(dates) >= 2:
+                try:
+                    period_dates = (datetime.strptime(dates[0], '%m/%d/%Y').date(), datetime.strptime(dates[1], '%m/%d/%Y').date())
+                except ValueError:
+                    pass
+                break
+
+    if expected_report_date is not None:
+        if parsed_date is not None and parsed_date != expected_report_date:
+            raise ValueError(
+                f'POS file date ({parsed_date.strftime("%B %d, %Y")}) does not match the selected report date ({expected_report_date.strftime("%B %d, %Y")}).'
+            )
+        if period_dates is not None:
+            ps, pe = period_dates
+            if ps > pe:
+                ps, pe = pe, ps
+            if ps != expected_report_date or pe != expected_report_date:
+                raise ValueError(
+                    'POS file must contain exactly one day matching the selected report date. '
+                    f'File period: {ps.strftime("%B %d, %Y")} to {pe.strftime("%B %d, %Y")}; '
+                    f'Report date: {expected_report_date.strftime("%B %d, %Y")}. Please double-check and upload again.'
+                )
+
+    data_start = header_row_index + 1
+    data_cols = [column_map.get('product_name', 0), column_map.get('quantity', 1), column_map.get('gross_sales', 2), column_map.get('discount', 3), column_map.get('net_sales', 4)]
+    if column_map.get('price') is not None:
+        data_cols.append(column_map['price'])
+
+    product_qty_rows = df.iloc[data_start:, data_cols]
+
+    aggregated_items = OrderedDict()
+    row_errors = []
+
+    for row_index, row in product_qty_rows.iterrows():
+        row_number = int(row_index) + 1
+        product_cell = row.iloc[0]
+        quantity_cell = row.iloc[1]
+        gross_sales_cell = row.iloc[2]
+        discount_cell = row.iloc[3]
+        net_sales_cell = row.iloc[4]
+
+        product_name = '' if pd.isna(product_cell) else str(product_cell).strip()
+        has_quantity_content = not pd.isna(quantity_cell) and str(quantity_cell).strip() != ''
+        has_gross_sales_content = not pd.isna(gross_sales_cell) and str(gross_sales_cell).strip() != ''
+        has_discount_content = not pd.isna(discount_cell) and str(discount_cell).strip() != ''
+        has_net_sales_content = not pd.isna(net_sales_cell) and str(net_sales_cell).strip() != ''
+        quantity = _normalize_pos_quantity(quantity_cell)
+        gross_sales = _normalize_pos_amount(gross_sales_cell)
+        discount = _normalize_pos_amount(discount_cell)
+        net_sales = _normalize_pos_net_sales(net_sales_cell)
+
+        if not product_name and not has_quantity_content and not has_gross_sales_content and not has_discount_content and not has_net_sales_content:
+            continue
+
+        if has_quantity_content and quantity is None:
+            row_errors.append(f'Invalid quantity at row {row_number}.')
+            continue
+        if has_gross_sales_content and gross_sales is None:
+            row_errors.append(f'Invalid gross sales at row {row_number}.')
+            continue
+        if has_discount_content and discount is None:
+            row_errors.append(f'Invalid discount at row {row_number}.')
+            continue
+        if has_net_sales_content and net_sales is None:
+            row_errors.append(f'Invalid net sales at row {row_number}.')
+            continue
+
+        if _is_pos_total_row(product_name):
+            continue
+
+        product_key = product_name if product_name else 'Unnamed Product'
+        if product_key not in aggregated_items:
+            aggregated_items[product_key] = {
+                'quantity': 0,
+                'gross_sales': 0.0,
+                'discount': 0.0,
+                'net_sales': 0.0,
+            }
+
+        aggregated_items[product_key]['quantity'] = int(aggregated_items[product_key].get('quantity', 0) or 0) + int(quantity or 0)
+        aggregated_items[product_key]['gross_sales'] = float(aggregated_items[product_key].get('gross_sales', 0.0) or 0.0) + float(gross_sales or 0.0)
+        aggregated_items[product_key]['discount'] = float(aggregated_items[product_key].get('discount', 0.0) or 0.0) + float(discount or 0.0)
+        aggregated_items[product_key]['net_sales'] = float(aggregated_items[product_key].get('net_sales', 0.0) or 0.0) + float(net_sales or 0.0)
+
+    if row_errors:
+        preview_errors = '; '.join(row_errors[:5])
+        if len(row_errors) > 5:
+            preview_errors += f'; and {len(row_errors) - 5} more row issue(s)'
+        raise ValueError(f'POS upload failed validation: {preview_errors}.')
+
+    items = _sanitize_pos_sold_items([
+        {
+            'product_name': product_name,
+            'quantity': item_values.get('quantity', 0),
+            'gross_sales': item_values.get('gross_sales', 0.0),
+            'discount': item_values.get('discount', 0.0),
+            'net_sales': item_values.get('net_sales', 0.0),
+        }
+        for product_name, item_values in aggregated_items.items()
+    ])
+    if not items:
+        raise ValueError('No POS sold rows found. Ensure the file has data rows with product names and quantities.')
+
+    return items
+
+
+def _pos_sold_draft_storage_key(store_id, report_date):
+    return f'{int(store_id)}:{report_date.strftime("%Y-%m-%d")}'
+
+
+def _get_pos_sold_draft(store_id, report_date):
+    draft = PosSoldDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    if not draft:
+        return []
+    try:
+        items = json.loads(draft.items_json or '[]')
+    except (TypeError, ValueError):
+        items = []
+    return _sanitize_pos_sold_items(items if isinstance(items, list) else [])
+
+
+def _set_pos_sold_draft(store_id, report_date, items):
+    sanitized_items = _sanitize_pos_sold_items(items)
+    draft = PosSoldDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    if not draft:
+        draft = PosSoldDraft(
+            store_id=store_id,
+            report_date=report_date,
+            scanned_by=current_user.id if current_user.is_authenticated else None,
+        )
+        db.session.add(draft)
+    draft.items_json = json.dumps(sanitized_items)
+    draft.scanned_by = current_user.id if current_user.is_authenticated else draft.scanned_by
+    legacy_drafts = session.get('pos_sold_drafts') or {}
+    if isinstance(legacy_drafts, dict):
+        legacy_drafts.pop(_pos_sold_draft_storage_key(store_id, report_date), None)
+        session['pos_sold_drafts'] = legacy_drafts
+        session.modified = True
+    db.session.flush()
+
+
+def _pop_pos_sold_draft(store_id, report_date):
+    draft = PosSoldDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+    items = _get_pos_sold_draft(store_id, report_date) if draft else []
+    if draft:
+        db.session.delete(draft)
+    legacy_drafts = session.get('pos_sold_drafts') or {}
+    if isinstance(legacy_drafts, dict):
+        legacy_drafts.pop(_pos_sold_draft_storage_key(store_id, report_date), None)
+        session['pos_sold_drafts'] = legacy_drafts
+        session.modified = True
+    db.session.flush()
+    return items
+
+
+def _get_pos_sold_staging(store_id, report_date):
+    return PosSoldStaging.query.filter_by(store_id=store_id, report_date=report_date).first()
+
+
+def _get_staged_pos_sold_items(staging):
+    if not staging:
+        return []
+    try:
+        raw_items = json.loads(staging.items_json or '[]')
+    except (TypeError, ValueError):
+        raw_items = []
+    return _sanitize_pos_sold_items(raw_items if isinstance(raw_items, list) else [])
+
+
+def _get_saved_motif_rows(raw_value):
+    if isinstance(raw_value, str):
+        try:
+            raw_value = json.loads(raw_value or '[]')
+        except (TypeError, ValueError):
+            return []
+    if isinstance(raw_value, dict):
+        raw_value = raw_value.get('rows') or []
+    return raw_value if isinstance(raw_value, list) else []
+
+
+def _validate_saved_motif_rows(pos_items, raw_value):
+    motif_payload = _build_motif_charge_payload_from_pos_items(pos_items)
+    if not motif_payload:
+        return []
+    raw_rows = _get_saved_motif_rows(raw_value)
+    if not raw_rows:
+        return []
+    expected_groups = max(1, int(motif_payload.get('quantity', 0) or 0))
+    product_ids = {
+        int(row.get('product_id'))
+        for row in raw_rows
+        if isinstance(row, dict) and str(row.get('product_id') or '').isdigit()
+    }
+    products = {
+        int(product.id): product
+        for product in ProductMaster.query.filter(ProductMaster.id.in_(product_ids)).all()
+    } if product_ids else {}
+    rows = []
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, dict) or not raw_row.get('product_id'):
+            continue
+        try:
+            product_id = int(raw_row.get('product_id'))
+            motif_index = int(raw_row.get('motif_index') or 0)
+            quantity = int(raw_row.get('quantity') or 0)
+            discount = max(0.0, float(raw_row.get('discount') or 0.0))
+        except (TypeError, ValueError):
+            raise ValueError('The motif breakdown contains invalid values.')
+        product = products.get(product_id)
+        if not product or motif_index < 1 or motif_index > expected_groups or quantity <= 0:
+            raise ValueError('Complete the Additional Charge for Motif breakdown before saving POS Sold.')
+        unit_price = float(product.sp_p or product.sp_np or 0.0)
+        rows.append({
+            'motif_index': motif_index,
+            'row_index': int(raw_row.get('row_index') or 0),
+            'product_id': product_id,
+            'product_code': product.code,
+            'product': product.description,
+            'quantity': quantity,
+            'unit_price': unit_price,
+            'discount': discount,
+            'price': max(0.0, (unit_price * quantity) - discount),
+        })
+    for motif_index in range(1, expected_groups + 1):
+        group_rows = [row for row in rows if row['motif_index'] == motif_index]
+        if len(group_rows) < 2 or len(group_rows) > 3:
+            raise ValueError(f'Motif #{motif_index} requires 2 or 3 products before saving POS Sold.')
+    return rows
+
+
+def _normalize_product_text(value):
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+
+DEFAULT_POS_SOLD_ALIASES = {
+    # Bag & Packaging Aliases
+    'bag kraft large': 144,
+    'bag kraft medium': 144,
+    'bag kraft small': 144,
+    'bag kraft': 144,
+    'kraft bag large': 144,
+    'kraft bag medium': 144,
+    'kraft bag small': 144,
+    'kraft bag': 144,
+    'cake tote bag': 143,
+    'cake bag 9rd/8rd': 149,
+    'cake bag': 149,
+    'non woven bag': 144,
+    'non woven bag 023': 144,
+    # Candle Aliases
+    'candle sml- blue': 131,
+    'candle sml blue': 131,
+    'candle sml- pink': 131,
+    'candle sml pink': 131,
+    'candle sml- red': 131,
+    'candle sml red': 131,
+    'candle sml- white': 131,
+    'candle sml white': 131,
+    'candle sml- yellow': 131,
+    'candle sml yellow': 131,
+    'candle sml': 131,
+    'candle big - blue': 131,
+    'stick candles - blue': 131,
+    'stick candles - pink': 131,
+}
+
+
+def _ensure_default_pos_sold_aliases():
+    try:
+        alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+        added = False
+        for raw_alias, master_id in DEFAULT_POS_SOLD_ALIASES.items():
+            norm = _normalize_product_text(raw_alias)
+            if not norm or norm in alias_lookup:
+                continue
+            db.session.add(
+                ProductAlias(
+                    alias_name=raw_alias.upper(),
+                    normalized_alias=norm,
+                    product_master_id=int(master_id),
+                )
+            )
+            added = True
+        if added:
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def _build_pos_sold_master_lookups():
+    alias_lookup = {}
+    master_lookup = {}
+
+    for alias_text, product_master_id in DEFAULT_POS_SOLD_ALIASES.items():
+        norm = _normalize_product_text(alias_text)
+        if norm:
+            alias_lookup[norm] = int(product_master_id)
+
+    for normalized_alias, product_master_id in (
+        db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
+        .all()
+    ):
+        alias_text = str(normalized_alias or '').strip()
+        if alias_text:
+            alias_lookup[alias_text] = int(product_master_id)
+
+    for product_id, description in (
+        db.session.query(ProductMaster.id, ProductMaster.description).all()
+    ):
+        normalized_description = _normalize_product_text(description)
+        if normalized_description:
+            master_lookup[normalized_description] = int(product_id)
+
+    return alias_lookup, master_lookup
+
+
+def _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup, similarity_threshold=0.85):
+    normalized_name = _normalize_product_text(product_name)
+    if not normalized_name:
+        return None
+    if normalized_name in alias_lookup:
+        return alias_lookup[normalized_name]
+    if normalized_name in master_lookup:
+        return master_lookup[normalized_name]
+
+    best_score = 0.0
+    best_master_id = None
+    for normalized_master, product_master_id in master_lookup.items():
+        if not normalized_master:
+            continue
+        score = SequenceMatcher(None, normalized_name, normalized_master).ratio()
+        if score > best_score:
+            best_score = score
+            best_master_id = product_master_id
+
+    return best_master_id if best_score >= similarity_threshold else None
+
+
+BITBIT_6S_POS_SOLD_RULES = [
+    {
+        'source': 'Assorted Butter Cake Slices Bitbit 6s',
+        'keywords': ['butter', 'cake', 'slice', 'bitbit', '6'],
+        'target': 'Butter Cake Slice',
+    },
+    {
+        'source': 'Fluffy Mamon Bitbit 6s',
+        'keywords': ['fluffy', 'mamon', 'bitbit', '6'],
+        'target': 'Fluffy Mamon',
+    },
+    {
+        'source': 'Cheesy Ensaymada Bitbit 6s',
+        'keywords': ['cheesy', 'ensaymada', 'bitbit', '6'],
+        'target': 'Cheesy Ensaymada',
+    },
+    {
+        'source': 'Assorted Chiffon Cake Slices Bitbit 6s',
+        'keywords': ['chiffon', 'cake', 'slice', 'bitbit', '6'],
+        'target': 'Chiffon Cake Slice',
+    },
+]
+BITBIT_6S_DISCOUNT_AMOUNT = 10
+
+
+def _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
+    normalized_name = _normalize_product_text(product_name)
+    if not normalized_name:
+        return None
+
+    for rule in BITBIT_6S_POS_SOLD_RULES:
+        normalized_source = _normalize_product_text(rule.get('source'))
+        keyword_match = all(
+            _normalize_product_text(keyword) in normalized_name
+            for keyword in rule.get('keywords', [])
+            if _normalize_product_text(keyword)
+        )
+        if not (
+            (normalized_source and normalized_source in normalized_name)
+            or keyword_match
+        ):
+            continue
+
+        target_name = rule.get('target') or ''
+        target_master_id = _resolve_pos_sold_master_id(target_name, alias_lookup, master_lookup, similarity_threshold=0.75)
+        if not target_master_id:
+            continue
+
+        return {
+            'target_master_id': target_master_id,
+            'target_name': target_name,
+            'source_name': str(product_name or rule.get('source') or '').strip(),
+            'multiplier': 6,
+        }
+
+    return None
+
+
+def _validate_pos_sold_product_mappings(items):
+    _ensure_default_pos_sold_aliases()
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    skip_exact = {_normalize_product_text('Delivery Charge')}
+    motif_name = _normalize_product_text('ADDITIONAL CHARGE FOR MOTIF')
+    unmapped_names = []
+    for item in items or []:
+        product_name = str(item.get('product_name') or '').strip()
+        normalized_name = _normalize_product_text(product_name)
+        if not normalized_name or normalized_name in skip_exact or motif_name in normalized_name:
+            continue
+        if normalized_name in alias_lookup or normalized_name in master_lookup:
+            continue
+        if _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
+            continue
+        if _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup) is not None:
+            continue
+        unmapped_names.append(product_name)
+    if unmapped_names:
+        preview = ', '.join(unmapped_names[:5])
+        if len(unmapped_names) > 5:
+            preview += f', and {len(unmapped_names) - 5} more'
+        raise ValueError(
+            'These POS products are not mapped exactly to Product Master or Product Alias: '
+            f'{preview}. Add or correct their aliases before saving.'
+        )
+
+
+def _build_pos_sold_quantities_by_master_id(items, include_bitbit_details=False):
+    if not items:
+        return ({}, {}) if include_bitbit_details else {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    bitbit_details = {}
+
+    for raw_item in items:
+        if isinstance(raw_item, dict):
+            quantity = int(raw_item.get('quantity', 0) or 0)
+            product_name = raw_item.get('product_name', '')
+        else:
+            quantity = int(getattr(raw_item, 'quantity', 0) or 0)
+            product_name = str(getattr(raw_item, 'product_name', '') or '')
+        if quantity <= 0:
+            continue
+        bitbit_rule = _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup)
+        if bitbit_rule:
+            source_master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+            if source_master_id:
+                master_quantities[source_master_id] = int(master_quantities.get(source_master_id, 0) or 0) + quantity
+
+            master_id = bitbit_rule['target_master_id']
+            converted_quantity = quantity * int(bitbit_rule.get('multiplier') or 6)
+            master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + converted_quantity
+            bitbit_details.setdefault(master_id, []).append({
+                'source_name': bitbit_rule['source_name'],
+                'packs': quantity,
+                'slices': converted_quantity,
+                'target_name': bitbit_rule['target_name'],
+                'discount_amount': BITBIT_6S_DISCOUNT_AMOUNT,
+                'is_source_row': False,
+            })
+            continue
+
+        master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return (master_quantities, bitbit_details) if include_bitbit_details else master_quantities
+
+
+def _build_complete_pos_quantities(items, motif_rows=None, include_bitbit_details=False):
+    result = _build_pos_sold_quantities_by_master_id(items, include_bitbit_details=include_bitbit_details)
+    if include_bitbit_details:
+        quantities, bitbit_details = result
+    else:
+        quantities, bitbit_details = result, None
+    for row in motif_rows or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            product_id = int(row.get('product_id') or 0)
+            quantity = int(row.get('quantity') or 0)
+        except (TypeError, ValueError):
+            continue
+        if product_id > 0 and quantity > 0:
+            quantities[product_id] = int(quantities.get(product_id, 0) or 0) + quantity
+    return (quantities, bitbit_details) if include_bitbit_details else quantities
+
+
+def _build_motif_sold_details(motif_rows):
+    details = {}
+    for row in motif_rows or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            product_id = int(row.get('product_id') or 0)
+            quantity = int(row.get('quantity') or 0)
+        except (TypeError, ValueError):
+            continue
+        if product_id <= 0 or quantity <= 0:
+            continue
+        details.setdefault(product_id, []).append({
+            'motif_index': int(row.get('motif_index') or 1),
+            'product': str(row.get('product') or '').strip(),
+            'quantity': quantity,
+            'unit_price': float(row.get('unit_price') or 0.0),
+            'discount': float(row.get('discount') or 0.0),
+            'price': float(row.get('price') or 0.0),
+        })
+    return details
+
+
+def _build_pos_sold_draft_quantity_by_master_id(store_id, report_date, include_bitbit_details=False):
+    return _build_pos_sold_quantities_by_master_id(
+        _get_pos_sold_draft(store_id, report_date),
+        include_bitbit_details=include_bitbit_details,
+    )
+
+
+def _build_taf_trans_out_quantity_by_master_id(store, transaction_date):
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer']))
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(quantity or 0)
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+def _build_taf_csi_quantity_by_master_id(store, transaction_date):
+    """Return CSI quantities from Charge Slips (charge_type != 'Spoilage')."""
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip')
+        .filter(func.lower(func.trim(func.coalesce(TafTransfer.charge_type, 'charge'))) != 'spoilage')
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(quantity or 0)
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+def _build_taf_wastage_quantity_by_master_id(store, transaction_date):
+    """Return sent wastage quantities, including TAFs that are still pending."""
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(
+            (func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer') |
+            (
+                (func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip') &
+                (func.lower(func.trim(func.coalesce(TafTransfer.charge_type, ''))) == 'spoilage')
+            )
+        )
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, sent_quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        quantity = int(sent_quantity or 0)
+        if not master_id or quantity <= 0:
+            continue
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+def _build_taf_trans_in_quantity_by_master_id(store, transaction_date):
+    if not store or not transaction_date:
+        return {}
+
+    normalized_store_name = str(store.name or '').strip().lower()
+    if not normalized_store_name:
+        return {}
+
+    transfer_rows = (
+        db.session.query(
+            TafTransferItem.item_name,
+            TafTransferItem.quantity,
+            TafTransferItem.received_quantity,
+        )
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(func.coalesce(TafTransfer.received_date, TafTransfer.transaction_date) == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+        .filter(func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name)
+        .filter(func.lower(func.trim(TafTransfer.status)) != 'pending')
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, sent_quantity, received_quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(received_quantity if received_quantity is not None else (sent_quantity or 0))
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+def _build_taf_transfer_trace(store, transaction_date, product_master_id, direction):
+    """Return the TafTransfer records that account for a store/day product's
+    Trans-In or Trans-Out column. Mirrors the column source logic so the trace
+    always matches the auto-populated values used by the InvenSync table."""
+    if not store or not transaction_date or not product_master_id:
+        return [], 0
+
+    direction = str(direction or '').strip().lower()
+    if direction not in ('in', 'out'):
+        return [], 0
+
+    normalized_store_name = str(store.name or '').strip().lower()
+
+    if direction == 'out':
+        query = (
+            db.session.query(TafTransferItem, TafTransfer)
+            .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer']))
+            .filter(TafTransfer.store_id == store.id)
+            .filter(TafTransfer.transaction_date == transaction_date)
+        )
+    elif direction == 'in':
+        if not normalized_store_name:
+            return [], 0
+        query = (
+            db.session.query(TafTransferItem, TafTransfer)
+            .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+            .filter(
+                func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name
+            ).filter(
+                func.lower(func.trim(TafTransfer.status)) != 'pending'
+            ).filter(
+                func.coalesce(TafTransfer.received_date, TafTransfer.transaction_date) == transaction_date
+            )
+        )
+
+    transfer_rows = query.all()
+    if not transfer_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    traced_total = 0
+    for transfer_item, transfer in transfer_rows:
+        resolved_master_id = _resolve_pos_sold_master_id(
+            transfer_item.item_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(transfer_item.quantity or 0)
+        received_qty = int(transfer_item.received_quantity) if transfer_item.received_quantity is not None else quantity
+
+        if direction == 'out':
+            count_qty = quantity
+        else:
+            count_qty = received_qty
+        if count_qty <= 0:
+            continue
+
+        traced_total += count_qty
+        records.append({
+            'control_no': getattr(transfer, 'control_no', None),
+            'transaction_date': (
+                transfer.transaction_date.strftime('%Y-%m-%d')
+                if getattr(transfer, 'transaction_date', None) else ''
+            ),
+            'transaction_type': getattr(transfer, 'transaction_type', None),
+            'transfer_from': getattr(transfer, 'transfer_from', None),
+            'transfer_to': getattr(transfer, 'transfer_to', None),
+            'status': getattr(transfer, 'status', None),
+            'prepared_by_name': getattr(transfer, 'prepared_by_name', None),
+            'received_by_name': getattr(transfer, 'received_by_name', None),
+            'quantity': quantity,
+            'received_quantity': received_qty,
+            'short_over_qty': int(transfer_item.short_over_qty or 0),
+            'unit_cost': float(transfer_item.unit_cost or 0.0),
+            'line_total': float(transfer_item.line_total or 0.0),
+            'remarks': transfer_item.remarks,
+            'created_at': (
+                transfer.created_at.strftime('%Y-%m-%d %H:%M')
+                if getattr(transfer, 'created_at', None) else ''
+            ),
+        })
+
+    return records, traced_total
+
+
+def _build_delivery_trace(store, transaction_date, product_master_id):
+    from website.models import RsoDelivery, User
+    
+    query = (
+        db.session.query(RsoDelivery)
+        .filter(RsoDelivery.store_id == store.id)
+        .filter(RsoDelivery.report_date == transaction_date)
+        .filter(RsoDelivery.delivery_reviewed_date.isnot(None))
+    )
+    delivery_rows = query.all()
+    if not delivery_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    traced_total = 0
+    for delivery in delivery_rows:
+        if str(delivery.upload_source or 'delivery').strip().lower() == 'bulk':
+            continue
+        resolved_master_id = _resolve_pos_sold_master_id(
+            delivery.product_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(delivery.quantity or 0)
+        received_qty = int(delivery.received_quantity) if delivery.received_quantity is not None else quantity
+
+        traced_total += received_qty
+
+        uploader_name = ''
+        if delivery.uploaded_by:
+            uploader = User.query.get(delivery.uploaded_by)
+            if uploader:
+                uploader_name = uploader.full_name
+
+        records.append({
+            'control_no': getattr(delivery, 'rso_no', None) or 'N/A',
+            'transaction_date': delivery.report_date.strftime('%Y-%m-%d') if getattr(delivery, 'report_date', None) else '',
+            'transaction_type': 'Bulk Order' if str(getattr(delivery, 'upload_source', '')).strip().lower() == 'bulk' else 'Delivery',
+            'transfer_from': 'Supplier/Warehouse',
+            'transfer_to': store.name,
+            'status': 'Reviewed',
+            'prepared_by_name': uploader_name,
+            'received_by_name': uploader_name,
+            'quantity': quantity,
+            'received_quantity': received_qty,
+            'short_over_qty': quantity - received_qty if quantity and received_qty is not None else 0,
+            'remarks': delivery.manual_note,
+        })
+    return records, traced_total
+
+
+def _build_sold_trace(store, transaction_date, product_master_id):
+    from website.models import PosSold, DailyReport, User
+    
+    query = (
+        db.session.query(PosSold, DailyReport)
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(DailyReport.store_id == store.id)
+        .filter(DailyReport.report_date == transaction_date)
+    )
+    pos_rows = query.all()
+    if not pos_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    for item, report in pos_rows:
+        resolved_master_id = _resolve_pos_sold_master_id(
+            item.product_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(item.quantity or 0)
+        if quantity <= 0:
+            continue
+
+        uploader_name = ''
+        if report.submitted_by:
+            uploader = User.query.get(report.submitted_by)
+            if uploader:
+                uploader_name = uploader.full_name
+
+        records.append({
+            'control_no': 'POS Upload',
+            'transaction_date': report.report_date.strftime('%Y-%m-%d') if getattr(report, 'report_date', None) else '',
+            'transaction_type': 'POS Sold',
+            'transfer_from': store.name,
+            'transfer_to': 'Customer',
+            'status': 'Sold',
+            'prepared_by_name': uploader_name,
+            'received_by_name': 'Customer',
+            'quantity': quantity,
+            'received_quantity': quantity,
+            'short_over_qty': 0,
+            'remarks': item.product_name,
+        })
+
+    # traced_total uses the same quantity logic as the InvenSync Sold column
+    # (Bitbit 6s conversion + motif additions), so the trace matches the cell.
+    try:
+        motif_rows = json.loads(pos_rows[0][1].pos_motif_breakdown_json or '[]')
+    except (TypeError, ValueError):
+        motif_rows = []
+    sold_map = _build_complete_pos_quantities(
+        [item for item, _report in pos_rows],
+        motif_rows,
+    )
+    traced_total = int(sold_map.get(int(product_master_id), 0) or 0)
+
+    return records, traced_total
+
+
+
+def _build_pos_sold_quantity_by_master_id_for_report(report_id, include_bitbit_details=False):
+    if not report_id:
+        return ({}, {}) if include_bitbit_details else {}
+
+    pos_items = PosSold.query.filter_by(daily_report_id=report_id).all()
+    if not pos_items:
+        return ({}, {}) if include_bitbit_details else {}
+
+    return _build_pos_sold_quantities_by_master_id([
+        {
+            'product_name': item.product_name,
+            'quantity': item.quantity,
+        }
+        for item in pos_items
+    ], include_bitbit_details=include_bitbit_details)
+
+
+def _build_motif_charge_payload_from_pos_items(items):
+    motif_items = []
+    normalized_motif_name = _normalize_product_text('ADDITIONAL CHARGE FOR MOTIF')
+    for item in items or []:
+        if isinstance(item, dict):
+            product_name = str(item.get('product_name') or '').strip()
+            quantity = item.get('quantity', 0)
+            gross_sales = item.get('gross_sales', 0.0)
+            discount = item.get('discount', 0.0)
+            net_sales = item.get('net_sales', 0.0)
+        else:
+            product_name = str(getattr(item, 'product_name', '') or '').strip()
+            quantity = getattr(item, 'quantity', 0)
+            gross_sales = getattr(item, 'gross_sales', 0.0)
+            discount = getattr(item, 'discount', 0.0)
+            net_sales = getattr(item, 'net_sales', 0.0)
+        normalized_product_name = _normalize_product_text(product_name)
+        if not normalized_product_name or normalized_motif_name not in normalized_product_name:
+            continue
+        motif_items.append({
+            'product_name': product_name,
+            'quantity': int(quantity or 0),
+            'gross_sales': float(gross_sales or 0.0),
+            'discount': float(discount or 0.0),
+            'net_sales': float(net_sales or 0.0),
+        })
+
+    if not motif_items:
+        return None
+
+    return {
+        'detected': True,
+        'items': motif_items,
+        'quantity': sum(int(item.get('quantity', 0) or 0) for item in motif_items),
+        'gross_sales': sum(float(item.get('gross_sales', 0.0) or 0.0) for item in motif_items),
+        'discount': sum(float(item.get('discount', 0.0) or 0.0) for item in motif_items),
+        'net_sales': sum(float(item.get('net_sales', 0.0) or 0.0) for item in motif_items),
+    }
+
+
+def _apply_pos_sold_quantities_to_inventory(store_id, report_date, master_quantities):
+    if not master_quantities:
+        return
+
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store_id,
+        inventory_date=report_date
+    ).first()
+    if not inventory:
+        return
+
+    for item in inventory.items:
+        if not item.product_master_id:
+            continue
+        if item.product_master_id not in master_quantities:
+            continue
+        if item.quantity_sold:
+            continue
+
+        item.quantity_sold = int(master_quantities[item.product_master_id]) if master_quantities.get(item.product_master_id) else None
+        _recalculate_inventory_item(item)
+
+    db.session.flush()
+
+
+def _reconcile_pos_sold_quantities_to_inventory(store_id, report_date, master_quantities):
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store_id,
+        inventory_date=report_date,
+    ).first()
+    if not inventory:
+        return False
+    master_quantities = master_quantities or {}
+    for item in inventory.items:
+        if not item.product_master_id:
+            continue
+        sold_qty = master_quantities.get(item.product_master_id)
+        item.quantity_sold = int(sold_qty) if sold_qty else None
+        _recalculate_inventory_item(item)
+    db.session.flush()
+    return True
+
+
+def _ensure_daily_report_exists(store_id, report_date, user_id):
+    existing = DailyReport.query.filter_by(
+        store_id=store_id,
+        report_date=report_date,
+    ).first()
+    if existing:
+        return existing
+    report = DailyReport(
+        store_id=store_id,
+        report_date=report_date,
+        submitted_by=user_id,
+        status='Pending',
+    )
+    db.session.add(report)
+    db.session.flush()
+    return report
+
+
+def _commit_pos_sold_from_staging_items(daily_report, staging_items, z_reading_path=None, motif_json='[]'):
+    for item in staging_items:
+        db.session.add(PosSold(
+            daily_report_id=daily_report.id,
+            product_name=str(item.get('product_name', '')).strip(),
+            quantity=int(item.get('quantity', 0) or 0),
+            gross_sales=float(item.get('gross_sales', 0.0) or 0.0),
+            discount=float(item.get('discount', 0.0) or 0.0),
+            net_sales=float(item.get('net_sales', 0.0) or 0.0),
+            z_reading_image_path=z_reading_path,
+        ))
+    daily_report.pos_motif_breakdown_json = motif_json or '[]'
+    db.session.flush()
+
+
+def backfill_pos_sold_from_staging(user_id=None):
+    if not user_id:
+        admin_user = User.query.filter(
+            User.role.in_(['Superadmin', 'Admin'])
+        ).order_by(User.id.asc()).first()
+        user_id = admin_user.id if admin_user else 1
+
+    staging_records = PosSoldStaging.query.all()
+    created_count = 0
+    skipped_count = 0
+
+    for staging in staging_records:
+        has_pos_sold = PosSold.query.join(
+            DailyReport, DailyReport.id == PosSold.daily_report_id
+        ).filter(
+            DailyReport.store_id == staging.store_id,
+            DailyReport.report_date == staging.report_date,
+        ).first() is not None
+
+        if has_pos_sold:
+            skipped_count += 1
+            continue
+
+        try:
+            raw_items = json.loads(staging.items_json or '[]')
+        except (TypeError, ValueError):
+            raw_items = []
+
+        if not raw_items:
+            skipped_count += 1
+            continue
+
+        report = _ensure_daily_report_exists(staging.store_id, staging.report_date, user_id)
+        _commit_pos_sold_from_staging_items(
+            report,
+            raw_items,
+            z_reading_path=staging.z_reading_image_path,
+            motif_json=staging.motif_breakdown_json or '[]',
+        )
+        created_count += 1
+
+    return {'created': created_count, 'skipped': skipped_count, 'total_staging': len(staging_records)}
+
+
+def _ensure_invensync_inventory_for_pos_save(store, report_date, created_by):
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=report_date,
+    ).first()
+    if not inventory:
+        inventory = DailyEndingInventory(
+            store_id=store.id,
+            inventory_date=report_date,
+            created_by=created_by,
+        )
+        db.session.add(inventory)
+        db.session.flush()
+
+    previous_inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=report_date - timedelta(days=1),
+    ).first()
+    previous_finalized_totals = {}
+    if previous_inventory and previous_inventory.is_finalized:
+        previous_finalized_totals = {
+            item.product_master_id: int(item.total_ending_qty or 0)
+            for item in previous_inventory.items
+            if item.product_master_id is not None
+        }
+
+    products = ProductMaster.query.all()
+    existing_items = {
+        int(item.product_master_id): item
+        for item in inventory.items
+        if item.product_master_id is not None
+    }
+    for product in products:
+        beginning_qty = previous_finalized_totals.get(product.id, 0)
+        item = existing_items.get(int(product.id))
+        if not item:
+            srp = product.sp_p if store.store_group == 'premium' else product.sp_np
+            item = DailyEndingInventoryItem(
+                inventory=inventory,
+                product_master_id=product.id,
+                product_code=str(product.code) if product.code else '',
+                product_description=product.description,
+                srp_price=srp or 0,
+                beginning_qty=beginning_qty,
+            )
+            db.session.add(item)
+        elif product.id in previous_finalized_totals:
+            item.beginning_qty = beginning_qty
+
+    db.session.flush()
+    return inventory
+
+
+def _sanitize_rso_items(items):
+    if not isinstance(items, list):
+        return []
+
+    aggregated_items = OrderedDict()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        product_name = str(item.get('product_name', '')).strip()
+        if not product_name:
+            continue
+        item_rso_no = str(item.get('rso_no', '') or '').strip()
+        item_source = str(item.get('upload_source', '') or '').strip()
+        product_code = str(item.get('product_code', '') or '').strip()
+
+        quantity = _normalize_pos_quantity(item.get('quantity'))
+        if quantity is None or quantity <= 0:
+            continue
+
+        item_key = (item_rso_no, item_source, product_name)
+        if item_key not in aggregated_items:
+            aggregated_items[item_key] = {
+                'quantity': 0,
+                'received_quantity': 0,
+                'has_received_quantity': False,
+                'product_code': product_code or None,
+            }
+        elif product_code and not aggregated_items[item_key].get('product_code'):
+            aggregated_items[item_key]['product_code'] = product_code
+
+        aggregated_items[item_key]['quantity'] = int(aggregated_items[item_key]['quantity'] or 0) + quantity
+        raw_received_quantity = item.get('received_quantity')
+        if raw_received_quantity is not None and str(raw_received_quantity).strip() != '':
+            received_quantity = _normalize_pos_quantity(raw_received_quantity)
+            if received_quantity is not None:
+                aggregated_items[item_key]['received_quantity'] += max(0, received_quantity)
+                aggregated_items[item_key]['has_received_quantity'] = True
+
+    return [
+        {
+            'product_name': item_key[2],
+            'product_code': item_values.get('product_code') or None,
+            'rso_no': item_key[0] or None,
+            'upload_source': item_key[1] or None,
+            'quantity': int(item_values.get('quantity', 0) or 0),
+            'received_quantity': (
+                int(item_values.get('received_quantity', 0) or 0)
+                if item_values.get('has_received_quantity') else None
+            ),
+        }
+        for item_key, item_values in aggregated_items.items()
+    ]
+
+
+def _extract_rso_items_from_excel(uploaded_file):
+    df = _read_uploaded_excel(uploaded_file, 'RSO')
+
+    if df.empty or df.shape[0] < 1 or df.shape[1] < 1:
+        raise ValueError('Excel file is empty. Please upload a valid RSO Excel file.')
+
+    # 1. Extract RSO No from cell A1 or search top cells for RSO number pattern
+    rso_no = ''
+    first_cell = df.iat[0, 0] if not pd.isna(df.iat[0, 0]) else ''
+    first_cell_str = str(first_cell).strip()
+
+    rso_pattern = re.compile(r'rso\s*(?:number|no\.?|#)?\s*[:\-\s]*(?:rso\s*[:\-\s]*)?([a-z0-9\-_]+)', re.IGNORECASE)
+    rso_match = rso_pattern.search(first_cell_str)
+    if rso_match:
+        rso_no = rso_match.group(1).strip()
+    elif first_cell_str and not any(kw in first_cell_str.lower() for kw in ['product', 'item', 'description', 'qty', 'quantity', 'code']):
+        rso_no = first_cell_str
+
+    if not rso_no:
+        for r_idx in range(min(5, df.shape[0])):
+            for c_idx in range(min(5, df.shape[1])):
+                val = df.iat[r_idx, c_idx]
+                if pd.isna(val):
+                    continue
+                v_str = str(val).strip()
+                match = rso_pattern.search(v_str)
+                if match:
+                    rso_no = match.group(1).strip()
+                    break
+            if rso_no:
+                break
+
+    if not rso_no:
+        rso_no = 'RSO-DELIVERY'
+
+    # 2. Flexible column detection for Product Code, Product Name, and Quantity
+    prod_col = None
+    qty_col = None
+    code_col = None
+    header_row_idx = None
+
+    prod_keywords = ['product name', 'product_name', 'item name', 'item_name', 'product description', 'item description', 'description', 'desc', 'particulars', 'material description', 'product']
+    qty_keywords = ['quantity', 'qty', 'qty.', 'received qty', 'received', 'del qty', 'delivery qty', 'ordered qty', 'order qty', 'total qty', 'del_qty', 'pcs', 'count']
+    code_keywords = ['product code', 'product_code', 'item code', 'item_code', 'code', 'sku', 'mat. no.', 'mat no', 'mat_no', 'item_no', 'item no']
+
+    for r_idx in range(min(10, df.shape[0])):
+        row_vals = [str(df.iat[r_idx, c_idx]).strip().lower() if not pd.isna(df.iat[r_idx, c_idx]) else '' for c_idx in range(df.shape[1])]
+        
+        found_prod = None
+        found_qty = None
+        found_code = None
+
+        for c_idx, cell in enumerate(row_vals):
+            if not cell:
+                continue
+
+            is_code_cell = any(kw == cell or cell.startswith(kw) for kw in code_keywords) or ('code' in cell and 'name' not in cell) or ('sku' in cell)
+            if found_code is None and is_code_cell:
+                found_code = c_idx
+
+            if found_qty is None and any(kw == cell or cell.startswith(kw) for kw in qty_keywords):
+                found_qty = c_idx
+
+            if found_prod is None and not is_code_cell:
+                if any(kw == cell or (cell.startswith(kw) and 'code' not in cell and 'sku' not in cell) for kw in prod_keywords):
+                    found_prod = c_idx
+
+        if found_prod is not None or found_qty is not None or found_code is not None:
+            prod_col = found_prod if found_prod is not None else prod_col
+            qty_col = found_qty if found_qty is not None else qty_col
+            code_col = found_code if found_code is not None else code_col
+            header_row_idx = r_idx
+            if prod_col is not None and qty_col is not None:
+                break
+
+    # If header match didn't find both prod_col and qty_col, inspect row data values
+    if prod_col is None or qty_col is None:
+        start_search_row = (header_row_idx + 1) if header_row_idx is not None else 1
+        col_text_counts = {c: 0 for c in range(df.shape[1])}
+        col_num_counts = {c: 0 for c in range(df.shape[1])}
+
+        for r_idx in range(start_search_row, min(start_search_row + 30, df.shape[0])):
+            for c_idx in range(df.shape[1]):
+                val = df.iat[r_idx, c_idx]
+                if pd.isna(val):
+                    continue
+                v_str = str(val).strip()
+                if not v_str:
+                    continue
+                num = _normalize_pos_quantity(val)
+                if num is not None and num >= 0:
+                    col_num_counts[c_idx] += 1
+                elif len(v_str) > 1 and not v_str.isdigit():
+                    col_text_counts[c_idx] += 1
+
+        if prod_col is None:
+            if df.shape[1] >= 3 and col_text_counts.get(2, 0) > 0:
+                prod_col = 2
+            elif col_text_counts:
+                text_candidates = [(c, cnt) for c, cnt in col_text_counts.items() if c != code_col]
+                prod_col = max(text_candidates, key=lambda x: x[1])[0] if text_candidates else 2
+            else:
+                prod_col = 2 if df.shape[1] >= 3 else 0
+
+        if qty_col is None:
+            num_candidates = [(c, cnt) for c, cnt in col_num_counts.items() if c != prod_col and c != code_col]
+            if num_candidates:
+                qty_col = max(num_candidates, key=lambda x: x[1])[0]
+            else:
+                qty_col = 3 if df.shape[1] >= 4 else (1 if prod_col != 1 else 2)
+
+    # Final fallback guarantees: Column C (index 2) for Product Name, Column D (index 3) for Quantity
+    if prod_col is None:
+        prod_col = 2 if df.shape[1] >= 3 else 0
+    if qty_col is None:
+        qty_col = 3 if df.shape[1] >= 4 else (1 if prod_col != 1 else 2)
+    if code_col is None and df.shape[1] >= 3 and prod_col != 1 and qty_col != 1:
+        code_col = 1  # Column B is Product Code
+
+    start_row = (header_row_idx + 1) if header_row_idx is not None else 1
+
+    aggregated_items = OrderedDict()
+
+    for r_idx in range(start_row, df.shape[0]):
+        prod_cell = df.iat[r_idx, prod_col] if prod_col is not None and prod_col < df.shape[1] and not pd.isna(df.iat[r_idx, prod_col]) else ''
+        qty_cell = df.iat[r_idx, qty_col] if qty_col is not None and qty_col < df.shape[1] and not pd.isna(df.iat[r_idx, qty_col]) else None
+        code_cell = df.iat[r_idx, code_col] if code_col is not None and code_col < df.shape[1] and not pd.isna(df.iat[r_idx, code_col]) else ''
+
+        product_name = str(prod_cell).strip()
+        product_code = str(code_cell).strip()
+        has_qty_content = qty_cell is not None and str(qty_cell).strip() != ''
+        quantity = _normalize_pos_quantity(qty_cell)
+
+        if not product_name and not has_qty_content:
+            continue
+
+        lower_prod = product_name.lower()
+        if any(hdr in lower_prod for hdr in ['product name', 'item description', 'total', 'grand total', 'subtotal', 'rso no']):
+            continue
+
+        if not product_name:
+            continue
+        if quantity is None:
+            continue
+
+        item_key = (product_name, product_code)
+        if item_key not in aggregated_items:
+            aggregated_items[item_key] = {'quantity': 0, 'product_code': product_code or None}
+        aggregated_items[item_key]['quantity'] = int(aggregated_items[item_key]['quantity'] or 0) + quantity
+
+    items = _sanitize_rso_items([
+        {
+            'product_name': item_key[0],
+            'product_code': item_key[1] or None,
+            'quantity': item_values.get('quantity', 0),
+        }
+        for item_key, item_values in aggregated_items.items()
+    ])
+
+    rso_no_item = {'product_name': f'RSO No: {rso_no}', 'quantity': 1}
+    if not items:
+        items = [rso_no_item]
+    else:
+        items = [rso_no_item] + items
+
+    return items
+
+
+def _split_rso_meta_and_items(items):
+    rso_no = ''
+    clean_items = []
+    pattern = re.compile(r'^\s*rso\s*no\s*:\s*(.+?)\s*$', re.IGNORECASE)
+
+    for item in items or []:
+        item_rso_no = ''
+        if isinstance(item, dict):
+            product_name = str(item.get('product_name', '')).strip()
+            item_rso_no = str(item.get('rso_no', '') or '').strip()
+        else:
+            product_name = str(getattr(item, 'product_name', '') or '').strip()
+            item_rso_no = str(getattr(item, 'rso_no', '') or '').strip()
+
+        if item_rso_no and not rso_no:
+            rso_no = item_rso_no
+
+        match = pattern.match(product_name)
+        if match:
+            candidate = (match.group(1) or '').strip()
+            if candidate and not rso_no:
+                rso_no = candidate
+            continue
+
+        clean_items.append(item)
+
+    return rso_no, clean_items
+
+
+def _enrich_rso_items_with_product_code(rso_items):
+    """Add product_code to RSO items by matching product_name with ProductMaster."""
+    if not rso_items:
+        return rso_items
+    
+    # Build a lookup dictionary for product codes
+    product_lookup = {}
+    products = ProductMaster.query.all()
+    for product in products:
+        # Index by description (case-insensitive)
+        if product.description:
+            product_lookup[product.description.lower().strip()] = product.code
+        # Also index by code itself
+        if product.code:
+            product_lookup[str(product.code).lower().strip()] = product.code
+    
+    enriched_items = []
+    for item in rso_items:
+        if isinstance(item, dict):
+            # It's a dict (from draft)
+            product_name = str(item.get('product_name', '')).strip()
+            product_code = item.get('product_code')
+            
+            # Try to find product code if not already set
+            if not product_code and product_name:
+                product_code = product_lookup.get(product_name.lower())
+            
+            enriched_item = dict(item)
+            enriched_item['product_code'] = product_code
+            enriched_item.setdefault('received_quantity', None)
+            enriched_item['is_manual'] = bool(
+                enriched_item.get('is_manual')
+                or str(enriched_item.get('rso_no') or '').strip().lower() == 'manual entry'
+            )
+            enriched_items.append(enriched_item)
+        else:
+            # It's a model instance (from database)
+            product_name = str(getattr(item, 'product_name', '') or '').strip()
+            product_code = getattr(item, 'product_code', None)
+            
+            # Try to find product code if not already set
+            if not product_code and product_name:
+                product_code = product_lookup.get(product_name.lower())
+            
+            # Create a dict with all attributes plus product_code
+            enriched_item = {
+                'product_name': item.product_name,
+                'quantity': item.quantity,
+                'received_quantity': getattr(item, 'received_quantity', None),
+                'product_code': product_code,
+                'rso_no': getattr(item, 'rso_no', None),
+                'is_manual': str(getattr(item, 'rso_no', '') or '').strip().lower() == 'manual entry',
+                'manual_note': getattr(item, 'manual_note', None),
+                'upload_source': getattr(item, 'upload_source', None) or 'delivery',
+            }
+            enriched_items.append(enriched_item)
+    
+    return enriched_items
+
+
+def _rso_draft_storage_key(store_id, report_date):
+    return f'{int(store_id)}:{report_date.strftime("%Y-%m-%d")}'
+
+
+def _rso_source_filter(source='delivery'):
+    source = (source or 'delivery').strip().lower()
+    if source == 'delivery':
+        return or_(
+            RsoDelivery.upload_source == 'delivery',
+            RsoDelivery.upload_source.is_(None),
+            func.trim(RsoDelivery.upload_source) == '',
+        )
+    return RsoDelivery.upload_source == source
+
+
+def _get_rso_draft_object(store_id, report_date, create_if_missing=False):
+    for obj in db.session.new:
+        if isinstance(obj, RsoDeliveryDraft) and obj.store_id == store_id and obj.report_date == report_date:
+            if obj not in db.session.deleted:
+                return obj
+    for obj in db.session.dirty:
+        if isinstance(obj, RsoDeliveryDraft) and obj.store_id == store_id and obj.report_date == report_date:
+            if obj not in db.session.deleted:
+                return obj
+
+    with db.session.no_autoflush:
+        draft = RsoDeliveryDraft.query.filter_by(store_id=store_id, report_date=report_date).first()
+
+    if draft and draft in db.session.deleted:
+        draft = None
+
+    if not draft and create_if_missing:
+        draft = RsoDeliveryDraft(
+            store_id=store_id,
+            report_date=report_date,
+            items_json='[]',
+            upload_filename='{}',
+            updated_by=current_user.id,
+        )
+        db.session.add(draft)
+    return draft
+
+
+def _get_rso_draft_meta(store_id, report_date, source='delivery'):
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=False)
+    if not draft:
+        return {}
+    try:
+        filenames = json.loads(draft.upload_filename or '{}')
+    except (TypeError, ValueError):
+        filenames = {}
+    if not isinstance(filenames, dict):
+        filenames = {str(draft.upload_source or 'delivery'): str(draft.upload_filename or '')}
+    return {'source': source, 'filename': str(filenames.get(source, '') or '').strip()}
+
+
+def _set_rso_draft_meta(store_id, report_date, meta, source='delivery'):
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=True)
+    try:
+        filenames = json.loads(draft.upload_filename or '{}')
+    except (TypeError, ValueError):
+        filenames = {}
+    if not isinstance(filenames, dict):
+        filenames = {}
+    filenames[source] = str((meta or {}).get('filename') or '').strip()
+    draft.upload_source = source
+    draft.upload_filename = json.dumps(filenames)
+    draft.updated_by = current_user.id
+
+
+def _pop_rso_draft_meta(store_id, report_date, source='delivery'):
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=False)
+    if not draft:
+        return {}
+    try:
+        filenames = json.loads(draft.upload_filename or '{}')
+    except (TypeError, ValueError):
+        filenames = {}
+    if not isinstance(filenames, dict):
+        filenames = {}
+    meta = {'source': source, 'filename': str(filenames.pop(source, '') or '').strip()}
+    draft.upload_filename = json.dumps(filenames)
+    return meta
+
+
+def _get_rso_draft(store_id, report_date, source='delivery'):
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=False)
+    if not draft:
+        return []
+    try:
+        payload = json.loads(draft.items_json or '{}')
+    except (TypeError, ValueError):
+        payload = {}
+    if isinstance(payload, list):
+        items = payload if str(draft.upload_source or 'delivery') == source else []
+    else:
+        items = payload.get(source, []) if isinstance(payload, dict) else []
+    return _sanitize_rso_items(items if isinstance(items, list) else [])
+
+
+def _set_rso_draft(store_id, report_date, items, source='delivery'):
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=True)
+    try:
+        payload = json.loads(draft.items_json or '{}')
+    except (TypeError, ValueError):
+        payload = {}
+    if isinstance(payload, list):
+        payload = {str(draft.upload_source or 'delivery'): payload}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload[source] = _sanitize_rso_items(items)
+    draft.items_json = json.dumps(payload)
+    draft.updated_by = current_user.id
+
+
+def _pop_rso_draft(store_id, report_date, source='delivery'):
+    draft = _get_rso_draft_object(store_id, report_date, create_if_missing=False)
+    if not draft:
+        return []
+    try:
+        payload = json.loads(draft.items_json or '{}')
+    except (TypeError, ValueError):
+        payload = {}
+    if isinstance(payload, list):
+        payload = {str(draft.upload_source or 'delivery'): payload}
+    items = payload.pop(source, []) if isinstance(payload, dict) else []
+    if payload:
+        draft.items_json = json.dumps(payload)
+    else:
+        db.session.delete(draft)
+    return _sanitize_rso_items(items if isinstance(items, list) else [])
+
+@views.route('/')
+@login_required
+def home():
+    role = (current_user.role or '').strip()
+
+    if role == 'Superadmin':
+        return redirect(url_for('admin.dashboard'))
+    if role == 'General Manager':
+        return redirect(url_for('admin.dashboard'))
+    if role == 'Admin':
+        return redirect(url_for('admin.users'))
+    if role == 'Auditor':
+        return redirect(url_for('admin.dashboard'))
+    if role == 'Area Manager':
+        return redirect(url_for('admin.area_manager_dashboard'))
+    if role == 'Cluster Manager':
+        return redirect(url_for('views.cluster_dashboard'))
+    if role == 'Store Manager':
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if store and not _store_has_operational_data(store.id):
+            return redirect(url_for('views.invensync'))
+        return redirect(url_for('views.store_manager_report'))
+    if role == 'Inventory Staff':
+        return redirect(url_for('views.store_manager_wastage'))
+
+    flash('No dashboard is configured for your account role.', category='error')
+    return redirect(url_for('auth.logout'))
+
+
+@views.route('/cluster-dashboard')
+@login_required
+def cluster_dashboard():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
+        flash('Access denied. Only Cluster Managers and Admins can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Cluster
+    cluster = None
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            flash('You are not assigned to any cluster yet.', category='error')
+            return redirect(url_for('views.home'))
+    elif role == 'Area Manager':
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id or cluster_id not in allowed_cluster_ids:
+            flash('Access denied. You are not assigned to this cluster.', category='error')
+            return redirect(url_for('views.home'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view dashboard.', category='error')
+            return redirect(url_for('admin.clusters'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+    
+    # Get current month/year/date filters
+    from datetime import date, timedelta
+    from calendar import monthrange
+    from .models import Store, DailyReport, StoreTarget
+    
+    today = date.today()
+    month_arg = request.args.get('month')
+    year_arg = request.args.get('year')
+    start_date_arg = request.args.get('start_date')
+    end_date_arg = request.args.get('end_date')
+    
+    # Get stores in this cluster.
+    # Fallback to all stores when cluster-store assignment is missing so dashboard widgets remain usable.
+    cluster_stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    if not cluster_stores:
+        cluster_stores = Store.query.all()
+    cluster_stores = _apply_store_scope_filter(cluster_stores, request)
+    stores = cluster_stores
+    
+    # Get store IDs
+    store_ids = [s.id for s in stores]
+    
+    # Resolve selected range.
+    parsed_start_date = _parse_iso_date(start_date_arg)
+    parsed_end_date = _parse_iso_date(end_date_arg)
+
+    if parsed_start_date or parsed_end_date:
+        start_date = parsed_start_date or parsed_end_date
+        end_date = parsed_end_date or parsed_start_date
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+        year_int = int(start_date.year)
+        month_int = int(start_date.month)
+    else:
+        # Default dashboard filter: first day of current month up to today.
+        start_date = today.replace(day=1)
+        end_date = today
+        year_int = int(start_date.year)
+        month_int = int(start_date.month)
+
+    current_month = f'{month_int:02d}'
+    current_year = str(year_int)
+    
+    # Fetch all reports for this month (only approved ones)
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date,
+        DailyReport.status == 'Approved'
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_taf_wastage_amounts(reports)
+
+    # Fetch store targets for the selected month
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+    
+    # Build day-level and cumulative data for the selected range.
+    daily_targets = _aggregate_targets_by_day(targets)
+    daily_sales_map = {}
+    sbase_store_ids = {int(s.id) for s in stores if bool(getattr(s, 'is_one_year_already', False))}
+    daily_sbase_sales_map = {}
+    for report in reports:
+        date_key = report.report_date.strftime('%Y-%m-%d')
+        report_net_sales = float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+        daily_sales_map[date_key] = float(daily_sales_map.get(date_key, 0.0) or 0.0) + report_net_sales
+        if int(report.store_id) in sbase_store_ids:
+            daily_sbase_sales_map[date_key] = float(daily_sbase_sales_map.get(date_key, 0.0) or 0.0) + report_net_sales
+
+    acc_daily_targets = {}
+    acc_daily_sales = {}
+    mtd_metrics_by_day = {}
+    sales_data = []
+    sbase_sales_data = []
+    target_data = []
+    last_year_data = []
+    labels = []
+
+    running_sales = 0.0
+    running_target = 0.0
+    running_ly = 0.0
+    running_gbi = 0.0
+
+    cursor = start_date
+    while cursor <= end_date:
+        date_key = cursor.strftime('%Y-%m-%d')
+        day_sales = float(daily_sales_map.get(date_key, 0.0) or 0.0)
+        day_sbase_sales = float(daily_sbase_sales_map.get(date_key, 0.0) or 0.0)
+        day_target = float(daily_targets.get(date_key, {}).get('target_net', 0.0) or 0.0)
+        day_ly = float(daily_targets.get(date_key, {}).get('last_year_net', 0.0) or 0.0)
+        day_gbi = float(daily_targets.get(date_key, {}).get('gbi_target', 0.0) or 0.0)
+
+        running_sales += day_sales
+        running_target += day_target
+        running_ly += day_ly
+        running_gbi += day_gbi
+
+        sales_data.append(day_sales)
+        sbase_sales_data.append(day_sbase_sales)
+        target_data.append(day_target)
+        last_year_data.append(day_ly)
+        labels.append(cursor.strftime('%b %d'))
+
+        acc_daily_sales[date_key] = {'net_sales': running_sales}
+        acc_daily_targets[date_key] = {
+            'target_net': running_target,
+            'last_year_net': running_ly,
+            'gbi_target': running_gbi,
+        }
+        mtd_metrics_by_day[date_key] = {
+            'mtd_vs_tgt': (((running_sales / running_target) - 1.0) * 100) if running_target > 0 else None,
+            'mtd_vs_ly': (((running_sales / running_ly) - 1.0) * 100) if running_ly > 0 else None,
+        }
+
+        cursor += timedelta(days=1)
+    
+    # Build summary so dashboard can reuse the same Performance Overview metrics.
+    summary = _build_cluster_manager_summary(reports, targets)
+    ytd_overview = _build_ytd_overview(end_date, store_ids=store_ids)
+    summary.setdefault('overview', {}).update(ytd_overview)
+    top_products = _build_top_products_from_reports(reports)
+    top_products_total_units = sum(item['units'] for item in top_products)
+    store_product_mix = _build_store_product_mix_from_reports(reports, stores)
+    pos_sold_products_by_store = _build_pos_sold_products_by_store(reports, stores)
+    wastage_performance = _build_wastage_performance(
+        reports,
+        start_date,
+        end_date,
+        store_lookup={int(store.id): store.name for store in stores},
+    )
+    discount_performance = _build_discount_performance(reports, start_date, end_date)
+
+    # Prepare per-store performance data
+    store_performance_data = []
+    range_days = max((end_date - start_date).days + 1, 1)
+    
+    for store in stores:
+        # Get reports for this specific store
+        store_reports = [r for r in reports if r.store_id == store.id]
+        store_targets = [t for t in targets if t.store_id == store.id]
+        
+        # Calculate selected-range sales and targets.
+        mtd_sales = sum(
+            float(r.pos_net_sales or 0) + float(r.ci_regular_net_sales or 0)
+            for r in store_reports
+        )
+        
+        # Average Daily Sales over the selected range.
+        ads = mtd_sales / range_days if range_days > 0 else 0
+        
+        # Last Year and Target in selected range.
+        store_ly_mtd = sum(
+            float(t.last_year_net or 0)
+            for t in store_targets
+        )
+        
+        store_target_mtd = sum(
+            float(t.target_net or 0)
+            for t in store_targets
+        )
+        ar_tgt_percent = (((mtd_sales / store_target_mtd) - 1.0) * 100) if store_target_mtd > 0 else 0.0
+            
+        # Calculate % Gr (Growth vs Last Year) = Act/LY - 1
+        if store_ly_mtd > 0:
+            growth_percent = (mtd_sales / store_ly_mtd) - 1.0
+        else:
+            growth_percent = None
+
+        status = _classify_store_status(ar_tgt_percent, growth_percent)
+            
+        store_performance_data.append({
+            'store_name': store.name,
+            'act': mtd_sales,
+            'target_mtd': store_target_mtd,
+            'ads': ads,
+            'ly': store_ly_mtd,
+            'ar_tgt_percent': ar_tgt_percent,
+            'growth_percent': growth_percent,
+            'status': status
+        })
+
+    # Top stores by ADS (Average Daily Sales)
+    top_stores_ads = []
+    sorted_by_ads = sorted(store_performance_data, key=lambda item: float(item.get('ads', 0) or 0), reverse=True)[:3]
+    max_ads = float(sorted_by_ads[0].get('ads', 0) or 0) if sorted_by_ads else 0.0
+    for rank, store_data in enumerate(sorted_by_ads, start=1):
+        ads_value = float(store_data.get('ads', 0) or 0)
+        top_stores_ads.append({
+            'rank': rank,
+            'store_name': store_data.get('store_name', ''),
+            'ads': ads_value,
+            'ads_percent': ((ads_value / max_ads) * 100) if max_ads > 0 else 0.0,
+        })
+
+    # Top stores by Attainment Rate (AR % Tgt)
+    top_attainment_ar = []
+    sorted_by_ar = sorted(store_performance_data, key=lambda item: float(item.get('ar_tgt_percent', 0) or 0), reverse=True)[:3]
+    for rank, store_data in enumerate(sorted_by_ar, start=1):
+        ar_value = float(store_data.get('ar_tgt_percent', 0) or 0)
+        top_attainment_ar.append({
+            'rank': rank,
+            'store_name': store_data.get('store_name', ''),
+            'ar_tgt_percent': ar_value,
+            'target_mtd': float(store_data.get('target_mtd', 0) or 0),
+            'act': float(store_data.get('act', 0) or 0),
+            'delta_percent': ar_value,
+            'progress_percent': min(max(ar_value + 100.0, 0.0), 100.0),
+        })
+
+    # ICU Stores: show lowest-performing stores that need attention in the selected range.
+    severity_order = {'ICU Critical': 0, 'Critical': 1, 'Recovery': 2, 'Good': 3, 'Excellent': 4}
+    status_meta = {
+        'ICU Critical': {
+            'tone_card': 'bg-red-50 border-l-4 border-red-500',
+            'tone_badge': 'text-red-700 bg-red-100',
+            'tone_value': 'text-red-600',
+            'tone_bar_bg': 'bg-red-200',
+            'tone_bar_fill': 'bg-red-500',
+            'note': 'Significantly below target',
+        },
+        'Critical': {
+            'tone_card': 'bg-orange-50 border-l-4 border-orange-500',
+            'tone_badge': 'text-orange-700 bg-orange-100',
+            'tone_value': 'text-orange-600',
+            'tone_bar_bg': 'bg-orange-200',
+            'tone_bar_fill': 'bg-orange-500',
+            'note': 'Below target',
+        },
+        'Recovery': {
+            'tone_card': 'bg-amber-50 border-l-4 border-amber-500',
+            'tone_badge': 'text-amber-700 bg-amber-100',
+            'tone_value': 'text-amber-600',
+            'tone_bar_bg': 'bg-amber-200',
+            'tone_bar_fill': 'bg-amber-500',
+            'note': 'Near target, monitor closely',
+        },
+    }
+
+    icu_candidates = [
+        item for item in store_performance_data
+        if item.get('status') == 'ICU Critical'
+    ]
+    icu_candidates = sorted(
+        icu_candidates,
+        key=lambda item: (
+            severity_order.get(item.get('status', 'Excellent'), 99),
+            float(item.get('ar_tgt_percent', 0) or 0),
+        )
+    )[:3]
+
+    icu_stores = []
+    for item in icu_candidates:
+        status = item.get('status', 'Recovery')
+        meta = status_meta.get(status, status_meta['Recovery'])
+        ar_percent = float(item.get('ar_tgt_percent', 0) or 0)
+        attainment_percent = max(0.0, ar_percent + 100.0)
+        icu_stores.append({
+            'store_name': item.get('store_name', ''),
+            'status': status,
+            'note': meta['note'],
+            'act': float(item.get('act', 0) or 0),
+            'target_mtd': float(item.get('target_mtd', 0) or 0),
+            'attainment_percent': attainment_percent,
+            'progress_percent': min(max(attainment_percent, 0.0), 100.0),
+            'tone_card': meta['tone_card'],
+            'tone_badge': meta['tone_badge'],
+            'tone_value': meta['tone_value'],
+            'tone_bar_bg': meta['tone_bar_bg'],
+            'tone_bar_fill': meta['tone_bar_fill'],
+        })
+
+    def _format_tracker_date_range(range_start, range_end):
+        if range_start == range_end:
+            return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year}"
+        if range_start.year == range_end.year and range_start.month == range_end.month:
+            return f"{range_start.strftime('%b')} {range_start.day}-{range_end.day}, {range_start.year}"
+        if range_start.year == range_end.year:
+            return f"{range_start.strftime('%b')} {range_start.day} - {range_end.strftime('%b')} {range_end.day}, {range_start.year}"
+        return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year} - {range_end.strftime('%b')} {range_end.day}, {range_end.year}"
+
+    def _summarize_missing_dates(missing_dates):
+        if not missing_dates:
+            return []
+        missing_dates = sorted(missing_dates)
+        ranges = []
+        range_start = missing_dates[0]
+        previous = missing_dates[0]
+        for missing_date in missing_dates[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            ranges.append(_format_tracker_date_range(range_start, previous))
+            range_start = missing_date
+            previous = missing_date
+        ranges.append(_format_tracker_date_range(range_start, previous))
+        return ranges
+
+    # Don't flag today's date as missing: reports/uploads for the current day
+    # are not due yet, so exclude today from the expected (required) dates.
+    tracker_end_date = min(end_date, today - timedelta(days=1))
+    expected_dates = []
+    tracker_cursor = start_date
+    while tracker_cursor <= tracker_end_date:
+        expected_dates.append(tracker_cursor)
+        tracker_cursor += timedelta(days=1)
+
+    dashboard_store_count = len(store_ids)
+    daily_report_dates_by_store = {}
+    if store_ids:
+        daily_report_date_rows = (
+            db.session.query(DailyReport.store_id, DailyReport.report_date)
+            .filter(
+                DailyReport.store_id.in_(store_ids),
+                DailyReport.report_date >= start_date,
+                DailyReport.report_date <= end_date,
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, report_date in daily_report_date_rows:
+            if store_id and report_date:
+                daily_report_dates_by_store.setdefault(int(store_id), set()).add(report_date)
+
+    invensync_dates_by_store = {}
+    if store_ids:
+        invensync_date_rows = (
+            db.session.query(DailyEndingInventory.store_id, DailyEndingInventory.inventory_date)
+            .filter(
+                DailyEndingInventory.store_id.in_(store_ids),
+                DailyEndingInventory.inventory_date >= start_date,
+                DailyEndingInventory.inventory_date <= end_date,
+                DailyEndingInventory.is_finalized.is_(True),
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, inventory_date in invensync_date_rows:
+            if store_id and inventory_date:
+                invensync_dates_by_store.setdefault(int(store_id), set()).add(inventory_date)
+
+    def _build_missing_tool_rows(date_map):
+        rows = []
+        for store in sorted(stores, key=lambda item: (item.name or '').lower()):
+            available_dates = date_map.get(int(store.id), set())
+            missing_dates = [expected_date for expected_date in expected_dates if expected_date not in available_dates]
+            if not missing_dates:
+                continue
+            rows.append({
+                'store_name': store.name,
+                'missing_count': len(missing_dates),
+                'date_ranges': _summarize_missing_dates(missing_dates),
+            })
+        return rows
+
+    daily_report_missing_rows = _build_missing_tool_rows(daily_report_dates_by_store)
+    invensync_missing_rows = _build_missing_tool_rows(invensync_dates_by_store)
+    daily_report_store_count = dashboard_store_count - len(daily_report_missing_rows)
+    invensync_store_count = dashboard_store_count - len(invensync_missing_rows)
+    oracle_store_count = (
+        db.session.query(StoreProductBuffer.store_id)
+        .filter(StoreProductBuffer.store_id.in_(store_ids))
+        .distinct()
+        .count()
+        if store_ids else 0
+    )
+    icount_tool_tracker = {
+        'total_stores': dashboard_store_count,
+        'daily_reports': {
+            'label': 'Daily Reports',
+            'count': daily_report_store_count,
+            'subtitle': 'stores with complete uploads',
+            'missing_rows': daily_report_missing_rows,
+            'show_missing_details': True,
+        },
+        'invensync': {
+            'label': 'Invensync',
+            'count': invensync_store_count,
+            'subtitle': 'stores with complete updates',
+            'missing_rows': invensync_missing_rows,
+            'show_missing_details': True,
+        },
+        'oracle': {
+            'label': 'Oracle',
+            'count': oracle_store_count,
+            'subtitle': 'stores with Oracle buffer setup',
+            'missing_rows': [],
+            'show_missing_details': False,
+        },
+    }
+    
+    cluster_sidebar_stores = _build_cluster_sidebar_stores(cluster_stores, start_date, end_date)
+
+    return render_template('cluster_manager/cluster_dashboard.html', 
+                           user=current_user,
+                           cluster=cluster,
+                           team_name=_get_team_name(cluster),
+                           force_cluster_sidebar=(role in ('Admin', 'Superadmin', 'General Manager')),
+                           cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin', 'General Manager') else '',
+                           cluster_sidebar_stores=cluster_sidebar_stores,
+                           sales_data=sales_data,
+                           sbase_sales_data=sbase_sales_data,
+                           target_data=target_data,
+                           last_year_data=last_year_data,
+                          labels=labels,
+                          current_month=current_month,
+                          current_year=current_year,
+                          current_date=today,
+                          selected_start_date=start_date.strftime('%Y-%m-%d'),
+                          selected_end_date=end_date.strftime('%Y-%m-%d'),
+                          selected_start_date_display=_format_header_date(start_date),
+                          selected_end_date_display=_format_header_date(end_date),
+                          store_performance_data=store_performance_data,
+                          top_stores_ads=top_stores_ads,
+                          top_attainment_ar=top_attainment_ar,
+                          mtd_metrics_by_day=mtd_metrics_by_day,
+                          summary=summary,
+                            top_products=top_products,
+                            top_products_total_units=top_products_total_units,
+                            store_product_mix=store_product_mix,
+                            pos_sold_products_by_store=pos_sold_products_by_store,
+                            icu_stores=icu_stores,
+                            wastage_performance=wastage_performance,
+                            discount_performance=discount_performance,
+                            icount_tool_tracker=icount_tool_tracker)
+
+
+@views.route('/api/cluster-dashboard-data')
+@login_required
+def api_cluster_dashboard_data():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
+        return jsonify({'error': 'Access denied'}), 403
+
+    from .models import Cluster, Store, DailyReport, StoreTarget, DailyEndingInventory, StoreProductBuffer
+    from datetime import date, timedelta
+    from calendar import monthrange
+    from sqlalchemy import func
+
+    cluster = None
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            return jsonify({'error': 'No cluster assigned'}), 404
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            return jsonify({'error': 'cluster_id required'}), 400
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    today = date.today()
+    month_arg = request.args.get('month')
+    year_arg = request.args.get('year')
+    start_date_arg = request.args.get('start_date')
+    end_date_arg = request.args.get('end_date')
+
+    cluster_stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    if not cluster_stores:
+        cluster_stores = Store.query.all()
+    cluster_stores = _apply_store_scope_filter(cluster_stores, request)
+    stores = cluster_stores
+    store_ids = [s.id for s in stores]
+
+    parsed_start_date = _parse_iso_date(start_date_arg)
+    parsed_end_date = _parse_iso_date(end_date_arg)
+
+    if parsed_start_date or parsed_end_date:
+        start_date = parsed_start_date or parsed_end_date
+        end_date = parsed_end_date or parsed_start_date
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+        year_int = int(start_date.year)
+        month_int = int(start_date.month)
+    else:
+        start_date = today.replace(day=1)
+        end_date = today
+        year_int = int(start_date.year)
+        month_int = int(start_date.month)
+
+    current_month = f'{month_int:02d}'
+    current_year = str(year_int)
+
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date,
+        DailyReport.status == 'Approved'
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_taf_wastage_amounts(reports)
+
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+
+    daily_targets = _aggregate_targets_by_day(targets)
+    daily_sales_map = {}
+    sbase_store_ids = {int(s.id) for s in stores if bool(getattr(s, 'is_one_year_already', False))}
+    daily_sbase_sales_map = {}
+    for report in reports:
+        date_key = report.report_date.strftime('%Y-%m-%d')
+        report_net_sales = float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+        daily_sales_map[date_key] = float(daily_sales_map.get(date_key, 0.0) or 0.0) + report_net_sales
+        if int(report.store_id) in sbase_store_ids:
+            daily_sbase_sales_map[date_key] = float(daily_sbase_sales_map.get(date_key, 0.0) or 0.0) + report_net_sales
+
+    sales_data = []
+    sbase_sales_data = []
+    target_data = []
+    last_year_data = []
+    labels = []
+    mtd_metrics_by_day = {}
+    running_sales = 0.0
+    running_target = 0.0
+    running_ly = 0.0
+    running_gbi = 0.0
+    cursor = start_date
+    while cursor <= end_date:
+        date_key = cursor.strftime('%Y-%m-%d')
+        day_sales = float(daily_sales_map.get(date_key, 0.0) or 0.0)
+        day_sbase_sales = float(daily_sbase_sales_map.get(date_key, 0.0) or 0.0)
+        day_target = float(daily_targets.get(date_key, {}).get('target_net', 0.0) or 0.0)
+        day_ly = float(daily_targets.get(date_key, {}).get('last_year_net', 0.0) or 0.0)
+        day_gbi = float(daily_targets.get(date_key, {}).get('gbi_target', 0.0) or 0.0)
+
+        running_sales += day_sales
+        running_target += day_target
+        running_ly += day_ly
+        running_gbi += day_gbi
+
+        sales_data.append(day_sales)
+        sbase_sales_data.append(day_sbase_sales)
+        target_data.append(day_target)
+        last_year_data.append(day_ly)
+        labels.append(cursor.strftime('%b %d'))
+
+        mtd_metrics_by_day[date_key] = {
+            'mtd_vs_tgt': (((running_sales / running_target) - 1.0) * 100) if running_target > 0 else None,
+            'mtd_vs_ly': (((running_sales / running_ly) - 1.0) * 100) if running_ly > 0 else None,
+        }
+        cursor += timedelta(days=1)
+
+    summary = _build_cluster_manager_summary(reports, targets)
+    ytd_overview = _build_ytd_overview(end_date, store_ids=store_ids)
+    summary.setdefault('overview', {}).update(ytd_overview)
+    top_products = _build_top_products_from_reports(reports)
+    top_products_total_units = sum(item['units'] for item in top_products)
+    store_product_mix = _build_store_product_mix_from_reports(reports, stores)
+    pos_sold_products_by_store = _build_pos_sold_products_by_store(reports, stores)
+    wastage_performance = _build_wastage_performance(
+        reports, start_date, end_date,
+        store_lookup={int(store.id): store.name for store in stores},
+    )
+    discount_performance = _build_discount_performance(reports, start_date, end_date)
+
+    store_performance_data = []
+    range_days = max((end_date - start_date).days + 1, 1)
+    for store in stores:
+        store_reports = [r for r in reports if r.store_id == store.id]
+        store_targets = [t for t in targets if t.store_id == store.id]
+
+        mtd_sales = sum(
+            float(r.pos_net_sales or 0) + float(r.ci_regular_net_sales or 0)
+            for r in store_reports
+        )
+        ads = mtd_sales / range_days if range_days > 0 else 0
+        store_ly_mtd = sum(float(t.last_year_net or 0) for t in store_targets)
+        store_target_mtd = sum(float(t.target_net or 0) for t in store_targets)
+        ar_tgt_percent = (((mtd_sales / store_target_mtd) - 1.0) * 100) if store_target_mtd > 0 else 0.0
+
+        if store_ly_mtd > 0:
+            growth_percent = (mtd_sales / store_ly_mtd) - 1.0
+        else:
+            growth_percent = None
+
+        status = _classify_store_status(ar_tgt_percent, growth_percent)
+
+        store_performance_data.append({
+            'store_name': store.name,
+            'act': mtd_sales,
+            'target_mtd': store_target_mtd,
+            'ads': ads,
+            'ly': store_ly_mtd,
+            'ar_tgt_percent': ar_tgt_percent,
+            'growth_percent': growth_percent,
+            'status': status
+        })
+
+    top_stores_ads = []
+    sorted_by_ads = sorted(store_performance_data, key=lambda item: float(item.get('ads', 0) or 0), reverse=True)[:3]
+    max_ads = float(sorted_by_ads[0].get('ads', 0) or 0) if sorted_by_ads else 0.0
+    for rank, store_data in enumerate(sorted_by_ads, start=1):
+        ads_value = float(store_data.get('ads', 0) or 0)
+        top_stores_ads.append({
+            'rank': rank,
+            'store_name': store_data.get('store_name', ''),
+            'ads': ads_value,
+            'ads_percent': ((ads_value / max_ads) * 100) if max_ads > 0 else 0.0,
+        })
+
+    top_attainment_ar = []
+    sorted_by_ar = sorted(store_performance_data, key=lambda item: float(item.get('ar_tgt_percent', 0) or 0), reverse=True)[:3]
+    for rank, store_data in enumerate(sorted_by_ar, start=1):
+        ar_value = float(store_data.get('ar_tgt_percent', 0) or 0)
+        top_attainment_ar.append({
+            'rank': rank,
+            'store_name': store_data.get('store_name', ''),
+            'ar_tgt_percent': ar_value,
+            'target_mtd': float(store_data.get('target_mtd', 0) or 0),
+            'act': float(store_data.get('act', 0) or 0),
+            'delta_percent': ar_value,
+            'progress_percent': min(max(ar_value + 100.0, 0.0), 100.0),
+        })
+
+    severity_order = {'ICU Critical': 0, 'Critical': 1, 'Recovery': 2, 'Good': 3, 'Excellent': 4}
+    status_meta = {
+        'ICU Critical': {
+            'tone_card': 'bg-red-50 border-l-4 border-red-500',
+            'tone_badge': 'text-red-700 bg-red-100',
+            'tone_value': 'text-red-600',
+            'tone_bar_bg': 'bg-red-200',
+            'tone_bar_fill': 'bg-red-500',
+            'note': 'Significantly below target',
+        },
+        'Critical': {
+            'tone_card': 'bg-orange-50 border-l-4 border-orange-500',
+            'tone_badge': 'text-orange-700 bg-orange-100',
+            'tone_value': 'text-orange-600',
+            'tone_bar_bg': 'bg-orange-200',
+            'tone_bar_fill': 'bg-orange-500',
+            'note': 'Below target',
+        },
+        'Recovery': {
+            'tone_card': 'bg-amber-50 border-l-4 border-amber-500',
+            'tone_badge': 'text-amber-700 bg-amber-100',
+            'tone_value': 'text-amber-600',
+            'tone_bar_bg': 'bg-amber-200',
+            'tone_bar_fill': 'bg-amber-500',
+            'note': 'Near target, monitor closely',
+        },
+    }
+
+    icu_candidates = [item for item in store_performance_data if item.get('status') == 'ICU Critical']
+    icu_candidates = sorted(
+        icu_candidates,
+        key=lambda item: (
+            severity_order.get(item.get('status', 'Excellent'), 99),
+            float(item.get('ar_tgt_percent', 0) or 0),
+        )
+    )[:3]
+
+    icu_stores = []
+    for item in icu_candidates:
+        status = item.get('status', 'Recovery')
+        meta = status_meta.get(status, status_meta['Recovery'])
+        ar_percent = float(item.get('ar_tgt_percent', 0) or 0)
+        attainment_percent = max(0.0, ar_percent + 100.0)
+        icu_stores.append({
+            'store_name': item.get('store_name', ''),
+            'status': status,
+            'note': meta['note'],
+            'act': float(item.get('act', 0) or 0),
+            'target_mtd': float(item.get('target_mtd', 0) or 0),
+            'attainment_percent': attainment_percent,
+            'progress_percent': min(max(attainment_percent, 0.0), 100.0),
+            'tone_card': meta['tone_card'],
+            'tone_badge': meta['tone_badge'],
+            'tone_value': meta['tone_value'],
+            'tone_bar_bg': meta['tone_bar_bg'],
+            'tone_bar_fill': meta['tone_bar_fill'],
+        })
+
+    def _format_tracker_date_range(range_start, range_end):
+        if range_start == range_end:
+            return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year}"
+        if range_start.year == range_end.year and range_start.month == range_end.month:
+            return f"{range_start.strftime('%b')} {range_start.day}-{range_end.day}, {range_start.year}"
+        if range_start.year == range_end.year:
+            return f"{range_start.strftime('%b')} {range_start.day} - {range_end.strftime('%b')} {range_end.day}, {range_start.year}"
+        return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year} - {range_end.strftime('%b')} {range_end.day}, {range_end.year}"
+
+    def _summarize_missing_dates(missing_dates):
+        if not missing_dates:
+            return []
+        missing_dates = sorted(missing_dates)
+        ranges = []
+        range_start = missing_dates[0]
+        previous = missing_dates[0]
+        for missing_date in missing_dates[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            ranges.append(_format_tracker_date_range(range_start, previous))
+            range_start = missing_date
+            previous = missing_date
+        ranges.append(_format_tracker_date_range(range_start, previous))
+        return ranges
+
+    tracker_end_date = min(end_date, today - timedelta(days=1))
+    expected_dates = []
+    tracker_cursor = start_date
+    while tracker_cursor <= tracker_end_date:
+        expected_dates.append(tracker_cursor)
+        tracker_cursor += timedelta(days=1)
+
+    dashboard_store_count = len(store_ids)
+    daily_report_dates_by_store = {}
+    if store_ids:
+        daily_report_date_rows = (
+            db.session.query(DailyReport.store_id, DailyReport.report_date)
+            .filter(
+                DailyReport.store_id.in_(store_ids),
+                DailyReport.report_date >= start_date,
+                DailyReport.report_date <= end_date,
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, report_date in daily_report_date_rows:
+            if store_id and report_date:
+                daily_report_dates_by_store.setdefault(int(store_id), set()).add(report_date)
+
+    invensync_dates_by_store = {}
+    if store_ids:
+        invensync_date_rows = (
+            db.session.query(DailyEndingInventory.store_id, DailyEndingInventory.inventory_date)
+            .filter(
+                DailyEndingInventory.store_id.in_(store_ids),
+                DailyEndingInventory.inventory_date >= start_date,
+                DailyEndingInventory.inventory_date <= end_date,
+                DailyEndingInventory.is_finalized.is_(True),
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, inventory_date in invensync_date_rows:
+            if store_id and inventory_date:
+                invensync_dates_by_store.setdefault(int(store_id), set()).add(inventory_date)
+
+    def _build_missing_tool_rows(date_map):
+        rows = []
+        for store in sorted(stores, key=lambda item: (item.name or '').lower()):
+            available_dates = date_map.get(int(store.id), set())
+            missing_dates = [expected_date for expected_date in expected_dates if expected_date not in available_dates]
+            if not missing_dates:
+                continue
+            rows.append({
+                'store_name': store.name,
+                'missing_count': len(missing_dates),
+                'date_ranges': _summarize_missing_dates(missing_dates),
+            })
+        return rows
+
+    daily_report_missing_rows = _build_missing_tool_rows(daily_report_dates_by_store)
+    invensync_missing_rows = _build_missing_tool_rows(invensync_dates_by_store)
+    daily_report_store_count = dashboard_store_count - len(daily_report_missing_rows)
+    invensync_store_count = dashboard_store_count - len(invensync_missing_rows)
+    oracle_store_count = (
+        db.session.query(StoreProductBuffer.store_id)
+        .filter(StoreProductBuffer.store_id.in_(store_ids))
+        .distinct()
+        .count()
+        if store_ids else 0
+    )
+    icount_tool_tracker = {
+        'total_stores': dashboard_store_count,
+        'daily_reports': {
+            'label': 'Daily Reports',
+            'count': daily_report_store_count,
+            'subtitle': 'stores with complete uploads',
+            'missing_rows': daily_report_missing_rows,
+            'show_missing_details': True,
+        },
+        'invensync': {
+            'label': 'Invensync',
+            'count': invensync_store_count,
+            'subtitle': 'stores with complete updates',
+            'missing_rows': invensync_missing_rows,
+            'show_missing_details': True,
+        },
+        'oracle': {
+            'label': 'Oracle',
+            'count': oracle_store_count,
+            'subtitle': 'stores with Oracle buffer setup',
+            'missing_rows': [],
+            'show_missing_details': False,
+        },
+    }
+
+    return jsonify({
+        'summary': summary,
+        'sales_data': sales_data,
+        'sbase_sales_data': sbase_sales_data,
+        'target_data': target_data,
+        'last_year_data': last_year_data,
+        'labels': labels,
+        'current_month': current_month,
+        'current_year': current_year,
+        'current_date': today.isoformat(),
+        'selected_start_date': start_date.strftime('%Y-%m-%d'),
+        'selected_end_date': end_date.strftime('%Y-%m-%d'),
+        'selected_start_date_display': _format_header_date(start_date),
+        'selected_end_date_display': _format_header_date(end_date),
+        'store_performance_data': store_performance_data,
+        'top_stores_ads': top_stores_ads,
+        'top_attainment_ar': top_attainment_ar,
+        'mtd_metrics_by_day': mtd_metrics_by_day,
+        'top_products': top_products,
+        'top_products_total_units': top_products_total_units,
+        'store_product_mix': store_product_mix,
+        'pos_sold_products_by_store': pos_sold_products_by_store,
+        'icu_stores': icu_stores,
+        'wastage_performance': wastage_performance,
+        'discount_performance': discount_performance,
+        'icount_tool_tracker': icount_tool_tracker,
+        'entity_label': 'Store',
+        'entity_label_plural': 'Stores',
+        'team_name': _get_team_name(cluster),
+    })
+
+
+# Store Manager Daily Report Routes
+@views.route('/store-manager/daily-report')
+@login_required
+def store_manager_report():
+    if current_user.role != 'Store Manager':
+        flash('Access denied. Only Store Managers can access this page.', category='error')
+        return redirect(url_for('views.home'))
+    
+    # Get the store managed by this user
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+    
+    # Get recent reports for this store
+    recent_reports = DailyReport.query.filter_by(store_id=store.id).order_by(DailyReport.report_date.desc()).limit(10).all()
+
+    explicit_date_in_query = bool((request.args.get('date') or '').strip())
+    lock_report_date = str(request.args.get('lock_date') or '').strip() == '1'
+
+    # Resolve selected report date (defaults to today when missing/invalid)
+    today_date = date.today()
+    selected_date = (
+        _parse_iso_date(request.args.get('date'))
+        or _parse_iso_date(session.get('login_selected_date'))
+        or today_date
+    )
+    if selected_date > today_date:
+        selected_date = today_date
+
+    # Remember the last-used date so sidebar nav returns to it
+    if explicit_date_in_query:
+        session['login_selected_date'] = selected_date.strftime('%Y-%m-%d')
+
+    # When user is already on an explicit date URL, skip missing-date modal prompts.
+    missing_dates = []
+    if not explicit_date_in_query:
+        month_start = selected_date.replace(day=1)
+        cutoff_date = min(selected_date, today_date - timedelta(days=1))
+        missing_dates = _build_missing_report_dates(store.id, month_start, cutoff_date)
+
+    selected_report = DailyReport.query.filter_by(store_id=store.id, report_date=selected_date).first()
+
+    daily_report_form_fields = [
+        'pos_gross_sales', 'pos_net_sales', 'pos_tc',
+        'ci_regular_gross_sales', 'ci_regular_net_sales', 'ci_tc',
+        'ci_number', 'ci_sales_discount',
+        'boothselling_sales', 'boothselling_tc',
+        'bulk_order_sales', 'bulk_order_tc',
+        'reseller_sales', 'reseller_tc',
+        'tieup_sales', 'tieup_tc',
+        'gow_sales', 'gow_tc',
+        'ambulant_sales', 'ambulant_tc',
+        'extended_hours_sales', 'extended_hours_tc',
+        'gds_sales', 'gds_tc',
+        'grab_sales', 'grab_tc',
+        'foodpanda_sales', 'foodpanda_tc',
+        'paymaya_sales', 'paymaya_tc',
+        'gcash_sales', 'gcash_tc',
+        'ldts_gc', 'ldts_rolls', 'ldts_premium',
+        'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium',
+        'spoilage_gc', 'spoilage_rolls', 'spoilage_premium', 'spoilage_others',
+        'senior_pwd_discount', 'promo_ldts_discount', 'bulk_orders_discount',
+        'total_net_spoilage', 'spoilage_percentage', 'mtd_percentage',
+    ]
+    initial_form_values = {}
+    if selected_report:
+        for field_name in daily_report_form_fields:
+            initial_form_values[field_name] = getattr(selected_report, field_name, '')
+
+    pos_sales_autofill = {
+        'source': '',
+        'label': '',
+        'rows_count': 0,
+        'pos_gross_sales': 0.0,
+        'pos_net_sales': 0.0,
+    }
+    pos_staging = _get_pos_sold_staging(store.id, selected_date)
+    pos_sold_items_for_autofill = _get_staged_pos_sold_items(pos_staging)
+    if pos_sold_items_for_autofill:
+        pos_sales_autofill.update(_build_pos_sales_autofill_totals(pos_sold_items_for_autofill))
+        pos_sales_autofill['source'] = 'staged'
+        pos_sales_autofill['label'] = 'Saved POS Sold data'
+    elif selected_report:
+        saved_pos_items = (
+            PosSold.query.filter_by(daily_report_id=selected_report.id)
+            .order_by(PosSold.id.asc())
+            .all()
+        )
+        if saved_pos_items:
+            pos_sales_autofill.update(_build_pos_sales_autofill_totals(saved_pos_items))
+            pos_sales_autofill['source'] = 'saved'
+            pos_sales_autofill['label'] = 'Submitted POS sold data'
+
+    pos_fields_blank = (
+        not selected_report
+        or (
+            not float(getattr(selected_report, 'pos_gross_sales', 0) or 0)
+            and not float(getattr(selected_report, 'pos_net_sales', 0) or 0)
+        )
+    )
+    if pos_sales_autofill['source'] and pos_fields_blank:
+        initial_form_values['pos_gross_sales'] = pos_sales_autofill['pos_gross_sales']
+        initial_form_values['pos_net_sales'] = pos_sales_autofill['pos_net_sales']
+
+    selected_report_date = selected_date.strftime('%Y-%m-%d')
+    next_missing_date = missing_dates[0]['iso'] if missing_dates else None
+    return render_template(
+        'store_manager/daily_report.html',
+        user=current_user,
+        store=store,
+        recent_reports=recent_reports,
+        selected_report=selected_report,
+        today=today_date.strftime('%Y-%m-%d'),
+        selected_report_date=selected_report_date,
+        missing_dates=missing_dates,
+        next_missing_date=next_missing_date,
+        initial_form_values=initial_form_values,
+        pos_sales_autofill=pos_sales_autofill,
+        lock_report_date=lock_report_date,
+    )
+
+
+@views.route('/store-manager/daily-report/pos-sold')
+@login_required
+def store_manager_pos_sold():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Manager or Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    today_date = date.today()
+    explicit_date_in_query = bool((request.args.get('date') or '').strip())
+    selected_date = _parse_iso_date(request.args.get('date')) or today_date
+    if selected_date > today_date:
+        selected_date = today_date
+
+    missing_dates = []
+    if not explicit_date_in_query:
+        month_start = selected_date.replace(day=1)
+        cutoff_date = min(selected_date, today_date - timedelta(days=1))
+        missing_dates = _build_missing_report_dates(store.id, month_start, cutoff_date)
+
+    selected_report_date = selected_date.strftime('%Y-%m-%d')
+    next_missing_date = missing_dates[0]['iso'] if missing_dates else None
+    pos_scan_success = str(request.args.get('pos_scan_success') or '').strip() == '1'
+    try:
+        pos_scan_rows = int(request.args.get('pos_scan_rows') or 0)
+    except (TypeError, ValueError):
+        pos_scan_rows = 0
+    selected_report = DailyReport.query.filter_by(store_id=store.id, report_date=selected_date).first()
+    draft_pos_sold_items = _get_pos_sold_draft(store.id, selected_date)
+    pos_staging = _get_pos_sold_staging(store.id, selected_date)
+    staged_pos_sold_items = _get_staged_pos_sold_items(pos_staging)
+    pos_sold_items = draft_pos_sold_items if draft_pos_sold_items else []
+    pos_sold_source = 'draft' if draft_pos_sold_items else 'none'
+    current_z_reading_image_link = ''
+    current_z_reading_image_preview_url = ''
+    pos_sold_locked = bool(pos_staging)
+    saved_pos_sold_items = []
+    if pos_staging:
+        pos_sold_items = staged_pos_sold_items
+        pos_sold_source = 'staged'
+        current_z_reading_image_link = str(pos_staging.z_reading_image_path or '').strip()
+        current_z_reading_image_preview_url = _build_drive_image_preview_url(current_z_reading_image_link)
+    if selected_report:
+        saved_pos_sold_items = (
+            PosSold.query.filter_by(daily_report_id=selected_report.id)
+            .order_by(PosSold.id.asc())
+            .all()
+        )
+        pos_sold_locked = bool(pos_sold_locked or saved_pos_sold_items)
+        for saved_item in saved_pos_sold_items:
+            candidate_link = str(getattr(saved_item, 'z_reading_image_path', '') or '').strip()
+            if candidate_link:
+                current_z_reading_image_link = candidate_link
+                current_z_reading_image_preview_url = _build_drive_image_preview_url(candidate_link)
+                break
+
+        if saved_pos_sold_items:
+            pos_sold_items = saved_pos_sold_items
+            pos_sold_source = 'saved'
+
+    if selected_report and not saved_pos_sold_items and not pos_staging and not draft_pos_sold_items:
+        selected_report = None
+    if selected_report and pos_sold_source == 'draft' and not pos_staging:
+        selected_report = None
+
+    force_pos_flow_guide = str(request.args.get('guide') or '').strip() == '1'
+    # POS Sold walkthroughs are opt-in: start them only from the Help page's
+    # guide link. The page-level Help button starts the same tour in JavaScript.
+    show_pos_flow_guide = role == 'Store Manager' and force_pos_flow_guide
+    motif_charge_payload = _build_motif_charge_payload_from_pos_items([
+        {
+            'product_name': item.get('product_name') if isinstance(item, dict) else item.product_name,
+            'quantity': item.get('quantity') if isinstance(item, dict) else item.quantity,
+            'gross_sales': item.get('gross_sales') if isinstance(item, dict) else item.gross_sales,
+            'discount': item.get('discount') if isinstance(item, dict) else item.discount,
+            'net_sales': item.get('net_sales') if isinstance(item, dict) else item.net_sales,
+        }
+        for item in (pos_sold_items or [])
+    ])
+    motif_product_options = [
+        {
+            'id': int(product.id),
+            'code': str(product.code or ''),
+            'description': product.description,
+            'price': float(product.sp_p or product.sp_np or 0.0),
+        }
+        for product in ProductMaster.query.order_by(ProductMaster.description.asc()).all()
+        if (
+            (product.description or '').strip()
+            and not (
+                'additional charge' in (product.description or '').strip().lower()
+                and 'motif' in (product.description or '').strip().lower()
+            )
+        )
+    ]
+
+    return render_template(
+        'store_manager/pos_sold.html',
+        user=current_user,
+        store=store,
+        today=today_date.strftime('%Y-%m-%d'),
+        selected_report_date=selected_report_date,
+        selected_report=selected_report,
+        pos_sold_items=pos_sold_items,
+        pos_sold_source=pos_sold_source,
+        pos_sold_locked=pos_sold_locked,
+        pos_sold_day_finalized=_is_operational_day_finalized(store.id, selected_date),
+        missing_dates=missing_dates,
+        next_missing_date=next_missing_date,
+        show_pos_flow_guide=show_pos_flow_guide,
+        pos_scan_success=pos_scan_success,
+        pos_scan_rows=pos_scan_rows,
+        current_z_reading_image_link=current_z_reading_image_link,
+        current_z_reading_image_preview_url=current_z_reading_image_preview_url,
+        motif_charge_payload=motif_charge_payload,
+        motif_product_options=motif_product_options,
+    )
+
+
+@views.route('/store-manager/delivery')
+@login_required
+def store_manager_delivery():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Manager or Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    today_date = date.today()
+    selected_date = _parse_iso_date(request.args.get('date')) or today_date
+    if selected_date > today_date:
+        selected_date = today_date
+
+    selected_report_date = selected_date.strftime('%Y-%m-%d')
+    source_data = {}
+    for upload_source in ('delivery', 'bulk'):
+        draft_items = _get_rso_draft(store.id, selected_date, upload_source)
+        draft_meta = _get_rso_draft_meta(store.id, selected_date, upload_source) if draft_items else {}
+        items = draft_items
+        status = 'draft' if draft_items else 'none'
+        if not items:
+            query = RsoDelivery.query.filter_by(
+                store_id=store.id,
+                report_date=selected_date,
+            )
+            query = query.filter(_rso_source_filter(upload_source))
+            items = query.order_by(RsoDelivery.id.asc()).all()
+            status = 'saved' if items else 'none'
+        item_rso_no, clean_items = _split_rso_meta_and_items(items)
+        source_data[upload_source] = {
+            'items': _enrich_rso_items_with_product_code(clean_items),
+            'status': status,
+            'rso_no': item_rso_no,
+            'filename': draft_meta.get('filename', ''),
+        }
+
+    # The automatic guide is onboarding, not an empty-date warning. Once this
+    # store has saved or drafted any delivery, keep the guide available only
+    # through the Help button.
+    force_delivery_guide = str(request.args.get('guide') or '').strip() == '1'
+    with db.session.no_autoflush:
+        has_delivery = RsoDelivery.query.filter_by(store_id=store.id).first()
+        has_draft = RsoDeliveryDraft.query.filter_by(store_id=store.id).first()
+    show_delivery_guide = role == 'Store Manager' and (
+        force_delivery_guide
+        or not (has_delivery or has_draft)
+    )
+
+    return render_template(
+        'store_manager/delivery.html',
+        user=current_user,
+        store=store,
+        today=today_date.strftime('%Y-%m-%d'),
+        selected_report_date=selected_report_date,
+        delivery_data=source_data['delivery'],
+        bulk_data=source_data['bulk'],
+        delivery_day_finalized=_is_operational_day_finalized(store.id, selected_date),
+        show_delivery_guide=show_delivery_guide,
+        manual_products=(
+            ProductMaster.query
+            .order_by(ProductMaster.description.asc())
+            .all()
+        ),
+    )
+
+
+def _clean_match_key(val):
+    if not val:
+        return ""
+    return re.sub(r'[^a-z0-9]', '', str(val).lower())
+
+
+def _normalize_tokens(val):
+    if not val:
+        return set()
+    abbrev_map = {
+        'choco': 'chocolate',
+        'signiture': 'signature',
+        'sign': 'signature',
+        'ck': 'cake',
+        'hlf': 'half',
+        'whl': 'whole',
+        'roll': 'roll',
+        'bc': 'buttercream',
+        'lg': 'large',
+        'sm': 'small',
+    }
+    tokens = set()
+    words = re.findall(r'[a-z0-9]+', str(val).lower())
+    for w in words:
+        w_norm = abbrev_map.get(w, w)
+        tokens.add(w_norm)
+    return tokens
+
+
+def _token_similarity_score(set1, set2):
+    if not set1 or not set2:
+        return 0.0
+    intersection = set1.intersection(set2)
+    union = set1.union(set2)
+    return len(intersection) / len(union) if union else 0.0
+
+
+
+
+
+# Delivery Recon Routes for Inventory Staff and Store Users
+@views.route('/store-manager/delivery-recon')
+@views.route('/inventory/delivery-recon')
+@login_required
+def inventory_delivery_recon():
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        flash('Access denied. Only authorized personnel can access Delivery Recon.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    today_date = date.today()
+    selected_date = _parse_iso_date(request.args.get('date')) or today_date
+    if selected_date > today_date:
+        selected_date = today_date
+
+    selected_report_date = selected_date.strftime('%Y-%m-%d')
+
+    saved_deliveries = (
+        RsoDelivery.query
+        .filter_by(store_id=store.id, report_date=selected_date)
+        .order_by(RsoDelivery.id.asc())
+        .all()
+    )
+
+    draft_items = []
+    if not saved_deliveries:
+        for src in ('delivery', 'bulk'):
+            d_items = _get_rso_draft(store.id, selected_date, src)
+            if d_items:
+                _, clean_d_items = _split_rso_meta_and_items(d_items)
+                draft_items.extend(clean_d_items)
+
+    rso_items = []
+    if saved_deliveries:
+        enriched = _enrich_rso_items_with_product_code(saved_deliveries)
+        for idx, raw_item in enumerate(saved_deliveries):
+            enrich_dict = enriched[idx] if idx < len(enriched) else {}
+            qty_recv = raw_item.received_quantity if raw_item.received_quantity is not None else raw_item.quantity
+            rso_items.append({
+                'id': raw_item.id,
+                'uid': f"saved_{raw_item.id}",
+                'product_code': enrich_dict.get('product_code') or '-',
+                'product_name': raw_item.product_name,
+                'rso_no': raw_item.rso_no or ('Manual Entry' if raw_item.upload_source == 'delivery_recon' else 'Direct Entry'),
+                'quantity': raw_item.quantity,
+                'quantity_received': qty_recv,
+                'is_manual': bool(raw_item.manual_note or (raw_item.rso_no or '').strip().lower() == 'manual entry' or raw_item.upload_source == 'delivery_recon'),
+                'manual_note': raw_item.manual_note,
+                'upload_source': raw_item.upload_source or 'delivery',
+            })
+    elif draft_items:
+        enriched = _enrich_rso_items_with_product_code(draft_items)
+        for idx, enrich_dict in enumerate(enriched):
+            qty_recv = enrich_dict.get('received_quantity') if enrich_dict.get('received_quantity') is not None else enrich_dict.get('quantity', 0)
+            p_name = enrich_dict.get('product_name', '')
+            rso_items.append({
+                'id': None,
+                'uid': f"draft_{idx}_{p_name}",
+                'product_code': enrich_dict.get('product_code') or '-',
+                'product_name': p_name,
+                'rso_no': enrich_dict.get('rso_no') or 'Draft Entry',
+                'quantity': enrich_dict.get('quantity', 0),
+                'quantity_received': qty_recv,
+                'is_manual': bool(enrich_dict.get('is_manual') or str(enrich_dict.get('rso_no') or '').strip().lower() == 'manual entry'),
+                'manual_note': enrich_dict.get('manual_note'),
+                'upload_source': enrich_dict.get('upload_source', 'draft'),
+            })
+
+    session_preview = session.get('delivery_recon_receipt_preview') or {}
+    receipt_filename = ''
+    receipt_items = []
+    if session_preview and session_preview.get('store_id') == store.id and session_preview.get('date') == selected_report_date:
+        receipt_filename = session_preview.get('filename', '')
+        receipt_items = session_preview.get('items', [])
+        deleted_rows = set(session.get('delivery_recon_deleted_rows') or [])
+        if deleted_rows and receipt_items:
+            receipt_items = [
+                rec for rec in receipt_items
+                if str(rec.get('item_description') or '').strip() not in deleted_rows
+            ]
+
+    rso_numbers_set = {
+        str(item['rso_no']).strip().upper()
+        for item in rso_items
+        if item.get('rso_no') and str(item['rso_no']).strip().upper() not in ('-', 'MANUAL ENTRY', 'DIRECT ENTRY')
+    }
+
+    comparison_rows = []
+    rso_used_uids = set()
+    date_errors_count = 0
+    cus_po_errors_count = 0
+    qty_mismatch_count = 0
+    matched_count = 0
+    manual_links = session.get('delivery_recon_manual_links') or {}
+
+    if receipt_items:
+        for rec in receipt_items:
+            rec_po = str(rec.get('cus_po') or '').strip().upper()
+            rec_desc_raw = str(rec.get('item_description') or '').strip()
+            rec_code_raw = str(rec.get('item_code') or '').strip()
+            rec_date = rec.get('date') or selected_report_date
+            rec_qty = rec.get('quantity', 0)
+
+            rec_clean_desc = _clean_match_key(rec_desc_raw)
+            rec_clean_code = _clean_match_key(rec_code_raw)
+            rec_tokens = _normalize_tokens(rec_desc_raw)
+
+            matched_rso = None
+            is_manually_linked = False
+
+            # Check Manual Link Override first!
+            manual_target = manual_links.get(rec_desc_raw) or manual_links.get(rec_code_raw)
+            if manual_target:
+                target_str = str(manual_target).strip()
+                for r_item in rso_items:
+                    if (str(r_item.get('id')) == target_str or
+                        str(r_item.get('uid')) == target_str or
+                        str(r_item.get('product_code')) == target_str or
+                        str(r_item.get('product_name')).strip() == target_str):
+                        matched_rso = r_item
+                        is_manually_linked = True
+                        break
+
+            # Pass 1: Try Code match on unused RSO items
+            if not matched_rso and rec_clean_code:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_code_clean = _clean_match_key(r_item.get('product_code'))
+                        if r_code_clean and r_code_clean == rec_clean_code:
+                            matched_rso = r_item
+                            break
+
+            # Pass 2: Try Description match on unused RSO items (Clean normalized string)
+            if not matched_rso and rec_clean_desc:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_desc_clean = _clean_match_key(r_item.get('product_name'))
+                        if r_desc_clean and r_desc_clean == rec_clean_desc:
+                            matched_rso = r_item
+                            break
+
+            # Pass 3: Try Description substring match on unused RSO items
+            if not matched_rso and rec_clean_desc and len(rec_clean_desc) >= 4:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_desc_clean = _clean_match_key(r_item.get('product_name'))
+                        if r_desc_clean and (r_desc_clean in rec_clean_desc or rec_clean_desc in r_desc_clean):
+                            matched_rso = r_item
+                            break
+
+            # Pass 4: Try Normalized Token Set exact match
+            if not matched_rso and rec_tokens:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_tokens = _normalize_tokens(r_item.get('product_name'))
+                        if r_tokens and r_tokens == rec_tokens:
+                            matched_rso = r_item
+                            break
+
+            # Pass 5: Try Fuzzy Token Similarity match (Jaccard similarity >= 0.65)
+            if not matched_rso and rec_tokens:
+                best_score = 0.0
+                best_rso = None
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_tokens = _normalize_tokens(r_item.get('product_name'))
+                        score = _token_similarity_score(rec_tokens, r_tokens)
+                        if score >= 0.65 and score > best_score:
+                            best_score = score
+                            best_rso = r_item
+                if best_rso:
+                    matched_rso = best_rso
+
+            if matched_rso:
+                rso_used_uids.add(matched_rso['uid'])
+
+            rso_qty = matched_rso['quantity'] if matched_rso else 0
+            rso_no_display = matched_rso['rso_no'] if matched_rso and matched_rso.get('rso_no') and matched_rso['rso_no'] not in ('-', 'MANUAL ENTRY') else (rec_po if rec_po else '-')
+            variance = rec_qty - rso_qty
+
+            date_error = bool(rec_date and rec_date != selected_report_date)
+            rso_error = False
+
+            if date_error:
+                date_errors_count += 1
+                status = 'Date Mismatch'
+                status_badge = 'danger'
+                status_desc = f"Receipt date ({rec_date}) does not match selected date ({selected_report_date})"
+            elif variance != 0:
+                qty_mismatch_count += 1
+                status = 'Qty Mismatch'
+                status_badge = 'amber'
+                status_desc = f"Short by {abs(variance)}" if variance < 0 else f"Over by {variance}"
+            else:
+                matched_count += 1
+                status = 'Match'
+                status_badge = 'success'
+                status_desc = 'RSO & Receipt Match'
+
+            display_code = rec_code_raw
+            if not display_code or display_code == '-':
+                display_code = (matched_rso.get('product_code') if matched_rso else '-') or '-'
+
+            comparison_rows.append({
+                'rso_code': matched_rso.get('product_code') if matched_rso and matched_rso.get('product_code') else '-',
+                'rso_desc': matched_rso.get('product_name') if matched_rso and matched_rso.get('product_name') else '-',
+                'rso_qty': rso_qty,
+                'receipt_code': rec_code_raw if rec_code_raw else '-',
+                'receipt_desc': rec_desc_raw if rec_desc_raw else '-',
+                'receipt_qty': rec_qty,
+                'rso_no': rso_no_display,
+                'receipt_date': rec_date,
+                'receipt_invoice_no': rec.get('invoice_no') or '-',
+                'receipt_store': rec.get('store') or '-',
+                'receipt_cus_po': rec_po if rec_po else rso_no_display,
+                'receipt_amount': rec.get('amount', 0.0),
+                'variance': variance,
+                'status': status,
+                'status_badge': status_badge,
+                'status_desc': status_desc,
+                'date_error': date_error,
+                'rso_error': False,
+                'has_error': date_error or (variance != 0),
+                'is_manually_linked': is_manually_linked,
+            })
+
+        # Add leftover unused RSO items (recorded in RSO but missing from uploaded receipt)
+        for r_item in rso_items:
+            if r_item['uid'] not in rso_used_uids:
+                r_qty = r_item.get('quantity', 0)
+                r_po = r_item.get('rso_no') or '-'
+                qty_mismatch_count += 1
+                comparison_rows.append({
+                    'rso_code': r_item.get('product_code') or '-',
+                    'rso_desc': r_item.get('product_name') or '-',
+                    'rso_qty': r_qty,
+                    'receipt_code': '-',
+                    'receipt_desc': '-',
+                    'receipt_qty': 0,
+                    'rso_no': r_po,
+                    'receipt_date': selected_report_date,
+                    'receipt_invoice_no': '-',
+                    'receipt_store': '-',
+                    'receipt_cus_po': '-',
+                    'receipt_amount': 0.0,
+                    'variance': -r_qty,
+                    'status': 'Missing Receipt',
+                    'status_badge': 'amber',
+                    'status_desc': f"Recorded in RSO (Qty: {r_qty}) but missing from uploaded receipt",
+                    'date_error': False,
+                    'rso_error': False,
+                    'has_error': True,
+                    'is_manually_linked': False,
+                })
+
+    total_items_count = len(rso_items)
+    total_qty_rso = sum(item['quantity'] for item in rso_items)
+    total_qty_receipt = sum(rec['quantity'] for rec in receipt_items) if receipt_items else 0
+    added_products_count = sum(1 for item in rso_items if item['is_manual'])
+
+    manual_products = ProductMaster.query.order_by(ProductMaster.description.asc()).all()
+
+    inventory_staff_stores = []
+    if role == 'Inventory Staff':
+        assigned_ids = _inventory_staff_assigned_store_ids()
+        inventory_staff_stores = Store.query.filter(Store.id.in_(assigned_ids)).order_by(Store.name.asc()).all() if assigned_ids else []
+
+    rso_numbers_display = ", ".join(sorted(rso_numbers_set)) if rso_numbers_set else "-"
+    receipt_pos = {str(rec.get('cus_po')).strip() for rec in receipt_items if rec.get('cus_po') and str(rec.get('cus_po')).strip() not in ('-', 'None')}
+    receipt_rso_no_display = ", ".join(sorted(receipt_pos)) if receipt_pos else "-"
+
+    unmatched_rso_items = [item for item in rso_items if item['uid'] not in rso_used_uids]
+
+    short_items = [r for r in comparison_rows if r.get('variance', 0) < 0]
+    over_items = [r for r in comparison_rows if r.get('variance', 0) > 0]
+    matched_rows = [r for r in comparison_rows if r.get('variance', 0) == 0 and not r.get('date_error')]
+
+    existing_recon = DeliveryReconciliation.query.filter_by(
+        store_id=store.id,
+        reconciliation_date=selected_date
+    ).first()
+    is_reconciled = bool(existing_recon)
+
+    return render_template(
+        'store_manager/delivery_recon.html',
+        user=current_user,
+        store=store,
+        today=today_date.strftime('%Y-%m-%d'),
+        selected_report_date=selected_report_date,
+        rso_items=rso_items,
+        unmatched_rso_items=unmatched_rso_items,
+        receipt_items=receipt_items,
+        receipt_filename=receipt_filename,
+        comparison_rows=comparison_rows,
+        short_items=short_items,
+        over_items=over_items,
+        matched_rows=matched_rows,
+        total_items_count=total_items_count,
+        total_qty_rso=total_qty_rso,
+        total_qty_receipt=total_qty_receipt,
+        matched_count=len(matched_rows),
+        date_errors_count=date_errors_count,
+        cus_po_errors_count=cus_po_errors_count,
+        qty_mismatch_count=qty_mismatch_count,
+        added_products_count=added_products_count,
+        manual_products=manual_products,
+        inventory_staff_stores=inventory_staff_stores,
+        inventory_staff_selected_store_id=store.id,
+        rso_numbers_display=rso_numbers_display,
+        receipt_rso_no_display=receipt_rso_no_display,
+        is_reconciled=is_reconciled,
+        existing_recon=existing_recon,
+    )
+
+
+@views.route('/store-manager/delivery-recon/upload-receipt', methods=['POST'])
+@views.route('/inventory/delivery-recon/upload-receipt', methods=['POST'])
+@views.route('/inventory/delivery-recon/recon', methods=['POST'])
+@login_required
+def upload_delivery_receipt():
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date_str = (request.form.get('report_date') or '').strip()
+    report_date = _parse_iso_date(report_date_str) or date.today()
+    selected_report_date = report_date.strftime('%Y-%m-%d')
+
+    uploaded_file = request.files.get('receipt_file') or request.files.get('recon_file')
+    if not uploaded_file or not (uploaded_file.filename or '').strip():
+        flash('Please select a Delivery Receipt Excel file to upload.', category='error')
+        return redirect(url_for('views.inventory_delivery_recon', date=selected_report_date, store_id=store.id))
+
+    try:
+        parsed_items = _parse_delivery_receipt_excel(uploaded_file, "Delivery Receipt")
+        if not parsed_items:
+            flash('No valid data rows found in the uploaded Excel file.', category='error')
+            return redirect(url_for('views.inventory_delivery_recon', date=selected_report_date, store_id=store.id))
+
+        saved_deliveries = (
+            RsoDelivery.query
+            .filter_by(store_id=store.id, report_date=report_date)
+            .all()
+        )
+        invalid_dates = set()
+        for item in parsed_items:
+            rec_date = (item.get('date') or '').strip()
+            if rec_date and rec_date != selected_report_date:
+                invalid_dates.add(rec_date)
+
+        session['delivery_recon_receipt_preview'] = {
+            'store_id': store.id,
+            'date': selected_report_date,
+            'filename': uploaded_file.filename,
+            'items': parsed_items,
+        }
+
+        if invalid_dates:
+            flash(
+                f'Warning: Uploaded receipt contains date(s) ({", ".join(sorted(invalid_dates))}) '
+                f'that differ from report date ({selected_report_date}).',
+                category='warning'
+            )
+
+        flash(f'Successfully loaded {len(parsed_items)} rows from {uploaded_file.filename} for Reconciliation.', category='success')
+
+    except Exception as exc:
+        flash(f'Error reading Excel file: {str(exc)}', category='error')
+
+    return redirect(url_for('views.inventory_delivery_recon', date=selected_report_date, store_id=store.id))
+
+
+@views.route('/store-manager/delivery-recon/save', methods=['POST'])
+@views.route('/inventory/delivery-recon/save', methods=['POST'])
+@login_required
+def save_delivery_recon():
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+            return jsonify({'success': False, 'message': 'Access denied.'}), 403
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+            return jsonify({'success': False, 'message': 'Store assignment missing.'}), 400
+        flash('You are not assigned to any store.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date_str = (request.form.get('report_date') or '').strip()
+    if not report_date_str and request.is_json and request.json:
+        report_date_str = str(request.json.get('report_date') or '').strip()
+    report_date = _parse_iso_date(report_date_str) or date.today()
+    selected_report_date = report_date.strftime('%Y-%m-%d')
+
+    saved_deliveries = (
+        RsoDelivery.query
+        .filter_by(store_id=store.id, report_date=report_date)
+        .order_by(RsoDelivery.id.asc())
+        .all()
+    )
+
+    rso_items = []
+    if saved_deliveries:
+        enriched = _enrich_rso_items_with_product_code(saved_deliveries)
+        for idx, raw_item in enumerate(saved_deliveries):
+            enrich_dict = enriched[idx] if idx < len(enriched) else {}
+            qty_recv = raw_item.received_quantity if raw_item.received_quantity is not None else raw_item.quantity
+            rso_items.append({
+                'id': raw_item.id,
+                'uid': f"saved_{raw_item.id}",
+                'product_code': enrich_dict.get('product_code') or '-',
+                'product_name': raw_item.product_name,
+                'rso_no': raw_item.rso_no or 'Direct Entry',
+                'quantity': raw_item.quantity,
+                'quantity_received': qty_recv,
+                'is_manual': bool(raw_item.manual_note),
+                'manual_note': raw_item.manual_note,
+                'upload_source': raw_item.upload_source or 'delivery',
+            })
+
+    session_preview = session.get('delivery_recon_receipt_preview') or {}
+    receipt_filename = ''
+    receipt_items = []
+    if session_preview and session_preview.get('store_id') == store.id and session_preview.get('date') == selected_report_date:
+        receipt_filename = session_preview.get('filename', '')
+        receipt_items = session_preview.get('items', [])
+        deleted_rows = set(session.get('delivery_recon_deleted_rows') or [])
+        if deleted_rows and receipt_items:
+            receipt_items = [
+                rec for rec in receipt_items
+                if str(rec.get('item_description') or '').strip() not in deleted_rows
+            ]
+
+    rso_used_uids = set()
+    comparison_rows = []
+    manual_links = session.get('delivery_recon_manual_links') or {}
+
+    if receipt_items:
+        for rec in receipt_items:
+            rec_po = str(rec.get('cus_po') or '').strip().upper()
+            rec_desc_raw = str(rec.get('item_description') or '').strip()
+            rec_code_raw = str(rec.get('item_code') or '').strip()
+            rec_date = rec.get('date') or selected_report_date
+            rec_qty = rec.get('quantity', 0)
+
+            rec_clean_desc = _clean_match_key(rec_desc_raw)
+            rec_clean_code = _clean_match_key(rec_code_raw)
+            rec_tokens = _normalize_tokens(rec_desc_raw)
+
+            matched_rso = None
+            manual_target = manual_links.get(rec_desc_raw) or manual_links.get(rec_code_raw)
+            if manual_target:
+                target_str = str(manual_target).strip()
+                for r_item in rso_items:
+                    if (str(r_item.get('id')) == target_str or
+                        str(r_item.get('uid')) == target_str or
+                        str(r_item.get('product_code')) == target_str or
+                        str(r_item.get('product_name')).strip() == target_str):
+                        matched_rso = r_item
+                        break
+
+            if not matched_rso and rec_clean_code:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_code_clean = _clean_match_key(r_item.get('product_code'))
+                        if r_code_clean and r_code_clean == rec_clean_code:
+                            matched_rso = r_item
+                            break
+
+            if not matched_rso and rec_clean_desc:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_desc_clean = _clean_match_key(r_item.get('product_name'))
+                        if r_desc_clean and r_desc_clean == rec_clean_desc:
+                            matched_rso = r_item
+                            break
+
+            if not matched_rso and rec_clean_desc and len(rec_clean_desc) >= 4:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_desc_clean = _clean_match_key(r_item.get('product_name'))
+                        if r_desc_clean and (r_desc_clean in rec_clean_desc or rec_clean_desc in r_desc_clean):
+                            matched_rso = r_item
+                            break
+
+            if not matched_rso and rec_tokens:
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_tokens = _normalize_tokens(r_item.get('product_name'))
+                        if r_tokens and r_tokens == rec_tokens:
+                            matched_rso = r_item
+                            break
+
+            if not matched_rso and rec_tokens:
+                best_score = 0.0
+                best_rso = None
+                for r_item in rso_items:
+                    if r_item['uid'] not in rso_used_uids:
+                        r_tokens = _normalize_tokens(r_item.get('product_name'))
+                        score = _token_similarity_score(rec_tokens, r_tokens)
+                        if score >= 0.65 and score > best_score:
+                            best_score = score
+                            best_rso = r_item
+                if best_rso:
+                    matched_rso = best_rso
+
+            if matched_rso:
+                rso_used_uids.add(matched_rso['uid'])
+
+            rso_qty = matched_rso['quantity'] if matched_rso else 0
+            variance = rec_qty - rso_qty
+            date_error = bool(rec_date and rec_date != selected_report_date)
+
+            if date_error:
+                status = 'Date Mismatch'
+            elif variance != 0:
+                status = 'Qty Mismatch'
+            else:
+                status = 'Match'
+
+            comparison_rows.append({
+                'rso_code': matched_rso.get('product_code') if matched_rso and matched_rso.get('product_code') else '-',
+                'rso_desc': matched_rso.get('product_name') if matched_rso and matched_rso.get('product_name') else '-',
+                'rso_qty': rso_qty,
+                'receipt_code': rec_code_raw if rec_code_raw else '-',
+                'receipt_desc': rec_desc_raw if rec_desc_raw else '-',
+                'receipt_qty': rec_qty,
+                'receipt_cus_po': rec_po if rec_po else '-',
+                'variance': variance,
+                'status': status,
+            })
+
+        for r_item in rso_items:
+            if r_item['uid'] not in rso_used_uids:
+                r_qty = r_item.get('quantity', 0)
+                comparison_rows.append({
+                    'rso_code': r_item.get('product_code') or '-',
+                    'rso_desc': r_item.get('product_name') or '-',
+                    'rso_qty': r_qty,
+                    'receipt_code': '-',
+                    'receipt_desc': '-',
+                    'receipt_qty': 0,
+                    'receipt_cus_po': '-',
+                    'variance': -r_qty,
+                    'status': 'Missing Receipt',
+                })
+    else:
+        for r_item in rso_items:
+            r_qty = r_item.get('quantity', 0)
+            comparison_rows.append({
+                'rso_code': r_item.get('product_code') or '-',
+                'rso_desc': r_item.get('product_name') or '-',
+                'rso_qty': r_qty,
+                'receipt_code': '-',
+                'receipt_desc': '-',
+                'receipt_qty': 0,
+                'receipt_cus_po': '-',
+                'variance': -r_qty,
+                'status': 'RSO Only',
+            })
+
+    short_items = [r for r in comparison_rows if r.get('variance', 0) < 0]
+    over_items = [r for r in comparison_rows if r.get('variance', 0) > 0]
+    matched_rows = [r for r in comparison_rows if r.get('variance', 0) == 0 and not r.get('date_error')]
+
+    try:
+        recon_record = DeliveryReconciliation.query.filter_by(
+            store_id=store.id,
+            reconciliation_date=report_date
+        ).first()
+
+        if not recon_record:
+            recon_record = DeliveryReconciliation(
+                store_id=store.id,
+                reconciliation_date=report_date,
+                reconciled_by=current_user.id
+            )
+
+        recon_record.receipt_filename = receipt_filename or 'Delivery_Reconciliation'
+        recon_record.total_items = len(comparison_rows)
+        recon_record.matched_count = len(matched_rows)
+        recon_record.short_count = len(short_items)
+        recon_record.over_count = len(over_items)
+        recon_record.status = 'Reconciled'
+        recon_record.items_json = json.dumps(comparison_rows)
+        recon_record.reconciled_by = current_user.id
+
+        db.session.add(recon_record)
+        db.session.commit()
+
+        flash('Delivery Reconciliation saved to database successfully!', category='success')
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+            return jsonify({
+                'success': True,
+                'message': 'Delivery Reconciliation saved to database successfully!',
+                'is_reconciled': True
+            })
+
+    except Exception as exc:
+        db.session.rollback()
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+            return jsonify({'success': False, 'message': f'Unable to save reconciliation: {str(exc)}'}), 500
+        flash(f'Unable to save reconciliation: {str(exc)}', category='error')
+
+    return redirect(url_for('views.inventory_delivery_recon', date=selected_report_date, store_id=store.id))
+
+
+@views.route('/store-manager/delivery-recon/export-excel')
+@views.route('/inventory/delivery-recon/export-excel')
+@login_required
+def export_delivery_recon_excel():
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('Store assignment missing.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date_str = (request.args.get('date') or '').strip()
+    report_date = _parse_iso_date(report_date_str) or date.today()
+    selected_report_date = report_date.strftime('%Y-%m-%d')
+
+    recon_record = DeliveryReconciliation.query.filter_by(
+        store_id=store.id,
+        reconciliation_date=report_date
+    ).first()
+
+    if not recon_record:
+        flash('Export Excel is only available for reconciled dates. Please reconcile first.', category='warning')
+        return redirect(url_for('views.inventory_delivery_recon', date=selected_report_date, store_id=store.id))
+
+    items_list = []
+    if recon_record.items_json:
+        try:
+            items_list = json.loads(recon_record.items_json)
+        except Exception:
+            items_list = []
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Delivery Reconciliation"
+    ws.views.sheetView[0].showGridLines = True
+
+    title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
+    meta_label_font = Font(name="Calibri", size=10, bold=True, color="334155")
+    meta_val_font = Font(name="Calibri", size=10, color="0F172A")
+    header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+
+    rso_fill = PatternFill(start_color="4338CA", end_color="4338CA", fill_type="solid")
+    receipt_fill = PatternFill(start_color="047857", end_color="047857", fill_type="solid")
+    audit_fill = PatternFill(start_color="334155", end_color="334155", fill_type="solid")
+    sub_header_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+
+    ws.append(["DELIVERY RECONCILIATION REPORT"])
+    ws.cell(row=1, column=1).font = title_font
+
+    ws.append([f"Store: {store.name} | Date: {selected_report_date} | Status: Reconciled"])
+    ws.cell(row=2, column=1).font = sub_font
+    ws.append([])
+
+    ws.append(["Total Items", "Matched Items", "Short Items", "Over Items", "Reconciled At"])
+    for col in range(1, 6):
+        c = ws.cell(row=4, column=col)
+        c.font = meta_label_font
+        c.fill = sub_header_fill
+
+    reconciled_time_str = recon_record.reconciled_at.strftime('%Y-%m-%d %H:%M') if recon_record.reconciled_at else selected_report_date
+    ws.append([recon_record.total_items, recon_record.matched_count, recon_record.short_count, recon_record.over_count, reconciled_time_str])
+    for col in range(1, 6):
+        ws.cell(row=5, column=col).font = meta_val_font
+
+    ws.append([])
+
+    ws.cell(row=7, column=1, value="Delivery RSO Records").fill = rso_fill
+    ws.cell(row=7, column=1).font = header_font
+    ws.merge_cells(start_row=7, start_column=1, end_row=7, end_column=3)
+
+    ws.cell(row=7, column=4, value="Delivery Receipt Plant Excel").fill = receipt_fill
+    ws.cell(row=7, column=4).font = header_font
+    ws.merge_cells(start_row=7, start_column=4, end_row=7, end_column=7)
+
+    ws.cell(row=7, column=8, value="Audit Result").fill = audit_fill
+    ws.cell(row=7, column=8).font = header_font
+    ws.merge_cells(start_row=7, start_column=8, end_row=7, end_column=9)
+
+    headers = [
+        "RSO Item Code", "RSO Description", "RSO Qty",
+        "Receipt Cus PO", "Receipt Item Code", "Receipt Description", "Receipt Qty",
+        "Variance", "Status"
+    ]
+    ws.append(headers)
+    for col in range(1, 10):
+        c = ws.cell(row=8, column=col)
+        c.font = Font(name="Calibri", size=10, bold=True, color="1E293B")
+        c.fill = sub_header_fill
+
+    for row in items_list:
+        ws.append([
+            row.get('rso_code', '-'),
+            row.get('rso_desc', '-'),
+            row.get('rso_qty', 0),
+            row.get('receipt_cus_po', '-'),
+            row.get('receipt_code', '-'),
+            row.get('receipt_desc', '-'),
+            row.get('receipt_qty', 0),
+            row.get('variance', 0),
+            row.get('status', 'Match')
+        ])
+
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = col[0].column_letter
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"Delivery_Reconciliation_{store.name.replace(' ', '_')}_{selected_report_date}.xlsx"
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@views.route('/store-manager/delivery-recon/clear-receipt', methods=['POST'])
+@views.route('/inventory/delivery-recon/clear-receipt', methods=['POST'])
+@login_required
+def clear_delivery_receipt():
+    session.pop('delivery_recon_receipt_preview', None)
+    session.pop('delivery_recon_manual_links', None)
+    session.pop('delivery_recon_deleted_rows', None)
+    store = _resolve_store_for_store_scope_user()
+    report_date_str = (request.form.get('report_date') or '').strip()
+    return redirect(url_for('views.inventory_delivery_recon', date=report_date_str, store_id=store.id if store else None))
+
+
+@views.route('/store-manager/delivery-recon/delete-row', methods=['POST'])
+@views.route('/inventory/delivery-recon/delete-row', methods=['POST'])
+@login_required
+def delete_delivery_recon_row():
+    store = _resolve_store_for_store_scope_user()
+    report_date_str = (request.form.get('report_date') or '').strip()
+    receipt_desc = (request.form.get('receipt_desc') or '').strip()
+
+    deleted_rows = session.get('delivery_recon_deleted_rows') or []
+    if receipt_desc and receipt_desc not in deleted_rows:
+        deleted_rows.append(receipt_desc)
+    session['delivery_recon_deleted_rows'] = deleted_rows
+
+    manual_links = session.get('delivery_recon_manual_links') or {}
+    if receipt_desc in manual_links:
+        manual_links.pop(receipt_desc, None)
+    session['delivery_recon_manual_links'] = manual_links
+
+    session_preview = session.get('delivery_recon_receipt_preview')
+    if session_preview and session_preview.get('items'):
+        session_preview['items'] = [
+            rec for rec in session_preview['items']
+            if str(rec.get('item_description') or '').strip() != receipt_desc
+        ]
+        session['delivery_recon_receipt_preview'] = session_preview
+
+    session.modified = True
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+        return jsonify({'success': True})
+
+    return redirect(url_for('views.inventory_delivery_recon', date=report_date_str, store_id=store.id if store else None))
+
+
+@views.route('/store-manager/delivery-recon/manual-link', methods=['POST'])
+@views.route('/inventory/delivery-recon/manual-link', methods=['POST'])
+@login_required
+def manual_link_delivery_recon():
+    store = _resolve_store_for_store_scope_user()
+    report_date_str = (request.form.get('report_date') or '').strip()
+    receipt_desc = (request.form.get('receipt_desc') or '').strip()
+    selected_rso_id = (request.form.get('selected_rso_id') or '').strip()
+
+    manual_links = session.get('delivery_recon_manual_links') or {}
+    previous_link_id = manual_links.get(receipt_desc)
+
+    if receipt_desc:
+        if selected_rso_id:
+            manual_links[receipt_desc] = selected_rso_id
+        else:
+            manual_links.pop(receipt_desc, None)
+        session['delivery_recon_manual_links'] = manual_links
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+        report_date = _parse_iso_date(report_date_str) or date.today()
+        matched_rso = None
+        if selected_rso_id and store:
+            if selected_rso_id.isdigit():
+                r_record = RsoDelivery.query.get(int(selected_rso_id))
+                if r_record:
+                    p_code = '-'
+                    if r_record.product_name:
+                        pm = ProductMaster.query.filter_by(description=r_record.product_name).first()
+                        if pm and pm.code:
+                            p_code = pm.code
+                    matched_rso = {
+                        'id': r_record.id,
+                        'product_code': p_code,
+                        'product_name': r_record.product_name,
+                        'quantity': r_record.quantity,
+                    }
+
+        rso_code = matched_rso.get('product_code') if matched_rso and matched_rso.get('product_code') else '-'
+        rso_desc = matched_rso.get('product_name') if matched_rso and matched_rso.get('product_name') else '-'
+        rso_qty = matched_rso.get('quantity', 0) if matched_rso else 0
+
+        prev_rso = None
+        if not selected_rso_id and previous_link_id and str(previous_link_id).isdigit():
+            r_prev = RsoDelivery.query.get(int(previous_link_id))
+            if r_prev:
+                p_code = '-'
+                if r_prev.product_name:
+                    pm = ProductMaster.query.filter_by(description=r_prev.product_name).first()
+                    if pm and pm.code:
+                        p_code = pm.code
+                prev_rso = {
+                    'id': r_prev.id,
+                    'product_code': p_code,
+                    'product_name': r_prev.product_name,
+                    'quantity': r_prev.quantity,
+                }
+
+        return jsonify({
+            'success': True,
+            'rso_id': selected_rso_id,
+            'rso_code': rso_code,
+            'rso_desc': rso_desc,
+            'rso_qty': rso_qty,
+            'is_manually_linked': bool(matched_rso),
+            'unlinked_rso': prev_rso
+        })
+
+    return redirect(url_for('views.inventory_delivery_recon', date=report_date_str, store_id=store.id if store else None))
+
+
+@views.route('/store-manager/delivery-recon/add-product', methods=['POST'])
+@views.route('/inventory/delivery-recon/add-product', methods=['POST'])
+@login_required
+def add_delivery_recon_product():
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date_str = (request.form.get('report_date') or '').strip()
+    report_date = _parse_iso_date(report_date_str) or date.today()
+
+    product_id = request.form.get('product_id', type=int)
+    quantity = request.form.get('quantity', type=int)
+    manual_note = (request.form.get('manual_note') or '').strip()
+
+    product = ProductMaster.query.get(product_id) if product_id else None
+    if not product:
+        flash('Please select a valid product.', category='error')
+        return redirect(url_for('views.inventory_delivery_recon', date=report_date.strftime('%Y-%m-%d'), store_id=store.id))
+
+    if quantity is None or quantity <= 0:
+        flash('Received quantity must be greater than zero.', category='error')
+        return redirect(url_for('views.inventory_delivery_recon', date=report_date.strftime('%Y-%m-%d'), store_id=store.id))
+
+    try:
+        new_delivery = RsoDelivery(
+            store_id=store.id,
+            report_date=report_date,
+            rso_no='Manual Entry',
+            product_name=product.description,
+            quantity=quantity,
+            received_quantity=quantity,
+            uploaded_by=current_user.id,
+            upload_source='delivery_recon',
+            manual_note=manual_note or 'Added product (Delivery Recon)'
+        )
+        db.session.add(new_delivery)
+
+        inventory = DailyEndingInventory.query.filter_by(store_id=store.id, inventory_date=report_date).first()
+        if inventory:
+            inv_item = DailyEndingInventoryItem.query.filter_by(daily_ending_inventory_id=inventory.id, product_id=product.id).first()
+            if inv_item:
+                inv_item.delivery_qty = (inv_item.delivery_qty or 0) + quantity
+            else:
+                inv_item = DailyEndingInventoryItem(
+                    daily_ending_inventory_id=inventory.id,
+                    product_id=product.id,
+                    delivery_qty=quantity
+                )
+                db.session.add(inv_item)
+
+        db.session.commit()
+        flash(f'Successfully added {quantity} x {product.description} to Delivery Recon.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Unable to add product: {str(exc)}', category='error')
+
+    return redirect(url_for('views.inventory_delivery_recon', date=report_date.strftime('%Y-%m-%d'), store_id=store.id))
+
+
+@views.route('/store-manager/delivery-recon/<int:delivery_id>/delete', methods=['POST'])
+@views.route('/inventory/delivery-recon/<int:delivery_id>/delete', methods=['POST'])
+@login_required
+def delete_delivery_recon_product(delivery_id):
+    role = (current_user.role or '').strip()
+    allowed_roles = ('Inventory Staff', 'Store Manager', 'Admin', 'Superadmin', 'General Manager', 'Cluster Manager', 'Area Manager', 'Auditor')
+    if role not in allowed_roles:
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    delivery_item = RsoDelivery.query.get_or_404(delivery_id)
+    store_id = delivery_item.store_id
+    report_date = delivery_item.report_date
+    qty_to_remove = delivery_item.received_quantity if delivery_item.received_quantity is not None else delivery_item.quantity
+
+    try:
+        product = ProductMaster.query.filter_by(description=delivery_item.product_name).first()
+        if product:
+            inventory = DailyEndingInventory.query.filter_by(store_id=store_id, inventory_date=report_date).first()
+            if inventory:
+                inv_item = DailyEndingInventoryItem.query.filter_by(daily_ending_inventory_id=inventory.id, product_id=product.id).first()
+                if inv_item and inv_item.delivery_qty:
+                    inv_item.delivery_qty = max(0, (inv_item.delivery_qty or 0) - qty_to_remove)
+
+        db.session.delete(delivery_item)
+        db.session.commit()
+        flash(f'Removed {delivery_item.product_name} from Delivery Recon.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Unable to delete entry: {str(exc)}', category='error')
+
+    return redirect(url_for('views.inventory_delivery_recon', date=report_date.strftime('%Y-%m-%d'), store_id=store_id))
+def inventory_staff_delivery_reconciliation_recon():
+    return redirect(url_for('views.inventory_delivery_recon'))
+
+
+@views.route('/store-manager/delivery/add-product', methods=['POST'])
+@login_required
+def add_manual_rso_product():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        upload_source = (request.form.get('upload_source') or 'delivery').strip().lower()
+        if upload_source not in ('delivery', 'bulk'):
+            upload_source = 'delivery'
+
+        if _is_operational_day_finalized(store.id, report_date):
+            flash(
+                f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
+                'Delivery (RSO) can no longer be edited. Contact an Admin to unfinalize the day.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        product_id = request.form.get('product_id', type=int)
+        quantity = request.form.get('quantity', type=int)
+        product = ProductMaster.query.get(product_id) if product_id else None
+        if not product:
+            flash('Please select a valid Product Master item.', category='error')
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+        if quantity is None or quantity <= 0:
+            flash('Quantity must be greater than zero.', category='error')
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        items = _get_rso_draft(store.id, report_date, upload_source)
+        existing_meta = _get_rso_draft_meta(store.id, report_date, upload_source)
+        if not items:
+            saved_items = (
+                RsoDelivery.query
+                .filter_by(store_id=store.id, report_date=report_date)
+                .filter(_rso_source_filter(upload_source))
+                .order_by(RsoDelivery.id.asc())
+                .all()
+            )
+            items = [{
+                'product_name': item.product_name,
+                'quantity': item.quantity,
+                'received_quantity': item.received_quantity,
+                'rso_no': item.rso_no,
+                'upload_source': upload_source,
+            } for item in saved_items]
+
+        items.append({
+            'product_name': product.description,
+            'quantity': quantity,
+            'received_quantity': quantity,
+            'rso_no': 'Manual Entry',
+            'upload_source': upload_source,
+            'is_manual': True,
+        })
+        _set_rso_draft(store.id, report_date, items, upload_source)
+        _set_rso_draft_meta(store.id, report_date, {
+            'source': upload_source,
+            'filename': existing_meta.get('filename') or 'Manual product entry',
+        }, upload_source)
+        db.session.commit()
+        flash(f'Added {product.description}. Received quantity was set to {quantity}.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Unable to add product: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/delivery/review', methods=['POST'])
+@login_required
+def review_rso_excel():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        if report_date > date.today():
+            flash('Report date cannot be in the future.', category='error')
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        if _is_operational_day_finalized(store.id, report_date):
+            flash(
+                f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
+                'Delivery (RSO) can no longer be edited. Contact an Admin to unfinalize the day.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        upload_files = [
+            ('delivery', 'RSO', request.files.get('rso_file')),
+            ('bulk', 'Bulk Order RSO', request.files.get('bulk_order_rso_file')),
+        ]
+        upload_files = [
+            (source, label, upload_file)
+            for source, label, upload_file in upload_files
+            if upload_file and (upload_file.filename or '').strip()
+        ]
+        if not upload_files:
+            flash('Please select an RSO or Bulk Order RSO Excel file to upload.', category='error')
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        active_source = upload_files[0][0]
+        existing_draft_items = _sanitize_rso_items(_get_rso_draft(store.id, report_date, active_source))
+        existing_rso_no, existing_product_items = _split_rso_meta_and_items(existing_draft_items)
+        combined_items = []
+        combined_product_items = list(existing_product_items)
+        rso_numbers = [part.strip() for part in existing_rso_no.split('/') if part.strip()]
+        uploaded_filenames = []
+        upload_sources = []
+        for upload_source, upload_label, upload_file in upload_files:
+            filename = (upload_file.filename or '').lower()
+            if not filename.endswith(('.xls', '.xlsx')):
+                flash(f'Please upload an Excel file (.xls or .xlsx) for {upload_label}.', category='error')
+                return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+            parsed_items = _extract_rso_items_from_excel(upload_file)
+            parsed_rso_no, parsed_product_items = _split_rso_meta_and_items(parsed_items)
+            for parsed_item in parsed_product_items:
+                if isinstance(parsed_item, dict):
+                    parsed_item['rso_no'] = parsed_rso_no or None
+                    parsed_item['upload_source'] = upload_source
+            if parsed_rso_no and parsed_rso_no not in rso_numbers:
+                rso_numbers.append(parsed_rso_no)
+            combined_product_items.extend(parsed_product_items)
+            uploaded_filenames.append(upload_file.filename)
+            upload_sources.append(upload_source)
+
+        if rso_numbers:
+            combined_items.append({
+                'product_name': f'RSO No: {" / ".join(rso_numbers)}',
+                'quantity': 1,
+            })
+        combined_items.extend(combined_product_items)
+        _set_rso_draft(store.id, report_date, combined_items, active_source)
+        _set_rso_draft_meta(store.id, report_date, {
+            'source': active_source,
+            'filename': uploaded_filenames[-1] if uploaded_filenames else '',
+        }, active_source)
+
+        log_audit_event(
+            action='report.rso.review',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store manager extracted RSO delivery rows from Excel for review.',
+            details={
+                'store_id': store.id,
+                'report_date': report_date.strftime('%Y-%m-%d'),
+                'filenames': uploaded_filenames,
+                'rows_extracted': len(combined_product_items),
+                'rso_no': ' / '.join(rso_numbers),
+            },
+        )
+        db.session.commit()
+
+        flash(
+            f'Reviewed {len(combined_product_items)} RSO delivery item(s) for {report_date.strftime("%B %d, %Y")}.',
+            category='success'
+        )
+
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), category='error')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error uploading RSO file: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/delivery/clear', methods=['POST'])
+@login_required
+def clear_rso_review_data():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        upload_source = (request.form.get('upload_source') or 'delivery').strip().lower()
+        if upload_source not in ('delivery', 'bulk'):
+            upload_source = 'delivery'
+
+        if _is_operational_day_finalized(store.id, report_date):
+            flash(
+                f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
+                'Delivery (RSO) can no longer be edited. Contact an Admin to unfinalize the day.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        cleared_items = _pop_rso_draft(store.id, report_date, upload_source)
+        _pop_rso_draft_meta(store.id, report_date, upload_source)
+        db.session.commit()
+        if cleared_items:
+            flash('Extracted RSO review data cleared.', category='success')
+        else:
+            flash('No extracted RSO review data found to clear.', category='info')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error clearing extracted RSO data: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/delivery/save', methods=['POST'])
+@login_required
+def save_rso_review_data():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        upload_source = (request.form.get('upload_source') or 'delivery').strip().lower()
+        if upload_source not in ('delivery', 'bulk'):
+            upload_source = 'delivery'
+        if report_date > date.today():
+            flash('Report date cannot be in the future.', category='error')
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        if _is_operational_day_finalized(store.id, report_date):
+            flash(
+                f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
+                'Delivery (RSO) can no longer be edited. Contact an Admin to unfinalize the day.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        raw_draft_items = _sanitize_rso_items(_get_rso_draft(store.id, report_date, upload_source))
+        rso_no, draft_items = _split_rso_meta_and_items(raw_draft_items)
+        received_qty_values = request.form.getlist('received_qty[]')
+
+        # When the RSO has already been saved, the manual "Save" button posts
+        # directly to this route without a review draft. Seed the save payload
+        # from the existing saved rows first; otherwise saving one manually
+        # added product would replace the whole saved RSO with only that row.
+        if not draft_items:
+            saved_items = (
+                RsoDelivery.query
+                .filter_by(store_id=store.id, report_date=report_date)
+                .filter(_rso_source_filter(upload_source))
+                .order_by(RsoDelivery.id.asc())
+                .all()
+            )
+            saved_rso_numbers = []
+            for saved_item in saved_items:
+                saved_rso_no = str(saved_item.rso_no or '').strip()
+                if saved_rso_no and saved_rso_no not in saved_rso_numbers:
+                    saved_rso_numbers.append(saved_rso_no)
+                draft_items.append({
+                    'product_name': saved_item.product_name,
+                    'quantity': saved_item.quantity,
+                    'received_quantity': saved_item.received_quantity,
+                    'rso_no': saved_rso_no or None,
+                    'upload_source': upload_source,
+                    'is_manual': saved_rso_no.lower() == 'manual entry',
+                    'manual_note': saved_item.manual_note,
+                })
+            if not rso_no and saved_rso_numbers:
+                rso_no = ' / '.join(saved_rso_numbers)
+
+        manual_product_ids = request.form.getlist('manual_product_id[]')
+        manual_quantities = request.form.getlist('manual_quantity[]')
+        manual_notes = request.form.getlist('manual_note[]')
+        for index, raw_product_id in enumerate(manual_product_ids):
+            raw_quantity = manual_quantities[index] if index < len(manual_quantities) else ''
+            manual_note = str(manual_notes[index] if index < len(manual_notes) else '').strip()
+            if not str(raw_product_id).strip() and not str(raw_quantity).strip():
+                continue
+            try:
+                product_id = int(raw_product_id)
+                quantity = int(raw_quantity)
+            except (TypeError, ValueError):
+                flash('Each added product row requires a product and quantity.', category='error')
+                return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+            product = ProductMaster.query.get(product_id)
+            if not product or quantity <= 0:
+                flash('Each added product row requires a valid product and quantity greater than zero.', category='error')
+                return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+            draft_items.append({
+                'product_name': product.description,
+                'quantity': quantity,
+                'received_quantity': quantity,
+                'rso_no': 'Manual Entry',
+                'upload_source': upload_source,
+                'is_manual': True,
+                'manual_note': manual_note or None,
+            })
+        if not draft_items:
+            if rso_no:
+                _pop_rso_draft(store.id, report_date, upload_source)
+                _pop_rso_draft_meta(store.id, report_date, upload_source)
+                db.session.commit()
+                flash(
+                    f'RSO No {rso_no} reviewed and saved for {report_date.strftime("%B %d, %Y")} with no product rows.',
+                    category='success'
+                )
+                return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+            flash('No reviewed RSO data found to save. Please upload and review first.', category='error')
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        (
+            RsoDelivery.query
+            .filter_by(store_id=store.id, report_date=report_date)
+            .filter(_rso_source_filter(upload_source))
+            .delete(synchronize_session=False)
+        )
+
+        for index, item in enumerate(draft_items):
+            raw_received_qty = (
+                received_qty_values[index]
+                if index < len(received_qty_values)
+                else item.get('received_quantity', '')
+            )
+            received_quantity = None
+            if str(raw_received_qty).strip():
+                try:
+                    received_quantity = max(0, int(raw_received_qty))
+                except (TypeError, ValueError):
+                    received_quantity = None
+
+            db.session.add(
+                RsoDelivery(
+                    store_id=store.id,
+                    report_date=report_date,
+                    rso_no=(
+                        'Manual Entry'
+                        if item.get('is_manual')
+                        else (str(item.get('rso_no', '') or '').strip() or rso_no or None)
+                    ),
+                    product_name=str(item.get('product_name', '')).strip(),
+                    quantity=int(item.get('quantity', 0) or 0),
+                    received_quantity=received_quantity,
+                    uploaded_by=current_user.id,
+                    delivery_reviewed_date=date.today(),
+                    upload_source=upload_source,
+                    manual_note=str(item.get('manual_note') or '').strip() or None,
+                )
+            )
+
+        _pop_rso_draft(store.id, report_date, upload_source)
+        _pop_rso_draft_meta(store.id, report_date, upload_source)
+
+        _sync_rso_delivery_to_inventory(store, report_date)
+
+        log_audit_event(
+            action='report.rso.save',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store manager saved reviewed RSO delivery rows.',
+            details={
+                'store_id': store.id,
+                'report_date': report_date.strftime('%Y-%m-%d'),
+                'rows_saved': len(draft_items),
+                'received_rows_saved': sum(1 for value in received_qty_values if str(value).strip()),
+                'rso_no': rso_no,
+            },
+        )
+        db.session.commit()
+        flash(
+            f'Saved {len(draft_items)} RSO delivery item(s) to database for {report_date.strftime("%B %d, %Y")}.',
+            category='success'
+        )
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error saving RSO data: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/delivery/delete-all-rso', methods=['POST'])
+@login_required
+def delete_all_rso_data():
+    """Delete all saved RSO data and clear reflected inventory delivery data"""
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+
+        if _is_operational_day_finalized(store.id, report_date):
+            flash(
+                f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
+                'Delivery (RSO) can no longer be deleted. Contact an Admin to unfinalize the day.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        # Get all RSO records for this date and store before deleting
+        rso_records = RsoDelivery.query.filter_by(
+            store_id=store.id,
+            report_date=report_date
+        ).all()
+
+        if not rso_records:
+            flash('No RSO data found to delete for this date.', category='info')
+            return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+        deleted_count = len(rso_records)
+
+        # ============================================================
+        # 1. Clear from DailyEndingInventoryItem (Inventory view)
+        # ============================================================
+        inventory = DailyEndingInventory.query.filter_by(
+            store_id=store.id,
+            inventory_date=report_date
+        ).first()
+
+        inventory_cleared_count = 0
+        if inventory:
+            items = DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
+            for item in items:
+                if item.product_master_id:
+                    product = ProductMaster.query.get(item.product_master_id)
+                    if product:
+                        # Check if this inventory item matches any RSO record
+                        for rso_record in rso_records:
+                            if _match_rso_to_inventory(rso_record, product):
+                                item.delivery_qty = 0
+                                item.delivery_reviewed_date = None
+                                _recalculate_inventory_item(item)
+                                inventory_cleared_count += 1
+                                break
+
+        forecast_cleared_count = 0
+
+        # ============================================================
+        # 3. Delete RSO records
+        # ============================================================
+        RsoDelivery.query.filter_by(
+            store_id=store.id,
+            report_date=report_date
+        ).delete(synchronize_session=False)
+
+        _sync_rso_delivery_to_inventory(store, report_date)
+
+        # Audit log
+        log_audit_event(
+            action='report.rso.delete',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store manager deleted all RSO delivery records and cleared reflected inventory data.',
+            details={
+                'store_id': store.id,
+                'report_date': report_date.strftime('%Y-%m-%d'),
+                'rso_records_deleted': deleted_count,
+                'inventory_items_cleared': inventory_cleared_count,
+                'forecast_items_cleared': forecast_cleared_count,
+            },
+        )
+
+        db.session.commit()
+        flash(
+            f'✓ Deleted {deleted_count} RSO record(s). Cleared delivery data from inventory ({inventory_cleared_count} items).',
+            category='success'
+        )
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error deleting RSO data: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_delivery', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/help')
+@login_required
+def store_manager_help():
+    if current_user.role != 'Store Manager':
+        flash('Access denied. Only Store Managers can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    return render_template('store_manager/help.html', user=current_user, store=store)
+
+
+@views.route('/store-manager/store-data')
+@login_required
+def store_manager_store_data():
+    if current_user.role != 'Store Manager':
+        flash('Access denied. Only Store Managers can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    today = date.today()
+    current_month = request.args.get('month', today.strftime('%m'))
+    current_year = request.args.get('year', str(today.year))
+
+    from calendar import monthrange
+    from datetime import datetime
+    from .models import StoreTarget
+
+    year_int = int(current_year)
+    month_int = int(current_month)
+    _, num_days = monthrange(year_int, month_int)
+
+    start_date = datetime(year_int, month_int, 1).date()
+    end_date = datetime(year_int, month_int, num_days).date()
+
+    reports = DailyReport.query.filter(
+        DailyReport.store_id == store.id,
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_ending_inventory_from_invensync(reports)
+    approved_reports = [report for report in reports if (report.status or '') == 'Approved']
+
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id == store.id,
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+
+    targets_by_date = {}
+    for target in targets:
+        date_key = target.target_date.strftime('%Y-%m-%d')
+        targets_by_date[date_key] = {
+            'target_net': target.target_net,
+            'last_year_net': target.last_year_net,
+            'gbi_target': target.gbi_target
+        }
+
+    daily_targets = _aggregate_targets_by_day(targets)
+    acc_daily_targets = _build_acc_targets_by_day(year_int, month_int, daily_targets)
+    acc_daily_sales = _build_acc_sales_by_day(year_int, month_int, approved_reports)
+    mtd_metrics_by_day = _build_mtd_metrics_by_day(year_int, month_int, acc_daily_sales, acc_daily_targets)
+    _attach_report_calc_fields(
+        reports,
+        daily_targets,
+        acc_targets_by_day=acc_daily_targets,
+        acc_sales_by_day=acc_daily_sales
+    )
+    summary = _build_cluster_manager_summary(approved_reports, targets)
+
+    total_reports = DailyReport.query.filter(
+        DailyReport.store_id == store.id,
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date
+    ).count()
+    approved_reports_count = len(approved_reports)
+    reports_by_date = _group_reports_by_date(reports)
+
+    # Missing dates for selected month (used for reminder modal in Store Data page)
+    month_start = start_date
+    cutoff_date = end_date
+    if year_int == today.year and month_int == today.month:
+        cutoff_date = today - timedelta(days=1)
+
+    missing_dates = _build_missing_report_dates(store.id, month_start, cutoff_date)
+    next_missing_date = missing_dates[0]['iso'] if missing_dates else None
+
+    pos_reports = (
+        DailyReport.query
+        .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+        .filter(DailyReport.store_id == store.id)
+        .group_by(DailyReport.id)
+        .order_by(DailyReport.report_date.desc(), DailyReport.id.desc())
+        .all()
+    )
+    pos_report_ids = [report.id for report in pos_reports]
+    pos_items_by_report = {}
+    if pos_report_ids:
+        pos_items = (
+            PosSold.query
+            .filter(PosSold.daily_report_id.in_(pos_report_ids))
+            .order_by(PosSold.daily_report_id.asc(), PosSold.id.asc())
+            .all()
+        )
+        for item in pos_items:
+            if _is_grand_total_product_name(item.product_name):
+                continue
+            pos_items_by_report.setdefault(int(item.daily_report_id), []).append({
+                'product_name': item.product_name,
+                'quantity': int(item.quantity or 0),
+                'net_sales': float(item.net_sales or 0.0),
+            })
+
+    pos_modal_payload = []
+    for report in pos_reports:
+        pos_modal_payload.append({
+            'report_id': int(report.id),
+            'date': report.report_date.strftime('%Y-%m-%d') if report.report_date else '',
+            'label': report.report_date.strftime('%B %d, %Y') if report.report_date else '',
+            'items': pos_items_by_report.get(int(report.id), []),
+        })
+
+    pos_modal_report = pos_reports[0] if pos_reports else None
+    pos_modal_items = pos_items_by_report.get(int(pos_modal_report.id), []) if pos_modal_report else []
+
+    return render_template(
+        'store_manager/store_data.html',
+        user=current_user,
+        store=store,
+        stores=[store],
+        current_month=current_month,
+        current_year=current_year,
+        store_filter=str(store.id),
+        reports_by_date=reports_by_date,
+        targets_by_date=targets_by_date,
+        daily_targets=daily_targets,
+        acc_daily_targets=acc_daily_targets,
+        acc_daily_sales=acc_daily_sales,
+        mtd_metrics_by_day=mtd_metrics_by_day,
+        total_reports=total_reports,
+        approved_reports_count=approved_reports_count,
+        summary=summary,
+        team_name=store.name,
+        missing_dates=missing_dates,
+        next_missing_date=next_missing_date,
+        pos_modal_report=pos_modal_report,
+        pos_modal_items=pos_modal_items,
+        pos_modal_payload=pos_modal_payload,
+        today_day=today.day,
+        today_month=today.month,
+        today_year=today.year
+    )
+
+
+def _generate_taf_control_no(transaction_date, transaction_type='Product Transfer'):
+    if not transaction_date:
+        transaction_date = date.today()
+    normalized_type = str(transaction_type or '').strip()
+    prefix_key_map = {
+        'Product Transfer': 'PTR',
+        'Wastage Transfer': 'WTR',
+        'EGI Plant Transfer': 'STR',
+        'Supplies Transfer': 'STR',
+        'Supplies Request': 'SRQ',
+        'Charge Slip': 'CS',
+    }
+    prefix_key = prefix_key_map.get(normalized_type, 'TAF')
+    date_part = transaction_date.strftime('%Y%m%d')
+    prefix = f'{prefix_key}-{date_part}-'
+    existing_control_nos = (
+        TafTransfer.query
+        .with_entities(TafTransfer.control_no)
+        .filter(TafTransfer.control_no.like(f'{prefix}%'))
+        .all()
+    )
+    max_sequence = 0
+    for row in existing_control_nos:
+        control_no = str(getattr(row, 'control_no', '') or '').strip()
+        match = re.match(rf'^{re.escape(prefix)}(\d{4})$', control_no)
+        if not match:
+            continue
+        max_sequence = max(max_sequence, int(match.group(1)))
+    next_sequence = max_sequence + 1
+    return f'{prefix}{str(next_sequence).zfill(4)}'
+
+
+def _resolve_product_master_id(item_name):
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    normalized = _normalize_product_text(item_name)
+    if normalized in alias_lookup:
+        return alias_lookup[normalized]
+    if normalized in master_lookup:
+        return master_lookup[normalized]
+    product = ProductMaster.query.filter(
+        func.lower(func.trim(ProductMaster.description)) == func.lower(func.trim(item_name))
+    ).first()
+    return product.id if product else None
+
+
+def _find_or_create_inventory_item(inventory, product_master_id, item_name):
+    from .models import DailyEndingInventoryItem
+    if product_master_id:
+        item = DailyEndingInventoryItem.query.filter_by(
+            inventory_id=inventory.id,
+            product_master_id=product_master_id,
+        ).first()
+        if item:
+            return item
+    item = DailyEndingInventoryItem.query.filter_by(
+        inventory_id=inventory.id,
+        product_description=item_name,
+    ).first()
+    if item:
+        return item
+    product = ProductMaster.query.get(product_master_id) if product_master_id else None
+    if not product:
+        product = ProductMaster.query.filter(
+            func.lower(func.trim(ProductMaster.description)) == func.lower(func.trim(item_name))
+        ).first()
+    item = DailyEndingInventoryItem(
+        inventory_id=inventory.id,
+        product_master_id=product.id if product else None,
+        product_code=str(product.code) if product and product.code else '',
+        product_description=product.description if product else item_name,
+        srp_price=float(product.sp_p or 0.0) if product else 0.0,
+    )
+    db.session.add(item)
+    db.session.flush()
+    return item
+
+
+_processed_taf_transfer_ids = set()
+
+
+def _update_inventory_trans_quantities(transfer_record, parsed_items):
+    from .models import DailyEndingInventory, DailyEndingInventoryItem
+
+    transfer_id = int(getattr(transfer_record, 'id', 0) or 0)
+    if transfer_id and transfer_id in _processed_taf_transfer_ids:
+        return
+    if transfer_id:
+        _processed_taf_transfer_ids.add(transfer_id)
+
+    transaction_type = str(transfer_record.transaction_type or '').strip()
+    if transaction_type == 'Wastage Transfer':
+        _update_inventory_wastage_on_receive(transfer_record, parsed_items)
+        return
+
+    transaction_date = transfer_record.transaction_date
+    transfer_from = transfer_record.transfer_from
+    transfer_to = transfer_record.transfer_to
+
+    source_store = Store.query.filter_by(name=transfer_from).first()
+    if not source_store:
+        return
+
+    source_inventory = DailyEndingInventory.query.filter_by(
+        store_id=source_store.id,
+        inventory_date=transaction_date
+    ).first()
+    if not source_inventory:
+        source_inventory = DailyEndingInventory(
+            store_id=source_store.id,
+            inventory_date=transaction_date,
+            created_by=current_user.id
+        )
+        db.session.add(source_inventory)
+        db.session.flush()
+
+    for item in parsed_items:
+        item_name = item['item_name']
+        quantity = item['quantity']
+        product_master_id = _resolve_product_master_id(item_name)
+        source_inventory_item = _find_or_create_inventory_item(
+            source_inventory, product_master_id, item_name
+        )
+        source_inventory_item.trans_out_qty = (source_inventory_item.trans_out_qty or 0) + quantity
+        _recalculate_inventory_item(source_inventory_item)
+
+    if transaction_type == 'Product Transfer':
+        dest_store = Store.query.filter_by(name=transfer_to).first()
+        if dest_store:
+            dest_inventory = DailyEndingInventory.query.filter_by(
+                store_id=dest_store.id,
+                inventory_date=transaction_date
+            ).first()
+            if not dest_inventory:
+                dest_inventory = DailyEndingInventory(
+                    store_id=dest_store.id,
+                    inventory_date=transaction_date,
+                    created_by=current_user.id
+                )
+                db.session.add(dest_inventory)
+                db.session.flush()
+
+            for item in parsed_items:
+                item_name = item['item_name']
+                quantity = item['quantity']
+                product_master_id = _resolve_product_master_id(item_name)
+                dest_inventory_item = _find_or_create_inventory_item(
+                    dest_inventory, product_master_id, item_name
+                )
+                dest_inventory_item.trans_in_qty = (dest_inventory_item.trans_in_qty or 0) + quantity
+                _recalculate_inventory_item(dest_inventory_item)
+
+
+def _update_inventory_wastage_on_receive(transfer, transfer_items):
+    """Sync InvenSync wastage from TAF sent quantities, regardless of status."""
+    source_store = Store.query.get(getattr(transfer, 'store_id', None))
+    if not source_store:
+        return
+
+    transaction_date = getattr(transfer, 'transaction_date', None)
+    if not transaction_date:
+        return
+
+    source_inventory = DailyEndingInventory.query.filter_by(
+        store_id=source_store.id,
+        inventory_date=transaction_date
+    ).first()
+
+    if not source_inventory:
+        source_inventory = DailyEndingInventory(
+            store_id=source_store.id,
+            inventory_date=transaction_date,
+            created_by=getattr(transfer, 'submitted_by', None) or current_user.id
+        )
+        db.session.add(source_inventory)
+        db.session.flush()
+
+    sent_quantities = _build_taf_wastage_quantity_by_master_id(source_store, transaction_date)
+    for product_master_id, sent_qty in sent_quantities.items():
+        product = ProductMaster.query.get(product_master_id)
+        if not product:
+            continue
+        source_inventory_item = DailyEndingInventoryItem.query.filter_by(
+            inventory_id=source_inventory.id,
+            product_master_id=product_master_id,
+        ).first()
+
+        if not source_inventory_item:
+            source_inventory_item = DailyEndingInventoryItem(
+                inventory_id=source_inventory.id,
+                product_master_id=product.id,
+                product_code=product.code,
+                product_description=product.description,
+                srp_price=product.sp_p or 0.0,
+                wastage_qty=int(sent_qty or 0),
+            )
+            db.session.add(source_inventory_item)
+        else:
+            # Always use sent quantity. Received/short/over quantities do not
+            # change wastage reporting.
+            source_inventory_item.wastage_qty = int(sent_qty or 0)
+
+        _recalculate_inventory_item(source_inventory_item)
+
+
+def _sync_taf_wastage_inventory_for_store_date(store, transaction_date, affected_product_ids=None):
+    """Reconcile InvenSync wastage_qty from remaining Wastage Transfer TAFs.
+
+    When a Store Manager edits or deletes a Wastage Transfer before End of Day,
+    the affected products' wastage_qty is recomputed from the TAFs that remain.
+    """
+    if not store or not transaction_date:
+        return
+
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=transaction_date,
+    ).first()
+    if not inventory:
+        return
+
+    wastage_by_master_id = _build_taf_wastage_quantity_by_master_id(store, transaction_date)
+
+    items = inventory.items
+    if affected_product_ids is not None:
+        affected = set(int(product_id) for product_id in affected_product_ids if product_id)
+        items = [item for item in items if item.product_master_id in affected]
+
+    for inv_item in items:
+        if not inv_item.product_master_id:
+            continue
+        inv_item.wastage_qty = int(wastage_by_master_id.get(inv_item.product_master_id, 0) or 0)
+        _recalculate_inventory_item(inv_item)
+
+    db.session.flush()
+
+
+def _sync_taf_csi_inventory_for_store_date(store, transaction_date, affected_product_ids=None):
+    """Reconcile InvenSync csi_qty for a store/date from Charge Slips."""
+    if not store or not transaction_date:
+        return
+
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=transaction_date,
+    ).first()
+    if not inventory:
+        inventory = DailyEndingInventory(
+            store_id=store.id,
+            inventory_date=transaction_date,
+            created_by=getattr(current_user, 'id', None)
+        )
+        db.session.add(inventory)
+        db.session.flush()
+
+    csi_map = _build_taf_csi_quantity_by_master_id(store, transaction_date)
+
+    for inv_item in inventory.items:
+        if not inv_item.product_master_id:
+            continue
+        inv_item.csi_qty = int(csi_map.get(inv_item.product_master_id, 0) or 0)
+        _recalculate_inventory_item(inv_item)
+
+    existing_pm_ids = {item.product_master_id for item in inventory.items if item.product_master_id}
+    for pm_id, qty in csi_map.items():
+        if pm_id not in existing_pm_ids and qty > 0:
+            product = ProductMaster.query.get(pm_id)
+            if product:
+                item = _find_or_create_inventory_item(inventory, pm_id, product.description)
+                item.csi_qty = qty
+                _recalculate_inventory_item(item)
+
+    db.session.flush()
+
+
+def _sync_taf_trans_in_inventory_for_store_date(store, target_date):
+    """Reconcile InvenSync trans_in_qty for a store/date from confirmed TAFs."""
+    if not store or not target_date:
+        return
+
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=target_date,
+    ).first()
+
+    trans_in_map = _build_taf_trans_in_quantity_by_master_id(store, target_date)
+    if not inventory:
+        if not trans_in_map:
+            return
+        inventory = DailyEndingInventory(
+            store_id=store.id,
+            inventory_date=target_date,
+            created_by=getattr(current_user, 'id', None)
+        )
+        db.session.add(inventory)
+        db.session.flush()
+
+    for item in inventory.items:
+        if not item.product_master_id:
+            continue
+        item.trans_in_qty = int(trans_in_map.get(item.product_master_id, 0) or 0)
+        _recalculate_inventory_item(item)
+
+    existing_pm_ids = {item.product_master_id for item in inventory.items if item.product_master_id}
+    for pm_id, qty in trans_in_map.items():
+        if pm_id not in existing_pm_ids and qty > 0:
+            product = ProductMaster.query.get(pm_id)
+            if product:
+                item = _find_or_create_inventory_item(inventory, pm_id, product.description)
+                item.trans_in_qty = qty
+                _recalculate_inventory_item(item)
+
+    db.session.flush()
+
+
+def _update_inventory_trans_in_on_receive(transfer, transfer_items, received_date=None):
+    """Update invensync Trans-In quantity when transfer receiving is confirmed."""
+    from datetime import date as date_type
+
+    transfer_id = int(getattr(transfer, 'id', 0) or 0)
+    if transfer_id and transfer_id in _processed_taf_transfer_ids:
+        return
+    if transfer_id:
+        _processed_taf_transfer_ids.add(transfer_id)
+
+    transaction_type = str(getattr(transfer, 'transaction_type', '') or '').strip().lower()
+    if transaction_type not in ('product transfer', 'wastage transfer'):
+        return
+
+    if transaction_type == 'wastage transfer':
+        _update_inventory_wastage_on_receive(transfer, transfer_items)
+        return
+
+    transfer_to = str(getattr(transfer, 'transfer_to', '') or '').strip()
+    if not transfer_to:
+        return
+
+    dest_store = Store.query.filter_by(name=transfer_to).first()
+    if not dest_store:
+        return
+
+    if received_date is None:
+        received_date = getattr(transfer, 'received_date', None) or getattr(transfer, 'transaction_date', None) or date_type.today()
+
+    _sync_taf_trans_in_inventory_for_store_date(dest_store, received_date)
+    sent_date = getattr(transfer, 'transaction_date', None)
+    if sent_date and sent_date != received_date:
+        _sync_taf_trans_in_inventory_for_store_date(dest_store, sent_date)
+
+
+def _parse_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_int(value, default=0):
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _inventory_staff_assigned_store_ids(user=None):
+    user = user or current_user
+    assigned_ids = {int(store.id) for store in (getattr(user, 'assigned_stores', None) or [])}
+    legacy_store_id = int(getattr(user, 'assigned_store_id', 0) or 0)
+    if legacy_store_id:
+        assigned_ids.add(legacy_store_id)
+    return assigned_ids
+
+
+def _inventory_staff_assigned_stores(user=None):
+    user = user or current_user
+    assigned_ids = _inventory_staff_assigned_store_ids(user)
+    if not assigned_ids:
+        return []
+    return Store.query.filter(Store.id.in_(assigned_ids)).all()
+
+
+def _normalize_store_name_for_match(name):
+    """Normalize a store/location name for lenient matching.
+
+    Drops parenthetical suffixes (e.g. '(Starlink)', '(StarLink)', '(GOW)'),
+    punctuation, and spaces so 'Kananga' still matches 'Kananga (StarLink)'.
+    """
+    text = str(name or '').lower()
+    text = re.sub(r'\([^)]*\)', '', text)
+    text = re.sub(r'[^a-z0-9]+', '', text)
+    return text.strip()
+
+
+def _resolve_transfer_destination_store(transfer, candidate_stores):
+    """Return the Store a transfer is destined for among candidate stores.
+
+    Tries an exact (case/space-insensitive) name match first, then falls back
+    to lenient normalized matching to tolerate short names and renamed stores.
+    """
+    transfer_to_raw = str(getattr(transfer, 'transfer_to', '') or '').strip()
+    if not transfer_to_raw:
+        return None
+    exact = transfer_to_raw.lower()
+    for store in candidate_stores:
+        if str(store.name or '').strip().lower() == exact:
+            return store
+    normalized = _normalize_store_name_for_match(transfer_to_raw)
+    if not normalized:
+        return None
+    for store in candidate_stores:
+        if _normalize_store_name_for_match(store.name) == normalized:
+            return store
+    return None
+
+
+def _collect_incoming_transfers_for_stores(candidate_stores):
+    """Transfers destined for any candidate store (lenient name match), excluding
+    transfers whose source store is the destination store itself."""
+    transfers = TafTransfer.query.all()
+    result = []
+    for transfer in transfers:
+        dest_store = _resolve_transfer_destination_store(transfer, candidate_stores)
+        if not dest_store:
+            continue
+        if int(getattr(transfer, 'store_id', 0) or 0) == int(dest_store.id):
+            continue
+        result.append(transfer)
+    result.sort(key=lambda t: (getattr(t, 'transaction_date') or date.min, int(getattr(t, 'id', 0) or 0)), reverse=True)
+    return result
+
+
+def _collect_wastage_transfers_for_stores(candidate_stores):
+    """Wastage transfers destined for any candidate store, plus wastage transfers
+    sent by any candidate store to Main Office."""
+    candidate_ids = {int(store.id) for store in candidate_stores}
+    transfers = TafTransfer.query.all()
+    result = []
+    for transfer in transfers:
+        if str(getattr(transfer, 'transaction_type', '') or '').strip().lower() != 'wastage transfer':
+            continue
+        dest_store = _resolve_transfer_destination_store(transfer, candidate_stores)
+        if dest_store and int(getattr(transfer, 'store_id', 0) or 0) != int(dest_store.id):
+            result.append(transfer)
+            continue
+        if (
+            int(getattr(transfer, 'store_id', 0) or 0) in candidate_ids
+            and _normalize_store_name_for_match(getattr(transfer, 'transfer_to', '')) == 'mainoffice'
+        ):
+            result.append(transfer)
+            continue
+    result.sort(key=lambda t: (getattr(t, 'transaction_date') or date.min, int(getattr(t, 'id', 0) or 0)), reverse=True)
+    return result
+
+
+def _resolve_store_for_store_scope_user():
+    role = str(getattr(current_user, 'role', '') or '').strip()
+    if role == 'Store Manager':
+        return Store.query.filter_by(manager_id=current_user.id).first()
+    if role == 'Inventory Staff':
+        assigned_store_ids = _inventory_staff_assigned_store_ids()
+        requested_store_id = request.args.get('store_id', type=int) or request.form.get('store_id', type=int)
+        if requested_store_id in assigned_store_ids:
+            session['inventory_staff_store_id'] = requested_store_id
+        session_store_id = int(session.get('inventory_staff_store_id', 0) or 0)
+        assigned_store_id = (
+            requested_store_id if requested_store_id in assigned_store_ids
+            else session_store_id if session_store_id in assigned_store_ids
+            else min(assigned_store_ids) if assigned_store_ids else None
+        )
+        if assigned_store_id:
+            session['inventory_staff_store_id'] = assigned_store_id
+        if not assigned_store_id:
+            return None
+        return Store.query.get(assigned_store_id)
+    return None
+
+
+@views.route('/store-manager/transaction-activity-form/control-no')
+@login_required
+def store_manager_transaction_activity_form_control_no():
+    if current_user.role != 'Store Manager':
+        return jsonify({'error': 'Access denied'}), 403
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        return jsonify({'error': 'Store assignment not found'}), 404
+
+    request_date = _parse_iso_date(request.args.get('date')) or date.today()
+    if request_date > date.today():
+        request_date = date.today()
+
+    transaction_type = str(request.args.get('transaction_type', '') or '').strip() or 'Product Transfer'
+    control_no = _generate_taf_control_no(request_date, transaction_type)
+    return jsonify({
+        'control_no': control_no,
+        'date': request_date.strftime('%Y-%m-%d'),
+    })
+
+
+@views.route('/store-manager/transaction-activity-form', methods=['GET', 'POST'])
+@login_required
+def store_manager_transaction_activity_form():
+    if current_user.role != 'Store Manager':
+        flash('Access denied. Only Store Managers can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    today_date = date.today()
+    selected_date = _parse_iso_date(request.args.get('date')) or today_date
+    if selected_date > today_date:
+        selected_date = today_date
+
+    if request.method == 'POST':
+        transaction_type = str(request.form.get('transaction_type', '') or '').strip()
+        allowed_transaction_types = {'Product Transfer', 'Wastage Transfer', 'EGI Plant Transfer', 'Supplies Transfer'}
+        if transaction_type not in allowed_transaction_types:
+            flash('Only Product Transfer, Wastage Transfer, EGI Plant Transfer, and Supplies Transfer submission are enabled for now.', category='error')
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=selected_date.strftime('%Y-%m-%d')))
+        is_egi_plant_transfer = transaction_type == 'EGI Plant Transfer'
+
+        taf_date = _parse_iso_date(request.form.get('taf_date')) or today_date
+        if taf_date > today_date:
+            flash('Transaction date cannot be in the future.', category='error')
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=today_date.strftime('%Y-%m-%d')))
+
+        if transaction_type == 'Wastage Transfer' and _is_operational_day_finalized(store.id, taf_date):
+            flash(
+                f'End of Day is already done for {taf_date.strftime("%B %d, %Y")}. '
+                'Wastage can no longer be entered or edited for this date. Contact an Admin to unfinalize the day.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+
+        transfer_from = str(request.form.get('transfer_from', '') or '').strip() or str(store.name or '').strip()
+        transfer_to = str(request.form.get('transfer_to', '') or '').strip()
+        prepared_by_name = str(request.form.get('prepared_by_name', '') or '').strip()
+        received_by_name = str(request.form.get('received_by_name', '') or '').strip()
+
+        if not transfer_to:
+            flash(f'Transfer To is required for {transaction_type}.', category='error')
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+        if not prepared_by_name:
+            flash('Prepared By (Name) is required.', category='error')
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+
+        item_names = request.form.getlist('item_name[]')
+        unit_costs = request.form.getlist('unit_cost[]')
+        quantities = request.form.getlist('qty[]')
+        remarks_list = request.form.getlist('remarks[]')
+        row_count = max(len(item_names), len(unit_costs), len(quantities), len(remarks_list))
+
+        product_master_name_map = {
+            _normalize_product_name(description): str(description or '').strip()
+            for (description,) in (
+                db.session.query(ProductMaster.description)
+                .filter(ProductMaster.description.isnot(None))
+                .all()
+            )
+            if _normalize_product_name(description)
+        }
+
+        parsed_items = []
+        for idx in range(row_count):
+            raw_item_name = item_names[idx] if idx < len(item_names) else ''
+            raw_unit_cost = unit_costs[idx] if idx < len(unit_costs) else ''
+            raw_quantity = quantities[idx] if idx < len(quantities) else ''
+            raw_remarks = remarks_list[idx] if idx < len(remarks_list) else ''
+
+            item_name = str(raw_item_name or '').strip()
+            remarks = str(raw_remarks or '').strip()
+            unit_cost = _parse_float(raw_unit_cost, default=0.0)
+            quantity = _parse_int(raw_quantity, default=0)
+
+            row_is_empty = (
+                not item_name
+                and not str(raw_unit_cost or '').strip()
+                and not str(raw_quantity or '').strip()
+                and not remarks
+            )
+            if row_is_empty:
+                continue
+            if not item_name:
+                flash(f'Item Name is required on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+            canonical_item_name = product_master_name_map.get(_normalize_product_name(item_name))
+            if not canonical_item_name:
+                flash(f'Please select a valid Product Master item on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+            item_name = canonical_item_name
+            if quantity <= 0:
+                flash(f'Qty must be greater than 0 on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+            if unit_cost < 0:
+                flash(f'Unit Cost cannot be negative on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+
+            line_total = float(unit_cost * quantity)
+            parsed_items.append({
+                'item_name': item_name,
+                'unit_cost': float(unit_cost),
+                'quantity': int(quantity),
+                'line_total': line_total,
+                'remarks': remarks or None,
+            })
+
+        if not parsed_items:
+            flash(f'Please add at least one {transaction_type} item before submitting.', category='error')
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+
+        # Use the control number entered by the user
+        control_no = str(request.form.get('control_no', '') or '').strip()
+        if not control_no:
+            flash('Control Number is required.', category='error')
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+        
+        # Check if control number already exists
+        existing_transfer = TafTransfer.query.filter_by(control_no=control_no).first()
+        if existing_transfer:
+            flash(f'Control Number "{control_no}" already exists. Please use a unique control number.', category='error')
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+        
+        grand_total = float(sum(item['line_total'] for item in parsed_items))
+
+        try:
+            transfer_record = TafTransfer(
+                store_id=store.id,
+                transaction_date=taf_date,
+                control_no=control_no,
+                transaction_type=transaction_type,
+                transfer_from=transfer_from,
+                transfer_to=transfer_to,
+                prepared_by_name=prepared_by_name,
+                received_by_name=(received_by_name or 'EGI Plant') if is_egi_plant_transfer else (received_by_name or None),
+                status='Received' if is_egi_plant_transfer else 'Pending',
+                grand_total=grand_total,
+                submitted_by=current_user.id,
+            )
+            db.session.add(transfer_record)
+            db.session.flush()
+
+            for item in parsed_items:
+                db.session.add(
+                    TafTransferItem(
+                        transfer_id=transfer_record.id,
+                        item_name=item['item_name'],
+                        unit_cost=item['unit_cost'],
+                        quantity=item['quantity'],
+                        received_quantity=item['quantity'] if is_egi_plant_transfer else None,
+                        short_over_qty=0,
+                        line_total=item['line_total'],
+                        remarks=item['remarks'],
+                    )
+                )
+
+            if transaction_type == 'Wastage Transfer':
+                # Pending wastage must appear in InvenSync immediately, using the
+                # quantity sent rather than any later received quantity.
+                db.session.flush()
+                _update_inventory_wastage_on_receive(transfer_record, [])
+            elif is_egi_plant_transfer:
+                # EGI Plant transfers are finalized on submit and immediately
+                # reflect as Trans-Out for the sender. EGI Plant is not treated as
+                # a destination store, so this does not create Trans-In.
+                db.session.flush()
+                _update_inventory_trans_quantities(transfer_record, parsed_items)
+
+            # Update inventory Trans-In/Trans-Out quantities only after receiving is confirmed
+            # This is now handled in store_manager_incoming_transfer_view when Confirm Receiving is clicked
+            # _update_inventory_trans_quantities(transfer_record, parsed_items)
+
+            log_audit_event(
+                action={
+                    'Product Transfer': 'taf.product_transfer.submit',
+                    'Wastage Transfer': 'taf.wastage_transfer.submit',
+                    'EGI Plant Transfer': 'taf.egi_plant_transfer.submit',
+                }.get(transaction_type, 'taf.transfer.submit'),
+                entity_type='TafTransfer',
+                entity_id=transfer_record.id,
+                reason=f'Store manager submitted {transaction_type} TAF.',
+                details={
+                    'store_id': store.id,
+                    'transaction_date': taf_date.strftime('%Y-%m-%d'),
+                    'control_no': control_no,
+                    'transaction_type': transaction_type,
+                    'status': transfer_record.status,
+                    'item_count': len(parsed_items),
+                    'grand_total': round(grand_total, 2),
+                },
+            )
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            flash(
+                f'Control Number "{control_no}" was already submitted. Please refresh the form and try again with the next control number.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+        except SQLAlchemyError:
+            db.session.rollback()
+            current_app.logger.exception('TAF submit database error for %s %s', transaction_type, control_no)
+            flash('Unable to submit this TAF due to a database issue. Please refresh the form and try again.', category='error')
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+
+        flash(f'{transaction_type} submitted successfully. Control No: {control_no}', category='success')
+        return redirect(url_for('views.store_manager_transaction_activity_form', date=taf_date.strftime('%Y-%m-%d')))
+
+    product_rows = (
+        ProductMaster.query
+        .with_entities(ProductMaster.description, ProductMaster.tp)
+        .order_by(ProductMaster.description.asc())
+        .all()
+    )
+    product_names = []
+    product_price_map = {}
+    for row in product_rows:
+        product_name = str(getattr(row, 'description', '') or '').strip()
+        if not product_name:
+            continue
+        product_names.append(product_name)
+        tp_value = getattr(row, 'tp', None)
+        if tp_value is not None:
+            product_price_map[product_name] = float(tp_value)
+    all_stores = Store.query.order_by(Store.name.asc()).all()
+    force_taf_guide = str(request.args.get('guide') or '').strip() == '1'
+    show_taf_guide = force_taf_guide or TafTransfer.query.filter_by(store_id=store.id).first() is None
+
+    supply_categories = (
+        db.session.query(SupplyItem.category)
+        .filter(SupplyItem.category.isnot(None), SupplyItem.category != '')
+        .distinct()
+        .order_by(SupplyItem.category.asc())
+        .all()
+    )
+    supply_items = SupplyItem.query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc()).all()
+    supply_requests = (
+        SupplyRequest.query
+        .options(db.selectinload(SupplyRequest.items))
+        .filter(SupplyRequest.store_id == store.id)
+        .order_by(SupplyRequest.created_at.desc(), SupplyRequest.id.desc())
+        .all()
+    )
+
+    return render_template(
+        'store_manager/transaction_activity_form.html',
+        user=current_user,
+        store=store,
+        all_stores=all_stores,
+        today=today_date.strftime('%Y-%m-%d'),
+        selected_report_date=selected_date.strftime('%Y-%m-%d'),
+        taf_date_finalized=_is_operational_day_finalized(store.id, selected_date),
+        product_names=product_names,
+        product_price_map=product_price_map,
+        show_taf_guide=show_taf_guide,
+        supply_categories=[row[0] for row in supply_categories],
+        supply_items=supply_items,
+        supply_requests=supply_requests,
+    )
+
+
+@views.route('/store-manager/charge-slip', methods=['GET', 'POST'])
+@login_required
+def store_manager_charge_slip():
+    role = str(getattr(current_user, 'role', '') or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Managers or Inventory Staff can access Charge Slip.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    today_date = date.today()
+    selected_date = _parse_iso_date(request.args.get('date')) or today_date
+    if selected_date > today_date:
+        selected_date = today_date
+
+    if request.method == 'POST':
+        edit_id_raw = request.form.get('edit_id') or request.args.get('edit_id')
+        edit_id = None
+        if edit_id_raw:
+            try:
+                edit_id = int(edit_id_raw)
+            except (ValueError, TypeError):
+                edit_id = None
+
+        taf_date = _parse_iso_date(request.form.get('taf_date')) or today_date
+        if taf_date > today_date:
+            flash('Transaction date cannot be in the future.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=today_date.strftime('%Y-%m-%d')))
+
+        if edit_id:
+            existing_transfer = TafTransfer.query.filter_by(id=edit_id, store_id=store.id, transaction_type='Charge Slip').first()
+            if not existing_transfer:
+                flash('Charge Slip record not found for editing.', category='error')
+                return redirect(url_for('views.store_manager_charge_slip_history'))
+            
+            is_finalized = _is_operational_day_finalized(store.id, existing_transfer.transaction_date)
+            if is_finalized and role not in ('Inventory Staff', 'Admin', 'Superadmin'):
+                flash(
+                    f'End of Day for {existing_transfer.transaction_date.strftime("%b %d, %Y")} has been finalized. '
+                    f'Charge Slips on this date are locked for Store Managers. Contact Inventory Staff or Admin to edit.',
+                    category='error'
+                )
+                return redirect(url_for('views.store_manager_charge_slip_history'))
+            if (existing_transfer.status or '').strip() != 'Pending' and role not in ('Inventory Staff', 'Admin', 'Superadmin'):
+                flash('Only Pending Charge Slips can be edited.', category='error')
+                return redirect(url_for('views.store_manager_charge_slip_history'))
+        else:
+            existing_transfer = None
+
+        customer_name = str(request.form.get('customer_name', '') or '').strip()
+        charge_type = str(request.form.get('charge_type', 'Charge') or '').strip()
+        prepared_by_name = str(request.form.get('prepared_by_name', '') or '').strip() or str(current_user.full_name or current_user.username or '').strip()
+        approved_by_name = str(request.form.get('approved_by_name', '') or '').strip()
+        received_by_name = str(request.form.get('received_by_name', '') or '').strip()
+        discount_percent = _parse_float(request.form.get('discount_percent', 0.0), default=0.0)
+
+        if not customer_name:
+            flash('Name is required for Charge Slip.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+        if not approved_by_name:
+            flash('Approved By is required.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+        if not received_by_name:
+            flash('Received By is required.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+
+        item_names = request.form.getlist('item_name[]')
+        unit_costs = request.form.getlist('unit_cost[]')
+        quantities = request.form.getlist('qty[]')
+        remarks_list = request.form.getlist('remarks[]')
+        row_count = max(len(item_names), len(unit_costs), len(quantities), len(remarks_list))
+
+        parsed_items = []
+        for idx in range(row_count):
+            raw_item_name = item_names[idx] if idx < len(item_names) else ''
+            raw_unit_cost = unit_costs[idx] if idx < len(unit_costs) else ''
+            raw_quantity = quantities[idx] if idx < len(quantities) else ''
+            raw_remarks = remarks_list[idx] if idx < len(remarks_list) else ''
+
+            item_name = str(raw_item_name or '').strip()
+            remarks = str(raw_remarks or '').strip()
+            unit_cost = _parse_float(raw_unit_cost, default=0.0)
+            quantity = _parse_int(raw_quantity, default=0)
+
+            if not item_name and not str(raw_unit_cost or '').strip() and not str(raw_quantity or '').strip():
+                continue
+            if not item_name:
+                flash(f'Particular / Item Name is required on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+            if quantity <= 0:
+                flash(f'Unit / Qty must be greater than 0 on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+            if unit_cost < 0:
+                flash(f'Price cannot be negative on row {idx + 1}.', category='error')
+                return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+
+            line_total = float(unit_cost * quantity)
+            parsed_items.append({
+                'item_name': item_name,
+                'unit_cost': float(unit_cost),
+                'quantity': int(quantity),
+                'line_total': line_total,
+                'remarks': remarks or None,
+            })
+
+        if not parsed_items:
+            flash('Please add at least one item before submitting the Charge Slip.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+
+        control_no = str(request.form.get('control_no', '') or '').strip()
+        if not control_no:
+            flash('Control Number is required.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+
+        if existing_transfer:
+            ctrl_conflict = TafTransfer.query.filter(TafTransfer.control_no == control_no, TafTransfer.id != existing_transfer.id).first()
+        else:
+            ctrl_conflict = TafTransfer.query.filter_by(control_no=control_no).first()
+
+        if ctrl_conflict:
+            flash(f'Control Number "{control_no}" already exists. Please enter a unique control number.', category='error')
+            return redirect(url_for('views.store_manager_charge_slip', date=taf_date.strftime('%Y-%m-%d')))
+
+        grand_total = float(sum(item['line_total'] for item in parsed_items))
+        discount_amount = grand_total * (discount_percent / 100.0)
+        net_total = grand_total - discount_amount
+
+        try:
+            if existing_transfer:
+                old_date = existing_transfer.transaction_date
+                old_charge_type = existing_transfer.charge_type
+
+                existing_transfer.transaction_date = taf_date
+                existing_transfer.control_no = control_no
+                existing_transfer.customer_name = customer_name
+                existing_transfer.charge_type = charge_type
+                existing_transfer.prepared_by_name = prepared_by_name
+                existing_transfer.approved_by_name = approved_by_name
+                existing_transfer.received_by_name = received_by_name
+                existing_transfer.discount_percent = discount_percent
+                existing_transfer.grand_total = grand_total
+                existing_transfer.net_total = net_total
+
+                TafTransferItem.query.filter_by(transfer_id=existing_transfer.id).delete()
+                transfer_record = existing_transfer
+            else:
+                transfer_record = TafTransfer(
+                    store_id=store.id,
+                    transaction_date=taf_date,
+                    control_no=control_no,
+                    transaction_type='Charge Slip',
+                    transfer_from=store.name,
+                    transfer_to='Charge Slip',
+                    customer_name=customer_name,
+                    charge_type=charge_type,
+                    prepared_by_name=prepared_by_name,
+                    approved_by_name=approved_by_name,
+                    received_by_name=received_by_name,
+                    discount_percent=discount_percent,
+                    grand_total=grand_total,
+                    net_total=net_total,
+                    status='Pending',
+                    submitted_by=current_user.id,
+                )
+                db.session.add(transfer_record)
+
+            db.session.flush()
+
+            for item in parsed_items:
+                db.session.add(
+                    TafTransferItem(
+                        transfer_id=transfer_record.id,
+                        item_name=item['item_name'],
+                        unit_cost=item['unit_cost'],
+                        quantity=item['quantity'],
+                        line_total=item['line_total'],
+                        remarks=item['remarks'],
+                    )
+                )
+
+            db.session.flush()
+            if charge_type == 'Spoilage':
+                _sync_taf_wastage_inventory_for_store_date(store, taf_date)
+            else:
+                _sync_taf_csi_inventory_for_store_date(store, taf_date)
+
+            action_name = 'taf.charge_slip.update' if edit_id else 'taf.charge_slip.submit'
+            msg = f'Charge Slip updated successfully! Control No: {control_no}' if edit_id else f'Charge Slip submitted successfully! Control No: {control_no}'
+
+            log_audit_event(
+                action=action_name,
+                entity_type='TafTransfer',
+                entity_id=transfer_record.id,
+                reason='Store manager saved Charge Slip.',
+                details={
+                    'store_id': store.id,
+                    'transaction_date': taf_date.strftime('%Y-%m-%d'),
+                    'control_no': control_no,
+                    'customer_name': customer_name,
+                    'charge_type': charge_type,
+                    'grand_total': round(grand_total, 2),
+                    'discount_percent': discount_percent,
+                    'net_total': round(net_total, 2),
+                },
+            )
+            db.session.commit()
+            flash(msg, category='success')
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.exception('Error saving Charge Slip: %s', str(exc))
+            flash('Error saving Charge Slip. Please try again.', category='error')
+
+        return redirect(url_for('views.store_manager_charge_slip_history'))
+
+    control_no = _generate_taf_control_no(selected_date, 'Charge Slip')
+    product_rows = (
+        ProductMaster.query
+        .with_entities(ProductMaster.description, ProductMaster.sp_p, ProductMaster.sp_np, ProductMaster.tp)
+        .order_by(ProductMaster.description.asc())
+        .all()
+    )
+    store_group = Store.determine_store_group(store.name)
+    product_names = []
+    product_price_map = {}
+    for row in product_rows:
+        p_name = str(getattr(row, 'description', '') or '').strip()
+        if not p_name:
+            continue
+        product_names.append(p_name)
+        price_val = getattr(row, 'sp_np' if store_group == 'non_premium' else 'sp_p', None)
+        if price_val is None or price_val == 0.0:
+            price_val = getattr(row, 'tp', 0.0)
+        product_price_map[p_name] = float(price_val or 0.0)
+
+    edit_id = request.args.get('edit_id')
+    view_id = request.args.get('view_id')
+    loaded_slip = None
+    loaded_slip_items = []
+    is_edit_mode = False
+    is_view_only = False
+
+    if edit_id:
+        try:
+            loaded_slip = TafTransfer.query.filter_by(id=int(edit_id), store_id=store.id).first()
+            if loaded_slip:
+                is_finalized = _is_operational_day_finalized(store.id, loaded_slip.transaction_date)
+                if is_finalized and role not in ('Inventory Staff', 'Admin', 'Superadmin'):
+                    flash('This Charge Slip is locked for Store Managers because End of Day has been finalized.', category='warning')
+                    is_view_only = True
+                elif (loaded_slip.status or '').strip() != 'Pending' and role not in ('Inventory Staff', 'Admin', 'Superadmin'):
+                    flash('This Charge Slip is no longer pending and cannot be edited by Store Managers.', category='warning')
+                    is_view_only = True
+                else:
+                    is_edit_mode = True
+                loaded_slip_items = TafTransferItem.query.filter_by(transfer_id=loaded_slip.id).all()
+        except (ValueError, TypeError):
+            loaded_slip = None
+    elif view_id:
+        try:
+            loaded_slip = TafTransfer.query.filter_by(id=int(view_id), store_id=store.id).first()
+            if loaded_slip:
+                loaded_slip_items = TafTransferItem.query.filter_by(transfer_id=loaded_slip.id).all()
+                is_view_only = True
+        except (ValueError, TypeError):
+            loaded_slip = None
+
+    return render_template(
+        'store_manager/charge_slip.html',
+        user=current_user,
+        store=store,
+        today=today_date.strftime('%Y-%m-%d'),
+        selected_report_date=selected_date.strftime('%Y-%m-%d'),
+        control_no=control_no,
+        product_names=product_names,
+        product_price_map=product_price_map,
+        loaded_slip=loaded_slip,
+        loaded_slip_items=loaded_slip_items,
+        is_edit_mode=is_edit_mode,
+        is_view_only=is_view_only,
+    )
+
+
+@views.route('/store-manager/charge-slip/<int:transfer_id>')
+@login_required
+def store_manager_charge_slip_view(transfer_id):
+    return redirect(url_for('views.store_manager_charge_slip', view_id=transfer_id))
+
+
+@views.route('/store-manager/charge-slip-history')
+@login_required
+def store_manager_charge_slip_history():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Manager or Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    show_all_stores = request.args.get('all_stores', '0') == '1'
+
+    query = TafTransfer.query.options(selectinload(TafTransfer.items), selectinload(TafTransfer.store)).filter_by(transaction_type='Charge Slip')
+    if not show_all_stores:
+        query = query.filter_by(store_id=store.id)
+
+    charge_slips = (
+        query
+        .order_by(TafTransfer.transaction_date.desc(), TafTransfer.created_at.desc())
+        .all()
+    )
+
+    transfer_ids = [transfer.id for transfer in charge_slips]
+    item_count_by_transfer = {}
+    slip_items_by_transfer = {}
+    finalized_dates_map = {}
+
+    if transfer_ids:
+        item_count_by_transfer = {
+            int(transfer_id): int(item_count or 0)
+            for transfer_id, item_count in (
+                db.session.query(
+                    TafTransferItem.transfer_id,
+                    func.count(TafTransferItem.id),
+                )
+                .filter(TafTransferItem.transfer_id.in_(transfer_ids))
+                .group_by(TafTransferItem.transfer_id)
+                .all()
+            )
+        }
+        all_items = TafTransferItem.query.filter(TafTransferItem.transfer_id.in_(transfer_ids)).all()
+        for item in all_items:
+            t_id = int(item.transfer_id)
+            if t_id not in slip_items_by_transfer:
+                slip_items_by_transfer[t_id] = []
+            slip_items_by_transfer[t_id].append({
+                'item_name': item.item_name,
+                'qty': item.quantity,
+                'unit_cost': float(item.unit_cost or 0.0),
+                'total_cost': float(item.line_total or 0.0),
+            })
+
+    for slip in charge_slips:
+        finalized_dates_map[slip.id] = _is_operational_day_finalized(slip.store_id, slip.transaction_date)
+
+    product_rows = ProductMaster.query.order_by(ProductMaster.description.asc()).all()
+    store_group = Store.determine_store_group(store.name)
+    product_names = []
+    product_price_map = {}
+    for row in product_rows:
+        p_name = str(getattr(row, 'description', '') or '').strip()
+        if not p_name:
+            continue
+        product_names.append(p_name)
+        price_val = getattr(row, 'sp_np' if store_group == 'non_premium' else 'sp_p', None)
+        if price_val is None or price_val == 0.0:
+            price_val = getattr(row, 'tp', 0.0)
+        product_price_map[p_name] = float(price_val or 0.0)
+
+    all_stores_query = Store.query.order_by(Store.name.asc()).all()
+    all_stores = [{'id': s.id, 'name': s.name} for s in all_stores_query]
+
+    return render_template(
+        'store_manager/charge_slip_history.html',
+        user=current_user,
+        store=store,
+        charge_slips=charge_slips,
+        item_count_by_transfer=item_count_by_transfer,
+        slip_items_by_transfer=slip_items_by_transfer,
+        finalized_dates_map=finalized_dates_map,
+        show_all_stores=show_all_stores,
+        product_names=product_names,
+        product_price_map=product_price_map,
+        all_stores=all_stores,
+    )
+
+
+@views.route('/store-manager/charge-slip/validate/<int:transfer_id>', methods=['POST'])
+@login_required
+def validate_charge_slip(transfer_id):
+    role = (current_user.role or '').strip()
+    if role not in ('Inventory Staff', 'Admin', 'Superadmin', 'Store Manager'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    slip = TafTransfer.query.get(transfer_id)
+    if not slip:
+        return jsonify({'success': False, 'message': 'Charge Slip not found.'}), 404
+
+    new_status = 'Validated' if slip.status != 'Validated' else 'Pending'
+    slip.status = new_status
+
+    from datetime import datetime
+    user_name = (getattr(current_user, 'full_name', None) or getattr(current_user, 'username', None) or f'User #{current_user.id}').strip()
+    if new_status == 'Validated':
+        slip.validated_by = current_user.id
+        slip.validated_at = datetime.now()
+    else:
+        slip.validated_by = None
+        slip.validated_at = None
+
+    try:
+        log_audit_event(
+            action='taf.charge_slip.validate',
+            entity_type='TafTransfer',
+            entity_id=slip.id,
+            reason=f'User {user_name} updated Charge Slip status to {new_status}.',
+            details={
+                'control_no': slip.control_no,
+                'status': new_status,
+                'validated_by_id': current_user.id,
+                'validated_by_name': user_name,
+                'user_id': current_user.id
+            }
+        )
+        db.session.commit()
+        val_time_str = slip.validated_at.strftime('%b %d, %Y %I:%M %p') if slip.validated_at else ''
+        return jsonify({
+            'success': True,
+            'status': new_status,
+            'validated_by_name': user_name if new_status == 'Validated' else '',
+            'validated_by_id': current_user.id if new_status == 'Validated' else None,
+            'validated_at_str': val_time_str,
+            'message': f'Status updated to {new_status}.'
+        })
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception('Error validating Charge Slip: %s', str(exc))
+        return jsonify({'success': False, 'message': 'Failed to update status.'}), 500
+
+
+@views.route('/store-manager/charge-slip/inline-update', methods=['POST'])
+@login_required
+def inline_update_charge_slip():
+    role = (current_user.role or '').strip()
+    if role not in ('Inventory Staff', 'Admin', 'Superadmin', 'Store Manager'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    data = request.get_json() or {}
+    transfer_id = data.get('transfer_id')
+    item_id = data.get('item_id')
+
+    if not transfer_id or str(transfer_id).lower() in ('', 'none'):
+        from datetime import datetime
+        store_id = None
+        if data.get('store_id'):
+            try:
+                store_id = int(data['store_id'])
+            except (ValueError, TypeError):
+                pass
+        if not store_id:
+            store_id = session.get('store_id') or (current_user.assigned_store_id if getattr(current_user, 'assigned_store_id', None) else None)
+        if not store_id and current_user.assigned_stores:
+            store_id = current_user.assigned_stores[0].id
+        if not store_id:
+            first_store = Store.query.first()
+            store_id = first_store.id if first_store else 1
+
+        ref_no = str(data.get('ref_no') or '').strip()
+        if not ref_no:
+            count_slips = TafTransfer.query.count() + 1
+            ref_no = f"CS-{datetime.now().strftime('%Y%m%d')}-{count_slips:04d}"
+        else:
+            existing = TafTransfer.query.filter_by(control_no=ref_no).first()
+            if existing:
+                return jsonify({'success': False, 'message': f'Control No. {ref_no} is already in use.'}), 400
+
+        t_date = datetime.now().date()
+        if data.get('transaction_date'):
+            try:
+                t_date = datetime.strptime(data['transaction_date'], '%Y-%m-%d').date()
+            except ValueError:
+                pass
+
+        disc_pct = 0.0
+        if data.get('discount_percent'):
+            try:
+                disc_pct = float(data['discount_percent'])
+            except (ValueError, TypeError):
+                pass
+
+        slip = TafTransfer(
+            store_id=store_id,
+            control_no=ref_no,
+            customer_name=str(data.get('payee') or '').strip(),
+            transaction_date=t_date,
+            discount_percent=disc_pct,
+            remarks=str(data.get('remarks') or '').strip(),
+            status='Pending',
+            user_id=current_user.id
+        )
+        db.session.add(slip)
+        db.session.flush()
+        transfer_id = slip.id
+    else:
+        slip = TafTransfer.query.get(transfer_id)
+        if not slip:
+            return jsonify({'success': False, 'message': 'Charge Slip not found.'}), 404
+
+    # Update slip header fields
+    if data.get('store_id'):
+        try:
+            slip.store_id = int(data['store_id'])
+        except (ValueError, TypeError):
+            pass
+
+    if 'transaction_date' in data and data['transaction_date']:
+        try:
+            from datetime import datetime
+            slip.transaction_date = datetime.strptime(data['transaction_date'], '%Y-%m-%d').date()
+        except ValueError:
+            pass
+
+    if 'payee' in data:
+        slip.customer_name = str(data['payee'] or '').strip()
+
+    if 'ref_no' in data and data['ref_no']:
+        new_ref = str(data['ref_no']).strip()
+        if new_ref and new_ref != slip.control_no:
+            existing = TafTransfer.query.filter_by(control_no=new_ref).first()
+            if existing and existing.id != slip.id:
+                return jsonify({'success': False, 'message': f'Control No. {new_ref} is already in use.'}), 400
+            slip.control_no = new_ref
+
+    if 'discount_percent' in data:
+        try:
+            slip.discount_percent = float(data['discount_percent'] or 0.0)
+        except (ValueError, TypeError):
+            pass
+
+    # Update line item if item_id provided or create new item if item_id == 'new'
+    updated_item = None
+    if item_id:
+        if str(item_id).lower() == 'new':
+            item_name = str(data.get('item_name') or 'New Item').strip()
+            qty = max(0, int(data.get('quantity') or 0)) if 'quantity' in data and data['quantity'] != '' else 0
+            cost = max(0.0, float(data.get('unit_cost') or 0.0)) if 'unit_cost' in data and data['unit_cost'] != '' else 0.0
+            item_remarks = str(data.get('remarks') or '').strip()
+            item = TafTransferItem(
+                transfer_id=slip.id,
+                item_name=item_name,
+                quantity=qty,
+                unit_cost=cost,
+                line_total=qty * cost,
+                remarks=item_remarks
+            )
+            db.session.add(item)
+            db.session.flush()
+            updated_item = item
+        else:
+            item = TafTransferItem.query.get(item_id)
+            if item and item.transfer_id == slip.id:
+                if 'item_name' in data:
+                    item.item_name = str(data['item_name'] or '').strip()
+                if 'quantity' in data:
+                    try:
+                        item.quantity = max(0, int(data['quantity'] or 0))
+                    except (ValueError, TypeError):
+                        pass
+                if 'unit_cost' in data:
+                    try:
+                        item.unit_cost = max(0.0, float(data['unit_cost'] or 0.0))
+                    except (ValueError, TypeError):
+                        pass
+                if 'remarks' in data:
+                    item.remarks = str(data['remarks'] or '').strip()
+                item.line_total = (item.quantity or 0) * (item.unit_cost or 0.0)
+                updated_item = item
+
+    # Recalculate slip totals
+    all_items = TafTransferItem.query.filter_by(transfer_id=slip.id).all()
+    if all_items:
+        slip.grand_total = sum(i.quantity * i.unit_cost for i in all_items)
+    else:
+        slip.grand_total = 0.0
+
+    disc_frac = max(0.0, min(100.0, slip.discount_percent or 0.0)) / 100.0
+    slip.net_total = slip.grand_total * (1.0 - disc_frac)
+
+    try:
+        log_audit_event(
+            action='taf.charge_slip.inline_update',
+            entity_type='TafTransfer',
+            entity_id=slip.id,
+            reason='User updated Charge Slip line item / header inline via Spreadsheet view.',
+            details={
+                'control_no': slip.control_no,
+                'item_id': item_id,
+                'user_id': current_user.id
+            }
+        )
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': 'Row saved successfully!',
+            'transfer_id': slip.id,
+            'store_id': slip.store_id,
+            'store_name': slip.store.name if slip.store else '',
+            'grand_total': slip.grand_total,
+            'net_total': slip.net_total,
+            'discount_percent': slip.discount_percent,
+            'control_no': slip.control_no,
+            'customer_name': slip.customer_name,
+            'transaction_date': slip.transaction_date.strftime('%Y-%m-%d') if slip.transaction_date else '',
+            'month_str': slip.transaction_date.strftime('%B') if slip.transaction_date else '',
+            'item_id': updated_item.id if updated_item else None,
+            'item_name': updated_item.item_name if updated_item else '',
+            'quantity': updated_item.quantity if updated_item else 0,
+            'unit_cost': updated_item.unit_cost if updated_item else 0.0,
+            'line_total': updated_item.line_total if updated_item else 0.0,
+            'remarks': updated_item.remarks if updated_item else slip.remarks
+        })
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception('Error inline updating Charge Slip: %s', str(exc))
+
+
+@views.route('/store-manager/trans')
+@login_required
+def store_manager_incoming_transfers():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Manager or Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    candidate_stores = [store]
+    incoming_transfers = _collect_incoming_transfers_for_stores(candidate_stores)
+
+    transfer_ids = [transfer.id for transfer in incoming_transfers]
+    item_count_by_transfer = {}
+    if transfer_ids:
+        item_count_by_transfer = {
+            int(transfer_id): int(item_count or 0)
+            for transfer_id, item_count in (
+                db.session.query(
+                    TafTransferItem.transfer_id,
+                    func.count(TafTransferItem.id),
+                )
+                .filter(TafTransferItem.transfer_id.in_(transfer_ids))
+                .group_by(TafTransferItem.transfer_id)
+                .all()
+            )
+        }
+
+    return render_template(
+        'store_manager/trans.html',
+        user=current_user,
+        store=store,
+        incoming_transfers=incoming_transfers,
+        item_count_by_transfer=item_count_by_transfer,
+    )
+
+
+@views.route('/store-manager/trans/<int:transfer_id>', methods=['GET', 'POST'])
+@login_required
+def store_manager_incoming_transfer_view(transfer_id):
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Manager or Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    transfer = TafTransfer.query.filter_by(id=transfer_id).first()
+    if not transfer:
+        flash('Transfer record not found.', category='error')
+        return redirect(url_for('views.store_manager_incoming_transfers'))
+
+    if role == 'Inventory Staff':
+        candidate_stores = _inventory_staff_assigned_stores() or [store]
+    else:
+        candidate_stores = [store]
+
+    transfer_type_normalized = str(getattr(transfer, 'transaction_type', '') or '').strip().lower()
+    transfer_to_norm = _normalize_store_name_for_match(getattr(transfer, 'transfer_to', ''))
+    transfer_store_id = int(getattr(transfer, 'store_id', 0) or 0)
+
+    dest_store = _resolve_transfer_destination_store(transfer, candidate_stores)
+    is_incoming_for_current_store = bool(dest_store and transfer_store_id != int(dest_store.id))
+    is_self_main_office_wastage = (
+        transfer_type_normalized == 'wastage transfer'
+        and transfer_to_norm == 'mainoffice'
+        and any(int(s.id) == transfer_store_id for s in candidate_stores)
+    )
+    if not (is_incoming_for_current_store or is_self_main_office_wastage):
+        flash('You can only view allowed incoming transfers for your store.', category='error')
+        return redirect(url_for('views.store_manager_incoming_transfers'))
+
+    if dest_store:
+        store = dest_store
+    elif is_self_main_office_wastage:
+        source_store = Store.query.get(transfer_store_id)
+        if source_store:
+            store = source_store
+
+    transfer_items = (
+        TafTransferItem.query
+        .filter(TafTransferItem.transfer_id == transfer.id)
+        .order_by(TafTransferItem.id.asc())
+        .all()
+    )
+    can_receive_action = (
+        (role == 'Inventory Staff' and transfer_type_normalized == 'wastage transfer')
+        or (role == 'Store Manager' and transfer_type_normalized != 'wastage transfer')
+    )
+
+    if request.method == 'POST':
+        if not can_receive_action:
+            flash('Access denied. Only assigned Inventory Staff can confirm receipt of a Wastage Transfer.', category='error')
+            return redirect(url_for('views.store_manager_incoming_transfer_view', transfer_id=transfer.id))
+
+        current_status = str(getattr(transfer, 'status', '') or 'Pending').strip()
+        if current_status != 'Pending':
+            flash('This transfer is already finalized and can no longer be edited.', category='error')
+            return redirect(url_for('views.store_manager_incoming_transfer_view', transfer_id=transfer.id))
+
+        received_by_name = str(request.form.get('received_by_name', '') or '').strip()
+        if not received_by_name:
+            flash('Received By is required.', category='error')
+            return redirect(url_for('views.store_manager_incoming_transfer_view', transfer_id=transfer.id))
+
+        item_ids = request.form.getlist('item_id[]')
+        received_qty_list = request.form.getlist('received_qty[]')
+        qty_by_item_id = {}
+        for idx in range(max(len(item_ids), len(received_qty_list))):
+            raw_item_id = item_ids[idx] if idx < len(item_ids) else ''
+            raw_received_qty = received_qty_list[idx] if idx < len(received_qty_list) else ''
+            item_id_str = str(raw_item_id or '').strip()
+            if not item_id_str:
+                continue
+            qty_by_item_id[item_id_str] = str(raw_received_qty or '').strip()
+
+        has_short = False
+        has_over = False
+        for item in transfer_items:
+            raw_received_qty = qty_by_item_id.get(str(item.id), '')
+            if not raw_received_qty:
+                flash(f'Received Qty is required for item "{item.item_name}".', category='error')
+                return redirect(url_for('views.store_manager_incoming_transfer_view', transfer_id=transfer.id))
+            if not re.fullmatch(r'\d+', raw_received_qty):
+                flash(f'Received Qty must be a whole number for item "{item.item_name}".', category='error')
+                return redirect(url_for('views.store_manager_incoming_transfer_view', transfer_id=transfer.id))
+
+            received_qty = int(raw_received_qty)
+            sent_qty = int(getattr(item, 'quantity', 0) or 0)
+            variance_qty = int(received_qty - sent_qty)
+            item.received_quantity = received_qty
+            item.short_over_qty = variance_qty
+            if variance_qty < 0:
+                has_short = True
+            elif variance_qty > 0:
+                has_over = True
+
+        transfer.received_by_name = received_by_name
+        if has_short and has_over:
+            transfer.status = 'Received - Short/Over'
+        elif has_short:
+            transfer.status = 'Received - Short'
+        elif has_over:
+            transfer.status = 'Received - Over'
+        else:
+            transfer.status = 'Received'
+
+        received_date_str = str(request.form.get('received_date', '') or '').strip()
+        received_date = None
+        if received_date_str:
+            try:
+                from datetime import datetime
+                received_date = datetime.strptime(received_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                pass
+
+        transfer.received_date = received_date
+
+        # Update invensync Trans-In quantity when receiving is confirmed
+        _update_inventory_trans_in_on_receive(transfer, transfer_items, received_date=received_date)
+
+        log_audit_event(
+            action='taf.product_transfer.receive',
+            entity_type='TafTransfer',
+            entity_id=transfer.id,
+            reason='Incoming transfer marked as received.',
+            details={
+                'store_id': store.id,
+                'control_no': transfer.control_no,
+                'transaction_type': transfer.transaction_type,
+                'receiver_role': role,
+                'received_by_name': received_by_name,
+                'status': transfer.status,
+                'has_short': has_short,
+                'has_over': has_over,
+            },
+        )
+        db.session.commit()
+        flash('Incoming transfer updated successfully.', category='success')
+        return redirect(url_for('views.store_manager_incoming_transfer_view', transfer_id=transfer.id))
+
+    return render_template(
+        'store_manager/trans_view.html',
+        user=current_user,
+        store=store,
+        transfer=transfer,
+        transfer_items=transfer_items,
+        can_edit_receive=can_receive_action,
+    )
+
+
+def _can_store_manager_edit_wastage_transfer(transfer, store):
+    """Shared gate for editing/deleting a Wastage Transfer before End of Day."""
+    if not transfer or not store:
+        return False
+    if str(getattr(transfer, 'transaction_type', '') or '').strip().lower() != 'wastage transfer':
+        return False
+    if int(getattr(transfer, 'store_id', 0) or 0) != int(store.id):
+        return False
+    if str(getattr(transfer, 'status', '') or 'Pending').strip() != 'Pending':
+        return False
+    if _is_operational_day_finalized(store.id, transfer.transaction_date):
+        return False
+    return True
+
+
+def _build_edited_transfer_items(item_names, unit_costs, quantities, remarks_list):
+    """Parse TAF item rows from the edit form, mirroring TAF submission rules."""
+    product_master_name_map = {
+        _normalize_product_name(description): str(description or '').strip()
+        for (description,) in (
+            db.session.query(ProductMaster.description)
+            .filter(ProductMaster.description.isnot(None))
+            .all()
+        )
+        if _normalize_product_name(description)
+    }
+
+    parsed_items = []
+    row_count = max(len(item_names), len(unit_costs), len(quantities), len(remarks_list))
+    for idx in range(row_count):
+        raw_item_name = item_names[idx] if idx < len(item_names) else ''
+        raw_unit_cost = unit_costs[idx] if idx < len(unit_costs) else ''
+        raw_quantity = quantities[idx] if idx < len(quantities) else ''
+        raw_remarks = remarks_list[idx] if idx < len(remarks_list) else ''
+
+        item_name = str(raw_item_name or '').strip()
+        remarks = str(raw_remarks or '').strip()
+        unit_cost = _parse_float(raw_unit_cost, default=0.0)
+        quantity = _parse_int(raw_quantity, default=0)
+
+        row_is_empty = (
+            not item_name
+            and not str(raw_unit_cost or '').strip()
+            and not str(raw_quantity or '').strip()
+            and not remarks
+        )
+        if row_is_empty:
+            continue
+        if not item_name:
+            raise ValueError(f'Item Name is required on row {idx + 1}.')
+        canonical_item_name = product_master_name_map.get(_normalize_product_name(item_name))
+        if not canonical_item_name:
+            raise ValueError(f'Please select a valid Product Master item on row {idx + 1}.')
+        if quantity <= 0:
+            raise ValueError(f'Qty must be greater than 0 on row {idx + 1}.')
+        if unit_cost < 0:
+            raise ValueError(f'Unit Cost cannot be negative on row {idx + 1}.')
+
+        parsed_items.append({
+            'item_name': canonical_item_name,
+            'unit_cost': float(unit_cost),
+            'quantity': int(quantity),
+            'line_total': float(unit_cost * quantity),
+            'remarks': remarks or None,
+        })
+    return parsed_items
+
+
+@views.route('/store-manager/trans/<int:transfer_id>/edit', methods=['POST'])
+@login_required
+def store_manager_edit_taf_transfer(transfer_id):
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    transfer = TafTransfer.query.get(transfer_id)
+    if not _can_store_manager_edit_wastage_transfer(transfer, store):
+        flash('This Wastage Transfer can no longer be edited (not pending, or the day is already finalized).', category='error')
+        return redirect(url_for('views.store_manager_wastage'))
+
+    try:
+        item_names = request.form.getlist('item_name[]')
+        unit_costs = request.form.getlist('unit_cost[]')
+        quantities = request.form.getlist('qty[]')
+        remarks_list = request.form.getlist('remarks[]')
+
+        parsed_items = _build_edited_transfer_items(item_names, unit_costs, quantities, remarks_list)
+        if not parsed_items:
+            flash('Please add at least one wastage item before saving.', category='error')
+            return redirect(url_for('views.store_manager_transaction_activity_form', date=transfer.transaction_date.strftime('%Y-%m-%d')))
+
+        grand_total = float(sum(item['line_total'] for item in parsed_items))
+
+        old_item_ids = [item.id for item in transfer.items]
+        affected_product_ids = []
+        for item in transfer.items:
+            master_id = _resolve_product_master_id(item.item_name)
+            if master_id:
+                affected_product_ids.append(master_id)
+        TafTransferItem.query.filter_by(transfer_id=transfer.id).delete(synchronize_session=False)
+
+        for item in parsed_items:
+            master_id = _resolve_product_master_id(item['item_name'])
+            if master_id:
+                affected_product_ids.append(master_id)
+            db.session.add(TafTransferItem(
+                transfer_id=transfer.id,
+                item_name=item['item_name'],
+                unit_cost=item['unit_cost'],
+                quantity=item['quantity'],
+                received_quantity=None,
+                short_over_qty=0,
+                line_total=item['line_total'],
+                remarks=item['remarks'],
+            ))
+
+        transfer.grand_total = grand_total
+        db.session.flush()
+        _sync_taf_wastage_inventory_for_store_date(store, transfer.transaction_date, affected_product_ids)
+
+        log_audit_event(
+            action='taf.wastage_transfer.edit',
+            entity_type='TafTransfer',
+            entity_id=transfer.id,
+            reason='Store manager edited pending Wastage Transfer before End of Day.',
+            details={
+                'store_id': store.id,
+                'control_no': transfer.control_no,
+                'transaction_date': transfer.transaction_date.strftime('%Y-%m-%d'),
+                'item_count': len(parsed_items),
+                'grand_total': round(grand_total, 2),
+                'replaced_item_ids': old_item_ids,
+            },
+        )
+        db.session.commit()
+        flash('Wastage Transfer updated and reflected in InvenSync.', category='success')
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), category='error')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error updating Wastage Transfer: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_wastage'))
+
+
+@views.route('/store-manager/trans/<int:transfer_id>/delete', methods=['POST'])
+@login_required
+def store_manager_delete_taf_transfer(transfer_id):
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    transfer = TafTransfer.query.get(transfer_id)
+    if not _can_store_manager_edit_wastage_transfer(transfer, store):
+        flash('This Wastage Transfer can no longer be deleted (not pending, or the day is already finalized).', category='error')
+        return redirect(url_for('views.store_manager_wastage'))
+
+    try:
+        affected_product_ids = []
+        for item in transfer.items:
+            master_id = _resolve_product_master_id(item.item_name)
+            if master_id:
+                affected_product_ids.append(master_id)
+
+        details = {
+            'store_id': store.id,
+            'control_no': transfer.control_no,
+            'transaction_date': transfer.transaction_date.strftime('%Y-%m-%d'),
+            'item_count': len(transfer.items),
+            'grand_total': round(float(transfer.grand_total or 0.0), 2),
+        }
+
+        TafTransferItem.query.filter_by(transfer_id=transfer.id).delete(synchronize_session=False)
+        db.session.delete(transfer)
+        db.session.flush()
+        _sync_taf_wastage_inventory_for_store_date(store, transfer.transaction_date, affected_product_ids)
+
+        log_audit_event(
+            action='taf.wastage_transfer.delete',
+            entity_type='TafTransfer',
+            entity_id=transfer_id,
+            reason='Store manager deleted pending Wastage Transfer before End of Day.',
+            details=details,
+        )
+        db.session.commit()
+        flash('Wastage Transfer deleted and InvenSync reconciled.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error deleting Wastage Transfer: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_wastage'))
+
+
+@views.route('/store-manager/trans-out')
+@login_required
+def store_manager_outgoing_transfers():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Manager or Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    candidate_store_ids = [store.id]
+
+    outgoing_transfers = (
+        TafTransfer.query
+        .filter(TafTransfer.store_id.in_(candidate_store_ids))
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer', 'supplies transfer']))
+        .order_by(TafTransfer.transaction_date.desc(), TafTransfer.id.desc())
+        .all()
+    )
+
+    transfer_ids = [transfer.id for transfer in outgoing_transfers]
+    item_count_by_transfer = {}
+    if transfer_ids:
+        item_count_by_transfer = {
+            int(transfer_id): int(item_count or 0)
+            for transfer_id, item_count in (
+                db.session.query(
+                    TafTransferItem.transfer_id,
+                    func.count(TafTransferItem.id),
+                )
+                .filter(TafTransferItem.transfer_id.in_(transfer_ids))
+                .group_by(TafTransferItem.transfer_id)
+                .all()
+            )
+        }
+
+    return render_template(
+        'store_manager/trans_out.html',
+        user=current_user,
+        store=store,
+        outgoing_transfers=outgoing_transfers,
+        item_count_by_transfer=item_count_by_transfer,
+    )
+
+
+@views.route('/store-manager/trans-out/<int:transfer_id>')
+@login_required
+def store_manager_outgoing_transfer_view(transfer_id):
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Manager or Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    transfer = TafTransfer.query.filter_by(id=transfer_id).first()
+    if not transfer:
+        flash('Transfer record not found.', category='error')
+        return redirect(url_for('views.store_manager_outgoing_transfers'))
+
+    if role == 'Inventory Staff':
+        candidate_store_ids = {int(s.id) for s in (_inventory_staff_assigned_stores() or [store])}
+    else:
+        candidate_store_ids = {int(store.id)}
+
+    transfer_store_id = int(getattr(transfer, 'store_id', 0) or 0)
+    if transfer_store_id not in candidate_store_ids:
+        flash('You can only view outgoing transfers from your store.', category='error')
+        return redirect(url_for('views.store_manager_outgoing_transfers'))
+
+    source_store = Store.query.get(transfer_store_id)
+    if source_store:
+        store = source_store
+
+    transfer_items = (
+        TafTransferItem.query
+        .filter(TafTransferItem.transfer_id == transfer.id)
+        .order_by(TafTransferItem.id.asc())
+        .all()
+    )
+
+    return render_template(
+        'store_manager/trans_view.html',
+        user=current_user,
+        store=store,
+        transfer=transfer,
+        transfer_items=transfer_items,
+        can_edit_receive=False,
+        trans_view_mode='outgoing',
+    )
+
+
+@views.route('/store-manager/wastage/<int:transfer_id>')
+@login_required
+def store_manager_wastage_transfer_view(transfer_id):
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Manager or Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    transfer = TafTransfer.query.filter_by(id=transfer_id).first()
+    if not transfer:
+        flash('Transfer record not found.', category='error')
+        return redirect(url_for('views.store_manager_wastage'))
+
+    if role == 'Inventory Staff':
+        candidate_stores = _inventory_staff_assigned_stores() or [store]
+    else:
+        candidate_stores = [store]
+
+    dest_store = _resolve_transfer_destination_store(transfer, candidate_stores)
+    is_incoming_for_current_store = bool(dest_store and int(getattr(transfer, 'store_id', 0) or 0) != int(dest_store.id))
+    if not is_incoming_for_current_store:
+        flash('You can only view incoming wastage transfers sent to your store.', category='error')
+        return redirect(url_for('views.store_manager_wastage'))
+
+    transfer_type = str(getattr(transfer, 'transaction_type', '') or '').strip().lower()
+    if transfer_type != 'wastage transfer':
+        flash('Selected transfer is not a wastage transfer.', category='error')
+        return redirect(url_for('views.store_manager_wastage'))
+    return redirect(url_for('views.store_manager_incoming_transfer_view', transfer_id=transfer.id))
+
+
+@views.route('/store-manager/wastage')
+@login_required
+def store_manager_wastage():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Manager or Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    candidate_stores = [store]
+    wastage_transfers = _collect_wastage_transfers_for_stores(candidate_stores)
+
+    editable_wastage_ids = set()
+    if role == 'Store Manager':
+        for transfer in wastage_transfers:
+            if _can_store_manager_edit_wastage_transfer(transfer, store):
+                editable_wastage_ids.add(int(transfer.id))
+
+    transfer_ids = [transfer.id for transfer in wastage_transfers]
+    item_count_by_transfer = {}
+    if transfer_ids:
+        item_count_by_transfer = {
+            int(transfer_id): int(item_count or 0)
+            for transfer_id, item_count in (
+                db.session.query(
+                    TafTransferItem.transfer_id,
+                    func.count(TafTransferItem.id),
+                )
+                .filter(TafTransferItem.transfer_id.in_(transfer_ids))
+                .group_by(TafTransferItem.transfer_id)
+                .all()
+            )
+        }
+
+    return render_template(
+        'store_manager/wastage.html',
+        user=current_user,
+        store=store,
+        wastage_transfers=wastage_transfers,
+        item_count_by_transfer=item_count_by_transfer,
+        editable_wastage_ids=editable_wastage_ids,
+    )
+
+
+@views.route('/store-manager/daily-report/pos-sold/review', methods=['POST'])
+@login_required
+def review_pos_sold_excel():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        if report_date > date.today():
+            flash('Report date cannot be in the future.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        upload_file = request.files.get('pos_file')
+        if not upload_file or upload_file.filename == '':
+            flash('Please select a POS Excel file to upload.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        filename = (upload_file.filename or '').lower()
+        if not filename.endswith(('.xls', '.xlsx')):
+            flash('Please upload an Excel file (.xls or .xlsx).', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        parsed_items = _extract_pos_sold_items_from_excel(upload_file, store=store, expected_report_date=report_date)
+
+        report = DailyReport.query.filter_by(store_id=store.id, report_date=report_date).first()
+        if report and PosSold.query.filter_by(daily_report_id=report.id).first():
+            flash('POS sold for this report date has already been uploaded. Upload is allowed once only.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+        if _get_pos_sold_staging(store.id, report_date):
+            flash('POS Sold is already saved for this date.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        _set_pos_sold_draft(store.id, report_date, parsed_items)
+
+        log_audit_event(
+            action='report.pos_sold.review',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store manager extracted POS sold items from Excel for review.',
+            details={
+                'store_id': store.id,
+                'report_date': report_date.strftime('%Y-%m-%d'),
+                'filename': upload_file.filename,
+                'rows_extracted': len(parsed_items),
+            },
+        )
+        db.session.commit()
+
+        return redirect(
+            url_for(
+                'views.store_manager_pos_sold',
+                date=report_date.strftime('%Y-%m-%d'),
+                pos_scan_success=1,
+                pos_scan_rows=len(parsed_items),
+            )
+        )
+
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), category='error')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error uploading POS sold file: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/daily-report/pos-sold/clear', methods=['POST'])
+@login_required
+def clear_pos_sold_review_data():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+
+        cleared_items = _pop_pos_sold_draft(store.id, report_date)
+        db.session.commit()
+        if cleared_items:
+            flash('Extracted POS sold review data cleared.', category='success')
+        else:
+            flash('No extracted POS sold review data found to clear.', category='info')
+
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error clearing extracted data: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/daily-report/pos-sold/delete-all', methods=['POST'])
+@login_required
+def delete_all_pos_sold_data():
+    """Delete all saved POS Sold data and clear reflected inventory sold data"""
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+
+        if _is_operational_day_finalized(store.id, report_date):
+            flash(
+                f'End of Day is already done for {report_date.strftime("%B %d, %Y")}. '
+                'POS Sold can no longer be deleted. Contact an Admin to unfinalize the day.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        report = DailyReport.query.filter_by(
+            store_id=store.id,
+            report_date=report_date
+        ).first()
+        pos_items = (
+            PosSold.query.filter_by(daily_report_id=report.id).all()
+            if report else []
+        )
+        staging = _get_pos_sold_staging(store.id, report_date)
+        draft_items = _get_pos_sold_draft(store.id, report_date)
+
+        if not pos_items and not staging and not draft_items:
+            flash('No POS Sold data found to delete for this date.', category='info')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        deleted_count = len(pos_items)
+        total_quantity = sum(int(item.quantity or 0) for item in pos_items)
+
+        for item in pos_items:
+            db.session.delete(item)
+
+        if report:
+            report.pos_gross_sales = 0.0
+            report.pos_net_sales = 0.0
+            report.pos_tc = 0
+            report.pos_motif_breakdown_json = '[]'
+
+        if staging:
+            db.session.delete(staging)
+        if draft_items:
+            _pop_pos_sold_draft(store.id, report_date)
+
+        _reconcile_pos_sold_quantities_to_inventory(store.id, report_date, {})
+
+        if report:
+            from .admin import _delete_empty_pending_report
+            _delete_empty_pending_report(report)
+
+        log_audit_event(
+            action='report.pos_sold.delete_all',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store manager deleted all POS Sold records and cleared reflected inventory data.',
+            details={
+                'store_id': store.id,
+                'report_date': report_date.strftime('%Y-%m-%d'),
+                'pos_records_deleted': deleted_count,
+                'total_quantity': total_quantity,
+            },
+        )
+
+        db.session.commit()
+        flash(
+            f'✓ Deleted {deleted_count} POS Sold record(s). Cleared Sold data from InvenSync.',
+            category='success'
+        )
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error deleting POS Sold data: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/daily-report/pos-sold/submit', methods=['POST'])
+@login_required
+def submit_pos_sold_report():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        redirect_to = (request.form.get('redirect_to') or '').strip().lower()
+        if report_date > date.today():
+            flash('Report date cannot be in the future.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        existing_report = DailyReport.query.filter_by(store_id=store.id, report_date=report_date).first()
+        if existing_report and PosSold.query.filter_by(daily_report_id=existing_report.id).first():
+            flash('POS sold for this report date has already been uploaded. Submission is allowed once only.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+        if _get_pos_sold_staging(store.id, report_date):
+            flash('POS Sold is already saved for this date.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        draft_pos_sold_items = _get_pos_sold_draft(store.id, report_date)
+        if not draft_pos_sold_items:
+            flash(
+                f'POS Sold is not yet scanned for {report_date.strftime("%B %d, %Y")}. '
+                f'Please attach the POS Sold file and click Scan Data before saving.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        motif_breakdown_raw = (request.form.get('motif_breakdown_json') or '').strip()
+        try:
+            motif_breakdown = json.loads(motif_breakdown_raw) if motif_breakdown_raw else {}
+        except (TypeError, ValueError):
+            motif_breakdown = {}
+        motif_rows = _validate_saved_motif_rows(draft_pos_sold_items, motif_breakdown)
+
+        z_reading_image_file = request.files.get('z_reading_image')
+        z_reading_base64 = (request.form.get('z_reading_image_base64') or '').strip()
+        z_reading_name = (request.form.get('z_reading_image_name') or '').strip()
+        z_reading_mime = (request.form.get('z_reading_image_mime') or '').strip()
+
+        has_uploaded_file = bool(z_reading_image_file and (z_reading_image_file.filename or '').strip())
+        has_base64_image = bool(z_reading_base64)
+
+        drive_file = None
+        if has_uploaded_file:
+            if not _is_allowed_image_filename(z_reading_image_file.filename):
+                flash('Please upload an image file (.png, .jpg, .jpeg, .webp).', category='error')
+                return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+            drive_file = _upload_z_reading_to_google_drive(z_reading_image_file, store, report_date)
+        elif has_base64_image:
+            if ',' in z_reading_base64 and z_reading_base64.lower().startswith('data:'):
+                z_reading_base64 = z_reading_base64.split(',', 1)[1].strip()
+
+            fallback_name = z_reading_name or 'z_reading_image.jpg'
+            if not _is_allowed_image_filename(fallback_name):
+                flash('Stored image is invalid. Please attach a valid image again.', category='error')
+                return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+            try:
+                decoded_bytes = base64.b64decode(z_reading_base64, validate=True)
+            except (ValueError, binascii.Error):
+                flash('Stored image is invalid or corrupted. Please attach the image again.', category='error')
+                return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+            drive_file = _upload_z_reading_bytes_to_google_drive(
+                file_bytes=decoded_bytes,
+                original_name=fallback_name,
+                mime_type=(z_reading_mime or 'application/octet-stream'),
+                store=store,
+                report_date=report_date,
+            )
+
+        drive_link = (drive_file.get('web_view_link') or drive_file.get('web_content_link') or '').strip() if drive_file else ''
+
+        staging = PosSoldStaging(
+            store_id=store.id,
+            report_date=report_date,
+            items_json=json.dumps(draft_pos_sold_items),
+            motif_breakdown_json=json.dumps(motif_rows),
+            z_reading_image_path=drive_link or None,
+            saved_by=current_user.id,
+        )
+        db.session.add(staging)
+        saved_quantities = _build_complete_pos_quantities(draft_pos_sold_items, motif_rows)
+        _ensure_invensync_inventory_for_pos_save(store, report_date, current_user.id)
+        reflected_in_inventory = _reconcile_pos_sold_quantities_to_inventory(
+            store.id,
+            report_date,
+            saved_quantities,
+        )
+        if not reflected_in_inventory:
+            raise RuntimeError('InvenSync could not be initialized for this report date.')
+        _pop_pos_sold_draft(store.id, report_date)
+        report = _ensure_daily_report_exists(store.id, report_date, current_user.id)
+        has_existing_pos = PosSold.query.filter_by(daily_report_id=report.id).first() is not None
+        if not has_existing_pos:
+            _commit_pos_sold_from_staging_items(
+                report,
+                draft_pos_sold_items,
+                z_reading_path=drive_link or None,
+                motif_json=json.dumps(motif_rows),
+            )
+
+        log_audit_event(
+            action='report.pos_sold.save',
+            entity_type='PosSoldStaging',
+            entity_id=staging.id,
+            reason='Store manager saved reviewed POS sold rows.',
+            details={
+                'store_id': store.id,
+                'report_date': report_date.strftime('%Y-%m-%d'),
+                'rows_saved': len(draft_pos_sold_items),
+                'z_reading_drive_file_id': drive_file.get('file_id', '') if drive_file else '',
+                'z_reading_drive_link': drive_link,
+            },
+        )
+        db.session.delete(staging)
+        db.session.flush()
+        db.session.commit()
+
+        if motif_rows:
+            flash(
+                f'POS Sold for {report_date.strftime("%B %d, %Y")} saved and reflected in InvenSync.',
+                category='success'
+            )
+        else:
+            flash(
+                f'POS Sold for {report_date.strftime("%B %d, %Y")} saved and reflected in InvenSync. '
+                'If Additional Charge for Motif was detected, you can complete the breakdown later from InvenSync.',
+                category='info'
+            )
+        if redirect_to == 'pos_sold':
+            session['login_selected_date'] = report_date.strftime('%Y-%m-%d')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+        session['login_selected_date'] = report_date.strftime('%Y-%m-%d')
+        return redirect(url_for('views.store_manager_report', date=report_date.strftime('%Y-%m-%d')))
+
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error saving POS Sold: {str(exc)}', category='error')
+        return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/daily-report/pos-sold/upload-z-reading', methods=['POST'])
+@login_required
+def upload_pos_sold_z_reading():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    report_date = date.today()
+    try:
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+
+        report_date_str = (request.form.get('report_date') or '').strip()
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+
+        staging = _get_pos_sold_staging(store.id, report_date)
+        report = DailyReport.query.filter_by(store_id=store.id, report_date=report_date).first()
+        pos_items = (
+            PosSold.query
+            .filter_by(daily_report_id=report.id)
+            .order_by(PosSold.id.asc())
+            .all()
+        ) if report else []
+        if not staging and not pos_items:
+            flash('No saved POS Sold data was found for this date.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        z_reading_image_file = request.files.get('z_reading_image')
+        if not z_reading_image_file or not (z_reading_image_file.filename or '').strip():
+            flash('Please choose an image file to upload.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+        if not _is_allowed_image_filename(z_reading_image_file.filename):
+            flash('Please upload an image file (.png, .jpg, .jpeg, .webp).', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        drive_file = _upload_z_reading_to_google_drive(z_reading_image_file, store, report_date)
+        drive_link = (drive_file.get('web_view_link') or drive_file.get('web_content_link') or '').strip()
+        if not drive_link:
+            flash('Uploaded image link is missing. Please try again.', category='error')
+            return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+        if staging:
+            staging.z_reading_image_path = drive_link
+        else:
+            for item in pos_items:
+                item.z_reading_image_path = drive_link
+
+        log_audit_event(
+            action='report.pos_sold.upload_z_reading',
+            entity_type='PosSoldStaging' if staging else 'DailyReport',
+            entity_id=staging.id if staging else report.id,
+            reason='Store manager uploaded Z reading image for saved POS Sold data.',
+            details={
+                'store_id': store.id,
+                'report_date': report_date.strftime('%Y-%m-%d'),
+                'rows_updated': len(_get_staged_pos_sold_items(staging)) if staging else len(pos_items),
+                'z_reading_drive_file_id': drive_file.get('file_id', ''),
+                'z_reading_drive_link': drive_link,
+            },
+        )
+        db.session.commit()
+        flash('Z Reading image uploaded successfully.', category='success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Error uploading Z Reading image: {str(exc)}', category='error')
+
+    return redirect(url_for('views.store_manager_pos_sold', date=report_date.strftime('%Y-%m-%d')))
+
+
+@views.route('/store-manager/daily-report/submit', methods=['POST'])
+@login_required
+def submit_daily_report():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+    
+    try:
+        # Get the store managed by this user
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+        
+        if not store:
+            flash('You are not assigned to any store.', category='error')
+            return redirect(url_for('views.home'))
+        
+        # Get report date from form
+        report_date_str = request.form.get('report_date')
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date() if report_date_str else date.today()
+        if report_date > date.today():
+            flash('Report date cannot be in the future.', category='error')
+            return redirect(url_for('views.store_manager_report', date=date.today().strftime('%Y-%m-%d')))
+
+        # Block empty submissions (date-only is not considered report data)
+        ignored_keys = {'report_date', 'csrf_token'}
+        has_report_values = any(
+            (value or '').strip()
+            for key, value in request.form.items()
+            if key not in ignored_keys
+        )
+        if not has_report_values:
+            flash('Please enter at least one report value before submitting.', category='error')
+            return redirect(url_for('views.store_manager_report', date=report_date.strftime('%Y-%m-%d')))
+        
+        # Check if report already exists for this date
+        existing_report = DailyReport.query.filter_by(store_id=store.id, report_date=report_date).first()
+        
+        if existing_report and existing_report.status == 'Approved':
+            flash(
+                f'A report for {report_date.strftime("%B %d, %Y")} is already approved and cannot be changed.',
+                category='error'
+            )
+            return redirect(url_for('views.store_manager_report', date=report_date.strftime('%Y-%m-%d')))
+
+        pos_staging = _get_pos_sold_staging(store.id, report_date)
+        staged_pos_sold_items = _get_staged_pos_sold_items(pos_staging)
+        existing_final_pos_items = (
+            PosSold.query.filter_by(daily_report_id=existing_report.id).all()
+            if existing_report else []
+        )
+        
+        # Helper function to get float value
+        def get_float(key, default=0.0):
+            val = request.form.get(key, '')
+            return float(val) if val and val.strip() else default
+        
+        # Helper function to get int value
+        def get_int(key, default=0):
+            val = request.form.get(key, '')
+            return int(val) if val and val.strip() else default
+        
+        report_values = {
+            # POS Sales
+            'pos_gross_sales': get_float('pos_gross_sales'),
+            'pos_net_sales': get_float('pos_net_sales'),
+            'pos_tc': get_int('pos_tc'),
+            # CI Regular Sales
+            'ci_regular_gross_sales': get_float('ci_regular_gross_sales'),
+            'ci_regular_net_sales': get_float('ci_regular_net_sales'),
+            'ci_tc': get_int('ci_tc'),
+            # CI Details
+            'ci_number': request.form.get('ci_number', ''),
+            'ci_sales_discount': get_float('ci_sales_discount'),
+            # SGA
+            'boothselling_sales': get_float('boothselling_sales'),
+            'boothselling_tc': get_int('boothselling_tc'),
+            'bulk_order_sales': get_float('bulk_order_sales'),
+            'bulk_order_tc': get_int('bulk_order_tc'),
+            'reseller_sales': get_float('reseller_sales'),
+            'reseller_tc': get_int('reseller_tc'),
+            'tieup_sales': get_float('tieup_sales'),
+            'tieup_tc': get_int('tieup_tc'),
+            'gow_sales': get_float('gow_sales'),
+            'gow_tc': get_int('gow_tc'),
+            'ambulant_sales': get_float('ambulant_sales'),
+            'ambulant_tc': get_int('ambulant_tc'),
+            'extended_hours_sales': get_float('extended_hours_sales'),
+            'extended_hours_tc': get_int('extended_hours_tc'),
+            # Aggregators
+            'gds_sales': get_float('gds_sales'),
+            'gds_tc': get_int('gds_tc'),
+            'grab_sales': get_float('grab_sales'),
+            'grab_tc': get_int('grab_tc'),
+            'foodpanda_sales': get_float('foodpanda_sales'),
+            'foodpanda_tc': get_int('foodpanda_tc'),
+            'paymaya_sales': get_float('paymaya_sales'),
+            'paymaya_tc': get_int('paymaya_tc'),
+            'gcash_sales': get_float('gcash_sales'),
+            'gcash_tc': get_int('gcash_tc'),
+            # LDTS
+            'ldts_gc': get_int('ldts_gc'),
+            'ldts_rolls': get_int('ldts_rolls'),
+            'ldts_premium': get_int('ldts_premium'),
+            # Ending Inventory
+            'ending_inv_gc': get_int('ending_inv_gc'),
+            'ending_inv_rolls': get_int('ending_inv_rolls'),
+            'ending_inv_premium': get_int('ending_inv_premium'),
+            # Spoilage
+            'spoilage_gc': get_float('spoilage_gc'),
+            'spoilage_rolls': get_float('spoilage_rolls'),
+            'spoilage_premium': get_float('spoilage_premium'),
+            'spoilage_others': get_float('spoilage_others'),
+            # Discount Monitoring
+            'senior_pwd_discount': get_float('senior_pwd_discount'),
+            'promo_ldts_discount': get_float('promo_ldts_discount'),
+            'bulk_orders_discount': get_float('bulk_orders_discount'),
+            # Calculated Spoilage
+            'total_net_spoilage': get_float('total_net_spoilage'),
+            'spoilage_percentage': get_float('spoilage_percentage'),
+            'mtd_percentage': get_float('mtd_percentage'),
+        }
+        authoritative_pos_items = staged_pos_sold_items or existing_final_pos_items
+        authoritative_pos_totals = _build_pos_sales_autofill_totals(authoritative_pos_items)
+        existing_pos_fields_blank = (
+            not existing_report
+            or (
+                not float(getattr(existing_report, 'pos_gross_sales', 0) or 0)
+                and not float(getattr(existing_report, 'pos_net_sales', 0) or 0)
+            )
+        )
+        if (
+            report_values.get('pos_gross_sales', 0.0) == 0.0
+            and report_values.get('pos_net_sales', 0.0) == 0.0
+            and existing_pos_fields_blank
+        ):
+            report_values['pos_gross_sales'] = authoritative_pos_totals['pos_gross_sales']
+            report_values['pos_net_sales'] = authoritative_pos_totals['pos_net_sales']
+
+        if existing_report:
+            new_report = existing_report
+            new_report.submitted_by = current_user.id
+            if new_report.status != 'Approved':
+                new_report.status = 'Pending'
+            for field_name, field_value in report_values.items():
+                setattr(new_report, field_name, field_value)
+        else:
+            new_report = DailyReport(
+                store_id=store.id,
+                report_date=report_date,
+                submitted_by=current_user.id,
+                **report_values,
+            )
+            db.session.add(new_report)
+
+        db.session.flush()
+
+        auto_saved_pos_rows = 0
+        has_existing_saved_pos = bool(PosSold.query.filter_by(daily_report_id=new_report.id).first())
+        if staged_pos_sold_items and not has_existing_saved_pos:
+            for item in staged_pos_sold_items:
+                db.session.add(
+                    PosSold(
+                        daily_report_id=new_report.id,
+                        product_name=str(item.get('product_name', '')).strip(),
+                        quantity=int(item.get('quantity', 0) or 0),
+                        gross_sales=float(item.get('gross_sales', 0.0) or 0.0),
+                        discount=float(item.get('discount', 0.0) or 0.0),
+                        net_sales=float(item.get('net_sales', 0.0) or 0.0),
+                        z_reading_image_path=pos_staging.z_reading_image_path or None,
+                    )
+                )
+            new_report.pos_motif_breakdown_json = pos_staging.motif_breakdown_json or '[]'
+            db.session.delete(pos_staging)
+            _pop_pos_sold_draft(store.id, report_date)
+            auto_saved_pos_rows = len(staged_pos_sold_items)
+        elif has_existing_saved_pos and pos_staging:
+            new_report.pos_motif_breakdown_json = pos_staging.motif_breakdown_json or new_report.pos_motif_breakdown_json or '[]'
+            db.session.delete(pos_staging)
+            _pop_pos_sold_draft(store.id, report_date)
+
+        log_audit_event(
+            action='report.submit',
+            entity_type='DailyReport',
+            entity_id=new_report.id,
+            reason='Store manager submitted a daily report.',
+            details={
+                'store_id': store.id,
+                'report_date': report_date.strftime('%Y-%m-%d'),
+                'status': new_report.status,
+                'mode': 'update' if existing_report else 'create',
+                'auto_saved_pos_rows': auto_saved_pos_rows,
+            },
+        )
+        if auto_saved_pos_rows:
+            log_audit_event(
+                action='report.pos_sold.auto_submit',
+                entity_type='DailyReport',
+                entity_id=new_report.id,
+                reason='Saved POS sold rows were converted to final records during Daily Report submission.',
+                details={
+                    'store_id': store.id,
+                    'report_date': report_date.strftime('%Y-%m-%d'),
+                    'rows_saved': auto_saved_pos_rows,
+                },
+            )
+        db.session.commit()
+
+        if auto_saved_pos_rows:
+            flash(
+                f'Daily report for {report_date.strftime("%B %d, %Y")} submitted successfully! '
+                f'POS sold was also submitted ({auto_saved_pos_rows} row{"s" if auto_saved_pos_rows != 1 else ""}).',
+                category='success'
+            )
+        else:
+            flash(f'Daily report for {report_date.strftime("%B %d, %Y")} submitted successfully!', category='success')
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error submitting report: {str(e)}', category='error')
+    
+    return redirect(url_for('views.store_manager_report', date=report_date.strftime('%Y-%m-%d')))
+
+
+# Cluster Manager Routes
+@views.route('/cluster-manager/raw-data')
+@login_required
+def cluster_manager_raw_data():
+    if current_user.role != 'Cluster Manager':
+        flash('Access denied. Only Cluster Managers can access this page.', category='error')
+        return redirect(url_for('views.home'))
+    
+    # Get the cluster managed by this user
+    from .models import Cluster
+    cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+    
+    if not cluster:
+        flash('You are not assigned to any cluster yet.', category='error')
+        return redirect(url_for('views.home'))
+    
+    # Get stores in this cluster
+    stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    stores = _apply_store_scope_filter(stores, request)
+    
+    # Get current month and year (or from query params)
+    from datetime import datetime as dt
+    today = date.today()
+    current_month = request.args.get('month', today.strftime('%m'))
+    current_year = request.args.get('year', str(today.year))
+    store_filter = request.args.get('store_id', '')
+    
+    # Fetch daily reports for the selected month/year
+    from calendar import monthrange
+    import calendar
+    
+    # Get all store IDs in this cluster
+    store_ids = [s.id for s in stores]
+    
+    # Filter by specific store if selected
+    if store_filter:
+        # Validate that the requested store is in the current scope-filtered list
+        valid_store_ids = [s.id for s in stores]
+        if int(store_filter) in valid_store_ids:
+            store_ids = [int(store_filter)]
+        else:
+            store_filter = ''
+    
+    # Build date range for the month
+    year_int = int(current_year)
+    month_int = int(current_month)
+    _, num_days = monthrange(year_int, month_int)
+    
+    # Fetch all reports for this month
+    from datetime import datetime
+    start_date = datetime(year_int, month_int, 1).date()
+    end_date = datetime(year_int, month_int, num_days).date()
+    
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_ending_inventory_from_invensync(reports)
+    _apply_taf_wastage_amounts(reports)
+    
+    # Fetch store targets for the selected month
+    from .models import StoreTarget
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+    
+    # Organize targets by date
+    targets_by_date = {}
+    for target in targets:
+        date_key = target.target_date.strftime('%Y-%m-%d')
+        if date_key not in targets_by_date:
+            targets_by_date[date_key] = []
+        targets_by_date[date_key].append(target)
+
+    daily_targets = _aggregate_targets_by_day(targets)
+    acc_daily_targets = _build_acc_targets_by_day(year_int, month_int, daily_targets)
+    acc_daily_sales = _build_acc_sales_by_day(year_int, month_int, reports)
+    mtd_metrics_by_day = _build_mtd_metrics_by_day(year_int, month_int, acc_daily_sales, acc_daily_targets)
+    _attach_report_calc_fields(
+        reports,
+        daily_targets,
+        acc_targets_by_day=acc_daily_targets,
+        acc_sales_by_day=acc_daily_sales
+    )
+    summary = _build_cluster_manager_summary(reports, targets)
+
+    store_name_by_id = {int(store.id): (store.name or '') for store in stores}
+    pos_scope_reports = (
+        DailyReport.query
+        .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+        .filter(DailyReport.store_id.in_(store_ids))
+        .group_by(DailyReport.id)
+        .order_by(DailyReport.report_date.desc(), DailyReport.id.desc())
+        .all()
+    )
+    pos_scope_report_ids = [int(report.id) for report in pos_scope_reports]
+    pos_items_by_report = {}
+    if pos_scope_report_ids:
+        pos_items = (
+            PosSold.query
+            .filter(PosSold.daily_report_id.in_(pos_scope_report_ids))
+            .order_by(PosSold.daily_report_id.asc(), PosSold.id.asc())
+            .all()
+        )
+        for item in pos_items:
+            if _is_grand_total_product_name(item.product_name):
+                continue
+            pos_items_by_report.setdefault(int(item.daily_report_id), []).append({
+                'product_name': item.product_name,
+                'quantity': int(item.quantity or 0),
+                'net_sales': float(item.net_sales or 0.0),
+            })
+
+    pos_modal_payload = []
+    for report in pos_scope_reports:
+        pos_modal_payload.append({
+            'report_id': int(report.id),
+            'store_id': int(report.store_id),
+            'store_name': store_name_by_id.get(int(report.store_id), f'Store {report.store_id}'),
+            'date': report.report_date.strftime('%Y-%m-%d') if report.report_date else '',
+            'label': report.report_date.strftime('%B %d, %Y') if report.report_date else '',
+            'items': pos_items_by_report.get(int(report.id), []),
+        })
+
+    # Organize reports by date
+    reports_by_date = _group_reports_by_date(reports)
+    
+    cluster_sidebar_stores = _build_cluster_sidebar_stores(stores, start_date, end_date)
+
+    return render_template('cluster_manager/raw_data.html', 
+                         user=current_user, 
+                         cluster=cluster, 
+                         team_name=_get_team_name(cluster),
+                          stores=stores,
+                          cluster_sidebar_stores=cluster_sidebar_stores,
+                          current_month=current_month,
+                          current_year=current_year,
+                         store_filter=store_filter,
+                         reports_by_date=reports_by_date,
+                         targets_by_date=targets_by_date,
+                         daily_targets=daily_targets,
+                         acc_daily_targets=acc_daily_targets,
+                         acc_daily_sales=acc_daily_sales,
+                         mtd_metrics_by_day=mtd_metrics_by_day,
+                         pos_modal_payload=pos_modal_payload,
+                         summary=summary,
+                         today_day=today.day,
+                         today_month=today.month,
+                         today_year=today.year)
+
+
+@views.route('/cluster-manager/cluster-data')
+@login_required
+def cluster_manager_cluster_data():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'):
+        flash('Access denied. Only Cluster Managers, Area Managers, Admins, and General Managers can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Cluster
+    from .views import _get_area_manager_cluster_ids
+    cluster = None
+
+    if role == 'Cluster Manager':
+        # Cluster managers can only open their assigned cluster.
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            flash('You are not assigned to any cluster yet.', category='error')
+            return redirect(url_for('views.home'))
+    elif role == 'Area Manager':
+        # Area Managers can only access clusters they are assigned to.
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view data.', category='error')
+            return redirect(url_for('admin.clusters'))
+        if cluster_id not in allowed_cluster_ids:
+            flash('Access denied. You are not assigned to this cluster.', category='error')
+            return redirect(url_for('views.home'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+    else:
+        # Admin/Superadmin/General Manager can open any cluster via query param.
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view data.', category='error')
+            return redirect(url_for('admin.clusters'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+    
+    # Get stores in this cluster
+    stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    stores = _apply_store_scope_filter(stores, request)
+    
+    # Get current month and year (or from query params)
+    from datetime import datetime as dt
+    today = date.today()
+    current_month = request.args.get('month', today.strftime('%m'))
+    current_year = request.args.get('year', str(today.year))
+    store_filter = request.args.get('store_id', '')
+    
+    # Fetch daily reports for the selected month/year
+    from calendar import monthrange
+    import calendar
+    
+    # Get all store IDs in this cluster
+    cluster_store_ids = [s.id for s in stores]
+    store_ids = list(cluster_store_ids)
+    
+    # Filter by specific store if selected
+    if store_filter:
+        try:
+            selected_store_id = int(store_filter)
+        except (TypeError, ValueError):
+            flash('Invalid store selection.', category='error')
+            return redirect(url_for('views.cluster_manager_cluster_data', cluster_id=cluster.id, month=current_month, year=current_year))
+        if selected_store_id in cluster_store_ids:
+            store_ids = [selected_store_id]
+        else:
+            flash('Selected store does not belong to this cluster.', category='error')
+            return redirect(url_for('views.cluster_manager_cluster_data', cluster_id=cluster.id, month=current_month, year=current_year))
+    
+    # Build date range for the month
+    year_int = int(current_year)
+    month_int = int(current_month)
+    _, num_days = monthrange(year_int, month_int)
+    
+    # Fetch all reports for this month
+    from datetime import datetime
+    start_date = datetime(year_int, month_int, 1).date()
+    end_date = datetime(year_int, month_int, num_days).date()
+    
+    # Match Raw Data logic: include all report statuses for the selected scope.
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_ending_inventory_from_invensync(reports)
+    _apply_taf_wastage_amounts(reports)
+    consolidated_reports = _consolidate_cluster_reports_by_date(reports)
+    
+    # Fetch store targets for the selected month
+    from .models import StoreTarget
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+    
+    # Organize targets by date (same shape as raw-data flow).
+    targets_by_date = {}
+    for target in targets:
+        date_key = target.target_date.strftime('%Y-%m-%d')
+        if date_key not in targets_by_date:
+            targets_by_date[date_key] = []
+        targets_by_date[date_key].append(target)
+    
+    daily_targets = _aggregate_targets_by_day(targets)
+    acc_daily_targets = _build_acc_targets_by_day(year_int, month_int, daily_targets)
+    acc_daily_sales = _build_acc_sales_by_day(year_int, month_int, consolidated_reports)
+    mtd_metrics_by_day = _build_mtd_metrics_by_day(year_int, month_int, acc_daily_sales, acc_daily_targets)
+    _attach_report_calc_fields(
+        consolidated_reports,
+        daily_targets,
+        prioritize_pending=True,
+        acc_targets_by_day=acc_daily_targets,
+        acc_sales_by_day=acc_daily_sales
+    )
+    summary = _build_cluster_manager_summary(consolidated_reports, targets)
+
+    store_name_by_id = {int(store.id): (store.name or '') for store in stores}
+    pos_scope_reports = (
+        DailyReport.query
+        .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+        .filter(DailyReport.store_id.in_(store_ids))
+        .group_by(DailyReport.id)
+        .order_by(DailyReport.report_date.desc(), DailyReport.id.desc())
+        .all()
+    )
+    pos_scope_report_ids = [int(report.id) for report in pos_scope_reports]
+    pos_items_by_report = {}
+    if pos_scope_report_ids:
+        pos_items = (
+            PosSold.query
+            .filter(PosSold.daily_report_id.in_(pos_scope_report_ids))
+            .order_by(PosSold.daily_report_id.asc(), PosSold.id.asc())
+            .all()
+        )
+        for item in pos_items:
+            if _is_grand_total_product_name(item.product_name):
+                continue
+            pos_items_by_report.setdefault(int(item.daily_report_id), []).append({
+                'product_name': item.product_name,
+                'quantity': int(item.quantity or 0),
+                'net_sales': float(item.net_sales or 0.0),
+            })
+
+    pos_modal_payload = []
+    for report in pos_scope_reports:
+        pos_modal_payload.append({
+            'report_id': int(report.id),
+            'store_id': int(report.store_id),
+            'store_name': store_name_by_id.get(int(report.store_id), f'Store {report.store_id}'),
+            'date': report.report_date.strftime('%Y-%m-%d') if report.report_date else '',
+            'label': report.report_date.strftime('%B %d, %Y') if report.report_date else '',
+            'items': pos_items_by_report.get(int(report.id), []),
+        })
+    
+    # Calculate statistics
+    total_reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date
+    ).count()
+    
+    approved_reports_count = len(consolidated_reports)
+    
+    # Organize reports by date
+    reports_by_date = _group_reports_by_date(consolidated_reports)
+    
+    cluster_sidebar_stores = _build_cluster_sidebar_stores(stores, start_date, end_date)
+
+    return render_template('cluster_manager/cluster_data.html', 
+                         user=current_user, 
+                         cluster=cluster, 
+                         team_name=_get_team_name(cluster),
+                         stores=stores,
+                         force_cluster_sidebar=(role in ('Admin', 'Superadmin', 'General Manager', 'Area Manager')),
+                         cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin', 'General Manager', 'Area Manager') else '',
+                         cluster_sidebar_stores=cluster_sidebar_stores,
+                         current_month=current_month,
+                         current_year=current_year,
+                         store_filter=store_filter,
+                         reports_by_date=reports_by_date,
+                         targets_by_date=targets_by_date,
+                         daily_targets=daily_targets,
+                         acc_daily_targets=acc_daily_targets,
+                         acc_daily_sales=acc_daily_sales,
+                         mtd_metrics_by_day=mtd_metrics_by_day,
+                         total_reports=total_reports,
+                         approved_reports_count=approved_reports_count,
+                         pos_modal_payload=pos_modal_payload,
+                         summary=summary,
+today_day=today.day,
+                          today_month=today.month,
+                          today_year=today.year)
+
+
+@views.route('/cluster-manager/cluster-data/export-excel')
+@login_required
+def cluster_manager_cluster_data_export_excel():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Cluster, Store
+    from .views import _get_area_manager_cluster_ids
+    cluster = None
+
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            flash('You are not assigned to any cluster yet.', category='error')
+            return redirect(url_for('views.home'))
+    elif role == 'Area Manager':
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view data.', category='error')
+            return redirect(url_for('admin.clusters'))
+        if cluster_id not in allowed_cluster_ids:
+            flash('Access denied. You are not assigned to this cluster.', category='error')
+            return redirect(url_for('views.home'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view data.', category='error')
+            return redirect(url_for('admin.clusters'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    # Get stores in this cluster
+    stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    stores = _apply_store_scope_filter(stores, request)
+
+    # Get current month and year (or from query params)
+    from datetime import datetime as dt
+    today = date.today()
+    current_month = request.args.get('month', today.strftime('%m'))
+    current_year = request.args.get('year', str(today.year))
+    store_filter = request.args.get('store_id', '')
+    export_type = request.args.get('export_type', 'current')
+
+    # Fetch daily reports for the selected month/year
+    from calendar import monthrange
+    import calendar
+
+    # Get all store IDs in this cluster
+    cluster_store_ids = [s.id for s in stores]
+    store_ids = list(cluster_store_ids)
+
+    # Filter by specific store if selected (only for 'current' export type)
+    if export_type == 'current' and store_filter:
+        try:
+            selected_store_id = int(store_filter)
+        except (TypeError, ValueError):
+            flash('Invalid store selection.', category='error')
+            return redirect(url_for('views.cluster_manager_cluster_data', cluster_id=cluster.id, month=current_month, year=current_year))
+        if selected_store_id in cluster_store_ids:
+            store_ids = [selected_store_id]
+        else:
+            flash('Selected store does not belong to this cluster.', category='error')
+            return redirect(url_for('views.cluster_manager_cluster_data', cluster_id=cluster.id, month=current_month, year=current_year))
+    # For 'all' export type, use all stores in cluster (store_ids already set to all cluster stores)
+
+    # Stores included in the export scope (used for row labels; consolidated rows
+    # do not carry a store_id, so label them by the number of stores in scope).
+    exported_stores = [s for s in stores if s.id in store_ids]
+
+    # Build date range for the month
+    year_int = int(current_year)
+    month_int = int(current_month)
+    _, num_days = monthrange(year_int, month_int)
+
+    # Fetch all reports for this month
+    from datetime import datetime
+    start_date = datetime(year_int, month_int, 1).date()
+    end_date = datetime(year_int, month_int, num_days).date()
+
+    # Match Raw Data logic: include all report statuses for the selected scope.
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_ending_inventory_from_invensync(reports)
+    _apply_taf_wastage_amounts(reports)
+    consolidated_reports = _consolidate_cluster_reports_by_date(reports)
+
+    # Fetch store targets for the selected month
+    from .models import StoreTarget
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+
+    # Organize targets by date (same shape as raw-data flow).
+    targets_by_date = {}
+    for target in targets:
+        date_key = target.target_date.strftime('%Y-%m-%d')
+        if date_key not in targets_by_date:
+            targets_by_date[date_key] = []
+        targets_by_date[date_key].append(target)
+
+    daily_targets = _aggregate_targets_by_day(targets)
+    acc_daily_targets = _build_acc_targets_by_day(year_int, month_int, daily_targets)
+    acc_daily_sales = _build_acc_sales_by_day(year_int, month_int, consolidated_reports)
+    mtd_metrics_by_day = _build_mtd_metrics_by_day(year_int, month_int, acc_daily_sales, acc_daily_targets)
+    _attach_report_calc_fields(
+        consolidated_reports,
+        daily_targets,
+        prioritize_pending=True,
+        acc_targets_by_day=acc_daily_targets,
+        acc_sales_by_day=acc_daily_sales
+    )
+    summary = _build_cluster_manager_summary(consolidated_reports, targets)
+
+    # Organize reports by date
+    reports_by_date = _group_reports_by_date(consolidated_reports)
+
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sales Data"
+
+    title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
+    header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
+    data_font = Font(name="Calibri", size=10, color="0F172A")
+    green_font = Font(name="Calibri", size=10, color="059669", bold=True)
+    red_font = Font(name="Calibri", size=10, color="DC2626", bold=True)
+    amber_font = Font(name="Calibri", size=10, color="B45309", bold=True)
+    number_format = '#,##0.00'
+    pct_format = '0.00%'
+
+    # Title
+    ws.append(["SALES DATA"])
+    ws.cell(row=1, column=1).font = title_font
+
+    # Meta info
+    month_names_full = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+    ws.append([f"Cluster: {cluster.name} | Month: {month_names_full[month_int]} {year_int} | Store Scope: {request.cookies.get('store_scope', 'official').capitalize()}"])
+    ws.cell(row=2, column=1).font = sub_font
+    ws.append([])
+
+    # Headers
+    headers = [
+        'Date', 'Store', 'Gross Sales', 'C.I', 'Total Gross Sales',
+        'Target (Net)', 'Last Year (Net)', 'vs. Tgt %', 'Net Sales',
+        'Acc Net Sales', 'Acc Target Net', 'Acc LY Net', 'MTD vs. Tgt %',
+        'MTD vs. LY %', 'GBI Target', 'GBI Acc', 'AR %', 'vs. LY %',
+        'TC', 'AC'
+    ]
+    ws.append(headers)
+    for col in range(1, len(headers) + 1):
+        c = ws.cell(row=4, column=col)
+        c.font = header_font
+        c.fill = header_fill
+
+    # Data rows (only render missing-report rows through today for the current month;
+    # for past months render all days to match the cluster data page view).
+    cutoff_day = num_days
+    if year_int == today.year and month_int == today.month:
+        cutoff_day = today.day
+
+    month_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    for day in range(1, num_days + 1):
+        date_str = f"{year_int}-{month_int:02d}-{day:02d}"
+        day_reports = reports_by_date.get(date_str, [])
+        
+        if day_reports:
+            for report in day_reports:
+                store_name = exported_stores[0].name if len(exported_stores) == 1 else 'All Stores'
+                calc = report.calc
+                vs_tgt = calc['vs_tgt']
+                mtd_vs_tgt = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_tgt')
+                mtd_vs_ly = mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_ly')
+                
+                row_data = [
+                    f"{month_names[month_int]} {day:02d}, {year_int}",
+                    store_name,
+                    float(report.pos_gross_sales or 0),
+                    float(report.ci_regular_gross_sales or 0),
+                    float(calc['total_gross_sales'] or 0),
+                    float(daily_targets.get(date_str, {}).get('target_net', 0)),
+                    float(daily_targets.get(date_str, {}).get('last_year_net', 0)),
+                    vs_tgt / 100 if vs_tgt is not None else None,
+                    float(calc['net_sales'] or 0),
+                    float(acc_daily_sales.get(date_str, {}).get('net_sales', 0)),
+                    float(acc_daily_targets.get(date_str, {}).get('target_net', 0)),
+                    float(acc_daily_targets.get(date_str, {}).get('last_year_net', 0)),
+                    (mtd_vs_tgt / 100) if mtd_vs_tgt is not None else None,
+                    (mtd_vs_ly / 100) if mtd_vs_ly is not None else None,
+                    float(daily_targets.get(date_str, {}).get('gbi_target', 0)),
+                    float(acc_daily_targets.get(date_str, {}).get('gbi_target', 0)),
+                    float(calc['ar'] or 0) / 100 if calc['ar'] is not None else None,
+                    float(calc['vs_ly'] or 0) / 100 if calc['vs_ly'] is not None else None,
+                    calc['tc_total'],
+                    float(calc['ac'] or 0),
+                ]
+                ws.append(row_data)
+                row_num = ws.max_row
+                # Format numbers
+                for col_idx in [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 20]:
+                    cell = ws.cell(row=row_num, column=col_idx)
+                    cell.number_format = number_format
+                for col_idx in [8, 13, 14, 17, 18]:
+                    cell = ws.cell(row=row_num, column=col_idx)
+                    if cell.value is not None:
+                        cell.number_format = pct_format
+                # Color coding for vs_tgt
+                vs_tgt_cell = ws.cell(row=row_num, column=8)
+                if vs_tgt_cell.value is not None:
+                    vs_tgt_cell.font = green_font if vs_tgt_cell.value >= 0 else red_font
+        elif day <= cutoff_day:
+            # Missing report row
+            store_name = exported_stores[0].name if len(exported_stores) == 1 else 'All Stores'
+            row_data = [
+                f"{month_names[month_int]} {day:02d}, {year_int}",
+                store_name,
+                0, 0, 0,
+                float(daily_targets.get(date_str, {}).get('target_net', 0)),
+                float(daily_targets.get(date_str, {}).get('last_year_net', 0)),
+                None,
+                0,
+                float(acc_daily_sales.get(date_str, {}).get('net_sales', 0)),
+                float(acc_daily_targets.get(date_str, {}).get('target_net', 0)),
+                float(acc_daily_targets.get(date_str, {}).get('last_year_net', 0)),
+                (mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_tgt') / 100) if mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_tgt') is not None else None,
+                (mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_ly') / 100) if mtd_metrics_by_day.get(date_str, {}).get('mtd_vs_ly') is not None else None,
+                float(daily_targets.get(date_str, {}).get('gbi_target', 0)),
+                float(acc_daily_targets.get(date_str, {}).get('gbi_target', 0)),
+                None,
+                None,
+                0,
+                0,
+            ]
+            ws.append(row_data)
+            row_num = ws.max_row
+            for col_idx in [3, 4, 5, 6, 7, 9, 10, 11, 12, 15, 16, 20]:
+                cell = ws.cell(row=row_num, column=col_idx)
+                cell.number_format = number_format
+            for col_idx in [8, 13, 14, 17, 18]:
+                cell = ws.cell(row=row_num, column=col_idx)
+                if cell.value is not None:
+                    cell.number_format = pct_format
+
+    # Summary row
+    ws.append([])
+    ws.append(["SUMMARY / TOTALS"])
+    summary_row = ws.max_row
+    ws.cell(row=summary_row, column=1).font = Font(name="Calibri", size=10, bold=True, color="1E293B")
+    
+    sales = summary['sales']
+    summary_data = [
+        '', 'TOTAL / AVG',
+        float(sales['gross_sales']),
+        float(sales['ci_sales']),
+        float(sales['total_gross_sales']),
+        float(sales['target_net']),
+        float(sales['last_year_net']),
+        float(sales['vs_tgt_percent']) / 100,
+        float(sales['net_sales']),
+        float(sales['acc_net_sales']),
+        float(sales['acc_target_net']),
+        float(sales['acc_ly_net']),
+        float(sales['mtd_vs_tgt_percent']) / 100,
+        float(sales['mtd_vs_ly_percent']) / 100,
+        float(sales['gbi_target']),
+        float(sales['acc_gbi']),
+        float(sales['ar_percent']) / 100,
+        float(sales['vs_ly_percent']) / 100,
+        float(sales['tc']),
+        float(sales['ac']),
+    ]
+    ws.append(summary_data)
+    for col_idx in [3, 4, 5, 6, 7, 9, 10, 11, 12, 15, 16, 20]:
+        cell = ws.cell(row=ws.max_row, column=col_idx)
+        cell.number_format = number_format
+    for col_idx in [8, 13, 14, 17, 18]:
+        cell = ws.cell(row=ws.max_row, column=col_idx)
+        if cell.value is not None:
+            cell.number_format = pct_format
+
+    # Auto-fit columns
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 30)
+        ws.column_dimensions[column].width = adjusted_width
+
+    # ------------------------------------------------------------------
+    # Additional sheets mirroring the Cluster Data page tabs.
+    # ------------------------------------------------------------------
+    def _add_tab_sheet(sheet_title, headers, rows, footer, money_cols=(), pct_cols=()):
+        tab_ws = wb.create_sheet(sheet_title)
+        tab_ws.append([sheet_title.upper()])
+        tab_ws.cell(row=1, column=1).font = title_font
+        tab_ws.append([f"Cluster: {cluster.name} | Month: {month_names_full[month_int]} {year_int} | Store Scope: {request.cookies.get('store_scope', 'official').capitalize()}"])
+        tab_ws.cell(row=2, column=1).font = sub_font
+        tab_ws.append([])
+        tab_ws.append(headers)
+        for col in range(1, len(headers) + 1):
+            c = tab_ws.cell(row=4, column=col)
+            c.font = header_font
+            c.fill = header_fill
+        for row in rows:
+            tab_ws.append(row)
+        if footer:
+            tab_ws.append([])
+            tab_ws.append(footer)
+            footer_bold = Font(name="Calibri", size=10, bold=True, color="1E293B")
+            for col in range(1, len(footer) + 1):
+                tab_ws.cell(row=tab_ws.max_row, column=col).font = footer_bold
+        for col_idx in money_cols:
+            for r in range(5, tab_ws.max_row + 1):
+                cell = tab_ws.cell(row=r, column=col_idx)
+                if cell.value is not None:
+                    cell.number_format = number_format
+        for col_idx in pct_cols:
+            for r in range(5, tab_ws.max_row + 1):
+                cell = tab_ws.cell(row=r, column=col_idx)
+                if cell.value is not None:
+                    cell.number_format = pct_format
+        for col in tab_ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+                except:
+                    pass
+            tab_ws.column_dimensions[column].width = min(max_length + 2, 30)
+        return tab_ws
+
+    # Performance Overview tab (mirrors the top summary card on the page)
+    overview = summary['overview']
+    perf_store_label = exported_stores[0].name if len(exported_stores) == 1 else _get_team_name(cluster)
+    perf_rows = [
+        ['Store Name', perf_store_label, None],
+        ['Month', f"{month_names_full[month_int]} {year_int}", None],
+        ['MTD Sales', float(overview['mtd_sales']), None],
+        ['Target', float(overview['total_target']), float(overview['variance_percent'] or 0) / 100],
+        ['Variance', float(overview['variance_amount']), None],
+        ['SBI Sales', float(overview['sbi_sales']), float(overview['sbi_percent'] or 0) / 100],
+        ['MTD Wastage', float(overview['wastage_amount']), float(overview['wastage_percent'] or 0) / 100],
+        ['MTD Discount', float(overview['discount_amount']), float(overview['discount_percent'] or 0) / 100],
+    ]
+    _add_tab_sheet('Performance Overview', ['Metric', 'Value', '%'], perf_rows, None, money_cols=[2], pct_cols=[3])
+    wb.move_sheet('Sales Data', offset=1)
+
+    # Aggregators tab
+    agg_headers = ['Date', 'GDS Sales', 'GDS TC', 'Grabfood Sales', 'Grabfood TC', 'FoodPanda Sales', 'FoodPanda TC', 'Maxim Sales', 'Maxim TC', 'Total Agg Sales', 'Total Agg TC']
+    agg_rows = []
+    for day in range(1, num_days + 1):
+        date_str = f"{year_int}-{month_int:02d}-{day:02d}"
+        day_reports = reports_by_date.get(date_str, [])
+        if day_reports:
+            report = day_reports[0]
+            gds_s = float(report.gds_sales or 0)
+            gds_tc = int(report.gds_tc or 0)
+            grab_s = float(report.grab_sales or 0)
+            grab_tc = int(report.grab_tc or 0)
+            fp_s = float(report.foodpanda_sales or 0)
+            fp_tc = int(report.foodpanda_tc or 0)
+        elif day <= cutoff_day:
+            gds_s = grab_s = fp_s = 0.0
+            gds_tc = grab_tc = fp_tc = 0
+        else:
+            continue
+        agg_rows.append([
+            f"{month_names[month_int]} {day:02d}, {year_int}",
+            gds_s, gds_tc, grab_s, grab_tc, fp_s, fp_tc,
+            0.0, 0,
+            gds_s + grab_s + fp_s,
+            gds_tc + grab_tc + fp_tc,
+        ])
+    agg_agg = summary['aggregators']
+    agg_footer = [
+        'TOTAL / AVG',
+        float(agg_agg['gds_sales']), int(agg_agg['gds_tc']),
+        float(agg_agg['grab_sales']), int(agg_agg['grab_tc']),
+        float(agg_agg['foodpanda_sales']), int(agg_agg['foodpanda_tc']),
+        float(agg_agg['maxim_sales']), int(agg_agg['maxim_tc']),
+        float(agg_agg['total_agg_sales']), int(agg_agg['total_agg_tc']),
+    ]
+    _add_tab_sheet('Aggregators', agg_headers, agg_rows, agg_footer, money_cols=[2, 4, 6, 8, 10])
+
+    # SBI tab
+    sbi_headers = ['Date', 'Booth Selling', 'TC', 'Bulk Order', 'TC', 'Reseller', 'TC', 'Company Tie-up', 'TC', 'GOW', 'TC', 'Ambulant/OOT', 'TC', 'Other SBI', 'TC', 'Total SBI', 'TC']
+    sbi_fields = [
+        ('boothselling_sales', 'boothselling_tc'),
+        ('bulk_order_sales', 'bulk_order_tc'),
+        ('reseller_sales', 'reseller_tc'),
+        ('tieup_sales', 'tieup_tc'),
+        ('gow_sales', 'gow_tc'),
+        ('ambulant_sales', 'ambulant_tc'),
+    ]
+    sbi_rows = []
+    for day in range(1, num_days + 1):
+        date_str = f"{year_int}-{month_int:02d}-{day:02d}"
+        day_reports = reports_by_date.get(date_str, [])
+        if not day_reports and day > cutoff_day:
+            continue
+        report = day_reports[0] if day_reports else None
+        values = []
+        total_s = 0.0
+        total_tc = 0
+        for sales_field, tc_field in sbi_fields:
+            if report is None:
+                s_val = 0.0
+                t_val = 0
+            else:
+                s_val = float(getattr(report, sales_field, 0) or 0)
+                t_val = int(getattr(report, tc_field, 0) or 0)
+            values.extend([s_val, t_val])
+            total_s += s_val
+            total_tc += t_val
+        values.extend([0.0, 0])
+        values.extend([total_s, total_tc])
+        sbi_rows.append([f"{month_names[month_int]} {day:02d}, {year_int}"] + values)
+    sbi_agg = summary['sbi']
+    sbi_footer = [
+        'TOTAL / AVG',
+        float(sbi_agg['boothselling_sales']), int(sbi_agg['boothselling_tc']),
+        float(sbi_agg['bulk_order_sales']), int(sbi_agg['bulk_order_tc']),
+        float(sbi_agg['reseller_sales']), int(sbi_agg['reseller_tc']),
+        float(sbi_agg['tieup_sales']), int(sbi_agg['tieup_tc']),
+        float(sbi_agg['gow_sales']), int(sbi_agg['gow_tc']),
+        float(sbi_agg['ambulant_sales']), int(sbi_agg['ambulant_tc']),
+        float(sbi_agg['other_sbi_sales']), int(sbi_agg['other_sbi_tc']),
+        float(sbi_agg['total_sbi_sales']), int(sbi_agg['total_sbi_tc']),
+    ]
+    _add_tab_sheet('SBI', sbi_headers, sbi_rows, sbi_footer, money_cols=[2, 4, 6, 8, 10, 12, 14, 16])
+
+    # Cost Monitoring tab
+    cost_headers = ['Date', 'Wastage Amount', 'Wastage Daily %', 'Senior / PWD', 'Promo (LDTS)', 'Bulk Orders', 'Total Disc Peso', 'Discount Daily %']
+    cost_rows = []
+    for day in range(1, num_days + 1):
+        date_str = f"{year_int}-{month_int:02d}-{day:02d}"
+        day_reports = reports_by_date.get(date_str, [])
+        if not day_reports and day > cutoff_day:
+            continue
+        report = day_reports[0] if day_reports else None
+        if report is None:
+            w_amt = 0.0
+            w_pct = 0.0
+            sp = 0.0
+            pr = 0.0
+            bo = 0.0
+            tot_disc = 0.0
+            d_pct = 0.0
+        else:
+            calc = report.calc
+            w_amt = float(calc['wastage_amount'] or 0)
+            w_pct = float(calc['wastage_percent'] or 0) / 100
+            sp = float(report.senior_pwd_discount or 0)
+            pr = float(report.promo_ldts_discount or 0)
+            bo = float(report.bulk_orders_discount or 0)
+            tot_disc = float(calc['total_discount'] or 0)
+            d_pct = float(calc['discount_percent'] or 0) / 100
+        cost_rows.append([
+            f"{month_names[month_int]} {day:02d}, {year_int}",
+            w_amt, w_pct, sp, pr, bo, tot_disc, d_pct,
+        ])
+    cost_agg = summary['cost']
+    cost_footer = [
+        'TOTAL / AVG',
+        float(cost_agg['wastage_amount']),
+        float(cost_agg['wastage_daily_percent'] or 0) / 100,
+        float(cost_agg['senior_pwd_discount']),
+        float(cost_agg['promo_ldts_discount']),
+        float(cost_agg['bulk_orders_discount']),
+        float(cost_agg['total_discount']),
+        float(cost_agg['discount_daily_percent'] or 0) / 100,
+    ]
+    _add_tab_sheet('Cost Monitoring', cost_headers, cost_rows, cost_footer, money_cols=[2, 4, 5, 6, 7], pct_cols=[3, 8])
+
+    # Inventory Monitoring tab
+    inv_headers = ['Date', 'Qty Sold - GC', 'Qty Sold - Rolls', 'Qty Sold - Premium', 'Qty Sold - Cheesy Ensay', 'Qty Sold - Slices', 'Qty Sold - Mamon', 'Ending Inv - GC', 'Ending Inv - Rolls', 'Ending Inv - Premium']
+    inv_qty_fields = ['pos_qty_gc', 'pos_qty_rolls', 'pos_qty_premium', 'pos_qty_cheesy_ensay', 'pos_qty_slices', 'pos_qty_mamon']
+    inv_ending_fields = ['ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium']
+    inv_rows = []
+    for day in range(1, num_days + 1):
+        date_str = f"{year_int}-{month_int:02d}-{day:02d}"
+        day_reports = reports_by_date.get(date_str, [])
+        if not day_reports and day > cutoff_day:
+            continue
+        report = day_reports[0] if day_reports else None
+        qty_vals = [int(getattr(report, f, 0) or 0) if report is not None else 0 for f in inv_qty_fields]
+        end_vals = [int(getattr(report, f, 0) or 0) if report is not None else 0 for f in inv_ending_fields]
+        inv_rows.append([f"{month_names[month_int]} {day:02d}, {year_int}"] + qty_vals + end_vals)
+    inv_agg = summary['inventory']
+    inv_footer = [
+        'TOTAL / AVG',
+        int(inv_agg['pos_qty_gc']), int(inv_agg['pos_qty_rolls']), int(inv_agg['pos_qty_premium']),
+        int(inv_agg['pos_qty_cheesy_ensay']), int(inv_agg['pos_qty_slices']), int(inv_agg['pos_qty_mamon']),
+        int(inv_agg['ending_inv_gc']), int(inv_agg['ending_inv_rolls']), int(inv_agg['ending_inv_premium']),
+    ]
+    _add_tab_sheet('Inventory Monitoring', inv_headers, inv_rows, inv_footer)
+
+    # Save to BytesIO
+    from io import BytesIO
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    # Generate filename
+    filename = f"Cluster_Data_{cluster.name}_{month_names_full[month_int]}_{year_int}.xlsx"
+
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+
+@views.route('/cluster-manager/oracle')
+@login_required
+def cluster_manager_oracle():
+    from datetime import date as _date
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
+        flash('Access denied. Only Cluster Managers and Admins can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Cluster, Store
+    cluster = None
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            flash('You are not assigned to any cluster yet.', category='error')
+            return redirect(url_for('views.home'))
+    elif role == 'Area Manager':
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id or cluster_id not in allowed_cluster_ids:
+            flash('Access denied. You are not assigned to this cluster.', category='error')
+            return redirect(url_for('views.home'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view Oracle.', category='error')
+            return redirect(url_for('admin.clusters'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    selected_date_str = request.args.get('date', '')
+    if selected_date_str:
+        try:
+            selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = _date.today()
+    else:
+        selected_date = _date.today()
+
+    stores = Store.query.filter_by(cluster_id=cluster.id).all()
+    stores = _apply_store_scope_filter(stores, request)
+    cluster_sidebar_stores = _build_cluster_sidebar_stores(stores)
+
+    from .models import ProductMaster, StoreProductBuffer
+    products = ProductMaster.query.order_by(ProductMaster.category, ProductMaster.description).all()
+
+    store_ids = [s.id for s in stores]
+    saved_buffers = StoreProductBuffer.query.filter(StoreProductBuffer.store_id.in_(store_ids)).all()
+    buffers_map = {}
+    for b in saved_buffers:
+        buffers_map.setdefault(b.store_id, {})[b.product_id] = b.buffer_pct
+
+    oracle_orders = (
+        OracleOrder.query
+        .options(
+            selectinload(OracleOrder.store),
+            selectinload(OracleOrder.product),
+            selectinload(OracleOrder.creator),
+        )
+        .filter(OracleOrder.store_id.in_(store_ids))
+        .order_by(OracleOrder.created_at.desc())
+        .all()
+    ) if store_ids else []
+
+    def serialize_oracle_order(order):
+        unit_cost = float(order.product.tp or 0) if order.product else 0
+        return {
+            'id': order.id,
+            'orderDate': order.order_date.isoformat(),
+            'storeName': order.store.name if order.store else f'Store {order.store_id}',
+            'storeId': order.store_id,
+            'productName': order.product.description if order.product else str(order.product_id),
+            'productId': order.product_id,
+            'suggested': order.suggested_qty,
+            'minSug': order.min_suggested_qty,
+            'maxSug': order.max_suggested_qty,
+            'finalOrder': order.quantity,
+            'unitCost': unit_cost,
+            'totalCost': round(order.quantity * unit_cost, 2),
+            'manager': order.creator.username if order.creator else '',
+            'timestamp': order.created_at.isoformat() if order.created_at else '',
+            'status': order.status,
+        }
+
+    oracle_pending_approvals = [
+        serialize_oracle_order(order)
+        for order in oracle_orders
+        if (order.status or '').lower() == 'pending'
+    ]
+    oracle_approval_history = [
+        serialize_oracle_order(order)
+        for order in oracle_orders
+        if (order.status or '').lower() == 'approved'
+    ][:100]
+
+    admin_shell = (role in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'))
+    can_approve_oracle_orders = role in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager')
+    return render_template('cluster_manager/oracle.html',
+                           user=current_user,
+                           cluster=cluster,
+                           team_name=_get_team_name(cluster),
+                           stores=stores,
+                           products=products,
+                           buffers_map=buffers_map,
+                           selected_date=selected_date.strftime('%Y-%m-%d'),
+                           today=_date.today().strftime('%Y-%m-%d'),
+                           cluster_sidebar_stores=cluster_sidebar_stores,
+                           force_cluster_sidebar=admin_shell,
+                           cluster_sidebar_cluster_id=cluster.id if admin_shell else '',
+                           oracle_pending_approvals=oracle_pending_approvals,
+                           oracle_approval_history=oracle_approval_history,
+                           can_approve_oracle_orders=can_approve_oracle_orders,
+                           admin_shell=admin_shell)
+
+
+@views.route('/cluster-manager/oracle/order/<int:order_id>/decision', methods=['POST'])
+@login_required
+def cluster_manager_decide_oracle_order(order_id):
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
+        return jsonify({'ok': False, 'error': 'Access denied.'}), 403
+
+    order = OracleOrder.query.get(order_id)
+    if not order:
+        return jsonify({'ok': False, 'error': 'Oracle order not found.'}), 404
+
+    store = Store.query.get(order.store_id)
+    if not store:
+        return jsonify({'ok': False, 'error': 'Order store not found.'}), 404
+    if not _apply_store_scope_filter([store], request):
+        return jsonify({'ok': False, 'error': 'Access denied for this store scope.'}), 403
+
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster or store.cluster_id != cluster.id:
+            return jsonify({'ok': False, 'error': 'You can only decide orders for your assigned cluster.'}), 403
+
+    if (order.status or '').lower() != 'pending':
+        return jsonify({'ok': False, 'error': 'This order is no longer pending.'}), 409
+
+    data = request.get_json(silent=True) or {}
+    requested_store_id = data.get('storeId')
+    if requested_store_id is not None:
+        try:
+            requested_store_id = int(requested_store_id)
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'Invalid store selection.'}), 400
+        if requested_store_id != order.store_id:
+            return jsonify({'ok': False, 'error': 'This order belongs to a different store.'}), 403
+    decision = str(data.get('decision') or '').strip().lower()
+    if decision not in ('approve', 'reject'):
+        return jsonify({'ok': False, 'error': 'Choose approve or reject.'}), 400
+
+    if decision == 'approve':
+        order.status = 'approved'
+        order.approved_at = datetime.utcnow()
+    else:
+        order.status = 'rejected'
+        order.approved_at = None
+
+    db.session.commit()
+    return jsonify({'ok': True, 'id': order.id, 'status': order.status})
+
+
+@views.route('/cluster-manager/oracle/approvals-data')
+@login_required
+def cluster_manager_oracle_approvals_data():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
+        return jsonify({'ok': False, 'error': 'Access denied.'}), 403
+
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            return jsonify({'ok': False, 'error': 'No cluster is assigned to your account.'}), 403
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            return jsonify({'ok': False, 'error': 'Choose a cluster.'}), 400
+        if role == 'Area Manager' and cluster_id not in _get_area_manager_cluster_ids(current_user):
+            return jsonify({'ok': False, 'error': 'You are not assigned to this cluster.'}), 403
+        cluster = Cluster.query.get(cluster_id)
+        if not cluster:
+            return jsonify({'ok': False, 'error': 'Cluster not found.'}), 404
+
+    stores = _apply_store_scope_filter(Store.query.filter_by(cluster_id=cluster.id).all(), request)
+    store_ids = [store.id for store in stores]
+    requested_store_id = request.args.get('store_id', type=int)
+    if requested_store_id is not None:
+        if requested_store_id not in store_ids:
+            return jsonify({'ok': False, 'error': 'This store is outside your assigned cluster or store scope.'}), 403
+        store_ids = [requested_store_id]
+    if not store_ids:
+        return jsonify({'ok': True, 'orders': []})
+
+    orders = (
+        OracleOrder.query
+        .options(
+            selectinload(OracleOrder.store),
+            selectinload(OracleOrder.product),
+            selectinload(OracleOrder.creator),
+        )
+        .filter(OracleOrder.store_id.in_(store_ids), func.lower(func.trim(OracleOrder.status)) == 'pending')
+        .order_by(OracleOrder.created_at.desc())
+        .all()
+    )
+
+    serialized = []
+    for order in orders:
+        unit_cost = float(order.product.tp or 0) if order.product else 0
+        serialized.append({
+            'id': order.id,
+            'orderDate': order.order_date.isoformat(),
+            'storeName': order.store.name if order.store else f'Store {order.store_id}',
+            'storeId': order.store_id,
+            'productName': order.product.description if order.product else str(order.product_id),
+            'productId': order.product_id,
+            'suggested': order.suggested_qty,
+            'minSug': order.min_suggested_qty,
+            'maxSug': order.max_suggested_qty,
+            'finalOrder': order.quantity,
+            'unitCost': unit_cost,
+            'totalCost': round(order.quantity * unit_cost, 2),
+            'manager': order.creator.username if order.creator else '',
+            'timestamp': order.created_at.isoformat() if order.created_at else '',
+            'status': order.status,
+        })
+    return jsonify({'ok': True, 'orders': serialized})
+
+
+@views.route('/cluster-manager/invensync')
+@login_required
+def cluster_manager_invensync():
+    """Cluster Manager view for Invensync ending inventory from assigned stores only"""
+    from datetime import date as _date
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Cluster, Store
+    from .views import _get_area_manager_cluster_ids
+    cluster = None
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            flash('You are not assigned to any cluster yet.', category='error')
+            return redirect(url_for('views.home'))
+    elif role == 'Area Manager':
+        # Area Managers can only access clusters they are assigned to.
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view Invensync.', category='error')
+            return redirect(url_for('admin.clusters'))
+        if cluster_id not in allowed_cluster_ids:
+            flash('Access denied. You are not assigned to this cluster.', category='error')
+            return redirect(url_for('views.home'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view Invensync.', category='error')
+            return redirect(url_for('admin.clusters'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    selected_date = _date.today()
+    month_start = selected_date.replace(day=1)
+
+    stores = Store.query.filter_by(cluster_id=cluster.id).order_by(Store.name.asc()).all()
+    stores = _apply_store_scope_filter(stores, request)
+    store_ids = [s.id for s in stores]
+    inventory_by_store = _get_latest_meaningful_invensync_by_store(store_ids)
+    manager_presence = _get_user_presence_states(store.manager_id for store in stores)
+
+    store_summaries = []
+    for store in stores:
+        inventory = inventory_by_store.get(store.id)
+        data_state = _get_invensync_data_state(inventory)
+        update_status = _build_cluster_invensync_update_status(store.id, month_start, selected_date)
+        store_summaries.append({
+            'store': store,
+            'inventory': inventory,
+            'has_data': data_state != 'empty',
+            'data_state': data_state,
+            'presence_state': manager_presence.get(store.manager_id, 'offline'),
+            'update_status': update_status,
+        })
+
+    cluster_sidebar_stores = _build_cluster_sidebar_stores(stores)
+
+    return render_template(
+        'cluster_manager/invensync.html',
+        user=current_user,
+        cluster=cluster,
+        team_name=_get_team_name(cluster),
+        stores=stores,
+        store_summaries=store_summaries,
+        selected_date=selected_date.strftime('%Y-%m-%d'),
+        today=_date.today().strftime('%Y-%m-%d'),
+        cluster_sidebar_stores=cluster_sidebar_stores,
+        force_cluster_sidebar=(role in ('Admin', 'Superadmin', 'General Manager')),
+        cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin', 'General Manager') else '',
+    )
+
+
+@views.route('/cluster-manager/invensync/inventory-correction', methods=['POST'])
+@login_required
+def cluster_manager_save_invensync_inventory_correction():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin'):
+        return jsonify({'success': False, 'message': 'Access denied.'}), 403
+
+    editable_fields = {
+        'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
+        'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+        'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
+        'ending_d3_qty', 'remarks',
+    }
+    numeric_fields = editable_fields - {'remarks'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return jsonify({'success': False, 'message': 'Inventory not found.'}), 404
+
+        if role == 'Cluster Manager':
+            store = _cluster_manager_invensync_verify_store_access(inventory.store_id, role)
+            if not store:
+                return jsonify({'success': False, 'message': 'Access denied for this store.'}), 403
+
+        changes = data.get('changes', [])
+        if not isinstance(changes, list) or not changes:
+            return jsonify({'success': False, 'message': 'No changes were submitted.'}), 400
+
+        changed_items = {}
+        audit_changes = []
+        for change in changes:
+            field = str(change.get('field', '')).strip()
+            if field not in editable_fields:
+                return jsonify({'success': False, 'message': f'{field or "Unknown field"} cannot be edited.'}), 400
+
+            item_id = int(change.get('item_id', 0) or 0)
+            item = DailyEndingInventoryItem.query.filter_by(
+                id=item_id,
+                inventory_id=inventory.id,
+            ).first()
+            if not item:
+                return jsonify({'success': False, 'message': 'An inventory item was not found.'}), 404
+
+            old_value = getattr(item, field)
+            if field in numeric_fields:
+                raw_value = change.get('value', 0)
+                new_value = int(float(raw_value)) if str(raw_value).strip() else 0
+            else:
+                new_value = str(change.get('value', '') or '').strip()
+
+            setattr(item, field, new_value)
+            changed_items[item.id] = item
+            audit_changes.append({
+                'item_id': item.id,
+                'product': item.product_description,
+                'field': field,
+                'old': old_value,
+                'new': new_value,
+            })
+
+        from .views import _recalculate_inventory_item
+        for item in changed_items.values():
+            _recalculate_inventory_item(item)
+
+        log_audit_event(
+            action='UPDATE',
+            entity_type='InvenSync Cluster Correction',
+            entity_id=inventory.id,
+            details={
+                'store_id': inventory.store_id,
+                'inventory_date': str(inventory.inventory_date),
+                'changes': audit_changes,
+            },
+        )
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': f'{len(audit_changes)} inventory cell change(s) saved.',
+        })
+    except (TypeError, ValueError):
+        db.session.rollback()
+        return jsonify({'success': False, 'message': 'Enter a valid whole number.'}), 400
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+@views.route('/cluster-manager/oracle/save-buffers', methods=['POST'])
+@login_required
+def cluster_manager_save_store_buffers():
+    from .models import Cluster, Store, ProductMaster, StoreProductBuffer
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
+        return {'ok': False, 'error': 'Access denied'}, 403
+
+    data = request.get_json(force=True)
+    store_id = data.get('store_id')
+    buffers = data.get('buffers', {})  # {product_id: buffer_pct}
+
+    if not store_id:
+        return {'ok': False, 'error': 'Missing store_id'}, 400
+
+    # Verify store belongs to manager's cluster
+    store = Store.query.get(store_id)
+    if not store:
+        return {'ok': False, 'error': 'Store not found'}, 404
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster or store.cluster_id != cluster.id:
+            return {'ok': False, 'error': 'Access denied'}, 403
+
+    for product_id_str, pct in buffers.items():
+        product_id = int(product_id_str)
+        pct = max(0.0, min(200.0, float(pct)))
+        rec = StoreProductBuffer.query.filter_by(store_id=store_id, product_id=product_id).first()
+        if rec:
+            rec.buffer_pct = pct
+            rec.updated_by = current_user.id
+        else:
+            db.session.add(StoreProductBuffer(store_id=store_id, product_id=product_id,
+                                              buffer_pct=pct, updated_by=current_user.id))
+    db.session.commit()
+    return {'ok': True}
+
+
+@views.route('/store-manager/oracle/submit', methods=['POST'])
+@login_required
+def store_manager_submit_oracle_order():
+    if current_user.role != 'Store Manager':
+        return {'ok': False, 'error': 'Access denied'}, 403
+
+    store = _resolve_oracle_store_for_manager(current_user)
+    if not store:
+        return {'ok': False, 'error': 'A single store is not assigned to your account.'}, 404
+
+    data = request.get_json(silent=True) or {}
+    orders = data.get('orders') or []
+    if not orders:
+        return {'ok': False, 'error': 'No order quantities were entered'}, 400
+
+    saved_orders = []
+    try:
+        for item in orders:
+            quantity = int(item['quantity'])
+            order_date = datetime.strptime(item['orderDate'], '%Y-%m-%d').date()
+            delivery_date = datetime.strptime(item['deliveryDate'], '%Y-%m-%d').date()
+            suggested = int(item.get('suggested', 0))
+            min_suggested = int(item.get('minSuggested', 0))
+            max_suggested = int(item.get('maxSuggested', 0))
+            if quantity < 0 or delivery_date < order_date:
+                continue
+            # Zero-quantity rows preserve empty days in a submitted weekly plan.
+            status = 'approved' if quantity == 0 or min_suggested <= quantity <= max_suggested else 'pending'
+            order = OracleOrder(
+                store_id=store.id,
+                product_id=int(item['productId']),
+                order_date=order_date,
+                delivery_date=delivery_date,
+                quantity=quantity,
+                suggested_qty=suggested,
+                min_suggested_qty=min_suggested,
+                max_suggested_qty=max_suggested,
+                status=status,
+                created_by=current_user.id,
+                approved_at=datetime.utcnow() if status == 'approved' else None,
+            )
+            db.session.add(order)
+            db.session.flush()
+            saved_orders.append({'id': order.id, 'productId': order.product_id, 'status': status})
+        db.session.commit()
+    except (KeyError, TypeError, ValueError):
+        db.session.rollback()
+        return {'ok': False, 'error': 'Invalid Oracle order data'}, 400
+    except Exception as exc:
+        db.session.rollback()
+        return {'ok': False, 'error': str(exc)}, 500
+
+    return {
+        'ok': True,
+        'saved': len(saved_orders),
+        'approved': sum(item['status'] == 'approved' for item in saved_orders),
+        'pending': sum(item['status'] == 'pending' for item in saved_orders),
+        'orders': saved_orders,
+    }
+
+
+@views.route('/store-manager/oracle/order/<int:order_id>', methods=['DELETE', 'PATCH'])
+@login_required
+def store_manager_delete_oracle_order(order_id):
+    if current_user.role != 'Store Manager':
+        return {'ok': False, 'error': 'Access denied'}, 403
+
+    store = _resolve_oracle_store_for_manager(current_user)
+    order = OracleOrder.query.filter_by(id=order_id, store_id=store.id if store else None).first()
+    if not order:
+        return {'ok': False, 'error': 'Order not found'}, 404
+    created_at = order.created_at.replace(tzinfo=None) if order.created_at else datetime.utcnow()
+    if datetime.utcnow() - created_at >= timedelta(days=1):
+        return {'ok': False, 'error': 'Orders can only be deleted within 1 day of submission'}, 403
+
+    if request.method == 'PATCH':
+        data = request.get_json(silent=True) or {}
+        try:
+            quantity = int(data.get('quantity'))
+        except (TypeError, ValueError):
+            return {'ok': False, 'error': 'Invalid quantity'}, 400
+        if quantity < 0:
+            return {'ok': False, 'error': 'Quantity cannot be negative'}, 400
+        order.quantity = quantity
+        order.status = 'approved' if quantity == 0 or order.min_suggested_qty <= quantity <= order.max_suggested_qty else 'pending'
+        order.approved_at = datetime.utcnow() if order.status == 'approved' else None
+        db.session.commit()
+        return {'ok': True, 'quantity': quantity, 'status': order.status}
+
+    deleted = {'productId': order.product_id, 'deliveryDate': order.delivery_date.isoformat(), 'quantity': order.quantity}
+    db.session.delete(order)
+    db.session.commit()
+    return {'ok': True, 'deleted': deleted}
+
+
+@views.route('/store-manager/oracle/order-date/<order_date>', methods=['DELETE'])
+@login_required
+def store_manager_delete_oracle_order_date(order_date):
+    if current_user.role != 'Store Manager':
+        return {'ok': False, 'error': 'Access denied'}, 403
+    store = _resolve_oracle_store_for_manager(current_user)
+    try:
+        selected_date = datetime.strptime(order_date, '%Y-%m-%d').date()
+    except ValueError:
+        return {'ok': False, 'error': 'Invalid order date'}, 400
+    orders = OracleOrder.query.filter_by(store_id=store.id if store else None, order_date=selected_date).all()
+    if not orders:
+        return {'ok': False, 'error': 'Order not found'}, 404
+    now = datetime.utcnow()
+    if any(now - (order.created_at.replace(tzinfo=None) if order.created_at else now) >= timedelta(days=1) for order in orders):
+        return {'ok': False, 'error': 'Orders can only be deleted within 1 day of submission'}, 403
+    deleted = [{'productId': order.product_id, 'deliveryDate': order.delivery_date.isoformat(), 'quantity': order.quantity} for order in orders]
+    for order in orders:
+        db.session.delete(order)
+    db.session.commit()
+    return {'ok': True, 'deleted': deleted}
+
+
+@views.route('/store-manager/oracle/export/<order_date>')
+@login_required
+def store_manager_export_oracle_order(order_date):
+    if current_user.role != 'Store Manager':
+        return {'ok': False, 'error': 'Access denied'}, 403
+    store = _resolve_oracle_store_for_manager(current_user)
+    try:
+        selected_date = datetime.strptime(order_date, '%Y-%m-%d').date()
+    except ValueError:
+        return {'ok': False, 'error': 'Invalid order date'}, 400
+
+    orders = OracleOrder.query.filter_by(
+        store_id=store.id if store else None,
+        order_date=selected_date,
+        status='approved',
+    ).order_by(OracleOrder.product_id.asc()).all()
+    if not orders:
+        return {'ok': False, 'error': 'No Oracle history data to export'}, 404
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = 'Oracle Order'
+    dates = sorted({order.delivery_date for order in orders})
+    if len(dates) >= 2:
+        expanded_dates = []
+        cursor = dates[0]
+        while cursor <= dates[-1] and len(expanded_dates) < 7:
+            expanded_dates.append(cursor)
+            cursor += timedelta(days=1)
+        dates = expanded_dates
+
+    orders_by_product_date = {}
+    products_by_id = {}
+    for order in orders:
+        product_id = int(order.product_id)
+        products_by_id[product_id] = order.product.description if order.product else str(product_id)
+        orders_by_product_date[(product_id, order.delivery_date)] = order
+
+    header = ['Product'] + [f'{delivery_date.strftime("%a, %b %d")}\nMin · Center · Max' for delivery_date in dates] + ['Week Total']
+    sheet.append(header)
+    dark_fill = PatternFill('solid', fgColor='1E293B')
+    header_fill = PatternFill('solid', fgColor='E2E8F0')
+    border = Border(*(Side(style='thin', color='1E293B') for _ in range(4)))
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color='0F172A')
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = border
+    sheet.row_dimensions[1].height = 34
+
+    for product_id in sorted(products_by_id, key=lambda pid: products_by_id[pid].lower()):
+        row = [products_by_id[product_id]]
+        week_total = 0
+        for delivery_date in dates:
+            order = orders_by_product_date.get((product_id, delivery_date))
+            if order:
+                row.append(f'{order.min_suggested_qty}   {order.suggested_qty}   {order.max_suggested_qty}\nFinal: {order.quantity}')
+                week_total += int(order.quantity or 0)
+            else:
+                row.append('—')
+        row.append(week_total)
+        sheet.append(row)
+
+    for row_index in range(2, sheet.max_row + 1):
+        sheet.cell(row=row_index, column=1).font = Font(bold=True)
+        for column_index in range(1, sheet.max_column + 1):
+            cell = sheet.cell(row=row_index, column=column_index)
+            cell.alignment = Alignment(horizontal='center' if column_index > 1 else 'left', vertical='center', wrap_text=True)
+            cell.border = border
+            if column_index > 1 and column_index < sheet.max_column:
+                cell.fill = PatternFill('solid', fgColor='F0F9FF')
+
+    totals_row = sheet.max_row + 1
+    sheet.cell(row=totals_row, column=1).value = 'TOTALS'
+    for column_index, delivery_date in enumerate(dates, start=2):
+        sheet.cell(row=totals_row, column=column_index).value = sum(
+            int(order.quantity or 0)
+            for order in orders
+            if order.delivery_date == delivery_date
+        )
+    sheet.cell(row=totals_row, column=sheet.max_column).value = sum(int(order.quantity or 0) for order in orders)
+    for cell in sheet[totals_row]:
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = dark_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = border
+
+    sheet.column_dimensions['A'].width = 32
+    for column_index in range(2, sheet.max_column + 1):
+        sheet.column_dimensions[sheet.cell(row=1, column=column_index).column_letter].width = 18
+    for row_index in range(2, totals_row):
+        sheet.row_dimensions[row_index].height = 36
+    sheet.freeze_panes = 'A2'
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f'oracle-history-{selected_date.isoformat()}.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
+@views.route('/cluster-manager/cluster-sbase')
+@login_required
+def cluster_manager_cluster_sbase():
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'):
+        flash('Access denied. Only Cluster Managers, Area Managers, Admins, and General Managers can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Cluster
+    from .views import _get_area_manager_cluster_ids
+    cluster = None
+
+    if role == 'Cluster Manager':
+        # Cluster managers can only open their assigned cluster.
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            flash('You are not assigned to any cluster yet.', category='error')
+            return redirect(url_for('views.home'))
+    elif role == 'Area Manager':
+        # Area Managers can only access clusters they are assigned to.
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view data.', category='error')
+            return redirect(url_for('admin.clusters'))
+        if cluster_id not in allowed_cluster_ids:
+            flash('Access denied. You are not assigned to this cluster.', category='error')
+            return redirect(url_for('views.home'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+    else:
+        # Admin/Superadmin/General Manager can open any cluster via query param.
+        cluster_id = request.args.get('cluster_id', type=int)
+        if not cluster_id:
+            flash('Please choose a cluster to view data.', category='error')
+            return redirect(url_for('admin.clusters'))
+        cluster = Cluster.query.get_or_404(cluster_id)
+
+    # Get only stores in this cluster that are already one year.
+    stores = Store.query.filter_by(cluster_id=cluster.id, is_one_year_already=True).all()
+    stores = _apply_store_scope_filter(stores, request)
+
+    # Get current month and year (or from query params)
+    today = date.today()
+    current_month = request.args.get('month', today.strftime('%m'))
+    current_year = request.args.get('year', str(today.year))
+    store_filter = request.args.get('store_id', '')
+
+    # Fetch daily reports for the selected month/year
+    from calendar import monthrange
+
+    # Get all one-year store IDs in this cluster
+    cluster_store_ids = [s.id for s in stores]
+    store_ids = list(cluster_store_ids)
+
+    # Filter by specific store if selected
+    if store_filter:
+        try:
+            selected_store_id = int(store_filter)
+        except (TypeError, ValueError):
+            flash('Invalid store selection.', category='error')
+            return redirect(url_for('views.cluster_manager_cluster_sbase', cluster_id=cluster.id, month=current_month, year=current_year))
+        if selected_store_id in cluster_store_ids:
+            store_ids = [selected_store_id]
+        else:
+            flash('Selected store does not belong to CL Sbase scope.', category='error')
+            return redirect(url_for('views.cluster_manager_cluster_sbase', cluster_id=cluster.id, month=current_month, year=current_year))
+
+    # Build date range for the month
+    year_int = int(current_year)
+    month_int = int(current_month)
+    _, num_days = monthrange(year_int, month_int)
+
+    # Fetch all reports for this month
+    from datetime import datetime
+    start_date = datetime(year_int, month_int, 1).date()
+    end_date = datetime(year_int, month_int, num_days).date()
+
+    # Only fetch approved reports
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date,
+        DailyReport.status == 'Approved'
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+
+    # Fetch store targets for the selected month
+    from .models import StoreTarget
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+
+    # Organize and aggregate targets by date for cluster-level view
+    targets_by_date = {}
+    for target in targets:
+        date_key = target.target_date.strftime('%Y-%m-%d')
+        if date_key not in targets_by_date:
+            targets_by_date[date_key] = {
+                'target_net': target.target_net,
+                'last_year_net': target.last_year_net,
+                'gbi_target': target.gbi_target
+            }
+        else:
+            targets_by_date[date_key]['target_net'] += target.target_net
+            targets_by_date[date_key]['last_year_net'] += target.last_year_net
+            targets_by_date[date_key]['gbi_target'] += target.gbi_target
+
+    daily_targets = _aggregate_targets_by_day(targets)
+    acc_daily_targets = _build_acc_targets_by_day(year_int, month_int, daily_targets)
+    acc_daily_sales = _build_acc_sales_by_day(year_int, month_int, reports)
+    mtd_metrics_by_day = _build_mtd_metrics_by_day(year_int, month_int, acc_daily_sales, acc_daily_targets)
+    _attach_report_calc_fields(
+        reports,
+        daily_targets,
+        acc_targets_by_day=acc_daily_targets,
+        acc_sales_by_day=acc_daily_sales
+    )
+    summary = _build_cluster_manager_summary(reports, targets)
+
+    # Calculate statistics
+    total_reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date
+    ).count()
+    approved_reports_count = len(reports)
+
+    # Organize reports by date
+    reports_by_date = _group_reports_by_date(reports)
+
+    cluster_sidebar_stores = _build_cluster_sidebar_stores(stores, start_date, end_date)
+
+    return render_template(
+        'cluster_manager/cluster_sbase.html',
+        user=current_user,
+        cluster=cluster,
+        team_name=_get_team_name(cluster),
+        stores=stores,
+        force_cluster_sidebar=(role in ('Admin', 'Superadmin', 'General Manager')),
+        cluster_sidebar_cluster_id=cluster.id if role in ('Admin', 'Superadmin', 'General Manager') else '',
+        cluster_sidebar_stores=cluster_sidebar_stores,
+        current_month=current_month,
+        current_year=current_year,
+        store_filter=store_filter,
+        reports_by_date=reports_by_date,
+        targets_by_date=targets_by_date,
+        daily_targets=daily_targets,
+        acc_daily_targets=acc_daily_targets,
+        acc_daily_sales=acc_daily_sales,
+        mtd_metrics_by_day=mtd_metrics_by_day,
+        total_reports=total_reports,
+        approved_reports_count=approved_reports_count,
+        summary=summary,
+        today_day=today.day,
+        today_month=today.month,
+        today_year=today.year
+    )
+
+
+@views.route('/cluster-manager/raw-data/update', methods=['POST'])
+@login_required
+def update_report_value():
+    """API endpoint to update a report value"""
+    if current_user.role != 'Cluster Manager':
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
+    try:
+        data = request.get_json()
+        report_id = data.get('report_id')
+        field_name = data.get('field_name')
+        new_value = data.get('value')
+        
+        if not report_id or not field_name or new_value is None:
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+        
+        # Cluster data is consolidated by date. Consolidated rows use a
+        # negative date ordinal as their display id, so resolve that row back
+        # to the real reports in the cluster before applying an edit.
+        source_reports = []
+        try:
+            report_id = int(report_id)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Report not found'}), 404
+
+        if report_id < 0:
+            report_date = date.fromordinal(-report_id)
+            managed_cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+            if not managed_cluster:
+                return jsonify({'success': False, 'error': 'Cluster not found'}), 404
+            source_reports = (
+                DailyReport.query
+                .join(Store, DailyReport.store_id == Store.id)
+                .filter(
+                    Store.cluster_id == managed_cluster.id,
+                    DailyReport.report_date == report_date,
+                    DailyReport.status.in_(('Pending', 'Approved', 'Rejected')),
+                )
+                .order_by(DailyReport.id.asc())
+                .all()
+            )
+            report = source_reports[0] if source_reports else None
+        else:
+            report = DailyReport.query.get(report_id)
+
+        if not report:
+            return jsonify({'success': False, 'error': 'Report not found'}), 404
+
+        if not source_reports:
+            managed_cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+            if not managed_cluster or not report.store or report.store.cluster_id != managed_cluster.id:
+                return jsonify({'success': False, 'error': 'Report is outside your assigned cluster'}), 403
+            source_reports = [report]
+        
+        # Cluster manager tables expose edit controls for pending, approved, and rejected rows.
+        if report.status not in ('Pending', 'Approved', 'Rejected'):
+            return jsonify({'success': False, 'error': 'Only pending, approved, or rejected reports can be edited'}), 400
+
+        computed_fields = [
+            'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium',
+        ]
+        if field_name in computed_fields:
+            return jsonify({'success': False, 'error': 'Ending inventory is automated from InvenSync'}), 400
+        
+        # Update the field based on field name
+        # Check if field is numeric (sales fields)
+        numeric_fields = [
+            'pos_gross_sales', 'pos_net_sales', 'ci_regular_gross_sales', 
+            'ci_regular_net_sales',
+            'boothselling_sales', 'bulk_order_sales', 'reseller_sales', 
+            'tieup_sales', 'gow_sales', 'ambulant_sales', 'extended_hours_sales',
+            'gds_sales', 'grab_sales', 'foodpanda_sales', 'paymaya_sales', 
+            'gcash_sales', 'ci_sales_discount', 'total_net_spoilage',
+            'spoilage_percentage', 'mtd_percentage', 'spoilage_gc',
+            'spoilage_rolls', 'spoilage_premium', 'spoilage_others',
+            'senior_pwd_discount', 'promo_ldts_discount', 'bulk_orders_discount',
+            'total_discount', 'discount_percentage'
+        ]
+        
+        tc_fields = [
+            'pos_tc', 'ci_tc', 'boothselling_tc', 'bulk_order_tc',
+            'reseller_tc', 'tieup_tc', 'gow_tc', 'ambulant_tc', 'extended_hours_tc',
+            'gds_tc', 'grab_tc', 'foodpanda_tc', 'paymaya_tc', 'gcash_tc',
+            'ldts_gc', 'ldts_rolls', 'ldts_premium'
+        ]
+        
+        int_fields = []
+        
+        # Determine field type and convert value
+        if field_name in numeric_fields:
+            try:
+                new_value = float(new_value) if new_value else 0.0
+            except ValueError:
+                return jsonify({'success': False, 'error': f'{field_name} must be a number'}), 400
+        elif field_name in tc_fields or field_name in int_fields:
+            try:
+                new_value = int(new_value) if new_value else 0
+            except ValueError:
+                return jsonify({'success': False, 'error': f'{field_name} must be an integer'}), 400
+        
+        # For a consolidated cluster row, preserve the displayed aggregate by
+        # applying the requested delta to one real source report.
+        if hasattr(report, field_name):
+            aggregate_value = sum(float(getattr(item, field_name, 0) or 0) for item in source_reports)
+            previous_value = getattr(report, field_name)
+            if len(source_reports) > 1:
+                setattr(report, field_name, float(previous_value or 0) + (float(new_value) - aggregate_value))
+            else:
+                setattr(report, field_name, new_value)
+            log_audit_event(
+                action='report.update_field',
+                entity_type='DailyReport',
+                entity_id=report.id,
+                reason='Cluster manager updated a report field.',
+                details={
+                    'field_name': field_name,
+                    'previous_value': previous_value,
+                    'new_value': new_value,
+                    'report_status': report.status,
+                },
+            )
+            
+            db.session.commit()
+            return jsonify({'success': True, 'message': 'Value updated successfully'})
+        else:
+            return jsonify({'success': False, 'error': f'Field {field_name} not found'}), 400
+            
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@views.route('/cluster-manager/raw-data/approve', methods=['POST'])
+@login_required
+def approve_report():
+    """API endpoint to approve a report"""
+    if current_user.role != 'Cluster Manager':
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
+    try:
+        data = request.get_json()
+        report_id = data.get('report_id')
+        
+        if not report_id:
+            return jsonify({'success': False, 'error': 'Missing report_id'}), 400
+        
+        # Get the report
+        report = DailyReport.query.get(report_id)
+        if not report:
+            return jsonify({'success': False, 'error': 'Report not found'}), 404
+
+        from .models import Cluster
+        managed_cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not managed_cluster or not report.store or report.store.cluster_id != managed_cluster.id:
+            return jsonify({'success': False, 'error': 'Report is outside your assigned cluster'}), 403
+        if report.status != 'Pending':
+            return jsonify({'success': False, 'error': 'Only pending reports can be approved'}), 400
+        # Update status to Approved
+        previous_status = report.status
+        report.status = 'Approved'
+        log_audit_event(
+            action='report.approve',
+            entity_type='DailyReport',
+            entity_id=report.id,
+            reason='Cluster manager approved report.',
+            details={
+                'previous_status': previous_status,
+                'new_status': report.status,
+            },
+        )
+        db.session.commit()
+        
+        return jsonify({'success': True, 'message': 'Report approved successfully'})
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
+# RETIRED DAILY FORECASTING ROUTES
+# ============================================================================
+
+@views.route('/store-manager/daily-forecasting')
+@login_required
+def daily_forecasting():
+    """Redirect to combined view"""
+    date_param = request.args.get('date', '')
+    if date_param:
+        return redirect(url_for('views.invensync', date=date_param))
+    return redirect(url_for('views.invensync'))
+
+
+@views.route('/store-manager/daily-forecasting/save', methods=['POST'])
+@login_required
+def save_daily_forecasting():
+    """Forecasting has been retired from InvenSync."""
+    return jsonify({'success': False, 'error': 'Forecasting has been disabled'}), 410
+
+
+@views.route('/store-manager/daily-forecasting/calculate', methods=['POST'])
+@login_required
+def calculate_forecasting():
+    """Forecasting has been retired from InvenSync."""
+    return jsonify({'success': False, 'error': 'Forecasting has been disabled'}), 410
+
+
+# ============================================================================
+# DAILY ENDING INVENTORY ROUTES
+# ============================================================================
+
+@views.route('/store-manager/daily-ending-inventory')
+@login_required
+def daily_ending_inventory():
+    """Redirect to combined view"""
+    date_param = request.args.get('date', '')
+    if date_param:
+        return redirect(url_for('views.invensync', date=date_param))
+    return redirect(url_for('views.invensync'))
+
+
+@views.route('/store-manager/pos-sold/download-template')
+@login_required
+def download_pos_sold_template():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        return jsonify({'error': 'Access denied.'}), 403
+
+    store = _resolve_store_for_store_scope_user()
+    store_name = store.name if store else 'Store Name'
+
+    output = io.BytesIO()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'POS Sold'
+
+    raw_date = str(request.args.get('date', '') or '').strip()
+    try:
+        report_date = datetime.strptime(raw_date, '%Y-%m-%d').date() if raw_date else date.today()
+    except ValueError:
+        report_date = date.today()
+
+    title_font = Font(bold=True, size=14)
+    ws.cell(row=1, column=1, value='CHAWNAH FOODS INC').font = title_font
+    ws.cell(row=2, column=1, value=store_name).font = Font(bold=True, size=12)
+    ws.cell(row=3, column=1, value='Product Sales Report').font = Font(size=11)
+    period_str = report_date.strftime('%m/%d/%Y')
+    ws.cell(row=4, column=1, value=f'For the Period of {period_str} to {period_str}')
+
+    headers = ['Product Name', 'Quantity', 'Gross Sales', 'Discount', '', 'Net Sales']
+    header_font = Font(bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=7, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center')
+
+    sample_data = [
+        ['Product A', 10, 500.00, 25.00, '', 475.00],
+        ['Product B', 5, 250.00, 12.50, '', 237.50],
+        ['Product C', 8, 400.00, 20.00, '', 380.00],
+    ]
+    for row_idx, row_data in enumerate(sample_data, 8):
+        for col_idx, value in enumerate(row_data, 1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
+
+    for r in range(11, 31):
+        ws.cell(row=r, column=1, value='')
+
+    ws.column_dimensions['A'].width = 30
+    ws.column_dimensions['B'].width = 12
+    ws.column_dimensions['C'].width = 16
+    ws.column_dimensions['D'].width = 14
+    ws.column_dimensions['E'].width = 4
+    ws.column_dimensions['F'].width = 14
+
+    output.seek(0)
+    wb.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f'pos_sold_template_{report_date.strftime("%Y-%m-%d")}.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
+@views.route('/store-manager/data-export')
+@login_required
+def store_manager_data_export():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        return jsonify({'error': 'Access denied.'}), 403
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        return jsonify({'error': 'No working store is selected.'}), 404
+
+    export_type = str(request.args.get('type', '') or '').strip().lower()
+    if export_type not in {'pos-sold', 'trans-in', 'trans-out', 'wastage', 'delivery', 'invensync'}:
+        return jsonify({'error': 'Invalid export type.'}), 400
+
+    selected_date = None
+    raw_date = str(request.args.get('date', '') or '').strip()
+    if raw_date:
+        try:
+            selected_date = datetime.strptime(raw_date, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'error': 'Invalid export date.'}), 400
+
+    export_scope = str(request.args.get('scope', 'date') or 'date').strip().lower()
+    rows = []
+    if export_type == 'pos-sold':
+        query = (
+            db.session.query(PosSold, DailyReport.report_date)
+            .join(DailyReport, PosSold.daily_report_id == DailyReport.id)
+            .filter(DailyReport.store_id == store.id)
+        )
+        if selected_date:
+            query = query.filter(DailyReport.report_date == selected_date)
+        rows = [{
+            'Date': report_date, 'Product': item.product_name, 'Quantity': item.quantity,
+            'Gross Sales': item.gross_sales, 'Discount': item.discount, 'Net Sales': item.net_sales,
+        } for item, report_date in query.order_by(DailyReport.report_date, PosSold.product_name).all()]
+    elif export_type == 'delivery':
+        query = RsoDelivery.query.filter(RsoDelivery.store_id == store.id)
+        if selected_date:
+            query = query.filter(RsoDelivery.report_date == selected_date)
+        rows = [{
+            'Date': item.report_date, 'RSO No': item.rso_no, 'Product': item.product_name,
+            'Quantity': item.quantity, 'Received Quantity': item.received_quantity,
+            'Source': item.upload_source, 'Reviewed Date': item.delivery_reviewed_date,
+        } for item in query.order_by(RsoDelivery.report_date, RsoDelivery.rso_no, RsoDelivery.product_name).all()]
+    elif export_type == 'invensync':
+        from calendar import monthrange
+
+        if export_scope not in {'date', 'month'}:
+            return jsonify({'error': 'Invalid export scope.'}), 400
+        if not selected_date:
+            selected_date = date.today()
+
+        query = DailyEndingInventory.query.filter(DailyEndingInventory.store_id == store.id)
+        if export_scope == 'month':
+            _, last_day = monthrange(selected_date.year, selected_date.month)
+            start_date = selected_date.replace(day=1)
+            end_date = selected_date.replace(day=last_day)
+            query = query.filter(
+                DailyEndingInventory.inventory_date >= start_date,
+                DailyEndingInventory.inventory_date <= end_date,
+            )
+        else:
+            query = query.filter(DailyEndingInventory.inventory_date == selected_date)
+
+        inventories = query.order_by(DailyEndingInventory.inventory_date).all()
+        product_ids = {
+            item.product_master_id
+            for inventory in inventories
+            for item in inventory.items
+            if item.product_master_id
+        }
+        product_lookup = {
+            product.id: product
+            for product in ProductMaster.query.filter(ProductMaster.id.in_(product_ids)).all()
+        } if product_ids else {}
+
+        rows = []
+        for inventory in inventories:
+            for item in sorted(inventory.items, key=lambda inv_item: ((inv_item.product_description or '').lower(), inv_item.id)):
+                product = product_lookup.get(item.product_master_id)
+                rows.append({
+                    'Store': store.name,
+                    'Date': inventory.inventory_date,
+                    'Product Code': item.product_code or (product.code if product else ''),
+                    'Product': item.product_description,
+                    'Category': product.category if product else '',
+                    'Beginning': item.beginning_qty,
+                    'Delivery': item.delivery_qty,
+                    'Trans-In': item.trans_in_qty,
+                    'BO': item.bo_qty,
+                    'Booth Sales': item.adv_del_qty,
+                    'Trans-Out': item.trans_out_qty,
+                    'Waste Qty': item.wastage_qty,
+                    'Waste Amt': item.wastage_amount,
+                    'CSI': item.csi_qty,
+                    'Sold': item.quantity_sold,
+                    'Ending D+5': item.ending_d5_qty,
+                    'Ending D+4': item.ending_d4_qty,
+                    'Ending D+3': item.ending_d3_qty,
+                    'Total Ending Inventory': item.total_ending_qty,
+                    'Total Peso SRP': item.total_peso_srp,
+                    'Theoretical Ending': item.theo_ending_qty,
+                    'Variance Qty': item.variance_qty,
+                    'Variance Peso': item.variance_peso,
+                    'Remarks': item.remarks,
+                    'Finalized': 'Yes' if inventory.is_finalized else 'No',
+                    'Finalized At': inventory.finalized_at,
+                })
+    else:
+        normalized_store_name = str(store.name or '').strip().lower()
+        query = (
+            db.session.query(TafTransfer, TafTransferItem)
+            .join(TafTransferItem, TafTransferItem.transfer_id == TafTransfer.id)
+        )
+        if export_type == 'trans-in':
+            query = query.filter(
+                func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name,
+                TafTransfer.store_id != store.id,
+            )
+        elif export_type == 'trans-out':
+            query = query.filter(
+                TafTransfer.store_id == store.id,
+                func.lower(func.trim(TafTransfer.transaction_type)).in_(
+                    ['product transfer', 'egi plant transfer', 'supplies transfer']
+                ),
+            )
+        else:
+            query = query.filter(
+                func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer',
+                (
+                    (
+                        (func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name)
+                        & (TafTransfer.store_id != store.id)
+                    )
+                    | (
+                        (TafTransfer.store_id == store.id)
+                        & (func.lower(func.trim(TafTransfer.transfer_to)) == 'main office')
+                    )
+                ),
+            )
+        rows = [{
+            'Date': transfer.transaction_date, 'Control No': transfer.control_no,
+            'Type': transfer.transaction_type, 'From': transfer.transfer_from, 'To': transfer.transfer_to,
+            'Status': transfer.status, 'Item': item.item_name, 'Quantity': item.quantity,
+            'Received Quantity': item.received_quantity, 'Short/Over': item.short_over_qty,
+            'Unit Cost': item.unit_cost, 'Line Total': item.line_total, 'Remarks': item.remarks,
+        } for transfer, item in query.order_by(
+            TafTransfer.transaction_date, TafTransfer.control_no, TafTransferItem.id
+        ).all()]
+
+    columns_by_type = {
+        'pos-sold': ['Date', 'Product', 'Quantity', 'Gross Sales', 'Discount', 'Net Sales'],
+        'delivery': ['Date', 'RSO No', 'Product', 'Quantity', 'Received Quantity', 'Source', 'Reviewed Date'],
+        'invensync': ['Store', 'Date', 'Product Code', 'Product', 'Category', 'Beginning', 'Delivery', 'Trans-In', 'BO', 'Booth Sales', 'Trans-Out', 'Waste Qty', 'Waste Amt', 'CSI', 'Sold', 'Ending D+5', 'Ending D+4', 'Ending D+3', 'Total Ending Inventory', 'Total Peso SRP', 'Theoretical Ending', 'Variance Qty', 'Variance Peso', 'Remarks', 'Finalized', 'Finalized At'],
+        'trans-in': ['Date', 'Control No', 'Type', 'From', 'To', 'Status', 'Item', 'Quantity', 'Received Quantity', 'Short/Over', 'Unit Cost', 'Line Total', 'Remarks'],
+        'trans-out': ['Date', 'Control No', 'Type', 'From', 'To', 'Status', 'Item', 'Quantity', 'Received Quantity', 'Short/Over', 'Unit Cost', 'Line Total', 'Remarks'],
+        'wastage': ['Date', 'Control No', 'Type', 'From', 'To', 'Status', 'Item', 'Quantity', 'Received Quantity', 'Short/Over', 'Unit Cost', 'Line Total', 'Remarks'],
+    }
+    dataframe = pd.DataFrame(rows, columns=columns_by_type[export_type])
+    if role == 'Inventory Staff':
+        dataframe = dataframe.mask(dataframe.eq(0), None)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        dataframe.to_excel(writer, index=False, sheet_name='Data')
+        sheet = writer.book['Data']
+        sheet.freeze_panes = 'A2'
+        sheet.auto_filter.ref = sheet.dimensions
+        for cells in sheet.columns:
+            sheet.column_dimensions[cells[0].column_letter].width = min(
+                max((len(str(cell.value or '')) for cell in cells), default=10) + 2,
+                45,
+            )
+    output.seek(0)
+    store_name = re.sub(r'[^A-Za-z0-9_-]+', '_', store.name or 'store').strip('_')
+    period = selected_date.strftime('%Y-%m') if export_type == 'invensync' and export_scope == 'month' else (selected_date.strftime('%Y-%m-%d') if selected_date else 'all')
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f'{store_name}_{export_type}_{period}.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
+@views.route('/store-manager/daily-ending-inventory/save', methods=['POST'])
+@login_required
+def save_daily_ending_inventory():
+    """Save daily ending inventory data"""
+    if (current_user.role or '').strip() != 'Store Manager':
+        return jsonify({
+            'success': False,
+            'error': 'Only Store Managers can edit InvenSync inventory.'
+        }), 403
+
+    try:
+        data = request.get_json()
+        inventory_id = data.get('inventory_id')
+        items_data = data.get('items', [])
+        motif_breakdown = data.get('motif_breakdown')
+        finalize_day = bool(data.get('finalize_day'))
+        finalize_beginning = bool(data.get('finalize_beginning'))
+        
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return jsonify({'success': False, 'error': 'Inventory not found'}), 404
+
+        motif_quantities = None
+        report = DailyReport.query.filter_by(
+            store_id=inventory.store_id,
+            report_date=inventory.inventory_date,
+        ).first()
+        if motif_breakdown is not None and report:
+            pos_items = PosSold.query.filter_by(daily_report_id=report.id).all()
+            motif_rows = _validate_saved_motif_rows(pos_items, motif_breakdown)
+            if motif_rows:
+                report.pos_motif_breakdown_json = json.dumps(motif_rows)
+                motif_quantities = _build_complete_pos_quantities(pos_items, motif_rows)
+        config, global_config_data = _get_or_create_global_invensync_config()
+        effective_config_data = _get_effective_invensync_config(global_config_data, inventory.store_id)
+        admin_unlock_scope = _get_invensync_admin_unlock(global_config_data, inventory.store_id, inventory.inventory_date)
+        has_admin_unlock = bool(admin_unlock_scope.get('all') or admin_unlock_scope.get('cells'))
+        if inventory.is_finalized and not has_admin_unlock:
+            return jsonify({
+                'success': False,
+                'error': 'This inventory day is already finalized and can no longer be edited.'
+            }), 423
+        if inventory.is_finalized and has_admin_unlock:
+            finalize_day = False
+            finalize_beginning = False
+        force_beginning_entry = inventory.store_id in {
+            int(item) for item in global_config_data.get('force_beginning_store_ids', [])
+            if str(item).isdigit()
+        }
+        store_beginning_baseline = DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == inventory.store_id,
+            DailyEndingInventory.is_beginning_finalized.is_(True),
+        ).first()
+        if finalize_beginning and not force_beginning_entry and store_beginning_baseline and store_beginning_baseline.id != inventory.id:
+            return jsonify({
+                'success': False,
+                'error': 'Beginning inventory has already been saved for this store.'
+            }), 409
+        if finalize_beginning and not force_beginning_entry and inventory.is_beginning_finalized:
+            return jsonify({
+                'success': False,
+                'error': 'Beginning inventory has already been saved for this store.'
+            }), 409
+
+        is_first_inventory_baseline = DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == inventory.store_id,
+            DailyEndingInventory.inventory_date < inventory.inventory_date,
+        ).first() is None
+        if finalize_beginning and not force_beginning_entry and not is_first_inventory_baseline:
+            return jsonify({
+                'success': False,
+                'error': 'Beginning inventory can only be finalized during the first inventory setup for this store.'
+            }), 409
+        has_beginning_payload = any('beginning_qty' in item_data for item_data in items_data)
+        if finalize_beginning and not has_beginning_payload:
+            return jsonify({
+                'success': False,
+                'error': 'Beginning inventory save requires beginning quantities.'
+            }), 400
+        beginning_qty_is_locked = 'beginning_qty' in effective_config_data.get('locked_columns', [])
+        allow_beginning_qty_update = (
+            force_beginning_entry
+            or (
+                (not inventory.is_beginning_finalized)
+                and (not store_beginning_baseline)
+                and ((not beginning_qty_is_locked) or is_first_inventory_baseline or finalize_beginning)
+            )
+        )
+        
+        # Update items
+        editable_fields = [
+            'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty',
+            'trans_out_qty', 'wastage_qty', 'csi_qty', 'quantity_sold',
+            'ending_d5_qty', 'ending_d4_qty', 'ending_d3_qty', 'remarks',
+        ]
+        numeric_fields = [field for field in editable_fields if field != 'remarks']
+        for item_data in items_data:
+            item_id = item_data.get('item_id')
+            item = DailyEndingInventoryItem.query.get(item_id)
+            if item:
+                if item.inventory_id != inventory.id:
+                    continue
+                if inventory.is_finalized and has_admin_unlock:
+                    if (
+                        'beginning_qty' in item_data
+                        and _is_invensync_admin_unlocked(admin_unlock_scope, item.id, 'beginning_qty')
+                    ):
+                        item.beginning_qty = int(item_data.get('beginning_qty', 0))
+                    for field in numeric_fields:
+                        if field in item_data and _is_invensync_admin_unlocked(admin_unlock_scope, item.id, field):
+                            setattr(item, field, int(item_data.get(field, 0)))
+                    if (
+                        'quantity_sold' in item_data
+                        and _is_invensync_admin_unlocked(admin_unlock_scope, item.id, 'quantity_sold')
+                    ):
+                        raw_sold = item_data.get('quantity_sold')
+                        item.quantity_sold = None if raw_sold in (None, '', 0, '0') else int(raw_sold)
+                    if (
+                        'remarks' in item_data
+                        and _is_invensync_admin_unlocked(admin_unlock_scope, item.id, 'remarks')
+                    ):
+                        item.remarks = item_data.get('remarks', '')
+                    _recalculate_inventory_item(item)
+                    continue
+
+                if allow_beginning_qty_update and 'beginning_qty' in item_data:
+                    item.beginning_qty = int(item_data.get('beginning_qty', 0))
+                item.delivery_qty = int(item_data.get('delivery_qty', 0))
+                item.trans_in_qty = int(item_data.get('trans_in_qty', 0))
+                item.bo_qty = int(item_data.get('bo_qty', 0))
+                item.adv_del_qty = int(item_data.get('adv_del_qty', 0))
+                item.trans_out_qty = int(item_data.get('trans_out_qty', 0))
+                item.wastage_qty = int(item_data.get('wastage_qty', 0))
+                item.csi_qty = int(item_data.get('csi_qty', 0))
+                raw_sold = item_data.get('quantity_sold', 0)
+                item.quantity_sold = None if raw_sold in (None, '', 0, '0') else int(raw_sold)
+                item.ending_d5_qty = int(item_data.get('ending_d5_qty', 0))
+                item.ending_d4_qty = int(item_data.get('ending_d4_qty', 0))
+                item.ending_d3_qty = int(item_data.get('ending_d3_qty', 0))
+                item.remarks = item_data.get('remarks', '')
+                if motif_quantities is not None and item.product_master_id:
+                    sold_qty = motif_quantities.get(item.product_master_id)
+                    item.quantity_sold = int(sold_qty) if sold_qty else None
+                
+                # Recalculate derived fields
+                _recalculate_inventory_item(item)
+
+        if is_first_inventory_baseline and has_beginning_payload:
+            _lock_global_invensync_column('beginning_qty')
+
+        if finalize_beginning:
+            inventory.is_beginning_finalized = True
+            inventory.beginning_finalized_at = datetime.now()
+            inventory.beginning_finalized_by = current_user.id
+            if force_beginning_entry:
+                global_config_data['force_beginning_store_ids'] = [
+                    int(item) for item in global_config_data.get('force_beginning_store_ids', [])
+                    if str(item).isdigit() and int(item) != inventory.store_id
+                ]
+                config.config_data = json.dumps(global_config_data)
+
+        if finalize_day:
+            if inventory.is_finalized:
+                db.session.rollback()
+                return jsonify({
+                    'success': False,
+                    'error': 'This inventory was already finalized by another session.'
+                }), 409
+            inventory.is_finalized = True
+            inventory.finalized_at = datetime.now()
+            inventory.finalized_by = current_user.id
+            _carry_finalized_ending_to_next_day(inventory)
+
+        if finalize_beginning:
+            if inventory.is_beginning_finalized:
+                db.session.rollback()
+                return jsonify({
+                    'success': False,
+                    'error': 'Beginning was already finalized by another session.'
+                }), 409
+        
+        db.session.commit()
+        
+        log_audit_event(
+            action='inventory.save',
+            entity_type='DailyEndingInventory',
+            entity_id=inventory.id,
+            details={
+                'inventory_date': inventory.inventory_date.isoformat(),
+                'finalize_day': finalize_day,
+                'finalize_beginning': finalize_beginning,
+            }
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Inventory saved successfully'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _carry_finalized_ending_to_next_day(source_inventory):
+    """Carry forward finalized ending quantities to the next day, creating it if needed."""
+    if not source_inventory or not source_inventory.is_finalized:
+        return 0
+
+    next_date = source_inventory.inventory_date + timedelta(days=1)
+    next_inventory = DailyEndingInventory.query.filter_by(
+        store_id=source_inventory.store_id,
+        inventory_date=next_date,
+    ).first()
+    if not next_inventory:
+        next_inventory = DailyEndingInventory(
+            store_id=source_inventory.store_id,
+            inventory_date=next_date,
+            created_by=getattr(source_inventory, 'finalized_by', 0) or 0,
+        )
+        db.session.add(next_inventory)
+        db.session.flush()
+
+    source_totals = {
+        item.product_master_id: int(item.total_ending_qty or 0)
+        for item in source_inventory.items
+        if item.product_master_id is not None
+    }
+    updated_count = 0
+    existing_by_product = {
+        item.product_master_id: item
+        for item in next_inventory.items
+        if item.product_master_id is not None
+    }
+    for product_master_id, ending_qty in source_totals.items():
+        next_item = existing_by_product.get(product_master_id)
+        if next_item:
+            next_item.beginning_qty = ending_qty
+            _recalculate_inventory_item(next_item)
+            updated_count += 1
+        else:
+            product = ProductMaster.query.get(product_master_id)
+            if product:
+                srp = product.sp_p or product.sp_np or 0.0
+                next_item = DailyEndingInventoryItem(
+                    inventory_id=next_inventory.id,
+                    product_master_id=product.id,
+                    product_code=str(product.code) if product.code else '',
+                    product_description=product.description,
+                    srp_price=float(srp),
+                    beginning_qty=ending_qty,
+                )
+                db.session.add(next_item)
+                updated_count += 1
+    return updated_count
+
+
+def _normalize_product_name(name):
+    """Normalize product name for comparison: lowercase, strip, collapse spaces."""
+    if not name:
+        return ''
+    # Convert to lowercase, strip whitespace, collapse multiple spaces
+    normalized = ' '.join(str(name).lower().strip().split())
+    return normalized
+
+
+def _match_rso_to_inventory(rso_item, product, alias_master_lookup=None):
+    """
+    Match RSO delivery item to inventory product.
+    Priority: Product Code > Full Product Name (exact normalized match)
+    
+    Rules:
+    - Do NOT use partial/substring matching
+    - Only accept exact full name matches after normalization
+    - Case-insensitive, trim spaces, normalize formatting
+    """
+    # Normalize both names
+    rso_name_normalized = _normalize_product_name(rso_item.product_name)
+    rso_alias_key = _normalize_product_text(rso_item.product_name)
+    product_desc_normalized = _normalize_product_name(product.description)
+    product_desc_key = _normalize_product_text(product.description)
+    product_code_str = str(product.code or '').strip()
+
+    # Product aliases are linked to a master product in System Analyzer. Resolve
+    # them at display time so aliases also apply to RSO rows uploaded before the
+    # link was created.
+    if (
+        rso_alias_key
+        and alias_master_lookup
+        and alias_master_lookup.get(rso_alias_key) == product.id
+    ):
+        return True
+    
+    # Try matching by product code if RSO item has a code embedded in product_name
+    # Some Excel files might have format: "CODE - Product Name" or "CODE Product Name"
+    rso_name_upper = str(rso_item.product_name).strip()
+    
+    # Check if RSO product_name starts with a number (potential product code)
+    code_match = re.match(r'^(\d+)\s*[-–—]?\s*(.+)$', rso_name_upper)
+    if code_match:
+        rso_code_from_name = code_match.group(1).strip()
+        if rso_code_from_name == product_code_str:
+            return True
+    
+    # Primary matching: Exact normalized product name comparison
+    if rso_name_normalized and product_desc_normalized:
+        if rso_name_normalized == product_desc_normalized:
+            return True
+
+    # Treat formatting-only differences the same way System Analyzer does.
+    # Example: "Pizza Bread - Cheeseburger" and
+    # "Pizza Bread (Cheese Burger)" both become "pizzabreadcheeseburger".
+    if rso_alias_key and product_desc_key and rso_alias_key == product_desc_key:
+        return True
+    
+    # Secondary matching: If product code in RSO matches product.code exactly
+    # (for cases where RSO product_name IS the product code)
+    if rso_name_normalized == product_code_str.lower():
+        return True
+    
+    return False
+
+
+def _sync_rso_delivery_to_inventory(store, report_date):
+    """Reconcile reviewed RSO rows into InvenSync delivery_qty / bo_qty.
+
+    Called after a Store Manager saves or deletes RSO rows (before End of Day).
+    Reviewed rows are authoritative: delivery_qty / bo_qty are overwritten so
+    saved edits are reflected in InvenSync immediately.
+    """
+    if not store or not report_date:
+        return
+
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=report_date,
+    ).first()
+    if not inventory:
+        return
+
+    rso_deliveries = RsoDelivery.query.filter_by(
+        store_id=store.id,
+        report_date=report_date,
+    ).filter(RsoDelivery.delivery_reviewed_date.isnot(None)).all()
+
+    rso_alias_master_lookup = {}
+    if rso_deliveries:
+        rso_alias_master_lookup = {
+            str(normalized_alias or '').strip(): int(product_master_id)
+            for normalized_alias, product_master_id in (
+                db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
+                .all()
+            )
+            if str(normalized_alias or '').strip()
+        }
+
+    products_by_id = {
+        int(product.id): product
+        for product in ProductMaster.query.all()
+        if product.id is not None
+    }
+
+    for inv_item in inventory.items:
+        if not inv_item.product_master_id:
+            continue
+        product = products_by_id.get(inv_item.product_master_id)
+        if not product:
+            continue
+
+        regular_delivery_qty = 0
+        bulk_order_qty = 0
+        has_regular_delivery = False
+        has_bulk_order = False
+
+        for rso_item in rso_deliveries:
+            if not _match_rso_to_inventory(rso_item, product, rso_alias_master_lookup):
+                continue
+            reviewed_qty = int(
+                rso_item.received_quantity
+                if rso_item.received_quantity is not None
+                else (rso_item.quantity or 0)
+            )
+            upload_source = str(rso_item.upload_source or 'delivery').strip().lower()
+            if upload_source == 'bulk':
+                bulk_order_qty += reviewed_qty
+                has_bulk_order = True
+            else:
+                regular_delivery_qty += reviewed_qty
+                has_regular_delivery = True
+
+        if has_regular_delivery:
+            inv_item.delivery_qty = regular_delivery_qty
+        else:
+            inv_item.delivery_qty = 0
+        inv_item.bo_qty = bulk_order_qty if has_bulk_order else 0
+        _recalculate_inventory_item(inv_item)
+
+    db.session.flush()
+
+
+@views.route('/store-manager/invensync')
+@login_required
+def invensync():
+    """Daily ending inventory view"""
+    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor', 'Area Manager']:
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+    
+    if current_user.role == 'Store Manager':
+        q = (request.args.get('q') or '').strip()
+        params = {'m': 'invensync_details_v2'}
+        if q:
+            params['q'] = q
+        return redirect(url_for('views.v2_base_2', **params))
+    
+    
+    # Inventory Staff behavior:
+    # - Without store_id: redirect to dashboard (all stores view)
+    # - With store_id: allow viewing specific store details (read-only)
+    if current_user.role == 'Inventory Staff':
+        store_id = request.args.get('store_id', type=int)
+        if not store_id:
+            # No store_id provided, redirect to dashboard
+            return redirect(url_for('views.invensync_inventory_staff'))
+        # store_id provided, allow viewing details (will be handled below)
+
+    # Get store for current user
+    role = (current_user.role or '').strip()
+    if role == 'Store Manager':
+        store = Store.query.filter_by(manager_id=current_user.id).first()
+    elif role == 'Inventory Staff':
+        # Inventory Staff viewing specific store details
+        store_id = request.args.get('store_id', type=int)
+        assigned_store_ids = _inventory_staff_assigned_store_ids()
+        store = Store.query.get(store_id) if store_id in assigned_store_ids else None
+    elif role == 'Cluster Manager':
+        # Cluster Manager viewing store details — must belong to their cluster
+        store_id = request.args.get('store_id', type=int)
+        if not store_id:
+            return redirect(url_for('views.cluster_manager_invensync'))
+        from .models import Cluster
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        store = Store.query.get(store_id) if store_id else None
+        if store and cluster and store.cluster_id != cluster.id:
+            flash('Access denied. Store does not belong to your cluster.', category='error')
+            return redirect(url_for('views.cluster_manager_invensync'))
+    else:
+        # Admin/Superadmin accessing store details via store_id parameter
+        store_id = request.args.get('store_id', type=int)
+        if not store_id:
+            # Redirect admins to admin dashboard if no store_id provided
+            return redirect(url_for('admin.dashboard'))
+        store = Store.query.get(store_id) if store_id else None
+
+    if not store:
+        flash('Store not found or not assigned.', category='error')
+        return redirect(url_for('views.home'))
+
+    # Get selected date (default to today)
+    selected_date_str = request.args.get('date', '')
+    if selected_date_str:
+        try:
+            selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = date.today()
+    else:
+        selected_date = date.today()
+
+    missing_invensync_dates = []
+    if current_user.role == 'Store Manager' and not selected_date_str:
+        today_date = date.today()
+        month_start = today_date.replace(day=1)
+        cutoff_date = today_date - timedelta(days=1)
+        missing_invensync_dates = _build_missing_invensync_dates(store.id, month_start, cutoff_date)
+
+    # Get or create inventory record
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=selected_date
+    ).first()
+
+    if not inventory:
+        inventory = DailyEndingInventory(
+            store_id=store.id,
+            inventory_date=selected_date,
+            created_by=current_user.id
+        )
+        db.session.add(inventory)
+        db.session.commit()
+
+    # Get all products
+    products = ProductMaster.query.all()
+    motif_product_options = [
+        {
+            'id': int(product.id),
+            'code': product.code,
+            'description': product.description,
+            'price': float(product.sp_p or product.sp_np or 0.0),
+        }
+        for product in sorted(products, key=lambda item: (item.description or '').lower())
+        if (
+            (product.description or '').strip()
+            and not (
+                'additional charge' in (product.description or '').strip().lower()
+                and 'motif' in (product.description or '').strip().lower()
+            )
+        )
+    ]
+    # Define category order
+    category_order = {
+        'breads': 1,
+        'trayproducts': 2,
+        'rolls': 3,
+        'greetingcakes': 4,
+        'premium': 5,
+        'cremadefruta': 6,
+        'gmproducts': 7,
+        'candles': 8,
+        'addons': 9,
+    }
+
+    def _product_category_label(product):
+        return (product.category or '').strip() or 'Uncategorized'
+
+    def _category_dom_id(category_name):
+        normalized = re.sub(r'[^a-z0-9]+', '', (category_name or '').lower())
+        return normalized or 'uncategorized'
+
+    def _product_category_key(product):
+        return _category_dom_id(_product_category_label(product))
+
+    products.sort(key=lambda p: (
+        category_order.get(_product_category_key(p), 99),
+        _product_category_key(p),
+        p.id,
+    ))
+
+    category_groups_by_key = OrderedDict()
+    for product in products:
+        category_label = _product_category_label(product)
+        category_key = _product_category_key(product)
+        group = category_groups_by_key.setdefault(category_key, {
+            'id': _category_dom_id(category_label),
+            'display_name': category_label,
+            'products': [],
+        })
+        group['products'].append(product)
+    category_groups = list(category_groups_by_key.values())
+
+    prev_inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=selected_date - timedelta(days=1),
+    ).first()
+    finalized_prev_totals = {}
+    if prev_inventory and prev_inventory.is_finalized:
+        finalized_prev_totals = {
+            prev_item.product_master_id: int(prev_item.total_ending_qty or 0)
+            for prev_item in prev_inventory.items
+            if prev_item.product_master_id is not None
+        }
+
+
+    # Get or create inventory items using fast bulk lookup (1 query instead of 300+)
+    existing_items_list = DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
+    existing_items_by_pm_id = {item.product_master_id: item for item in existing_items_list if item.product_master_id}
+    products_by_id = {p.id: p for p in products}
+
+    inventory_items = {}
+    new_items_to_add = []
+
+    for product in products:
+        item = existing_items_by_pm_id.get(product.id)
+
+    # Get or create inventory items (bulk load to avoid N+1)
+    existing_items = {
+        int(item.product_master_id): item
+        for item in DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
+        if item.product_master_id is not None
+    }
+    inventory_items = {}
+    for product in products:
+        item = existing_items.get(product.id)
+
+        beginning_qty = finalized_prev_totals.get(product.id, 0)
+        if not item:
+            srp = product.sp_p if store.store_group == 'premium' else product.sp_np
+            item = DailyEndingInventoryItem(
+                inventory_id=inventory.id,
+                product_master_id=product.id,
+                product_code=str(product.code) if product.code else '',
+                product_description=product.description,
+                srp_price=srp or 0,
+                beginning_qty=beginning_qty,
+            )
+            new_items_to_add.append(item)
+        elif product.id in finalized_prev_totals:
+            item.beginning_qty = beginning_qty
+        inventory_items[product.id] = item
+
+    if new_items_to_add:
+        db.session.add_all(new_items_to_add)
+    db.session.commit()
+
+    # Keep each item's SRP aligned with the store's current pricing tier so the
+    # price shown in InvenSync always matches the Product Masterlist (sp_np for
+    # non-premium stores, sp_p for premium). Frozen/finalized days keep history.
+    if not inventory.is_finalized:
+        tier_srp_by_product = {
+            p.id: float((p.sp_p if store.store_group == 'premium' else (p.sp_np or p.sp_p)) or 0.0)
+            for p in products
+        }
+        price_dirty = False
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            tier_srp = tier_srp_by_product.get(inv_item.product_master_id)
+            if tier_srp is not None and float(inv_item.srp_price or 0.0) != tier_srp:
+                inv_item.srp_price = tier_srp
+                price_dirty = True
+        if price_dirty:
+            db.session.commit()
+
+    # Sync RSO delivery data to inventory items with improved matching
+    # Reconcile reviewed RSO rows even after an inventory day is finalized.
+    # A product alias may be linked later, and that source-data correction must
+    # still populate the delivery column without reopening manual inventory edits.
+    rso_deliveries = RsoDelivery.query.filter_by(
+        store_id=store.id,
+        report_date=selected_date
+    ).filter(RsoDelivery.delivery_reviewed_date.isnot(None)).all()
+    
+    if rso_deliveries:
+        rso_alias_master_lookup = {
+            str(normalized_alias or '').strip(): int(product_master_id)
+            for normalized_alias, product_master_id in (
+                db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
+                .all()
+            )
+            if str(normalized_alias or '').strip()
+        }
+
+        for inv_item in inventory_items.values():
+            if inv_item.product_master_id:
+                product = products_by_id.get(inv_item.product_master_id)
+                if product:
+                    regular_delivery_qty = 0
+                    bulk_order_qty = 0
+                    has_regular_delivery = False
+                    has_bulk_order = False
+                    latest_reviewed_date = None
+
+                    for rso_item in rso_deliveries:
+                        if not _match_rso_to_inventory(rso_item, product, rso_alias_master_lookup):
+                            continue
+
+                        reviewed_qty = int(
+                            rso_item.received_quantity
+                            if rso_item.received_quantity is not None
+                            else (rso_item.quantity or 0)
+                        )
+                        upload_source = str(rso_item.upload_source or 'delivery').strip().lower()
+                        if upload_source == 'bulk':
+                            bulk_order_qty += reviewed_qty
+                            has_bulk_order = True
+                        else:
+                            # Blank/legacy upload_source values are regular RSO.
+                            regular_delivery_qty += reviewed_qty
+                            has_regular_delivery = True
+                            if (
+                                rso_item.delivery_reviewed_date
+                                and (
+                                    latest_reviewed_date is None
+                                    or rso_item.delivery_reviewed_date > latest_reviewed_date
+                                )
+                            ):
+                                latest_reviewed_date = rso_item.delivery_reviewed_date
+
+                    if has_regular_delivery:
+                        if int(inv_item.delivery_qty or 0) == 0:
+                            inv_item.delivery_qty = regular_delivery_qty
+                            inv_item.delivery_reviewed_date = latest_reviewed_date
+                    elif has_bulk_order and int(inv_item.delivery_qty or 0) == bulk_order_qty:
+                        inv_item.delivery_qty = 0
+
+                    if has_bulk_order:
+                        inv_item.bo_qty = bulk_order_qty
+
+    taf_trans_out_map = _build_taf_trans_out_quantity_by_master_id(store, selected_date)
+    for inv_item in inventory_items.values():
+        if not inv_item.product_master_id:
+            continue
+        inv_item.trans_out_qty = int(taf_trans_out_map.get(inv_item.product_master_id, 0) or 0)
+
+    taf_trans_in_map = _build_taf_trans_in_quantity_by_master_id(store, selected_date)
+    for inv_item in inventory_items.values():
+        if not inv_item.product_master_id:
+            continue
+        inv_item.trans_in_qty = int(taf_trans_in_map.get(inv_item.product_master_id, 0) or 0)
+
+    taf_csi_map = _build_taf_csi_quantity_by_master_id(store, selected_date)
+    for inv_item in inventory_items.values():
+        if not inv_item.product_master_id:
+            continue
+        inv_item.csi_qty = int(taf_csi_map.get(inv_item.product_master_id, 0) or 0)
+
+    taf_wastage_map = _build_taf_wastage_quantity_by_master_id(store, selected_date)
+    for inv_item in inventory_items.values():
+        if not inv_item.product_master_id:
+            continue
+        inv_item.wastage_qty = int(taf_wastage_map.get(inv_item.product_master_id, 0) or 0)
+
+    saved_sales_map = {}
+    saved_bitbit_sold_details = {}
+    saved_motif_sold_details = {}
+    motif_charge_payload = None
+    # Recalculate after carry-forward and source reconciliation. This also
+    # repairs derived values on finalized rows when late source data is synced.
+    for item in inventory_items.values():
+        _recalculate_inventory_item(item)
+    saved_report = DailyReport.query.filter_by(
+        store_id=store.id,
+        report_date=selected_date,
+    ).first()
+    saved_report_id = saved_report.id if saved_report else None
+    final_pos_items = PosSold.query.filter_by(daily_report_id=saved_report_id).all() if saved_report_id else []
+    pos_staging = _get_pos_sold_staging(store.id, selected_date)
+    staged_pos_items = _get_staged_pos_sold_items(pos_staging)
+    if final_pos_items:
+        saved_motif_items = [
+            {
+                'product_name': item.product_name,
+                'quantity': item.quantity,
+                'gross_sales': item.gross_sales,
+                'discount': item.discount,
+                'net_sales': item.net_sales,
+            }
+            for item in final_pos_items
+        ]
+        saved_motif_rows = _get_saved_motif_rows(saved_report.pos_motif_breakdown_json)
+        saved_sales_map, saved_bitbit_sold_details = _build_complete_pos_quantities(
+            saved_motif_items,
+            saved_motif_rows,
+            include_bitbit_details=True,
+        )
+        saved_motif_sold_details = _build_motif_sold_details(saved_motif_rows)
+    elif staged_pos_items:
+        saved_motif_rows = _get_saved_motif_rows(pos_staging.motif_breakdown_json)
+        saved_sales_map, saved_bitbit_sold_details = _build_complete_pos_quantities(
+            staged_pos_items,
+            saved_motif_rows,
+            include_bitbit_details=True,
+        )
+        saved_motif_sold_details = _build_motif_sold_details(saved_motif_rows)
+    motif_source_items = []
+    if final_pos_items:
+        motif_source_items = final_pos_items
+    elif staged_pos_items:
+        motif_source_items = staged_pos_items
+
+    if motif_source_items:
+        motif_payload_items = []
+        for item in motif_source_items:
+            if isinstance(item, dict):
+                motif_payload_items.append({
+                    'product_name': item.get('product_name'),
+                    'quantity': item.get('quantity'),
+                    'gross_sales': item.get('gross_sales'),
+                    'discount': item.get('discount'),
+                    'net_sales': item.get('net_sales'),
+                })
+            else:
+                motif_payload_items.append({
+                    'product_name': getattr(item, 'product_name', None),
+                    'quantity': getattr(item, 'quantity', None),
+                    'gross_sales': getattr(item, 'gross_sales', None),
+                    'discount': getattr(item, 'discount', None),
+                    'net_sales': getattr(item, 'net_sales', None),
+                })
+        motif_charge_payload = _build_motif_charge_payload_from_pos_items(motif_payload_items)
+
+    if final_pos_items or staged_pos_items:
+        for inv_item in inventory_items.values():
+            if inv_item.product_master_id:
+                sold_qty = saved_sales_map.get(inv_item.product_master_id)
+                inv_item.quantity_sold = int(sold_qty) if sold_qty else None
+                inv_item.pos_reviewed_source = 'saved'
+                inv_item.pos_reviewed_date = selected_date
+                _recalculate_inventory_item(inv_item)
+            if inv_item.product_master_id and inv_item.product_master_id in saved_bitbit_sold_details:
+                inv_item.bitbit_sold_tags = saved_bitbit_sold_details[inv_item.product_master_id]
+            if inv_item.product_master_id and inv_item.product_master_id in saved_motif_sold_details:
+                inv_item.motif_sold_tags = saved_motif_sold_details[inv_item.product_master_id]
+
+    db.session.commit()
+
+    _, global_config_data = _get_or_create_global_invensync_config()
+    effective_config_data = _get_effective_invensync_config(global_config_data, store.id)
+    admin_unlock_scope = _get_invensync_admin_unlock(global_config_data, store.id, selected_date)
+    force_beginning_entry = store.id in {
+        int(item) for item in global_config_data.get('force_beginning_store_ids', [])
+        if str(item).isdigit()
+    }
+    store_beginning_baseline_finalized = DailyEndingInventory.query.filter(
+        DailyEndingInventory.store_id == store.id,
+        DailyEndingInventory.is_beginning_finalized.is_(True),
+    ).first() is not None
+    # Detect first-time setup: no previous inventory baseline and no current beginning stock.
+    has_any_beginning = any(
+        item.beginning_qty and item.beginning_qty > 0
+        for item in inventory_items.values()
+    )
+    prev_inventory_exists = DailyEndingInventory.query.filter(
+        DailyEndingInventory.store_id == store.id,
+        DailyEndingInventory.inventory_date < selected_date
+    ).first() is not None
+    is_first_time = (not store_beginning_baseline_finalized) and not has_any_beginning and not prev_inventory_exists
+    allow_beginning_stock_entry = (is_first_time or force_beginning_entry) and current_user.role == 'Store Manager'
+    has_no_wastage = all(int(item.wastage_qty or 0) == 0 for item in inventory_items.values())
+
+    # Build cluster sidebar context for Cluster Manager
+    cluster_sidebar_ctx = {}
+    if role == 'Cluster Manager':
+        from .models import Cluster
+        cm_cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if cm_cluster:
+            cm_stores = Store.query.filter_by(cluster_id=cm_cluster.id).all()
+            cluster_sidebar_ctx = {
+                'cluster': cm_cluster,
+                'team_name': _get_team_name(cm_cluster),
+                'cluster_sidebar_stores': _build_cluster_sidebar_stores(cm_stores),
+            }
+
+    return render_template(
+        'store_manager/invensync.html',
+        user=current_user,
+        store=store,
+        inventory=inventory,
+        products=products,
+        category_groups=category_groups,
+        inventory_items=inventory_items,
+        selected_date=selected_date.strftime('%Y-%m-%d'),
+        today=date.today().strftime('%Y-%m-%d'),
+        global_config_data=effective_config_data,
+        admin_unlock_scope=admin_unlock_scope,
+        is_first_time=is_first_time,
+        allow_beginning_stock_entry=allow_beginning_stock_entry,
+        store_beginning_baseline_finalized=store_beginning_baseline_finalized,
+        missing_dates=missing_invensync_dates,
+        next_missing_date=missing_invensync_dates[0]['iso'] if missing_invensync_dates else None,
+        motif_charge_payload=motif_charge_payload,
+        motif_product_options=motif_product_options,
+        adj_product_options=[
+            {
+                'id': int(p.id),
+                'description': p.description,
+                'code': str(p.code or ''),
+                'price': float((p.sp_p if store.store_group == 'premium' else (p.sp_np or p.sp_p)) or 0.0),
+            }
+            for p in sorted(products, key=lambda x: (x.description or '').lower())
+            if (p.description or '').strip()
+        ],
+        show_trans_trace=current_user.role in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'),
+        is_edit_adjustments=(current_user.role == 'Inventory Staff'),
+        **cluster_sidebar_ctx,
+    )
+
+
+@views.route('/store-manager/invensync/trace-data')
+@login_required
+def invensync_transfer_trace():
+    """Return the TafTransfer records behind a Trans-In / Trans-Out cell.
+    Admin roles only."""
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        return jsonify({'ok': False, 'message': 'Access denied.'}), 403
+
+    store_id = request.args.get('store_id', type=int)
+    date_str = request.args.get('date', '').strip()
+    product_master_id = request.args.get('product_master_id', type=int)
+    direction = request.args.get('direction', '').strip().lower()
+
+    if not store_id or not date_str or not product_master_id:
+        return jsonify({'ok': False, 'message': 'Missing required parameters.'}), 400
+    if direction not in ('in', 'out', 'delivery', 'sold'):
+        return jsonify({'ok': False, 'message': 'Invalid direction.'}), 400
+
+    store = Store.query.get(store_id)
+    if not store:
+        return jsonify({'ok': False, 'message': 'Store not found.'}), 404
+
+    try:
+        transaction_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'ok': False, 'message': 'Invalid date.'}), 400
+
+    if not ProductMaster.query.get(product_master_id):
+        return jsonify({'ok': False, 'message': 'Product not found.'}), 404
+
+    if direction in ('in', 'out'):
+        records, traced_total = _build_taf_transfer_trace(
+            store, transaction_date, product_master_id, direction
+        )
+    elif direction == 'delivery':
+        records, traced_total = _build_delivery_trace(
+            store, transaction_date, product_master_id
+        )
+    elif direction == 'sold':
+        records, traced_total = _build_sold_trace(
+            store, transaction_date, product_master_id
+        )
+    else:
+        records, traced_total = [], 0
+
+    return jsonify({
+        'ok': True,
+        'direction': direction,
+        'store_id': store_id,
+        'date': date_str,
+        'product_master_id': product_master_id,
+        'traced_total': traced_total,
+        'records': records,
+        'record_count': len(records),
+    })
+
+
+ALLOWED_ADJUSTMENT_TYPES = {
+    '': '',
+    'swapping': 'Swapping',
+    'offset': 'OFFSET',
+    'variance': 'Variance',
+}
+
+
+@views.route('/store-manager/invensync/adjustments', methods=['POST'])
+@login_required
+def save_invensync_adjustments():
+    """Save the Inventory Adjustments columns (Swapping / OFFSET / Variance,
+    product, qty, and Variance charges). Inventory Staff only. Adjustments are
+    tracking-only and editable on any date, including finalized days."""
+    if (current_user.role or '').strip() != 'Inventory Staff':
+        return jsonify({'ok': False, 'message': 'Access denied. Only Inventory Staff can edit inventory adjustments.'}), 403
+
+    try:
+        payload = request.get_json() or {}
+        inventory_id = payload.get('inventory_id')
+        items_data = payload.get('items', [])
+        if not inventory_id or not isinstance(items_data, list):
+            return jsonify({'ok': False, 'message': 'Missing inventory_id or items.'}), 400
+
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return jsonify({'ok': False, 'message': 'Inventory not found.'}), 404
+
+        assigned_store_ids = _inventory_staff_assigned_store_ids()
+        if inventory.store_id not in assigned_store_ids:
+            return jsonify({'ok': False, 'message': 'Store not assigned to this Inventory Staff user.'}), 403
+
+        valid_product_ids = {
+            int(product_id) for (product_id,) in
+            db.session.query(ProductMaster.id).all()
+        }
+
+        any_item_found = False
+        for item_data in items_data:
+            if not isinstance(item_data, dict):
+                continue
+            item_id = item_data.get('item_id')
+            item = DailyEndingInventoryItem.query.get(item_id)
+            if not item or item.inventory_id != inventory.id:
+                continue
+            any_item_found = True
+
+            adjustment_type = str(item_data.get('adjustment_type') or '').strip()
+            item.adjustment_type = ALLOWED_ADJUSTMENT_TYPES.get(adjustment_type.lower(), '')
+
+            raw_product_id = item_data.get('adjustment_product_master_id')
+            if raw_product_id is None or str(raw_product_id) in ('', '0', 'None'):
+                parsed_product_id = None
+            else:
+                try:
+                    parsed_product_id = int(raw_product_id)
+                except (TypeError, ValueError):
+                    parsed_product_id = None
+            if parsed_product_id is not None and parsed_product_id not in valid_product_ids:
+                parsed_product_id = None
+            # The adjustment product and qty only apply to Swapping; clear them
+            # for blank / OFFSET / Variance types.
+            if item.adjustment_type != 'Swapping':
+                parsed_product_id = None
+                item.adjustment_qty = 0
+            item.adjustment_product_master_id = parsed_product_id
+
+            if item.adjustment_type == 'Swapping':
+                try:
+                    item.adjustment_qty = max(0, int(item_data.get('adjustment_qty', 0) or 0))
+                except (TypeError, ValueError):
+                    item.adjustment_qty = 0
+            else:
+                item.adjustment_qty = 0
+
+            item.adjustment_charges = str(item_data.get('adjustment_charges') or '').strip()[:1000]
+
+        if not any_item_found:
+            return jsonify({'ok': False, 'message': 'No valid inventory items provided.'}), 400
+
+        # Auto-link reciprocal Swapping adjustments (safety net for the
+        # front-end pairing): if a swap points to a target row whose
+        # adjustment fields are still empty, write the reciprocal swap there.
+        inventory_items = DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
+        for inv_item in inventory_items:
+            target_id = inv_item.adjustment_product_master_id
+            if (
+                inv_item.adjustment_type == 'Swapping'
+                and target_id is not None
+                and target_id != inv_item.product_master_id
+                and (inv_item.adjustment_qty or 0) > 0
+            ):
+                target = DailyEndingInventoryItem.query.filter_by(
+                    inventory_id=inventory.id,
+                    product_master_id=target_id,
+                ).first()
+                if (
+                    target is not None
+                    and not target.adjustment_type
+                    and not target.adjustment_qty
+                    and target.adjustment_product_master_id is None
+                ):
+                    target.adjustment_type = 'Swapping'
+                    target.adjustment_product_master_id = inv_item.product_master_id
+                    target_variance = (target.total_ending_qty or 0) - (target.theo_ending_qty or 0)
+                    if target_variance + inv_item.adjustment_qty >= 0:
+                        target.adjustment_qty = 0
+                    else:
+                        target.adjustment_qty = inv_item.adjustment_qty
+
+        db.session.commit()
+
+        try:
+            log_audit_event(
+                action='invensync.adjustments.save',
+                entity_type='DailyEndingInventory',
+                entity_id=inventory.id,
+                reason='Inventory Staff recorded inventory adjustments',
+                details={
+                    'store_id': inventory.store_id,
+                    'inventory_date': inventory.inventory_date.strftime('%Y-%m-%d'),
+                    'items_updated': len(items_data),
+                }
+            )
+        except Exception as log_err:
+            print(f"Audit log error: {log_err}")
+
+        return jsonify({
+            'ok': True,
+            'message': 'Inventory adjustments saved.',
+            'items_updated': len(items_data),
+        }), 200
+    except Exception as exc:
+        db.session.rollback()
+        print(f"Save inventory adjustments error: {exc}")
+        return jsonify({'ok': False, 'message': 'Unable to save inventory adjustments.'}), 500
+
+
+def _fetch_oracle_invensync_data(store, products, oracle_date=None):
+    """Fetch invensync data for the Oracle order form.
+    Returns (invensync_data dict keyed by str(product_id), prev_inventory_date_str or None).
+    - Ending Inventory: previous day's total_ending_qty from InvenSync (no theo fallback)
+    - Delivery / Trans-In / Trans-Out: oracle_date's record
+    Handles nullable product_master_id with product_description fallback.
+    """
+    from datetime import date as _date, timedelta
+    ref_date = oracle_date or _date.today()
+    prev_day = ref_date - timedelta(days=1)
+
+    # Previous day's inventory record (exact previous day)
+    prev_inventory = (
+        DailyEndingInventory.query
+        .filter_by(store_id=store.id, inventory_date=prev_day)
+        .first()
+    )
+
+    # Oracle date's inventory record (delivery, trans-in, trans-out)
+    today_inventory = (
+        DailyEndingInventory.query
+        .filter_by(store_id=store.id, inventory_date=ref_date)
+        .first()
+    )
+
+    # Build product lookup by description (lowercase) for fallback
+    prod_by_desc = {}
+    for p in products:
+        prod_by_desc[(p.description or '').strip().lower()] = p.id
+
+    # Previous day ending: product_id -> total_ending_qty
+    # Uses total_ending_qty directly from InvenSync (no theo_ending_qty fallback)
+    # If no previous day record exists, falls back to oracle date's beginning_qty
+    # (beginning_qty = last known ending inventory carried forward)
+    prev_ending = {}
+    if prev_inventory:
+        for item in prev_inventory.items:
+            pid = item.product_master_id
+            if pid is None:
+                pid = prod_by_desc.get((item.product_description or '').strip().lower())
+            if pid is not None:
+                ending = (item.total_ending_qty or 0)
+                prev_ending[pid] = prev_ending.get(pid, 0) + ending
+    elif today_inventory:
+        # No previous day record — use oracle date's beginning_qty as ending stock
+        for item in today_inventory.items:
+            pid = item.product_master_id
+            if pid is None:
+                pid = prod_by_desc.get((item.product_description or '').strip().lower())
+            if pid is not None:
+                prev_ending[pid] = prev_ending.get(pid, 0) + (item.beginning_qty or 0)
+
+    # Oracle date: product_id -> delivery, trans_in, trans_out
+    today_delivery = {}
+    today_trans_in = {}
+    today_trans_out = {}
+    if today_inventory:
+        for item in today_inventory.items:
+            pid = item.product_master_id
+            if pid is None:
+                pid = prod_by_desc.get((item.product_description or '').strip().lower())
+            if pid is not None:
+                today_delivery[pid] = today_delivery.get(pid, 0) + (item.delivery_qty or 0)
+                today_trans_in[pid] = today_trans_in.get(pid, 0) + (item.trans_in_qty or 0)
+                today_trans_out[pid] = today_trans_out.get(pid, 0) + (item.trans_out_qty or 0)
+
+    # Build invensync_data keyed by string product id (for JSON serialization)
+    invensync_data = {}
+    for p in products:
+        invensync_data[str(p.id)] = {
+            'ending_stock': prev_ending.get(p.id, 0),
+            'delivery': today_delivery.get(p.id, 0),
+            'trans_in': today_trans_in.get(p.id, 0),
+            'trans_out': today_trans_out.get(p.id, 0),
+        }
+
+    if prev_inventory:
+        prev_date_str = prev_inventory.inventory_date.isoformat()
+    elif today_inventory and prev_ending:
+        prev_date_str = prev_day.isoformat()  # beginning_qty carried forward from prev day
+    else:
+        prev_date_str = prev_day.isoformat() if today_inventory else None
+    return invensync_data, prev_date_str
+
+
+def _inventory_has_oracle_values(inventory):
+    if not inventory:
+        return False
+
+    return any(
+        (item.total_ending_qty or 0)
+        or (item.delivery_qty or 0)
+        or (item.trans_in_qty or 0)
+        or (item.trans_out_qty or 0)
+        for item in inventory.items
+    )
+
+
+def _resolve_oracle_invensync_inventory(store, selected_date=None):
+    if selected_date:
+        return DailyEndingInventory.query.filter_by(
+            store_id=store.id,
+            inventory_date=selected_date,
+        ).first()
+
+    inventories = (
+        DailyEndingInventory.query
+        .filter(DailyEndingInventory.store_id == store.id)
+        .order_by(DailyEndingInventory.inventory_date.desc())
+        .all()
+    )
+    for inventory in inventories:
+        if _inventory_has_oracle_values(inventory):
+            return inventory
+    return inventories[0] if inventories else None
+
+
+def _fetch_oracle_invensync_data_for_order_form(store, products, selected_date=None):
+    source_inventory = _resolve_oracle_invensync_inventory(store, selected_date)
+
+    prod_by_desc = {
+        (product.description or '').strip().lower(): product.id
+        for product in products
+    }
+
+    total_ending = {}
+    delivery = {}
+    trans_in = {}
+    trans_out = {}
+    if source_inventory:
+        for item in source_inventory.items:
+            product_id = item.product_master_id
+            if product_id is None:
+                product_id = prod_by_desc.get((item.product_description or '').strip().lower())
+            if product_id is None:
+                continue
+
+            total_ending[product_id] = total_ending.get(product_id, 0) + (item.total_ending_qty or 0)
+            delivery[product_id] = delivery.get(product_id, 0) + (item.delivery_qty or 0)
+            trans_in[product_id] = trans_in.get(product_id, 0) + (item.trans_in_qty or 0)
+            trans_out[product_id] = trans_out.get(product_id, 0) + (item.trans_out_qty or 0)
+
+    invensync_data = {}
+    for product in products:
+        invensync_data[str(product.id)] = {
+            'ending_stock': total_ending.get(product.id, 0),
+            'delivery': delivery.get(product.id, 0),
+            'trans_in': trans_in.get(product.id, 0),
+            'trans_out': trans_out.get(product.id, 0),
+        }
+
+    source_date = source_inventory.inventory_date.isoformat() if source_inventory else None
+    return invensync_data, source_date
+
+
+def _build_oracle_pos_sales_data(store, products, anchor_date=None):
+    if not store or not products:
+        return {}
+
+    anchor_date = anchor_date or date.today()
+    start_date = anchor_date - timedelta(days=27)
+    week_ranges = []
+    for week_index in range(4):
+        week_start = start_date + timedelta(days=(week_index * 7))
+        week_ranges.append((week_start, week_start + timedelta(days=6)))
+
+    end_date = week_ranges[-1][1]
+    product_ids = {int(product.id) for product in products}
+    sales_data = {
+        str(product.id): [[0 for _ in range(7)] for _ in range(4)]
+        for product in products
+    }
+
+    pos_rows = (
+        db.session.query(
+            DailyReport.report_date,
+            PosSold.product_name,
+            func.sum(PosSold.quantity).label('total_qty'),
+        )
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(DailyReport.store_id == store.id)
+        .filter(DailyReport.report_date >= start_date)
+        .filter(DailyReport.report_date <= end_date)
+        .group_by(DailyReport.report_date, PosSold.product_name)
+        .all()
+    )
+    if not pos_rows:
+        return sales_data
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    bulk_totals = {}
+    bulk_rows = RsoDelivery.query.filter(
+        RsoDelivery.store_id == store.id,
+        RsoDelivery.report_date >= start_date,
+        RsoDelivery.report_date <= end_date,
+        RsoDelivery.upload_source == 'bulk',
+    ).all()
+    for bulk_row in bulk_rows:
+        bulk_product_id = _resolve_pos_sold_master_id(bulk_row.product_name, alias_lookup, master_lookup)
+        if bulk_product_id not in product_ids:
+            continue
+        bulk_quantity = int(bulk_row.received_quantity if bulk_row.received_quantity is not None else (bulk_row.quantity or 0))
+        if bulk_quantity > 0:
+            key = (bulk_row.report_date, bulk_product_id)
+            bulk_totals[key] = bulk_totals.get(key, 0) + bulk_quantity
+
+    for report_date, product_name, total_qty in pos_rows:
+        # Bitbit 6s rows are bulk-order packs, not organic POS demand.
+        if _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
+            continue
+        master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+        if master_id not in product_ids:
+            continue
+
+        quantity = max(0, int(total_qty or 0) - bulk_totals.get((report_date, master_id), 0))
+        if quantity <= 0:
+            continue
+
+        week_index = None
+        for index, (week_start, week_end) in enumerate(week_ranges):
+            if week_start <= report_date <= week_end:
+                week_index = index
+                break
+        if week_index is None:
+            continue
+
+        js_day_index = (report_date.weekday() + 1) % 7
+        sales_data[str(master_id)][week_index][js_day_index] += quantity
+
+    return sales_data
+
+
+def _build_oracle_bulk_order_weeks(store, anchor_date=None):
+    if not store:
+        return []
+
+    anchor_date = anchor_date or date.today()
+    start_date = anchor_date - timedelta(days=27)
+    week_ranges = []
+    for week_index in range(4):
+        week_start = start_date + timedelta(days=(week_index * 7))
+        week_ranges.append((week_start, week_start + timedelta(days=6)))
+
+    end_date = week_ranges[-1][1]
+    reports = DailyReport.query.filter(
+        DailyReport.store_id == store.id,
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date,
+    ).all()
+
+    bulk_weeks = [
+        {
+            'has_bulk_order': False,
+            'sales': 0.0,
+            'tc': 0,
+        }
+        for _ in range(4)
+    ]
+
+    for report in reports:
+        report_date = report.report_date
+        week_index = None
+        for index, (week_start, week_end) in enumerate(week_ranges):
+            if week_start <= report_date <= week_end:
+                week_index = index
+                break
+        if week_index is None:
+            continue
+
+        bulk_sales = float(report.bulk_order_sales or 0.0)
+        bulk_tc = int(report.bulk_order_tc or 0)
+        if bulk_sales > 0 or bulk_tc > 0:
+            bulk_weeks[week_index]['has_bulk_order'] = True
+            bulk_weeks[week_index]['sales'] += bulk_sales
+            bulk_weeks[week_index]['tc'] += bulk_tc
+
+    return bulk_weeks
+
+
+def _build_oracle_bulk_order_product_data(store, products, anchor_date=None):
+    if not store or not products:
+        return {}
+
+    anchor_date = anchor_date or date.today()
+    start_date = anchor_date - timedelta(days=27)
+    week_ranges = []
+    for week_index in range(4):
+        week_start = start_date + timedelta(days=(week_index * 7))
+        week_ranges.append((week_start, week_start + timedelta(days=6)))
+
+    end_date = week_ranges[-1][1]
+    product_ids = {int(product.id) for product in products}
+    bulk_data = {
+        str(product.id): [[{'qty': 0, 'date': ''} for _ in range(7)] for _ in range(4)]
+        for product in products
+    }
+
+    bulk_rows = (
+        RsoDelivery.query
+        .filter(RsoDelivery.store_id == store.id)
+        .filter(RsoDelivery.upload_source == 'bulk')
+        .all()
+    )
+    if not bulk_rows:
+        return bulk_data
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    bulk_totals = {}
+    for row in bulk_rows:
+        uploaded_at = getattr(row, 'uploaded_at', None)
+        if uploaded_at:
+            if uploaded_at.tzinfo is None:
+                upload_date = uploaded_at.date()
+            else:
+                upload_date = uploaded_at.astimezone(ZoneInfo('Asia/Singapore')).date()
+        else:
+            upload_date = None
+        # Daily Averages BO markers should follow the precise file upload day,
+        # not the RSO/report date, because one uploaded bulk file can contain
+        # rows for multiple business dates.
+        indicator_date = upload_date
+        if not indicator_date or indicator_date < start_date or indicator_date > end_date:
+            continue
+
+        product_name = row.product_name
+        master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+        if master_id not in product_ids:
+            continue
+
+        quantity = int(row.received_quantity if row.received_quantity is not None else (row.quantity or 0))
+        if quantity <= 0:
+            continue
+
+        bulk_key = (indicator_date, master_id)
+        bulk_totals[bulk_key] = int(bulk_totals.get(bulk_key, 0) or 0) + quantity
+
+    for (indicator_date, master_id), quantity in bulk_totals.items():
+        week_index = None
+        for index, (week_start, week_end) in enumerate(week_ranges):
+            if week_start <= indicator_date <= week_end:
+                week_index = index
+                break
+        if week_index is None:
+            continue
+
+        js_day_index = (indicator_date.weekday() + 1) % 7
+        bulk_data[str(master_id)][week_index][js_day_index] = {
+            'qty': quantity,
+            'date': indicator_date.strftime('%B %d, %Y'),
+        }
+
+    return bulk_data
+
+
+def _resolve_oracle_store_for_manager(user):
+    """Resolve a Store Manager to one store without relying on query order."""
+    assigned_store_id = getattr(user, 'assigned_store_id', None)
+    if assigned_store_id:
+        assigned_store = Store.query.filter_by(
+            id=assigned_store_id,
+            manager_id=user.id,
+        ).first()
+        if assigned_store:
+            return assigned_store
+
+    managed_stores = Store.query.filter_by(manager_id=user.id).order_by(Store.id.asc()).all()
+    return managed_stores[0] if len(managed_stores) == 1 else None
+
+
+@views.route('/store-manager/oracle')
+@login_required
+def oracle():
+    """Store Manager Oracle page placeholder."""
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_oracle_store_for_manager(current_user)
+    if not store:
+        flash('A single store is not assigned to your account. Please contact an administrator.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import ProductMaster, StoreProductBuffer
+    from datetime import date as _date
+    products = ProductMaster.query.all()
+
+    # Parse optional oracle date from query string
+    oracle_date = None
+    date_str = request.args.get('date', '')
+    if date_str:
+        try:
+            oracle_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            oracle_date = None
+    if oracle_date is None:
+        oracle_date = _date.today()
+
+    # Load saved per-product buffers for this store (if any)
+    saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
+    store_buffers = {b.product_id: b.buffer_pct for b in saved}
+    incoming_orders = OracleOrder.query.filter_by(store_id=store.id, status='approved').filter(
+        OracleOrder.delivery_date >= oracle_date
+    ).all()
+    oracle_incoming_orders = {}
+    for order in incoming_orders:
+        product_orders = oracle_incoming_orders.setdefault(str(order.product_id), {})
+        delivery_key = order.delivery_date.isoformat()
+        product_orders[delivery_key] = product_orders.get(delivery_key, 0) + order.quantity
+    oracle_order_history = [{
+        'id': f'ORD-{order.id}',
+        'orderDateActual': order.order_date.isoformat(),
+        'delivDate': order.delivery_date.isoformat(),
+        'dayName': order.delivery_date.strftime('%A'),
+        'mode': 'Avg Consumption',
+        'productId': order.product_id,
+        'productName': order.product.description if order.product else str(order.product_id),
+        'suggested': order.suggested_qty,
+        'minSug': order.min_suggested_qty,
+        'maxSug': order.max_suggested_qty,
+        'finalOrder': order.quantity,
+        'unitCost': order.product.tp if order.product else 0,
+        'totalCost': order.quantity * (order.product.tp if order.product else 0),
+        'multiplier': 1,
+        'manager': order.creator.username if order.creator else '',
+        'timestamp': order.created_at.isoformat() if order.created_at else '',
+        'status': order.status,
+    } for order in OracleOrder.query.filter_by(store_id=store.id).order_by(OracleOrder.created_at.desc()).all()]
+
+    # Fetch invensync data (ending inventory from prev day, delivery/trans from oracle date)
+    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
+    pos_sales_data = _build_oracle_pos_sales_data(store, products, oracle_date)
+    bulk_order_weeks = _build_oracle_bulk_order_weeks(store, oracle_date)
+    bulk_order_product_data = _build_oracle_bulk_order_product_data(store, products, oracle_date)
+
+    return render_template(
+        'store_manager/oracle.html',
+        user=current_user,
+        store=store,
+        products=products,
+        store_buffers=store_buffers,
+        oracle_incoming_orders=oracle_incoming_orders,
+        oracle_order_history=oracle_order_history,
+        invensync_data=invensync_data,
+        prev_inventory_date=prev_inventory_date,
+        oracle_date=oracle_date.isoformat(),
+        pos_sales_data=pos_sales_data,
+        bulk_order_weeks=bulk_order_weeks,
+        bulk_order_product_data=bulk_order_product_data,
+    )
+
+
+@views.route('/cluster-manager/store-order-form/<int:store_id>')
+@login_required
+def cluster_store_order_form_legacy(store_id):
+    return redirect(url_for('views.cluster_store_order_form', store_id=store_id, **request.args.to_dict(flat=True)))
+
+
+@views.route('/cluster-manager/oracle/store/<int:store_id>/buffers')
+@login_required
+def cluster_store_order_form(store_id):
+    """Render a cluster-scoped buffer editor for a store."""
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    from .models import Store, Cluster
+    store = Store.query.get_or_404(store_id)
+
+    # Restrict Cluster Manager to stores within their cluster
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster or store.cluster_id != cluster.id:
+            flash('Access denied.', category='error')
+            return redirect(url_for('views.home'))
+
+    if not _apply_store_scope_filter([store], request):
+        flash('Access denied for this store scope.', category='error')
+        return redirect(url_for('views.home'))
+    if role == 'Area Manager' and store.cluster_id not in _get_area_manager_cluster_ids(current_user):
+        flash('Access denied. You are not assigned to this cluster.', category='error')
+        return redirect(url_for('views.home'))
+
+    from datetime import date as _date
+
+    # Parse optional oracle date from query string
+    oracle_date = None
+    date_str = request.args.get('date', '')
+    if date_str:
+        try:
+            oracle_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            oracle_date = None
+    if oracle_date is None:
+        oracle_date = _date.today()
+
+    return render_template(
+        'store_manager/oracle_v2.html',
+        user=current_user,
+        store_id=store.id,
+        cluster_view=True,
+        admin_shell=(role in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager')),
+        cluster_id=store.cluster_id,
+        oracle_date=oracle_date.isoformat(),
+    )
+
+
+@views.route('/store-manager/invensync-dashboard')
+@login_required
+def invensync_inventory_staff():
+    """Inventory Staff dashboard - view all stores (read-only)"""
+    if current_user.role != 'Inventory Staff':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    # Get selected date (default to today)
+    selected_date_str = request.args.get('date', '')
+    if selected_date_str:
+        try:
+            selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = date.today()
+    else:
+        selected_date = date.today()
+
+    assigned_store_ids = _inventory_staff_assigned_store_ids()
+    stores = Store.query.filter(Store.id.in_(assigned_store_ids)).order_by(Store.name.asc()).all() if assigned_store_ids else []
+    
+    # Get inventory data for selected date from all stores
+    inventory_records = DailyEndingInventory.query.filter_by(
+        inventory_date=selected_date
+    ).all()
+
+    # Organize by store
+    inventory_by_store = {i.store_id: i for i in inventory_records}
+
+    # Build store summary data
+    store_summaries = []
+    for store in stores:
+        inventory = inventory_by_store.get(store.id)
+        
+        store_summaries.append({
+            'store': store,
+            'inventory': inventory,
+            'has_data': bool(inventory)
+        })
+
+    return render_template(
+        'store_manager/invensync_dashboard.html',
+        user=current_user,
+        stores=stores,
+        store_summaries=store_summaries,
+        selected_date=selected_date.strftime('%Y-%m-%d'),
+        today=date.today().strftime('%Y-%m-%d')
+    )
+
+
+@views.route('/store-manager/invensync/sync', methods=['POST'])
+@login_required
+def sync_invensync_products():
+    """Sync products from ProductMaster to daily ending inventory."""
+    try:
+        data = request.get_json()
+        sync_date_str = data.get('date')
+        
+        if not sync_date_str:
+            return jsonify({'success': False, 'error': 'Date required'}), 400
+        
+        # Get store for current user
+        if current_user.role == 'Store Manager':
+            store = Store.query.filter_by(manager_id=current_user.id).first()
+        else:
+            store_id = request.args.get('store_id', type=int)
+            store = Store.query.get(store_id) if store_id else None
+        
+        if not store:
+            return jsonify({'success': False, 'error': 'Store not found or not assigned'}), 404
+        
+        try:
+            sync_date = datetime.strptime(sync_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'success': False, 'error': 'Invalid date format'}), 400
+        
+        # Get all products
+        products = ProductMaster.query.all()
+        
+        if not products:
+            return jsonify({'success': False, 'error': 'No products found in masterlist'}), 400
+        
+        # Get or create inventory record
+        inventory = DailyEndingInventory.query.filter_by(
+            store_id=store.id,
+            inventory_date=sync_date
+        ).first()
+        
+        if not inventory:
+            inventory = DailyEndingInventory(
+                store_id=store.id,
+                inventory_date=sync_date,
+                created_by=current_user.id
+            )
+            db.session.add(inventory)
+            db.session.flush()
+        
+        synced_count = 0
+        prev_date = sync_date - timedelta(days=1)
+        
+        for product in products:
+            srp = product.sp_p if store.store_group == 'premium' else product.sp_np
+
+            # Sync to Daily Ending Inventory
+            inv_item = DailyEndingInventoryItem.query.filter_by(
+                inventory_id=inventory.id,
+                product_master_id=product.id
+            ).first()
+            
+            # Get beginning qty from previous day's total ending
+            beginning_qty = 0
+            prev_inventory = DailyEndingInventory.query.filter_by(
+                store_id=store.id,
+                inventory_date=prev_date
+            ).first()
+            
+            if prev_inventory:
+                prev_inv_item = DailyEndingInventoryItem.query.filter_by(
+                    inventory_id=prev_inventory.id,
+                    product_master_id=product.id
+                ).first()
+                if prev_inv_item:
+                    beginning_qty = prev_inv_item.total_ending_qty
+            
+            if not inv_item:
+                inv_item = DailyEndingInventoryItem(
+                    inventory_id=inventory.id,
+                    product_master_id=product.id,
+                    product_code=str(product.code) if product.code else '',
+                    product_description=product.description,
+                    srp_price=srp or 0,
+                    beginning_qty=beginning_qty
+                )
+                db.session.add(inv_item)
+            else:
+                # Update with latest product data
+                inv_item.product_code = str(product.code) if product.code else inv_item.product_code
+                inv_item.product_description = product.description
+                inv_item.srp_price = srp or 0
+            
+            synced_count += 1
+        
+        db.session.commit()
+        
+        # Log audit event
+        try:
+            log_audit_event(
+                action='products.sync',
+                entity_type='DailyEndingInventory',
+                entity_id=inventory.id,
+                reason='Synced products from ProductMaster to daily ending inventory',
+                details={
+                    'products_synced': synced_count,
+                    'sync_date': sync_date_str,
+                    'store_id': store.id,
+                    'inventory_id': inventory.id
+                }
+            )
+        except Exception as log_err:
+            print(f"Audit log error: {log_err}")
+        
+        return jsonify({
+            'success': True,
+            'count': synced_count,
+            'message': f'Successfully synced {synced_count} products'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Sync error: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _recalculate_inventory_item(item, sold_override=None):
+    """Recalculate all derived fields for an inventory item"""
+    sold_qty = int(sold_override) if sold_override is not None else int(item.quantity_sold or 0)
+
+    # Wastage amount
+    item.wastage_amount = (item.wastage_qty or 0) * (item.srp_price or 0)
+
+    # Total ending
+    item.total_ending_qty = (
+        int(item.ending_d5_qty or 0)
+        + int(item.ending_d4_qty or 0)
+        + int(item.ending_d3_qty or 0)
+    )
+    item.total_peso_srp = item.total_ending_qty * (item.srp_price or 0)
+
+    # THEO ending
+    item.theo_ending_qty = (
+        int(item.beginning_qty or 0)
+        + int(item.delivery_qty or 0)
+        + int(item.trans_in_qty or 0)
+        + int(item.bo_qty or 0)
+        + int(item.adv_del_qty or 0)
+        - int(item.trans_out_qty or 0)
+        - int(item.wastage_qty or 0)
+        - int(item.csi_qty or 0)
+        - sold_qty
+    )
+
+    # Variance
+    item.variance_qty = item.total_ending_qty - item.theo_ending_qty
+    item.variance_peso = item.variance_qty * (item.srp_price or 0)
+    
+
+# ============================================================================
+# PRODUCT MASTER SYNC ROUTES
+# ============================================================================
+
+@views.route('/store-manager/sync-products', methods=['POST'])
+@login_required
+def sync_products_from_master():
+    """Sync products from ProductMaster to inventory items."""
+    try:
+        data = request.get_json()
+        store_id = data.get('store_id')
+        sync_type = data.get('type', 'inventory')
+        target_date_str = data.get('date')
+        
+        if not store_id:
+            return jsonify({'success': False, 'error': 'Store ID required'}), 400
+        
+        store = Store.query.get(store_id)
+        if not store:
+            return jsonify({'success': False, 'error': 'Store not found'}), 404
+        
+        # Check permissions
+        if current_user.role == 'Store Manager' and store.manager_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
+        
+        target_date = datetime.strptime(target_date_str, '%Y-%m-%d').date() if target_date_str else date.today()
+        
+        # Get all products from ProductMaster for syncing
+        # To filter by specific codes, add them to product_codes list
+        product_codes = []  # Empty list = sync all products
+        
+        if product_codes:
+            products = ProductMaster.query.filter(
+                ProductMaster.code.in_(product_codes)
+            ).all()
+        else:
+            products = ProductMaster.query.all()
+        
+        synced_inventory = 0
+
+        if sync_type == 'all':
+            sync_type = 'inventory'
+
+        # Sync to Daily Ending Inventory
+        if sync_type == 'inventory':
+            inventory = DailyEndingInventory.query.filter_by(
+                store_id=store.id,
+                inventory_date=target_date
+            ).first()
+            
+            if not inventory:
+                inventory = DailyEndingInventory(
+                    store_id=store.id,
+                    inventory_date=target_date,
+                    created_by=current_user.id
+                )
+                db.session.add(inventory)
+                db.session.flush()
+            
+            # Get previous day's ending as beginning
+            prev_date = target_date - timedelta(days=1)
+            prev_inventory = DailyEndingInventory.query.filter_by(
+                store_id=store.id,
+                inventory_date=prev_date
+            ).first()
+            
+            existing_item_ids = {item.product_master_id: item for item in 
+                DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()}
+            
+            for product in products:
+                if product.id in existing_item_ids:
+                    # Update existing item
+                    item = existing_item_ids[product.id]
+                    item.product_code = str(product.code) if product.code else item.product_code
+                    item.product_description = product.description
+                    srp = product.sp_p if store.store_group == 'premium' else product.sp_np
+                    item.srp_price = srp or 0
+                    _recalculate_inventory_item(item)
+                else:
+                    # Create new item
+                    beginning_qty = 0
+                    if prev_inventory:
+                        prev_item = DailyEndingInventoryItem.query.filter_by(
+                            inventory_id=prev_inventory.id,
+                            product_master_id=product.id
+                        ).first()
+                        if prev_item:
+                            beginning_qty = prev_item.total_ending_qty
+                    
+                    srp = product.sp_p if store.store_group == 'premium' else product.sp_np
+                    
+                    item = DailyEndingInventoryItem(
+                        inventory_id=inventory.id,
+                        product_master_id=product.id,
+                        product_code=str(product.code) if product.code else '',
+                        product_description=product.description,
+                        srp_price=srp or 0,
+                        beginning_qty=beginning_qty
+                    )
+                    db.session.add(item)
+                    synced_inventory += 1
+        
+        db.session.commit()
+        
+        log_audit_event(
+            action='products.sync',
+            entity_type='ProductMaster',
+            entity_id=store_id,
+            details={
+                'sync_type': sync_type,
+                'date': target_date.isoformat(),
+                'synced_inventory': synced_inventory
+            }
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': f'Sync completed successfully',
+            'synced_inventory': synced_inventory,
+            'total_products': len(products)
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@views.route('/api/products/masterlist')
+@login_required
+def get_masterlist_products():
+    """Get all products from ProductMaster for selection"""
+    try:
+        category_filter = request.args.get('category', '')
+        search = request.args.get('search', '')
+        
+        query = ProductMaster.query
+        
+        if category_filter:
+            query = query.filter(ProductMaster.category == category_filter)
+        
+        if search:
+            query = query.filter(
+                db.or_(
+                    ProductMaster.description.ilike(f'%{search}%'),
+                    ProductMaster.code.ilike(f'%{search}%')
+                )
+            )
+        
+        products = query.order_by(ProductMaster.category, ProductMaster.description).all()
+        
+        return jsonify({
+            'success': True,
+            'products': [{
+                'id': p.id,
+                'code': p.code,
+                'description': p.description,
+                'category': p.category,
+                'sub_category': p.sub_category,
+                'tp': p.tp,
+                'sp_p': p.sp_p,
+                'sp_np': p.sp_np,
+                'shelf_life': p.shelf_life
+            } for p in products]
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@views.route('/api/charges', methods=['GET'])
+@views.route('/api/charge-slips', methods=['GET'])
+def api_get_charges():
+    """API Endpoint to fetch Charge Slips (defaults to status=Validated for payroll integration)"""
+    try:
+        status_param = (request.args.get('status') or 'Validated').strip()
+        date_param = (request.args.get('date') or '').strip()
+        store_param = (request.args.get('store_id') or '').strip()
+
+        query = TafTransfer.query.options(
+            selectinload(TafTransfer.items),
+            selectinload(TafTransfer.store),
+            selectinload(TafTransfer.validator)
+        ).filter(
+            func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip'
+        )
+
+        if status_param.lower() != 'all':
+            query = query.filter(func.lower(func.trim(TafTransfer.status)) == status_param.lower())
+
+        if date_param:
+            try:
+                filter_date = datetime.strptime(date_param, '%Y-%m-%d').date()
+                query = query.filter(TafTransfer.transaction_date == filter_date)
+            except ValueError:
+                pass
+
+        if store_param:
+            try:
+                query = query.filter(TafTransfer.store_id == int(store_param))
+            except ValueError:
+                pass
+
+        transfers = query.order_by(TafTransfer.transaction_date.desc(), TafTransfer.id.desc()).all()
+
+        charges_data = []
+        for transfer in transfers:
+            store_name = transfer.store.name if transfer.store else transfer.transfer_from
+            validator_name = (transfer.validator.full_name or transfer.validator.username or '').strip() if transfer.validator else ''
+            if not validator_name:
+                validator_name = (transfer.approved_by_name or transfer.prepared_by_name or '').strip()
+
+            items_data = []
+            for item in transfer.items:
+                items_data.append({
+                    'id': item.id,
+                    'item_name': item.item_name,
+                    'unit_cost': float(item.unit_cost or 0.0),
+                    'quantity': int(item.quantity or 0),
+                    'line_total': float(item.line_total or 0.0),
+                    'remarks': item.remarks or ''
+                })
+
+            charges_data.append({
+                'id': transfer.id,
+                'control_no': transfer.control_no,
+                'transaction_date': transfer.transaction_date.strftime('%Y-%m-%d') if transfer.transaction_date else '',
+                'store_id': transfer.store_id,
+                'store_name': store_name,
+                'customer_name': transfer.customer_name or 'Unspecified Employee',
+                'charge_type': transfer.charge_type or 'Charge',
+                'discount_percent': float(transfer.discount_percent or 0.0),
+                'grand_total': float(transfer.grand_total or 0.0),
+                'net_total': float(transfer.net_total or 0.0),
+                'status': transfer.status or 'Pending',
+                'prepared_by_name': transfer.prepared_by_name or '',
+                'approved_by_name': transfer.approved_by_name or '',
+                'received_by_name': transfer.received_by_name or '',
+                'validated_by_id': transfer.validated_by,
+                'validated_by_name': validator_name,
+                'validated_at': transfer.validated_at.isoformat() if transfer.validated_at else None,
+                'created_at': transfer.created_at.isoformat() if transfer.created_at else None,
+                'items': items_data
+            })
+
+        return jsonify({
+            'success': True,
+            'count': len(charges_data),
+            'charges': charges_data
+        }), 200
+    except Exception as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+
+
+@views.route('/store-manager/supply-request/create', methods=['POST'])
+@login_required
+def create_store_supply_request():
+    if (current_user.role or '').strip() not in ('Store Manager', 'Inventory Staff'):
+        return jsonify({'success': False, 'error': 'Access denied.'}), 403
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        return jsonify({'success': False, 'error': 'No assigned store found.'}), 400
+
+    try:
+        data = request.get_json() or {}
+        items_data = data.get('items') or []
+        remarks = str(data.get('remarks') or '').strip()[:500]
+
+        if not items_data:
+            return jsonify({'success': False, 'error': 'Add at least one item to the request.'}), 400
+
+        valid_ids = {item.id: item for item in SupplyItem.query.all()}
+        line_items = []
+        for row in items_data:
+            try:
+                supply_item_id = int(row.get('supply_item_id'))
+            except (TypeError, ValueError):
+                continue
+            supply_item = valid_ids.get(supply_item_id)
+            if not supply_item:
+                return jsonify({'success': False, 'error': 'A selected supply item no longer exists.'}), 400
+            try:
+                quantity = int(row.get('quantity'))
+            except (TypeError, ValueError):
+                quantity = 0
+            if quantity <= 0:
+                continue
+            line_items.append((supply_item, quantity))
+
+        if not line_items:
+            return jsonify({'success': False, 'error': 'Enter a quantity greater than zero for at least one item.'}), 400
+
+        import uuid
+
+        request_type = str(data.get('request_type') or '').strip()
+        if request_type not in ('menu', 'taf'):
+            request_type = 'menu'
+
+        supply_request = SupplyRequest(
+            store_id=store.id,
+            store_name=store.name,
+            requested_by=current_user.id,
+            request_type=request_type,
+            remarks=remarks or None,
+            status='Pending',
+            request_no=f'__TMP__{uuid.uuid4().hex[:12]}',
+        )
+        db.session.add(supply_request)
+        db.session.flush()
+
+        today = datetime.now().strftime('%Y%m%d')
+        supply_request.request_no = f'SR-{today}-{supply_request.id:04d}'
+
+        for supply_item, quantity in line_items:
+            db.session.add(SupplyRequestItem(
+                request_id=supply_request.id,
+                supply_item_id=supply_item.id,
+                item_name=supply_item.item_name,
+                category=supply_item.category,
+                quantity=quantity,
+            ))
+
+        log_audit_event(
+            action='store.supply_request.create',
+            entity_type='SupplyRequest',
+            entity_id=supply_request.id,
+            reason='Store submitted a supply request.',
+            details={
+                'request_no': supply_request.request_no,
+                'store_id': store.id,
+                'store_name': store.name,
+                'request_type': request_type,
+                'items': len(line_items),
+                'remarks': remarks,
+            },
+        )
+        db.session.commit()
+        return jsonify({'success': True, 'message': f'Supply request {supply_request.request_no} submitted.', 'request_no': supply_request.request_no}), 200
+
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': f'Error submitting request: {exc}'}), 500
+
+
+
+
+
+
+@views.route('/set_theme', methods=['POST'])
+def themes():
+    theme = request.form.get("theme")
+
+    if 'theme' not in session:
+        session['theme'] = theme
+
+    session['theme'] = theme
+
+    return theme
+
+
+
+# ================================================
+# Proper Implementation of Views Py Section Start
+# ================================================
+
+
+## IMPORTANT Notice to all freaking coding agents... you shall not put any none render templates below, put them above where they belong, stop poisoning the codebase from videcoded garbage.
+
+
+#v2 of the base admin base page 
+@views.route('admin/v2', methods=['GET', 'POST'])
+def v2_main():
+    page = 'main'
+
+    return render_template("admin_base_v2.html", user=current_user, page=page)
+        
+
+
+#v2 of the base admin base 2 page 
+@views.route('/store-manager/v2')
+@login_required
+def v2_base_2():
+    
+    
+    return render_template("base_2.html", user=current_user, page='main')
+        
+
+
+
+#v2 of the Admin Users page 
+@views.route('/admin/users_v2', methods=['GET', 'POST'])
+def users_v2_():
+    page = 'users_v2'
+    stores   = Store.query.order_by(Store.name.asc()).all()
+    clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    return render_template("admin/users_v2.html", user=current_user, page=page, stores=stores, clusters=clusters)
+    
+
+
+
+
+#v2 of the product masterlist page 
+@views.route('/admin/product_masterlist', methods=['GET', 'POST'])
+def product_masterlist_v2():
+    page = 'product_masterlist'
+
+    return render_template("admin/product_masterlist_v2.html", user=current_user, page=page)
+     
+
+
+#v2 of the clusters page 
+@views.route('/admin/clusters_v2', methods=['GET', 'POST'])
+def clusters_v2_():
+    page = 'clusters'
+
+    return render_template("admin/clusters_v2.html", user=current_user, page=page)
+        
+
+
+
+
+#v2 of the storeds page 
+@views.route('/admin/stores_v2', methods=['GET', 'POST'])
+def stores_v2_():
+    page = 'stores'
+
+    return render_template("admin/stores_v2.html", user=current_user, page=page)
+        
+
+
+
+#v2 of the store Targets
+@views.route('/admin/targets_v2', methods=['GET', 'POST'])
+def store_targets_v2_():
+    clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    stores   = Store.query.order_by(Store.name.asc()).all()
+
+    clusters_json = [{'id': c.id, 'name': c.name} for c in clusters]
+    stores_json   = [{'id': s.id, 'name': s.name, 'cluster_id': s.cluster_id} for s in stores]
+
+    return render_template(
+        "admin/targets_v2.html",
+        user=current_user,
+        clusters_json=clusters_json,
+        stores_json=stores_json,
+    )
+
+
+
+#v2 of the supply page 
+@views.route('/admin/supply_v2', methods=['GET', 'POST'])
+def supply_v2_():
+    page = 'supply'
+    active_tab = (request.args.get('tab') or 'requests').strip()
+    if active_tab not in ('requests', 'items'):
+        active_tab = 'requests'
+        
+    return render_template("admin/supply_management_v2.html", user=current_user, page=page, active_tab=active_tab)      
+
+
+
+
+@views.route('/admin/system_analyzer', methods=['GET'])
+@login_required
+def system_analyzer_v2():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    page = 'system_analyzer'
+    return render_template("admin/system_analyzer_v2.html", user=current_user, page=page)
+    
+      
+   
+#v2 of the Inv Sync 
+@views.route('/admin/invensync_v2', methods=['GET'])
+@login_required
+def invensync_v2():
+
+
+    page = 'invensync'
+    return render_template("admin/invensync_v2.html", user=current_user, page=page)
+    
+
+
+#v2 of the Inv Sync Details
+@views.route('/store-manager/invensync_details_v2', methods=['GET'])
+@login_required
+def invensync_details_v2():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager','Store Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    page = 'invensync'
+    return render_template("store_manager/invensync_v2.html", user=current_user, page=page)
+    
+
+  
+#v2 of the Oracle
+@views.route('/store-manager/oracle_v2', methods=['GET'])
+@login_required
+def oracle_v2():
+    if current_user.role != 'Store Manager':
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_oracle_store_for_manager(current_user)
+    if not store:
+        flash('A single store is not assigned to your account. Please contact an administrator.', category='error')
+        return redirect(url_for('views.home'))
+
+    oracle_date = ''
+    date_str = request.args.get('date', '')
+    if date_str:
+        try:
+            oracle_date = datetime.strptime(date_str, '%Y-%m-%d').date().isoformat()
+        except ValueError:
+            oracle_date = ''
+
+    page = 'oracle'
+    return render_template(
+        "store_manager/oracle_v2.html",
+        user=current_user,
+        page=page,
+        store_id=store.id,
+        oracle_date=oracle_date,
+        admin_shell=False,
+        cluster_view=False,
+    )
+
+
+
+#v2 of the Help page
+@views.route('/store-manager/help_v2', methods=['GET'])
+@login_required
+def help_v2():
+    if current_user.role not in ('Superadmin', 'Admin', 'Store Manager'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('views.home'))
+
+    page = 'help'
+    return render_template("store_manager/help_v2.html", user=current_user, page=page)
+    
+    
+# ================================================
+# Supply Requests (store side)
+# ================================================
+    
+
+
+
+
+@views.route('/store-manager/supply-request')
+@login_required
+def store_supply_request():
+    if (current_user.role or '').strip() not in ('Store Manager', 'Inventory Staff'):
+        flash('Access denied. Only Store Managers and Inventory Staff can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    categories = (
+        db.session.query(SupplyItem.category)
+        .distinct()
+        .order_by(SupplyItem.category.asc())
+        .all()
+    )
+    category_list = [c[0] for c in categories]
+    supply_items = SupplyItem.query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc()).all()
+    my_requests = (
+        SupplyRequest.query
+        .filter_by(store_id=store.id)
+        .options(selectinload(SupplyRequest.items))
+        .order_by(SupplyRequest.created_at.desc())
+        .all()
+    )
+
+    return render_template(
+        'store_manager/supply_request.html',
+        user=current_user,
+        store=store,
+        categories=category_list,
+        supply_items=supply_items,
+        my_requests=my_requests,
+    )
+
+
+

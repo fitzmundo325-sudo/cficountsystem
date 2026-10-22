@@ -1,0 +1,4798 @@
+import os, json, re
+from operator import or_, and_
+from typing import Union
+from difflib import SequenceMatcher
+
+
+from flask import Blueprint, render_template, request, flash, jsonify, Flask, url_for, session, current_app, send_from_directory, Response
+from flask_login import login_required, current_user
+from sqlalchemy import asc, desc, distinct, table, func, or_, case, cast, Integer, String
+from sqlalchemy.orm import aliased, selectinload
+from werkzeug.security import generate_password_hash, check_password_hash
+from collections import OrderedDict
+
+import random, string, requests
+import pytz
+from werkzeug.utils import secure_filename
+
+manila_tz = pytz.timezone("Asia/Manila")
+from dotenv import load_dotenv
+
+from . import db, cache
+from datetime import datetime, date, timedelta
+from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem
+
+from .admin import log_audit_event
+
+plt = ""  # empty this var when on live website
+post_per_page = 100
+
+api_handles = Blueprint('api_handles', __name__)
+
+app = Flask(__name__)
+
+CONFIG_DATA = {}  # Stores Global Config Data
+load_dotenv()
+
+#api Handles added by ItsAtomtech on 07-29-2026 v1.0
+
+
+@api_handles.route('/dummy', methods=['GET', 'POST'])
+def dum():
+    return {"type": "success", "message": "Message test" } 
+    page = 'home'
+
+    
+def manila_time():
+    return datetime.now(pytz.timezone("Asia/Manila"))
+
+
+def _can_manage_users():
+    return hasattr(current_user, 'role') and current_user.role in ('Superadmin', 'Admin', 'General Manager')
+
+
+# Utilities ==========================================================
+
+def _is_grand_total_product_name(product_name):
+    normalized = re.sub(r'[^a-z0-9]+', '', str(product_name or '').strip().lower())
+    return normalized.startswith('grandtotal')
+
+
+
+def _normalize_product_text(value):
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+
+
+
+def _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup, similarity_threshold=0.85):
+    normalized_name = _normalize_product_text(product_name)
+    if not normalized_name:
+        return None
+    if normalized_name in alias_lookup:
+        return alias_lookup[normalized_name]
+    if normalized_name in master_lookup:
+        return master_lookup[normalized_name]
+
+    best_score = 0.0
+    best_master_id = None
+    for normalized_master, product_master_id in master_lookup.items():
+        if not normalized_master:
+            continue
+        score = SequenceMatcher(None, normalized_name, normalized_master).ratio()
+        if score > best_score:
+            best_score = score
+            best_master_id = product_master_id
+
+    return best_master_id if best_score >= similarity_threshold else None
+
+
+def _get_saved_motif_rows(raw_value):
+    if isinstance(raw_value, str):
+        try:
+            raw_value = json.loads(raw_value or '[]')
+        except (TypeError, ValueError):
+            return []
+    if isinstance(raw_value, dict):
+        raw_value = raw_value.get('rows') or []
+    return raw_value if isinstance(raw_value, list) else []
+
+
+def _build_complete_pos_quantities(items, motif_rows=None, include_bitbit_details=False):
+    result = _build_pos_sold_quantities_by_master_id(items, include_bitbit_details=include_bitbit_details)
+    if include_bitbit_details:
+        quantities, bitbit_details = result
+    else:
+        quantities, bitbit_details = result, None
+    for row in motif_rows or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            product_id = int(row.get('product_id') or 0)
+            quantity = int(row.get('quantity') or 0)
+        except (TypeError, ValueError):
+            continue
+        if product_id > 0 and quantity > 0:
+            quantities[product_id] = int(quantities.get(product_id, 0) or 0) + quantity
+    return (quantities, bitbit_details) if include_bitbit_details else quantities
+
+
+
+DEFAULT_POS_SOLD_ALIASES = {
+    # Bag & Packaging Aliases
+    'bag kraft large': 144,
+    'bag kraft medium': 144,
+    'bag kraft small': 144,
+    'bag kraft': 144,
+    'kraft bag large': 144,
+    'kraft bag medium': 144,
+    'kraft bag small': 144,
+    'kraft bag': 144,
+    'cake tote bag': 143,
+    'cake bag 9rd/8rd': 149,
+    'cake bag': 149,
+    'non woven bag': 144,
+    'non woven bag 023': 144,
+    # Candle Aliases
+    'candle sml- blue': 131,
+    'candle sml blue': 131,
+    'candle sml- pink': 131,
+    'candle sml pink': 131,
+    'candle sml- red': 131,
+    'candle sml red': 131,
+    'candle sml- white': 131,
+    'candle sml white': 131,
+    'candle sml- yellow': 131,
+    'candle sml yellow': 131,
+    'candle sml': 131,
+    'candle big - blue': 131,
+    'stick candles - blue': 131,
+    'stick candles - pink': 131,
+}
+
+
+
+def _build_name_variants(normalized_name):
+    variants = {normalized_name}
+    if normalized_name.endswith('ies') and len(normalized_name) > 5:
+        variants.add(normalized_name[:-3] + 'y')
+    if normalized_name.endswith('es') and len(normalized_name) > 4:
+        variants.add(normalized_name[:-2])
+    if normalized_name.endswith('s') and len(normalized_name) > 3:
+        variants.add(normalized_name[:-1])
+    return {item for item in variants if item}
+
+
+
+def _build_pos_sold_quantities_by_master_id(items, include_bitbit_details=False):
+    if not items:
+        return ({}, {}) if include_bitbit_details else {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    bitbit_details = {}
+
+    for raw_item in items:
+        if isinstance(raw_item, dict):
+            quantity = int(raw_item.get('quantity', 0) or 0)
+            product_name = raw_item.get('product_name', '')
+        else:
+            quantity = int(getattr(raw_item, 'quantity', 0) or 0)
+            product_name = str(getattr(raw_item, 'product_name', '') or '')
+        if quantity <= 0:
+            continue
+        bitbit_rule = _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup)
+        if bitbit_rule:
+            source_master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+            if source_master_id:
+                master_quantities[source_master_id] = int(master_quantities.get(source_master_id, 0) or 0) + quantity
+
+            master_id = bitbit_rule['target_master_id']
+            converted_quantity = quantity * int(bitbit_rule.get('multiplier') or 6)
+            master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + converted_quantity
+            bitbit_details.setdefault(master_id, []).append({
+                'source_name': bitbit_rule['source_name'],
+                'packs': quantity,
+                'slices': converted_quantity,
+                'target_name': bitbit_rule['target_name'],
+                'discount_amount': BITBIT_6S_DISCOUNT_AMOUNT,
+                'is_source_row': False,
+            })
+            continue
+
+        master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return (master_quantities, bitbit_details) if include_bitbit_details else master_quantities
+
+
+
+BITBIT_6S_POS_SOLD_RULES = [
+    {
+        'source': 'Assorted Butter Cake Slices Bitbit 6s',
+        'keywords': ['butter', 'cake', 'slice', 'bitbit', '6'],
+        'target': 'Butter Cake Slice',
+    },
+    {
+        'source': 'Fluffy Mamon Bitbit 6s',
+        'keywords': ['fluffy', 'mamon', 'bitbit', '6'],
+        'target': 'Fluffy Mamon',
+    },
+    {
+        'source': 'Cheesy Ensaymada Bitbit 6s',
+        'keywords': ['cheesy', 'ensaymada', 'bitbit', '6'],
+        'target': 'Cheesy Ensaymada',
+    },
+    {
+        'source': 'Assorted Chiffon Cake Slices Bitbit 6s',
+        'keywords': ['chiffon', 'cake', 'slice', 'bitbit', '6'],
+        'target': 'Chiffon Cake Slice',
+    },
+]
+
+
+BITBIT_6S_DISCOUNT_AMOUNT = 10
+
+
+def _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
+    normalized_name = _normalize_product_text(product_name)
+    if not normalized_name:
+        return None
+
+    for rule in BITBIT_6S_POS_SOLD_RULES:
+        normalized_source = _normalize_product_text(rule.get('source'))
+        keyword_match = all(
+            _normalize_product_text(keyword) in normalized_name
+            for keyword in rule.get('keywords', [])
+            if _normalize_product_text(keyword)
+        )
+        if not (
+            (normalized_source and normalized_source in normalized_name)
+            or keyword_match
+        ):
+            continue
+
+        target_name = rule.get('target') or ''
+        target_master_id = _resolve_pos_sold_master_id(target_name, alias_lookup, master_lookup, similarity_threshold=0.75)
+        if not target_master_id:
+            continue
+
+        return {
+            'target_master_id': target_master_id,
+            'target_name': target_name,
+            'source_name': str(product_name or rule.get('source') or '').strip(),
+            'multiplier': 6,
+        }
+
+    return None
+
+
+def _build_motif_sold_details(motif_rows):
+    details = {}
+    for row in motif_rows or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            product_id = int(row.get('product_id') or 0)
+            quantity = int(row.get('quantity') or 0)
+        except (TypeError, ValueError):
+            continue
+        if product_id <= 0 or quantity <= 0:
+            continue
+        details.setdefault(product_id, []).append({
+            'motif_index': int(row.get('motif_index') or 1),
+            'product': str(row.get('product') or '').strip(),
+            'quantity': quantity,
+            'unit_price': float(row.get('unit_price') or 0.0),
+            'discount': float(row.get('discount') or 0.0),
+            'price': float(row.get('price') or 0.0),
+        })
+    return details
+
+
+
+def _build_motif_charge_payload_from_pos_items(items):
+    motif_items = []
+    normalized_motif_name = _normalize_product_text('ADDITIONAL CHARGE FOR MOTIF')
+    for item in items or []:
+        if isinstance(item, dict):
+            product_name = str(item.get('product_name') or '').strip()
+            quantity = item.get('quantity', 0)
+            gross_sales = item.get('gross_sales', 0.0)
+            discount = item.get('discount', 0.0)
+            net_sales = item.get('net_sales', 0.0)
+        else:
+            product_name = str(getattr(item, 'product_name', '') or '').strip()
+            quantity = getattr(item, 'quantity', 0)
+            gross_sales = getattr(item, 'gross_sales', 0.0)
+            discount = getattr(item, 'discount', 0.0)
+            net_sales = getattr(item, 'net_sales', 0.0)
+        normalized_product_name = _normalize_product_text(product_name)
+        if not normalized_product_name or normalized_motif_name not in normalized_product_name:
+            continue
+        motif_items.append({
+            'product_name': product_name,
+            'quantity': int(quantity or 0),
+            'gross_sales': float(gross_sales or 0.0),
+            'discount': float(discount or 0.0),
+            'net_sales': float(net_sales or 0.0),
+        })
+
+    if not motif_items:
+        return None
+
+    return {
+        'detected': True,
+        'items': motif_items,
+        'quantity': sum(int(item.get('quantity', 0) or 0) for item in motif_items),
+        'gross_sales': sum(float(item.get('gross_sales', 0.0) or 0.0) for item in motif_items),
+        'discount': sum(float(item.get('discount', 0.0) or 0.0) for item in motif_items),
+        'net_sales': sum(float(item.get('net_sales', 0.0) or 0.0) for item in motif_items),
+    }
+
+
+
+@cache.memoize(timeout=300)
+def _get_product_alias_lookup():
+    rows = (
+        db.session.query(ProductAlias.normalized_alias, ProductMaster.description)
+        .join(ProductMaster, ProductMaster.id == ProductAlias.product_master_id)
+        .all()
+    )
+    return {
+        str(normalized_alias or '').strip(): (description or '').strip()
+        for normalized_alias, description in rows
+        if str(normalized_alias or '').strip() and (description or '').strip()
+    }
+
+
+
+
+
+
+# Lightweight cached access to product master rows for fast category resolution
+_cached_master_rows = None
+def _cached_product_masters():
+    global _cached_master_rows
+    if _cached_master_rows is None:
+        product_masters = (
+            ProductMaster.query
+            .with_entities(ProductMaster.description, ProductMaster.category)
+            .all()
+        )
+        _cached_master_rows = [
+            (
+                _normalize_product_text(description),
+                (description or '').strip(),
+                (category or '').strip() or 'Uncategorized',
+            )
+            for description, category in product_masters
+        ]
+    return _cached_master_rows
+
+
+# other api handles for INVsync
+
+
+@api_handles.route('/invensync/trace-data')
+@login_required
+def invensync_transfer_trace():
+    """Return the TafTransfer records behind a Trans-In / Trans-Out cell.
+    Admin roles only."""
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        return jsonify({'ok': False, 'message': 'Access denied.'}), 403
+
+    store_id = request.args.get('store_id', type=int)
+    date_str = request.args.get('date', '').strip()
+    product_master_id = request.args.get('product_master_id', type=int)
+    direction = request.args.get('direction', '').strip().lower()
+
+    if not store_id or not date_str or not product_master_id:
+        return jsonify({'ok': False, 'message': 'Missing required parameters.'}), 400
+    if direction not in ('in', 'out', 'delivery', 'sold'):
+        return jsonify({'ok': False, 'message': 'Invalid direction.'}), 400
+
+    store = Store.query.get(store_id)
+    if not store:
+        return jsonify({'ok': False, 'message': 'Store not found.'}), 404
+
+    try:
+        transaction_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'ok': False, 'message': 'Invalid date.'}), 400
+
+    if not ProductMaster.query.get(product_master_id):
+        return jsonify({'ok': False, 'message': 'Product not found.'}), 404
+
+    if direction in ('in', 'out'):
+        records, traced_total = _build_taf_transfer_trace(
+            store, transaction_date, product_master_id, direction
+        )
+    elif direction == 'delivery':
+        records, traced_total = _build_delivery_trace(
+            store, transaction_date, product_master_id
+        )
+    elif direction == 'sold':
+        records, traced_total = _build_sold_trace(
+            store, transaction_date, product_master_id
+        )
+    else:
+        records, traced_total = [], 0
+
+    return jsonify({
+        'ok': True,
+        'direction': direction,
+        'store_id': store_id,
+        'date': date_str,
+        'product_master_id': product_master_id,
+        'traced_total': traced_total,
+        'records': records,
+        'record_count': len(records),
+    })
+
+
+def _build_sold_trace(store, transaction_date, product_master_id):
+    from website.models import PosSold, DailyReport, User
+    
+    query = (
+        db.session.query(PosSold, DailyReport)
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(DailyReport.store_id == store.id)
+        .filter(DailyReport.report_date == transaction_date)
+    )
+    pos_rows = query.all()
+    if not pos_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    for item, report in pos_rows:
+        resolved_master_id = _resolve_pos_sold_master_id(
+            item.product_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(item.quantity or 0)
+        if quantity <= 0:
+            continue
+
+        uploader_name = ''
+        if report.submitted_by:
+            uploader = User.query.get(report.submitted_by)
+            if uploader:
+                uploader_name = uploader.full_name
+
+        records.append({
+            'control_no': 'POS Upload',
+            'transaction_date': report.report_date.strftime('%Y-%m-%d') if getattr(report, 'report_date', None) else '',
+            'transaction_type': 'POS Sold',
+            'transfer_from': store.name,
+            'transfer_to': 'Customer',
+            'status': 'Sold',
+            'prepared_by_name': uploader_name,
+            'received_by_name': 'Customer',
+            'quantity': quantity,
+            'received_quantity': quantity,
+            'short_over_qty': 0,
+            'remarks': item.product_name,
+        })
+
+    # traced_total uses the same quantity logic as the InvenSync Sold column
+    # (Bitbit 6s conversion + motif additions), so the trace matches the cell.
+    try:
+        motif_rows = json.loads(pos_rows[0][1].pos_motif_breakdown_json or '[]')
+    except (TypeError, ValueError):
+        motif_rows = []
+    sold_map = _build_complete_pos_quantities(
+        [item for item, _report in pos_rows],
+        motif_rows,
+    )
+    traced_total = int(sold_map.get(int(product_master_id), 0) or 0)
+
+    return records, traced_total
+
+
+def _build_delivery_trace(store, transaction_date, product_master_id):
+    from website.models import RsoDelivery, User
+    
+    query = (
+        db.session.query(RsoDelivery)
+        .filter(RsoDelivery.store_id == store.id)
+        .filter(RsoDelivery.report_date == transaction_date)
+        .filter(RsoDelivery.delivery_reviewed_date.isnot(None))
+    )
+    delivery_rows = query.all()
+    if not delivery_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    traced_total = 0
+    for delivery in delivery_rows:
+        if str(delivery.upload_source or 'delivery').strip().lower() == 'bulk':
+            continue
+        resolved_master_id = _resolve_pos_sold_master_id(
+            delivery.product_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(delivery.quantity or 0)
+        received_qty = int(delivery.received_quantity) if delivery.received_quantity is not None else quantity
+
+        traced_total += received_qty
+
+        uploader_name = ''
+        if delivery.uploaded_by:
+            uploader = User.query.get(delivery.uploaded_by)
+            if uploader:
+                uploader_name = uploader.full_name
+
+        records.append({
+            'control_no': getattr(delivery, 'rso_no', None) or 'N/A',
+            'transaction_date': delivery.report_date.strftime('%Y-%m-%d') if getattr(delivery, 'report_date', None) else '',
+            'transaction_type': 'Bulk Order' if str(getattr(delivery, 'upload_source', '')).strip().lower() == 'bulk' else 'Delivery',
+            'transfer_from': 'Supplier/Warehouse',
+            'transfer_to': store.name,
+            'status': 'Reviewed',
+            'prepared_by_name': uploader_name,
+            'received_by_name': uploader_name,
+            'quantity': quantity,
+            'received_quantity': received_qty,
+            'short_over_qty': quantity - received_qty if quantity and received_qty is not None else 0,
+            'remarks': delivery.manual_note,
+        })
+    return records, traced_total
+
+
+
+
+def _build_taf_transfer_trace(store, transaction_date, product_master_id, direction):
+    """Return the TafTransfer records that account for a store/day product's
+    Trans-In or Trans-Out column. Mirrors the column source logic so the trace
+    always matches the auto-populated values used by the InvenSync table."""
+    if not store or not transaction_date or not product_master_id:
+        return [], 0
+
+    direction = str(direction or '').strip().lower()
+    if direction not in ('in', 'out'):
+        return [], 0
+
+    normalized_store_name = str(store.name or '').strip().lower()
+
+    if direction == 'out':
+        query = (
+            db.session.query(TafTransferItem, TafTransfer)
+            .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer']))
+            .filter(TafTransfer.store_id == store.id)
+            .filter(TafTransfer.transaction_date == transaction_date)
+        )
+    elif direction == 'in':
+        if not normalized_store_name:
+            return [], 0
+        query = (
+            db.session.query(TafTransferItem, TafTransfer)
+            .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+            .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+            .filter(
+                func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name
+            ).filter(
+                func.lower(func.trim(TafTransfer.status)) != 'pending'
+            ).filter(
+                func.coalesce(TafTransfer.received_date, TafTransfer.transaction_date) == transaction_date
+            )
+        )
+
+    transfer_rows = query.all()
+    if not transfer_rows:
+        return [], 0
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+
+    records = []
+    traced_total = 0
+    for transfer_item, transfer in transfer_rows:
+        resolved_master_id = _resolve_pos_sold_master_id(
+            transfer_item.item_name, alias_lookup, master_lookup
+        )
+        if resolved_master_id != int(product_master_id):
+            continue
+
+        quantity = int(transfer_item.quantity or 0)
+        received_qty = int(transfer_item.received_quantity) if transfer_item.received_quantity is not None else quantity
+
+        if direction == 'out':
+            count_qty = quantity
+        else:
+            count_qty = received_qty
+        if count_qty <= 0:
+            continue
+
+        traced_total += count_qty
+        records.append({
+            'control_no': getattr(transfer, 'control_no', None),
+            'transaction_date': (
+                transfer.transaction_date.strftime('%Y-%m-%d')
+                if getattr(transfer, 'transaction_date', None) else ''
+            ),
+            'transaction_type': getattr(transfer, 'transaction_type', None),
+            'transfer_from': getattr(transfer, 'transfer_from', None),
+            'transfer_to': getattr(transfer, 'transfer_to', None),
+            'status': getattr(transfer, 'status', None),
+            'prepared_by_name': getattr(transfer, 'prepared_by_name', None),
+            'received_by_name': getattr(transfer, 'received_by_name', None),
+            'quantity': quantity,
+            'received_quantity': received_qty,
+            'short_over_qty': int(transfer_item.short_over_qty or 0),
+            'unit_cost': float(transfer_item.unit_cost or 0.0),
+            'line_total': float(transfer_item.line_total or 0.0),
+            'remarks': transfer_item.remarks,
+            'created_at': (
+                transfer.created_at.strftime('%Y-%m-%d %H:%M')
+                if getattr(transfer, 'created_at', None) else ''
+            ),
+        })
+
+    return records, traced_total
+
+# ================================
+# Product Masterlist Section Start
+# ================================
+
+@api_handles.route('/product_masterlist', methods=['POST', 'GET'])
+@login_required
+def api_product_masterlist():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}, 403
+
+    try:
+        current_page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        current_page = 1
+    
+    per_page = post_per_page
+
+    query = ProductMaster.query.options(selectinload(ProductMaster.aliases))
+
+    # -- Filters ----------------------------------------------
+    filters_raw = request.form.get('filters')
+    if filters_raw:
+        try:
+            filters = json.loads(filters_raw)
+
+            if filters.get('category'):
+                query = query.filter(ProductMaster.category == filters['category'])
+
+            if filters.get('sub_category'):
+                query = query.filter(ProductMaster.sub_category == filters['sub_category'])
+
+        except json.JSONDecodeError:
+            pass
+
+    # -- Search -----------------------------------------------
+    search = request.form.get('search')
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                cast(ProductMaster.code, String).ilike(pattern),
+                ProductMaster.description.ilike(pattern),
+                ProductMaster.category.ilike(pattern),
+                ProductMaster.sub_category.ilike(pattern),
+                cast(ProductMaster.tp, String).ilike(pattern),
+                cast(ProductMaster.sp_p, String).ilike(pattern),
+                cast(ProductMaster.sp_np, String).ilike(pattern),
+                ProductMaster.shelf_life.ilike(pattern),
+            )
+        )
+
+    # -- Sorting ----------------------------------------------
+    sortby = request.form.get('sort')
+    order = request.form.get('order_by', 'asc').lower()
+
+    sortable_columns = {
+        'id':          ProductMaster.id,
+        'code':        ProductMaster.code,
+        'description': ProductMaster.description,
+        'category':    ProductMaster.category,
+        'sub_category':ProductMaster.sub_category,
+        'tp':          ProductMaster.tp,
+        'sp_p':        ProductMaster.sp_p,
+        'sp_np':       ProductMaster.sp_np,
+        'shelf_life':  ProductMaster.shelf_life,
+        'created_at':  ProductMaster.created_at,
+    }
+
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(ProductMaster.id.asc())
+
+    # -- Pagination -------------------------------------------
+    pagination = query.paginate(page=current_page, per_page=per_page, error_out=False)
+    results      = pagination.items
+    total_pages  = pagination.pages
+    total_results = pagination.total
+
+    # -- Serialize --------------------------------------------
+    product_list = []
+    for product in results:
+        product_list.append({
+            'id':          product.id,
+            'code':        product.code,
+            'description': product.description,
+            'category':    product.category,
+            'sub_category':product.sub_category,
+            'tp':          product.tp,
+            'sp_p':        product.sp_p,
+            'sp_np':       product.sp_np,
+            'shelf_life':  product.shelf_life,
+            'created_at':  product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else None,
+            'updated_at':  product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else None,
+            'aliases': [
+                {
+                    'id':         a.id,
+                    'alias_name': a.alias_name,
+                }
+                for a in product.aliases
+            ],
+        })
+
+    return {
+        'type': 'success',
+        'products': product_list,
+        'pagination_data': {
+            'current_page':  current_page,
+            'total_pages':   total_pages,
+            'total_results': total_results,
+        }
+    }
+
+
+
+#Product Masterlist add api for v2   
+@api_handles.route('/add_product_master', methods=['POST'])
+@login_required
+def add_product_master():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}, 403
+    try:
+        data = request.get_json()
+
+        # Validate required fields
+        for field in ('description', 'category'):
+            if not data.get(field):
+                return {'type': 'error', 'message': f'Missing required field: {field}'}, 400
+
+        # Check if code already exists
+        existing = ProductMaster.query.filter_by(code=(data['code'])).first()
+        if existing:
+            return {'type': 'error', 'message': 'Product with this code already exists.'}, 400
+
+        # Create new product
+        product = ProductMaster(
+            code        = data['code'],
+            description = data['description'].strip(),
+            category    = data['category'].strip(),
+            sub_category= data.get('sub_category', '').strip() or None,
+            tp          = float(data['tp']),
+            sp_p        = float(data['sp_p']),
+            sp_np       = float(data['sp_np']),
+            shelf_life  = data.get('shelf_life', '').strip() or None,
+        )
+        db.session.add(product)
+        db.session.commit()
+
+        # Record initial prices as first price history entry
+        db.session.add(ProductPriceChangeLog(
+            product_id          = product.id,
+            change_type         = 'CREATE',
+            product_code        = str(product.code) if product.code is not None else None,
+            product_description = product.description,
+            old_tp              = None,
+            new_tp              = product.tp,
+            old_sp_p            = None,
+            new_sp_p            = product.sp_p,
+            old_sp_np           = None,
+            new_sp_np           = product.sp_np,
+            changed_by          = current_user.id,
+            changed_by_username = getattr(current_user, 'username', None),
+        ))
+        db.session.commit()
+
+        return {'type': 'success', 'message': 'Product added successfully.'}, 200
+
+    except ValueError as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Invalid data format: {str(e)}'}, 400
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error adding product: {str(e)}'}, 500
+    
+    
+# Updating Product route for v2
+@api_handles.route('update_product_master/<int:product_id>', methods=['POST',"GET"])
+@login_required
+def update_product_master(product_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}, 403
+    try:
+        data = request.get_json()
+
+        # Find product
+        product = ProductMaster.query.get(product_id)
+        if not product:
+            return {'type': 'error', 'message': 'Product not found.'}, 404
+
+        # Validate required fields
+        for field in ('code', 'description', 'category'):
+            if not data.get(field):
+                return {'type': 'error', 'message': f'Missing required field: {field}'}, 400
+
+        # Check code uniqueness against other products
+        code = (data['code'])
+        existing = ProductMaster.query.filter(
+            ProductMaster.code == code,
+            ProductMaster.id != product_id
+        ).first()
+        if existing:
+            return {'type': 'error', 'message': 'Another product with this code already exists.'}, 400
+
+        # Capture old prices before update
+        old_tp    = product.tp
+        old_sp_p  = product.sp_p
+        old_sp_np = product.sp_np
+
+        # Apply updates
+        product.code         = code
+        product.description  = data['description'].strip()
+        product.category     = data['category'].strip()
+        product.sub_category = data.get('sub_category', '').strip() or None
+        product.tp           = float(data['tp'])
+        product.sp_p         = float(data['sp_p'])
+        product.sp_np        = float(data['sp_np'])
+        product.shelf_life   = data.get('shelf_life', '').strip() or None
+
+        db.session.commit()
+
+        # Record price change log if any price actually changed
+        if any([
+            (old_tp    or 0) != (product.tp    or 0),
+            (old_sp_p  or 0) != (product.sp_p  or 0),
+            (old_sp_np or 0) != (product.sp_np or 0),
+        ]):
+            db.session.add(ProductPriceChangeLog(
+                product_id          = product.id,
+                change_type         = 'UPDATE',
+                product_code        = str(product.code) if product.code is not None else None,
+                product_description = product.description,
+                old_tp              = old_tp,
+                new_tp              = product.tp,
+                old_sp_p            = old_sp_p,
+                new_sp_p            = product.sp_p,
+                old_sp_np           = old_sp_np,
+                new_sp_np           = product.sp_np,
+                changed_by          = current_user.id,
+                changed_by_username = getattr(current_user, 'username', None),
+            ))
+            db.session.commit()
+
+        # Audit log
+        log_audit_event(
+            current_user.id,
+            'UPDATE',
+            'ProductMaster',
+            product.id,
+            {'action': 'Updated product', 'code': product.code, 'description': product.description}
+        )
+
+        return {'type': 'success', 'message': 'Product updated successfully.'}, 200
+
+    except ValueError as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Invalid data format: {str(e)}'}, 400
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error updating product: {str(e)}'}, 500
+ 
+
+#removing product from masterlist v2
+@api_handles.route('/delete_product_master/<int:product_id>', methods=['POST'])
+@login_required
+def delete_product_master(product_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}, 403
+    try:
+        # Find product
+        product = ProductMaster.query.get(product_id)
+        if not product:
+            return {'type': 'error', 'message': 'Product not found.'}, 404
+
+        # Store product info before deletion
+        product_code        = product.code
+        product_description = product.description
+
+        # Delete product
+        db.session.delete(product)
+        db.session.commit()
+
+        return {'type': 'success', 'message': 'Product deleted successfully.'}, 200
+
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error deleting product: {str(e)}'}, 500
+
+
+# = Product price change log =====
+@api_handles.route('/getPriceHistoryByProductId', methods=['GET','POST'])
+def get_price_history_by_product_id():
+    try:
+        product_id = int(request.args.get('product_id') or request.form.get('product_id'))
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid product_id'}), 400
+    
+    print(product_id)
+    
+    if not product_id:
+        return jsonify({'error': 'product_id is required'}), 400
+
+    logs = (
+        db.session.query(ProductPriceChangeLog, ProductMaster)
+        .join(ProductMaster, ProductPriceChangeLog.product_id == ProductMaster.id)
+        .filter(ProductPriceChangeLog.product_id == product_id)
+        .order_by(ProductPriceChangeLog.changed_at.asc())
+        .all()
+    )
+
+    if not logs:
+        return jsonify({
+            'product_id':          product_id,
+            'product_code':        None,
+            'product_description': None,
+            'product':             None,
+            'stats_data':          []
+        })
+
+    # Aggregate: keep the LAST entry per calendar date
+    daily = {}
+    for log, product in logs:
+        date_key = log.changed_at.strftime('%Y-%m-%d')
+        daily[date_key] = (log, product)
+
+    chart_data = []
+    for date_key in sorted(daily.keys()):
+        log, _ = daily[date_key]
+        chart_data.append({
+            'date':  date_key,
+            'tp':    log.new_tp,
+            'sp_p':  log.new_sp_p,
+            'sp_np': log.new_sp_np,
+        })
+
+    _, product = list(daily.values())[-1]
+    return jsonify({
+        'product_id':          product_id,
+        'product_code':        product.code,
+        'product_description': product.description,
+        'product': {
+            'id':           product.id,
+            'code':         product.code,
+            'description':  product.description,
+            'category':     product.category,
+            'sub_category': product.sub_category,
+            'tp':           product.tp,
+            'sp_p':         product.sp_p,
+            'sp_np':        product.sp_np
+        },
+        'stats_data': chart_data
+    })
+
+ 
+# ================================
+# Product Masterlist Section End
+# ================================
+
+  
+# ================================
+# Clusters Section Start
+# ================================
+@api_handles.route('/clusters_list_admin', methods=['POST','GET'])
+@login_required
+def list_clusters_admin():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        return jsonify({ 'type': 'error', 'message': 'Access denied.' }), 403
+
+    can_manage = current_user.role in ('Superadmin', 'Admin')
+
+    try:
+        current_page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        current_page = 1
+
+    per_page = post_per_page
+
+    query = Cluster.query.options(
+        selectinload(Cluster.stores),
+        selectinload(Cluster.manager)
+    )
+
+    # -- Search -----------------------------------------------
+    search = request.form.get('search')
+    if search:
+        pattern = f'%{search}%'
+        query = query.join(User, Cluster.manager_id == User.id, isouter=True).filter(
+            or_(
+                Cluster.name.ilike(pattern),
+                Cluster.description.ilike(pattern),
+                User.full_name.ilike(pattern),
+                User.username.ilike(pattern),
+            )
+        )
+
+    # -- Sorting ----------------------------------------------
+    sortby = request.form.get('sort')
+    order = request.form.get('order_by', 'asc').lower()
+
+    sortable_columns = {
+        'id':         Cluster.id,
+        'name':       Cluster.name,
+        'date_added': Cluster.date_added,
+    }
+
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(Cluster.id.asc())
+
+    # -- Pagination -------------------------------------------
+    pagination    = query.paginate(page=current_page, per_page=per_page, error_out=False)
+    results       = pagination.items
+    total_pages   = pagination.pages
+    total_results = pagination.total
+
+    # -- Serialize --------------------------------------------
+    data = []
+    for c in results:
+        data.append({
+            'id':              c.id,
+            'name':            c.name,
+            'description':     c.description,
+            'store_count':     len(c.stores),
+            'manager_id':      c.manager_id,
+            'manager_name':    c.manager.full_name if c.manager else 'Unassigned',
+            'manager_initial': c.manager.username[0].upper() if c.manager else '?',
+            'date_added':      c.date_added.strftime('%b %d, %Y') if c.date_added else None,
+        })
+
+    return jsonify({
+        'type': 'success',
+        'data': {
+            'clusters':   data,
+            'can_manage': can_manage,
+        },
+        'pagination_data': {
+            'current_page':  current_page,
+            'total_pages':   total_pages,
+            'total_results': total_results,
+        }
+    })
+
+
+
+@api_handles.route('/clusters_create', methods=['POST', 'GET'])
+@login_required
+def clusters_create_admin():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({ 'type': 'error', 'message': 'Access denied.' }), 403
+
+    try:
+        body       = request.get_json()
+        name       = (body.get('name') or '').strip()
+        description = (body.get('description') or '').strip()
+        manager_id = body.get('manager_id')
+
+        if not name:
+            return jsonify({ 'type': 'error', 'message': 'Cluster name is required.' })
+
+        if Cluster.query.filter_by(name=name).first():
+            return jsonify({ 'type': 'error', 'message': f'Cluster "{name}" already exists.' })
+
+        new_cluster = Cluster(
+            name=name,
+            description=description,
+            manager_id=int(manager_id) if manager_id else None
+        )
+
+        db.session.add(new_cluster)
+        db.session.flush()
+
+        log_audit_event(
+            action='admin.cluster.create',
+            entity_type='Cluster',
+            entity_id=new_cluster.id,
+            reason='Cluster created by administrator.',
+            details={
+                'name':        new_cluster.name,
+                'description': new_cluster.description,
+                'manager_id':  new_cluster.manager_id,
+            },
+        )
+
+        db.session.commit()
+
+        return jsonify({ 'type': 'success', 'message': f'Cluster "{name}" created successfully.' })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({ 'type': 'error', 'message': f'Error creating cluster: {str(e)}.' })
+
+
+
+@api_handles.route('/clusters_update', methods=['POST', 'GET'])
+@login_required
+def clusters_update_admin():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({ 'type': 'error', 'message': 'Access denied.' }), 403
+
+    try:
+        body        = request.get_json()
+        cluster_id  = body.get('id')
+        name        = (body.get('name') or '').strip()
+        description = (body.get('description') or '').strip()
+        manager_id  = body.get('manager_id')
+
+        if not cluster_id:
+            return jsonify({ 'type': 'error', 'message': 'Cluster ID is required.' })
+
+        if not name:
+            return jsonify({ 'type': 'error', 'message': 'Cluster name is required.' })
+
+        cluster = Cluster.query.get(cluster_id)
+
+        if not cluster:
+            return jsonify({ 'type': 'error', 'message': 'Cluster not found.' })
+
+        # Check name conflict against other clusters
+        existing = Cluster.query.filter_by(name=name).first()
+        if existing and existing.id != cluster.id:
+            return jsonify({ 'type': 'error', 'message': f'Cluster "{name}" already exists.' })
+
+        old_details = {
+            'name':        cluster.name,
+            'description': cluster.description,
+            'manager_id':  cluster.manager_id,
+        }
+
+        cluster.name        = name
+        cluster.description = description
+        cluster.manager_id  = int(manager_id) if manager_id else None
+
+        log_audit_event(
+            action='admin.cluster.update',
+            entity_type='Cluster',
+            entity_id=cluster.id,
+            reason='Cluster updated by administrator.',
+            details={
+                'before': old_details,
+                'after': {
+                    'name':        cluster.name,
+                    'description': cluster.description,
+                    'manager_id':  cluster.manager_id,
+                },
+            },
+        )
+
+        db.session.commit()
+
+        return jsonify({ 'type': 'success', 'message': f'Cluster "{name}" updated successfully.' })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({ 'type': 'error', 'message': f'Error updating cluster: {str(e)}.' })
+        
+
+
+@api_handles.route('/clusters_delete', methods=['POST', 'GET'])
+@login_required
+def clusters_delete_admin():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({ 'type': 'error', 'message': 'Access denied.' }), 403
+
+    try:
+        body       = request.get_json()
+        cluster_id = body.get('id')
+
+        if not cluster_id:
+            return jsonify({ 'type': 'error', 'message': 'Cluster ID is required.' })
+
+        cluster = Cluster.query.get(cluster_id)
+
+        if not cluster:
+            return jsonify({ 'type': 'error', 'message': 'Cluster not found.' })
+
+        if cluster.stores:
+            return jsonify({ 'type': 'error', 'message': f'Cluster "{cluster.name}" still has {len(cluster.stores)} store(s). Remove all stores before deleting.' })
+
+        cluster_name = cluster.name
+
+        log_audit_event(
+            action='admin.cluster.delete',
+            entity_type='Cluster',
+            entity_id=cluster.id,
+            reason='Cluster deleted by administrator.',
+            details={
+                'name':        cluster.name,
+                'description': cluster.description,
+                'manager_id':  cluster.manager_id,
+            },
+        )
+
+        db.session.delete(cluster)
+        db.session.commit()
+
+        return jsonify({ 'type': 'success', 'message': f'Cluster "{cluster_name}" deleted successfully.' })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({ 'type': 'error', 'message': f'Error deleting cluster: {str(e)}.' })
+
+
+
+@api_handles.route('/clusters_managers', methods=['POST', 'GET'])
+@login_required
+def clusters_managers_admin():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({ 'type': 'error', 'message': 'Access denied.' }), 403
+
+    try:
+        managers = User.query.filter_by(role='Cluster Manager').all()
+
+        data = [
+            {
+                'id':        m.id,
+                'full_name': m.full_name,
+                'username':  m.username,
+            }
+            for m in managers
+        ]
+
+        return jsonify({ 'type': 'success', 'data': data })
+
+    except Exception as e:
+        return jsonify({ 'type': 'error', 'message': f'Error loading managers: {str(e)}.' })
+
+# ================================
+# Clusters Masterlist Section End
+# ================================
+
+ 
+ 
+# ================================
+# Stores Section Start
+# ================================
+@api_handles.route('/stores', methods=['POST', 'GET'])
+@login_required
+def api_stores_list():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Cluster Manager'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+    can_manage = current_user.role in ('Superadmin', 'Admin')
+    try:
+        current_page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        current_page = 1
+    per_page = post_per_page
+    query = Store.query.options(
+        selectinload(Store.manager),
+        selectinload(Store.cluster)
+    )
+    # -- Scope filter -----------------------------------------
+    store_scope = request.form.get('store_scope') or request.args.get('store_scope')
+    if store_scope == 'starlink':
+        query = query.filter(Store.name.ilike('%starlink%'))
+    else:
+        query = query.filter(~Store.name.ilike('%starlink%'))
+    # -- Search -----------------------------------------------
+    search = request.form.get('search') or request.args.get('search')
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                Store.name.ilike(pattern),
+                Store.address.ilike(pattern),
+            )
+        )
+    # -- Sorting ----------------------------------------------
+    sortby = request.form.get('sort') or request.args.get('sort')
+    order  = (request.form.get('order_by') or request.args.get('order_by') or 'asc').lower()
+    sortable_columns = {
+        'id':         Store.id,
+        'name':       Store.name,
+        'address':    Store.address,
+        'date_added': Store.date_added,
+    }
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(Store.id.asc())
+    # -- Pagination -------------------------------------------
+    pagination    = query.paginate(page=current_page, per_page=per_page, error_out=False)
+    results       = pagination.items
+    total_pages   = pagination.pages
+    total_results = pagination.total
+    # -- Serialize --------------------------------------------
+    data = []
+    for s in results:
+        data.append({
+            'id':                  s.id,
+            'name':                s.name,
+            'address':             s.address,
+            'is_one_year_already': s.is_one_year_already,
+            'manager_id':          s.manager_id,
+            'manager_name':        s.manager.full_name if s.manager else None,
+            'manager_username':    s.manager.username if s.manager else None,
+            'cluster_name':        s.cluster.name if s.cluster else None,
+            'date_added':          s.date_added.strftime('%b %d, %Y') if s.date_added else None,
+        })
+    return jsonify({
+        'type': 'success',
+        'data': {
+            'stores':     data,
+            'can_manage': can_manage,
+        },
+        'pagination_data': {
+            'current_page':  current_page,
+            'total_pages':   total_pages,
+            'total_results': total_results,
+        }
+    })
+
+
+@api_handles.route('/stores_managers_available', methods=['GET', 'POST'])
+@login_required
+def api_stores_managers_available():
+    from .views import _apply_store_scope_filter
+    all_stores = Store.query.all()
+    scoped_stores = _apply_store_scope_filter(all_stores, request)
+    assigned_manager_ids = [s.manager_id for s in scoped_stores if s.manager_id]
+    available_managers = User.query.filter(
+        User.role == 'Store Manager',
+        ~User.id.in_(assigned_manager_ids)
+    ).all()
+    return jsonify({
+        'type': 'success',
+        'data': [
+            {'id': m.id, 'full_name': m.full_name, 'username': m.username}
+            for m in available_managers
+        ]
+    })
+    
+    
+    
+
+@api_handles.route('/managers_all', methods=['GET', 'POST'])
+@login_required
+def api_stores_managers_all():
+    all_managers = User.query.filter(User.role == 'Store Manager').all()
+    return jsonify({
+        'type': 'success',
+        'data': [
+            {'id': m.id, 'full_name': m.full_name, 'username': m.username}
+            for m in all_managers
+        ]
+    })
+ 
+ 
+ 
+
+@api_handles.route('/stores/create', methods=['POST'])
+@login_required
+def api_stores_create():
+    try:
+        data       = request.get_json()
+        name       = (data.get('name') or '').strip()
+        address    = (data.get('address') or '').strip()
+        manager_id = data.get('manager_id') or None
+        is_one_year_already = data.get('is_one_year_already', '0') == '1'
+
+        if not name or not address:
+            return jsonify({'type': 'error', 'message': 'Store name and address are required.'}), 400
+
+        if Store.query.filter_by(name=name).first():
+            return jsonify({'type': 'error', 'message': 'A store with this name already exists.'}), 400
+
+        new_store = Store(
+            name=name,
+            address=address,
+            is_one_year_already=is_one_year_already,
+            manager_id=int(manager_id) if manager_id else None
+        )
+        db.session.add(new_store)
+        db.session.flush()
+        log_audit_event(
+            action='admin.store.create',
+            entity_type='Store',
+            entity_id=new_store.id,
+            reason='Store created by administrator.',
+            details={
+                'name':                new_store.name,
+                'address':             new_store.address,
+                'store_group':         new_store.store_group,
+                'is_one_year_already': new_store.is_one_year_already,
+                'manager_id':          new_store.manager_id,
+            },
+        )
+        db.session.commit()
+        return jsonify({'type': 'success', 'message': f'Store "{name}" created successfully.'})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Error creating store: {str(e)}'}), 500
+ 
+
+
+@api_handles.route('/stores/<int:store_id>/assign-manager', methods=['POST'])
+@login_required
+def api_stores_assign_manager(store_id):
+    try:
+        store = Store.query.get_or_404(store_id)
+        data = request.get_json()
+        manager_id = data.get('manager_id')
+        previous_manager_id = store.manager_id
+
+        if not manager_id:
+            return jsonify({'type': 'error', 'message': 'Please select a manager.'}), 400
+
+        manager = User.query.get(int(manager_id))
+        if not manager or manager.role != 'Store Manager':
+            return jsonify({'type': 'error', 'message': 'Invalid manager selection.'}), 400
+
+        existing_store = Store.query.filter_by(manager_id=int(manager_id)).first()
+        if existing_store and existing_store.id != store_id:
+            return jsonify({'type': 'error', 'message': f'Manager {manager.full_name} is already assigned to {existing_store.name}.'}), 400
+
+        store.manager_id = int(manager_id)
+        log_audit_event(
+            action='admin.store.assign_manager',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store manager reassigned.',
+            details={
+                'store_name':          store.name,
+                'previous_manager_id': previous_manager_id,
+                'new_manager_id':      store.manager_id,
+            },
+        )
+        db.session.commit()
+        return jsonify({'type': 'success', 'message': f'Manager "{manager.full_name}" assigned to "{store.name}" successfully.'})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Error assigning manager: {str(e)}'}), 500
+
+
+@api_handles.route('/stores/<int:store_id>/update', methods=['POST'])
+@login_required
+def api_stores_update(store_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied. Only Admins and Superadmins can update stores.'}), 403
+
+    try:
+        store = Store.query.get_or_404(store_id)
+        data  = request.get_json()
+
+        previous_state = {
+            'name':                store.name,
+            'address':             store.address,
+            'is_one_year_already': store.is_one_year_already,
+            'manager_id':          store.manager_id,
+        }
+
+        name                = (data.get('name') or '').strip()
+        address             = (data.get('address') or '').strip()
+        is_one_year_already = data.get('is_one_year_already', '0') == '1'
+        manager_id_raw      = (data.get('manager_id') or '')
+
+        if not name or not address:
+            return jsonify({'type': 'error', 'message': 'Store name and address are required.'}), 400
+
+        if name != store.name:
+            existing = Store.query.filter(Store.name == name, Store.id != store_id).first()
+            if existing:
+                return jsonify({'type': 'error', 'message': 'A store with this name already exists.'}), 400
+
+        new_manager_id = None
+        if manager_id_raw:
+            new_manager_id = int(manager_id_raw)
+            manager = User.query.get(new_manager_id)
+            if not manager or manager.role != 'Store Manager':
+                return jsonify({'type': 'error', 'message': 'Invalid manager selection.'}), 400
+
+            existing_store = Store.query.filter_by(manager_id=new_manager_id).first()
+            if existing_store and existing_store.id != store_id:
+                return jsonify({'type': 'error', 'message': f'Manager {manager.full_name} is already assigned to {existing_store.name}.'}), 400
+
+        store.name                = name
+        store.address             = address
+        store.is_one_year_already = is_one_year_already
+        store.manager_id          = new_manager_id
+
+        log_audit_event(
+            action='admin.store.update',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store updated by administrator.',
+            details={
+                'before': previous_state,
+                'after': {
+                    'name':                store.name,
+                    'address':             store.address,
+                    'is_one_year_already': store.is_one_year_already,
+                    'manager_id':          store.manager_id,
+                },
+            },
+        )
+        db.session.commit()
+        return jsonify({'type': 'success', 'message': f'Store "{name}" updated successfully.'})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Error updating store: {str(e)}'}), 500
+
+
+@api_handles.route('/stores/<int:store_id>/delete', methods=['POST'])
+@login_required
+def api_stores_delete(store_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied. Only Admins and Superadmins can delete stores.'}), 403
+
+    try:
+        store = Store.query.get_or_404(store_id)
+        store_snapshot = {
+            'name':       store.name,
+            'address':    store.address,
+            'manager_id': store.manager_id,
+        }
+        log_audit_event(
+            action='admin.store.delete',
+            entity_type='Store',
+            entity_id=store.id,
+            reason='Store deleted by administrator.',
+            details=store_snapshot,
+        )
+        db.session.delete(store)
+        db.session.commit()
+        return jsonify({'type': 'success', 'message': f'Store "{store_snapshot["name"]}" deleted successfully.'})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Error deleting store: {str(e)}'}), 500
+ 
+# ================================
+# Stores Section End
+# ================================
+  
+  
+  
+# ================================
+# Stores Targets Section Start
+# ================================
+  
+@api_handles.route('/targets/sheet', methods=['GET', 'POST'])
+@login_required
+def targets_sheet():
+    if current_user.role not in ('Superadmin', 'General Manager'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    try:
+        store_id = request.form.get('store_id') or request.args.get('store_id')
+        month    = (request.form.get('month') or request.args.get('month') or '').strip()
+
+        if not store_id:
+            return jsonify({'type': 'error', 'message': 'No store selected.'}), 400
+
+        store = Store.query.get(int(store_id))
+        if not store:
+            return jsonify({'type': 'error', 'message': 'Store not found.'}), 404
+
+        try:
+            month_start = datetime.strptime(month, '%Y-%m').date().replace(day=1)
+        except ValueError:
+            month_start = date.today().replace(day=1)
+
+        next_month = (
+            date(month_start.year + 1, 1, 1)
+            if month_start.month == 12
+            else date(month_start.year, month_start.month + 1, 1)
+        )
+
+        targets = StoreTarget.query.filter(
+            StoreTarget.store_id == int(store_id),
+            StoreTarget.target_date >= month_start,
+            StoreTarget.target_date < next_month,
+        ).all()
+
+        target_by_date = {t.target_date: t for t in targets}
+
+        rows = []
+        current_date = month_start
+        while current_date < next_month:
+            t = target_by_date.get(current_date)
+            rows.append({
+                'date':          current_date.strftime('%Y-%m-%d'),
+                'date_label':    current_date.strftime('%b %d, %Y'),
+                'target_net':    float(t.target_net    or 0) if t else 0.0,
+                'last_year_net': float(t.last_year_net or 0) if t else 0.0,
+                'gbi_target':    float(t.gbi_target    or 0) if t else 0.0,
+            })
+            current_date += timedelta(days=1)
+
+        cluster_data_url = None
+        if store.cluster_id:
+            cluster_data_url = url_for(
+                'views.cluster_manager_cluster_data',
+                cluster_id=store.cluster_id,
+                store_id=store_id,
+                month=f'{month_start.month:02d}',
+                year=str(month_start.year),
+            )
+
+        return jsonify({
+            'type':             'success',
+            'rows':             rows,
+            'cluster_data_url': cluster_data_url,
+        })
+
+    except Exception as e:
+        return jsonify({'type': 'error', 'message': str(e)})
+  
+  
+@api_handles.route('/targets/save', methods=['POST'])
+@login_required
+def targets_save():
+    if current_user.role not in ('Superadmin', 'General Manager'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    try:
+        store_id       = request.form.get('store_id', type=int)
+        cluster_id     = request.form.get('cluster_id', type=int)
+        selected_month = (request.form.get('target_month') or '').strip()
+
+        if not store_id:
+            return jsonify({'type': 'error', 'message': 'Please select a store.'}), 400
+
+        store = Store.query.get(store_id)
+        if not store:
+            return jsonify({'type': 'error', 'message': 'Store not found.'}), 404
+
+        if not cluster_id:
+            cluster_id = store.cluster_id
+
+        try:
+            month_start = datetime.strptime(selected_month, '%Y-%m').date().replace(day=1)
+        except ValueError:
+            return jsonify({'type': 'error', 'message': 'Invalid month format.'}), 400
+
+        next_month = (
+            date(month_start.year + 1, 1, 1)
+            if month_start.month == 12
+            else date(month_start.year, month_start.month + 1, 1)
+        )
+
+        existing_targets = {
+            t.target_date: t
+            for t in StoreTarget.query.filter(
+                StoreTarget.store_id == store_id,
+                StoreTarget.target_date >= month_start,
+                StoreTarget.target_date < next_month,
+            ).all()
+        }
+
+        date_values       = request.form.getlist('target_date[]')
+        target_net_values = request.form.getlist('target_net[]')
+        last_year_values  = request.form.getlist('last_year_net[]')
+        gbi_target_values = request.form.getlist('gbi_target[]')
+
+        saved_count = 0
+        for idx, raw_date in enumerate(date_values):
+            try:
+                target_date = datetime.strptime(str(raw_date or '').strip(), '%Y-%m-%d').date()
+            except ValueError:
+                continue
+
+            if target_date < month_start or target_date >= next_month:
+                continue
+
+            target = existing_targets.get(target_date)
+            if not target:
+                target = StoreTarget(
+                    store_id=store_id,
+                    target_date=target_date,
+                    uploaded_by=current_user.id,
+                )
+                db.session.add(target)
+
+            target.target_net    = float(target_net_values[idx])    if idx < len(target_net_values)    and target_net_values[idx]    else 0.0
+            target.last_year_net = float(last_year_values[idx])     if idx < len(last_year_values)     and last_year_values[idx]     else 0.0
+            target.gbi_target    = float(gbi_target_values[idx])    if idx < len(gbi_target_values)    and gbi_target_values[idx]    else 0.0
+            saved_count += 1
+
+        log_audit_event(
+            action='admin.targets.month_save',
+            entity_type='StoreTarget',
+            entity_id=store_id,
+            reason='Monthly store targets saved from grid.',
+            details={
+                'store_id':      store_id,
+                'target_month':  selected_month,
+                'records_saved': saved_count,
+            },
+        )
+        db.session.commit()
+
+        return jsonify({
+            'type':    'success',
+            'message': f'Saved {saved_count} target rows for {selected_month}. Cluster Data will reflect TARGET (NET), LAST YEAR (NET), and GBI TARGET for {store.name}.',
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': str(e)}), 500 
+  
+# ================================
+# Stores Targets Section End
+# ================================
+   
+   
+   
+# ================================
+# Supply Request Section Start
+# ================================
+
+
+# ================================================
+# Supply Items - List
+
+@api_handles.route('/supply_items', methods=['GET', 'POST'])
+@login_required
+def api_supply_items():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    try:
+        page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        page = 1
+
+    category = (request.form.get('category') or request.args.get('category') or '').strip()
+    search   = (request.form.get('search')   or request.args.get('search')   or '').strip()
+    per_page = post_per_page
+
+    if category == 'all':
+        category = None
+
+    query = SupplyItem.query
+
+    if category:
+        query = query.filter(SupplyItem.category == category)
+
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                SupplyItem.item_name.ilike(pattern),
+                SupplyItem.category.ilike(pattern),
+            )
+        )
+
+    # -- Sorting ----------------------------------------------
+    sortby = (request.form.get('sort') or request.args.get('sort') or '').strip()
+    order  = (request.form.get('order_by') or request.args.get('order_by') or 'asc').lower()
+    sortable_columns = {
+        'item_name':       SupplyItem.item_name,
+        'category':        SupplyItem.category,
+        'available_stock': SupplyItem.available_stock,
+    }
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(SupplyItem.category.asc(), SupplyItem.item_name.asc())
+
+    # -- Pagination -------------------------------------------
+    paginated = query.paginate(page=page, per_page=per_page, error_out=False)
+
+    categories = [
+        c[0] for c in
+        db.session.query(SupplyItem.category).distinct().order_by(SupplyItem.category.asc()).all()
+    ]
+
+    data = []
+    for item in paginated.items:
+        data.append({
+            'id':              item.id,
+            'item_name':       item.item_name,
+            'category':        item.category,
+            'available_stock': item.available_stock,
+        })
+
+    return jsonify({
+        'type': 'success',
+        'data': data,
+        'pagination_data': {
+            'current_page':  paginated.page,
+            'total_pages':   paginated.pages,
+            'total_results': paginated.total,
+        },
+        'categories': categories,
+    })
+   
+
+# ================================================
+# Supply Item - Create
+
+@api_handles.route('/supply_items/create', methods=['POST'])
+@login_required
+def api_create_supply_item():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    data = request.get_json() or {}
+    category  = str(data.get('category')  or '').strip()[:100]
+    item_name = str(data.get('item_name') or '').strip()[:255]
+    try:
+        available_stock = max(0, int(data.get('available_stock') or 0))
+    except (TypeError, ValueError):
+        available_stock = 0
+
+    if not category or not item_name:
+        return jsonify({'type': 'error', 'message': 'Category and item name are required.'})
+
+    existing = SupplyItem.query.filter(
+        SupplyItem.category  == category,
+        SupplyItem.item_name == item_name,
+    ).first()
+    if existing:
+        return jsonify({'type': 'error', 'message': 'An item with this name already exists in this category.'})
+
+    item = SupplyItem(category=category, item_name=item_name, available_stock=available_stock)
+    db.session.add(item)
+    try:
+        db.session.flush()
+        log_audit_event(
+            action='admin.supply_item.create',
+            entity_type='SupplyItem',
+            entity_id=item.id,
+            reason=f'Admin created supply item {item_name}',
+            details={'category': category, 'item_name': item_name, 'available_stock': available_stock},
+        )
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': 'Failed to create item.'})
+
+    return jsonify({'type': 'success', 'message': f'Supply item "{item_name}" created.', 'id': item.id})
+
+
+# ================================================
+# Supply Item - Update
+
+@api_handles.route('/supply_items/<int:item_id>/update', methods=['POST'])
+@login_required
+def api_update_supply_item(item_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    item = SupplyItem.query.get_or_404(item_id)
+    data = request.get_json() or {}
+    category  = str(data.get('category')  or '').strip()[:100]
+    item_name = str(data.get('item_name') or '').strip()[:255]
+    try:
+        available_stock = max(0, int(data.get('available_stock') or 0))
+    except (TypeError, ValueError):
+        available_stock = 0
+
+    if not category or not item_name:
+        return jsonify({'type': 'error', 'message': 'Category and item name are required.'}), 400
+
+    duplicate = SupplyItem.query.filter(
+        SupplyItem.category  == category,
+        SupplyItem.item_name == item_name,
+        SupplyItem.id        != item.id,
+    ).first()
+    if duplicate:
+        return jsonify({'type': 'error', 'message': 'An item with this name already exists in this category.'}), 400
+
+    old_stock      = item.available_stock
+    item.category  = category
+    item.item_name = item_name
+    item.available_stock = available_stock
+
+    try:
+        log_audit_event(
+            action='admin.supply_item.update',
+            entity_type='SupplyItem',
+            entity_id=item.id,
+            reason=f'Admin updated supply item {item_name}',
+            details={
+                'category':  category,
+                'item_name': item_name,
+                'old_stock': old_stock,
+                'new_stock': available_stock,
+            },
+        )
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': 'Failed to update item.'}), 500
+
+    return jsonify({'type': 'success', 'message': f'Supply item "{item_name}" updated.'})
+
+
+
+# ================================================
+# Supply Item - Delete
+@api_handles.route('/supply_items/<int:item_id>/delete', methods=['POST'])
+@login_required
+def api_delete_supply_item(item_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    item = SupplyItem.query.get_or_404(item_id)
+    item_name = item.item_name
+    category  = item.category
+
+    try:
+        SupplyRequestItem.query.filter_by(supply_item_id=item.id).update({'supply_item_id': None})
+        log_audit_event(
+            action='admin.supply_item.delete',
+            entity_type='SupplyItem',
+            entity_id=item.id,
+            reason=f'Admin deleted supply item {item_name}',
+            details={'category': category, 'item_name': item_name},
+        )
+        db.session.delete(item)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': 'Failed to delete item.'}), 500
+
+    return jsonify({'type': 'success', 'message': f'Supply item "{item_name}" deleted.'})
+
+
+
+# ================================================
+# Supply Requests - List
+
+@api_handles.route('/supply_requests', methods=['GET', 'POST'])
+@login_required
+def api_supply_requests():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    try:
+        page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        page = 1
+
+    status  = (request.form.get('status') or request.args.get('status') or '').strip()
+    search  = (request.form.get('search') or request.args.get('search') or '').strip()
+    per_page = post_per_page
+
+    query = SupplyRequest.query.options(
+        selectinload(SupplyRequest.items),
+        selectinload(SupplyRequest.requester),
+        selectinload(SupplyRequest.approver),
+        selectinload(SupplyRequest.rejecter),
+    )
+
+    if status in ('Pending', 'Approved', 'Rejected'):
+        query = query.filter(SupplyRequest.status == status)
+
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                SupplyRequest.request_no.ilike(pattern),
+                SupplyRequest.store_name.ilike(pattern),
+            )
+        )
+
+    # -- Sorting ----------------------------------------------
+    sortby = (request.form.get('sort') or request.args.get('sort') or '').strip()
+    order  = (request.form.get('order_by') or request.args.get('order_by') or 'desc').lower()
+    sortable_columns = {
+        'request_no': SupplyRequest.request_no,
+        'store_name': SupplyRequest.store_name,
+        'status':     SupplyRequest.status,
+        'created_at': SupplyRequest.created_at,
+    }
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(SupplyRequest.created_at.desc(), SupplyRequest.id.desc())
+
+    # -- Pagination -------------------------------------------
+    paginated     = query.paginate(page=page, per_page=per_page, error_out=False)
+    pending_count = SupplyRequest.query.filter_by(status='Pending').count()
+
+    def fmt_dt(dt):
+        return dt.strftime('%b %d, %Y %I:%M %p') if dt else None
+
+    data = []
+    for req in paginated.items:
+        data.append({
+            'id':           req.id,
+            'request_no':   req.request_no,
+            'created_at':   fmt_dt(req.created_at),
+            'store_name':   req.store_name or (req.store.name if req.store else None),
+            'request_type': req.request_type,
+            'requester':    req.requester.username if req.requester else None,
+            'remarks':      req.remarks,
+            'status':       req.status,
+            'approver':     req.approver.username if req.approver else None,
+            'approved_at':  fmt_dt(req.approved_at),
+            'rejecter':     req.rejecter.username if req.rejecter else None,
+            'rejected_at':  fmt_dt(req.rejected_at),
+            'item_count':   len(req.items),
+            'items': [
+                {
+                    'item_name': line.item_name,
+                    'category':  line.category,
+                    'quantity':  line.quantity,
+                }
+                for line in req.items
+            ],
+        })
+
+    return jsonify({
+        'type':          'success',
+        'data':          data,
+        'pending_count': pending_count,
+        'pagination_data': {
+            'current_page':  paginated.page,
+            'total_pages':   paginated.pages,
+            'total_results': paginated.total,
+        },
+    })
+
+
+# ================================================
+# Supply Request - Approve
+
+@api_handles.route('/supply_requests/<int:request_id>/approve', methods=['POST'])
+@login_required
+def api_approve_supply_request(request_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'})
+
+    supply_request = SupplyRequest.query.options(selectinload(SupplyRequest.items)).get_or_404(request_id)
+    if supply_request.status != 'Pending':
+        return jsonify({'type': 'error', 'message': f'This request is already {supply_request.status.lower()}.'})
+
+    insufficient = []
+    for line in supply_request.items:
+        if not line.supply_item_id:
+            continue
+        item = SupplyItem.query.get(line.supply_item_id)
+        if item and item.available_stock < line.quantity:
+            insufficient.append({
+                'item_name': line.item_name,
+                'requested': line.quantity,
+                'available': item.available_stock,
+            })
+
+    if insufficient:
+        return jsonify({
+            'type':               'error',
+            'message':            'Insufficient stock. Update the supply item stock first.',
+            'insufficient_items': insufficient,
+        })
+
+    try:
+        for line in supply_request.items:
+            if line.supply_item_id:
+                item = SupplyItem.query.get(line.supply_item_id)
+                if item:
+                    item.available_stock = max(0, item.available_stock - line.quantity)
+
+        supply_request.status      = 'Approved'
+        supply_request.approved_by = current_user.id
+        supply_request.approved_at = func.now()
+
+        log_audit_event(
+            action='admin.supply_request.approve',
+            entity_type='SupplyRequest',
+            entity_id=supply_request.id,
+            reason=f'Admin approved supply request {supply_request.request_no}',
+            details={
+                'request_no': supply_request.request_no,
+                'store_id':   supply_request.store_id,
+                'store_name': supply_request.store_name,
+                'items':      len(supply_request.items),
+            },
+        )
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Failed to approve request: {str(e)}'}), 500
+
+    return jsonify({'type': 'success', 'message': f'Supply request {supply_request.request_no} approved. Stock updated.'})
+
+
+# ================================================
+# Supply Request - Reject
+
+@api_handles.route('/supply_requests/<int:request_id>/reject', methods=['POST'])
+@login_required
+def api_reject_supply_request(request_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    supply_request = SupplyRequest.query.get_or_404(request_id)
+    if supply_request.status != 'Pending':
+        return jsonify({'type': 'error', 'message': f'This request is already {supply_request.status.lower()}.'}), 400
+
+    try:
+        supply_request.status      = 'Rejected'
+        supply_request.rejected_by = current_user.id
+        supply_request.rejected_at = func.now()
+
+        log_audit_event(
+            action='admin.supply_request.reject',
+            entity_type='SupplyRequest',
+            entity_id=supply_request.id,
+            reason=f'Admin rejected supply request {supply_request.request_no}',
+            details={
+                'request_no': supply_request.request_no,
+                'store_id':   supply_request.store_id,
+                'store_name': supply_request.store_name,
+            },
+        )
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Failed to reject request: {str(e)}'}), 500
+
+    return jsonify({'type': 'success', 'message': f'Supply request {supply_request.request_no} rejected.'})
+
+
+# ================================================
+# Supply Request - Delete
+
+@api_handles.route('/supply_requests/<int:request_id>/delete', methods=['POST'])
+@login_required
+def api_delete_supply_request(request_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    supply_request = SupplyRequest.query.get_or_404(request_id)
+    request_no     = supply_request.request_no
+
+    try:
+        log_audit_event(
+            action='admin.supply_request.delete',
+            entity_type='SupplyRequest',
+            entity_id=supply_request.id,
+            reason=f'Admin deleted supply request {request_no}',
+            details={
+                'request_no': request_no,
+                'store_id':   supply_request.store_id,
+                'store_name': supply_request.store_name,
+                'status':     supply_request.status,
+            },
+        )
+        db.session.delete(supply_request)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Failed to delete request: {str(e)}'}), 500
+
+    return jsonify({'type': 'success', 'message': f'Supply request {request_no} deleted.'})
+   
+   
+# ================================
+# Supply Request Section End
+# ================================
+    
+    
+# ================================
+# System Analyzer Section Start
+# ================================
+
+
+@api_handles.route('/system_analyzer', methods=['GET'])
+@login_required
+def get_system_analyzer_data():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    today = datetime.today().date()
+    default_start = today.replace(day=1)
+    start_date_raw = (request.args.get('start_date') or '').strip()
+    end_date_raw = (request.args.get('end_date') or '').strip()
+
+    def _parse_iso_date(raw_value, fallback):
+        if not raw_value:
+            return fallback
+        try:
+            return datetime.strptime(raw_value, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            return fallback
+
+    start_date = _parse_iso_date(start_date_raw, default_start)
+    end_date = _parse_iso_date(end_date_raw, today)
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    master_products = ProductMaster.query.with_entities(ProductMaster.code, ProductMaster.description).all()
+    master_descriptions = [(description,) for _, description in master_products]
+    normalized_master_codes = {
+        re.sub(r'[^a-z0-9]', '', str(code).strip().lower())
+        for code, _ in master_products
+        if str(code or '').strip()
+    }
+    normalized_master_names = {
+        _normalize_product_text(description)
+        for (description,) in master_descriptions
+        if _normalize_product_text(description)
+    }
+    master_name_options = sorted({
+        (description or '').strip()
+        for (description,) in master_descriptions
+        if (description or '').strip()
+    })
+
+    master_match_names = set()
+    for master_name in normalized_master_names:
+        master_match_names.update(_build_name_variants(master_name))
+    master_match_names_list = list(master_match_names)
+    match_result_cache = {}
+    alias_lookup = _get_product_alias_lookup()
+
+    def _extract_product_code(product_text):
+        text_value = str(product_text or '').strip()
+        if not text_value:
+            return ''
+        compact_value = re.sub(r'[^a-z0-9]', '', text_value.lower())
+        if compact_value in normalized_master_codes:
+            return compact_value
+        leading_code = re.match(r'^\s*([a-z0-9][a-z0-9._-]{2,})\b', text_value, re.IGNORECASE)
+        if leading_code and re.search(r'\d', leading_code.group(1)):
+            candidate = re.sub(r'[^a-z0-9]', '', leading_code.group(1).lower())
+            return candidate
+        return ''
+
+    def _matches_master_code(product_text):
+        detected_code = _extract_product_code(product_text)
+        return bool(detected_code and detected_code in normalized_master_codes)
+
+    def _matches_master_name_exact(product_text):
+        normalized_name = _normalize_product_text(product_text)
+        if not normalized_name:
+            return False
+        return any(variant in master_match_names for variant in _build_name_variants(normalized_name))
+
+    pos_rows = (
+        db.session.query(
+            PosSold.product_name,
+            func.sum(PosSold.quantity).label('total_qty'),
+            func.sum(PosSold.gross_sales).label('total_gross_sales'),
+            func.sum(PosSold.net_sales).label('total_net_sales'),
+            func.count(PosSold.id).label('entry_count'),
+            func.count(func.distinct(DailyReport.store_id)).label('store_count'),
+            func.max(DailyReport.report_date).label('latest_report_date'),
+        )
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= end_date,
+        )
+        .group_by(PosSold.product_name)
+        .all()
+    )
+
+    price_timeline_rows = (
+        db.session.query(
+            PosSold.product_name,
+            DailyReport.report_date.label('report_date'),
+            func.sum(PosSold.quantity).label('daily_qty'),
+            func.sum(PosSold.gross_sales).label('daily_gross_sales'),
+        )
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= end_date,
+        )
+        .group_by(PosSold.product_name, DailyReport.report_date)
+        .order_by(DailyReport.report_date.asc())
+        .all()
+    )
+
+    price_timeline_by_product = {}
+    for row in price_timeline_rows:
+        product_name = (row.product_name or '').strip()
+        if not product_name:
+            continue
+        daily_qty = float(row.daily_qty or 0.0)
+        if daily_qty <= 0:
+            continue
+        daily_gross_sales = float(row.daily_gross_sales or 0.0)
+        unit_price = daily_gross_sales / daily_qty
+
+        bucket = price_timeline_by_product.setdefault(product_name, [])
+        bucket.append({
+            'date': row.report_date,
+            'unit_price': unit_price,
+        })
+
+    unmatched_items = []
+    total_unique_pos_products = 0
+    matched_unique_products = 0
+    unmatched_total_qty = 0
+    unmatched_total_net_sales = 0.0
+
+    for row in pos_rows:
+        product_name = (row.product_name or '').strip()
+        if not product_name or _is_grand_total_product_name(product_name):
+            continue
+
+        normalized_name = _normalize_product_text(product_name)
+        if not normalized_name:
+            continue
+
+        total_unique_pos_products += 1
+        aliased_master_name = alias_lookup.get(normalized_name)
+        canonical_name = aliased_master_name or product_name
+        is_in_master = (
+            bool(aliased_master_name)
+            or _matches_master_code(product_name)
+            or _matches_master_name_exact(canonical_name)
+        )
+        if is_in_master:
+            matched_unique_products += 1
+            continue
+
+        total_qty = int(row.total_qty or 0)
+        total_gross_sales = float(row.total_gross_sales or 0.0)
+        total_net_sales = float(row.total_net_sales or 0.0)
+        unmatched_total_qty += total_qty
+        unmatched_total_net_sales += total_net_sales
+
+        avg_unit_price = None
+        if total_qty > 0:
+            avg_unit_price = total_gross_sales / float(total_qty)
+
+        price_change_amount = None
+        price_change_percent = None
+        price_points = price_timeline_by_product.get(product_name, [])
+        if len(price_points) >= 2:
+            start_unit_price = float(price_points[0]['unit_price'])
+            end_unit_price = float(price_points[-1]['unit_price'])
+            price_change_amount = end_unit_price - start_unit_price
+            if start_unit_price != 0:
+                price_change_percent = (price_change_amount / start_unit_price) * 100.0
+
+        unmatched_items.append({
+            'product_name': product_name,
+            'product_code': _extract_product_code(product_name),
+            'total_qty': total_qty,
+            'total_gross_sales': total_gross_sales,
+            'total_net_sales': total_net_sales,
+            'avg_unit_price': avg_unit_price,
+            'unit_price_change': price_change_amount,
+            'unit_price_change_pct': price_change_percent,
+            'entry_count': int(row.entry_count or 0),
+            'store_count': int(row.store_count or 0),
+            'latest_report_date': row.latest_report_date.strftime('%Y-%m-%d') if row.latest_report_date else None,
+        })
+
+    unmatched_items = sorted(
+        unmatched_items,
+        key=lambda item: (item.get('latest_report_date') or '', int(item.get('total_qty', 0) or 0)),
+        reverse=True,
+    )
+
+    rso_rows = (
+        db.session.query(
+            RsoDelivery.product_name,
+            func.sum(RsoDelivery.quantity).label('total_qty'),
+            func.sum(func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity)).label('total_received_qty'),
+            func.count(RsoDelivery.id).label('entry_count'),
+            func.count(func.distinct(RsoDelivery.store_id)).label('store_count'),
+            func.max(RsoDelivery.report_date).label('latest_report_date'),
+        )
+        .filter(
+            RsoDelivery.report_date >= start_date,
+            RsoDelivery.report_date <= end_date,
+        )
+        .group_by(RsoDelivery.product_name)
+        .all()
+    )
+
+    unmatched_rso_items = []
+    total_unique_rso_products = 0
+    matched_unique_rso_products = 0
+    unmatched_rso_total_qty = 0
+    for row in rso_rows:
+        product_name = (row.product_name or '').strip()
+        normalized_name = _normalize_product_text(product_name)
+        if not normalized_name:
+            continue
+        total_unique_rso_products += 1
+        aliased_master_name = alias_lookup.get(normalized_name)
+        canonical_name = aliased_master_name or product_name
+        is_in_master = (
+            bool(aliased_master_name)
+            or _matches_master_code(product_name)
+            or _matches_master_name_exact(canonical_name)
+        )
+        if is_in_master:
+            matched_unique_rso_products += 1
+            continue
+
+        total_qty = int(row.total_qty or 0)
+        unmatched_rso_total_qty += total_qty
+        unmatched_rso_items.append({
+            'product_name': product_name,
+            'product_code': _extract_product_code(product_name),
+            'total_qty': total_qty,
+            'total_received_qty': int(row.total_received_qty or 0),
+            'entry_count': int(row.entry_count or 0),
+            'store_count': int(row.store_count or 0),
+            'latest_report_date': row.latest_report_date.strftime('%Y-%m-%d') if row.latest_report_date else None,
+        })
+
+    unmatched_rso_items.sort(
+        key=lambda item: (item.get('latest_report_date') or '', int(item.get('total_qty', 0) or 0)),
+        reverse=True,
+    )
+
+    pos_upload_details = {}
+    unmatched_pos_names = [item['product_name'] for item in unmatched_items if item.get('product_name')]
+    if unmatched_pos_names:
+        pos_upload_rows = (
+            db.session.query(
+                PosSold.product_name,
+                Store.name.label('store_name'),
+                DailyReport.report_date.label('report_date'),
+                func.count(PosSold.id).label('entry_count'),
+                func.sum(PosSold.quantity).label('total_qty'),
+                func.sum(PosSold.net_sales).label('total_net_sales'),
+                func.max(PosSold.uploaded_at).label('latest_uploaded_at'),
+                func.max(User.username).label('uploaded_by'),
+            )
+            .select_from(PosSold)
+            .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+            .join(Store, Store.id == DailyReport.store_id)
+            .outerjoin(User, User.id == DailyReport.submitted_by)
+            .filter(
+                DailyReport.report_date >= start_date,
+                DailyReport.report_date <= end_date,
+                PosSold.product_name.in_(unmatched_pos_names),
+            )
+            .group_by(PosSold.product_name, Store.id, Store.name, DailyReport.report_date)
+            .order_by(func.max(PosSold.uploaded_at).desc(), DailyReport.report_date.desc(), Store.name.asc())
+            .all()
+        )
+        for row in pos_upload_rows:
+            pos_upload_details.setdefault(row.product_name, []).append({
+                'store_name': row.store_name or '-',
+                'report_date': row.report_date.strftime('%Y-%m-%d') if row.report_date else '-',
+                'entry_count': int(row.entry_count or 0),
+                'total_qty': int(row.total_qty or 0),
+                'total_net_sales': float(row.total_net_sales or 0.0),
+                'uploaded_by': row.uploaded_by or '-',
+                'latest_uploaded_at': row.latest_uploaded_at.strftime('%Y-%m-%d %H:%M') if row.latest_uploaded_at else '-',
+            })
+
+    rso_upload_details = {}
+    unmatched_rso_names = [item['product_name'] for item in unmatched_rso_items if item.get('product_name')]
+    if unmatched_rso_names:
+        rso_upload_rows = (
+            db.session.query(
+                RsoDelivery.product_name,
+                Store.name.label('store_name'),
+                RsoDelivery.report_date.label('report_date'),
+                RsoDelivery.upload_source.label('upload_source'),
+                func.count(RsoDelivery.id).label('entry_count'),
+                func.sum(RsoDelivery.quantity).label('total_qty'),
+                func.sum(func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity)).label('total_received_qty'),
+                func.max(RsoDelivery.uploaded_at).label('latest_uploaded_at'),
+                func.max(User.username).label('uploaded_by'),
+            )
+            .select_from(RsoDelivery)
+            .join(Store, Store.id == RsoDelivery.store_id)
+            .outerjoin(User, User.id == RsoDelivery.uploaded_by)
+            .filter(
+                RsoDelivery.report_date >= start_date,
+                RsoDelivery.report_date <= end_date,
+                RsoDelivery.product_name.in_(unmatched_rso_names),
+            )
+            .group_by(RsoDelivery.product_name, Store.id, Store.name, RsoDelivery.report_date, RsoDelivery.upload_source)
+            .order_by(func.max(RsoDelivery.uploaded_at).desc(), RsoDelivery.report_date.desc(), Store.name.asc())
+            .all()
+        )
+        for row in rso_upload_rows:
+            rso_upload_details.setdefault(row.product_name, []).append({
+                'store_name': row.store_name or '-',
+                'report_date': row.report_date.strftime('%Y-%m-%d') if row.report_date else '-',
+                'upload_source': 'Bulk Order' if row.upload_source == 'bulk' else 'Delivery RSO',
+                'entry_count': int(row.entry_count or 0),
+                'total_qty': int(row.total_qty or 0),
+                'total_received_qty': int(row.total_received_qty or 0),
+                'uploaded_by': row.uploaded_by or '-',
+                'latest_uploaded_at': row.latest_uploaded_at.strftime('%Y-%m-%d %H:%M') if row.latest_uploaded_at else '-',
+            })
+
+    return jsonify({
+        'type': 'success',
+        'message': 'System analyzer data loaded.',
+        'data': {
+            'start_date': start_date.strftime('%Y-%m-%d'),
+            'end_date': end_date.strftime('%Y-%m-%d'),
+            'master_name_options': master_name_options,
+            'unmatched_items': unmatched_items,
+            'unmatched_rso_items': unmatched_rso_items,
+            'pos_upload_details': pos_upload_details,
+            'rso_upload_details': rso_upload_details,
+            'summary': {
+                'total_unique_pos_products': total_unique_pos_products,
+                'matched_unique_products': matched_unique_products,
+                'unmatched_unique_products': len(unmatched_items),
+                'unmatched_total_qty': unmatched_total_qty,
+                'unmatched_total_net_sales': unmatched_total_net_sales,
+                'total_unique_rso_products': total_unique_rso_products,
+                'matched_unique_rso_products': matched_unique_rso_products,
+                'unmatched_unique_rso_products': len(unmatched_rso_items),
+                'unmatched_rso_total_qty': unmatched_rso_total_qty,
+            },
+        },
+    })
+
+
+@api_handles.route('/system_analyzer/link_product', methods=['POST'])
+@login_required
+def link_system_analyzer_product():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    payload = request.get_json() or {}
+    alias_name = (payload.get('alias_name') or '').strip()
+    master_product_name = (payload.get('master_product_name') or '').strip()
+
+    if not alias_name or not master_product_name:
+        return jsonify({'type': 'error', 'message': 'Please provide the detected product name and master product name.'}), 400
+
+    normalized_alias = _normalize_product_text(alias_name)
+    normalized_target = _normalize_product_text(master_product_name)
+    if not normalized_alias or not normalized_target:
+        return jsonify({'type': 'error', 'message': 'Invalid product names for linking.'}), 400
+
+    product_masters = ProductMaster.query.with_entities(ProductMaster.id, ProductMaster.description).all()
+    best_match = None
+    best_score = 0.0
+    for master_id, master_description in product_masters:
+        normalized_master = _normalize_product_text(master_description)
+        if not normalized_master:
+            continue
+        if normalized_master == normalized_target:
+            best_match = (master_id, master_description)
+            best_score = 1.0
+            break
+        score = SequenceMatcher(None, normalized_target, normalized_master).ratio()
+        if score > best_score:
+            best_score = score
+            best_match = (master_id, master_description)
+
+    if not best_match or best_score < 0.80:
+        return jsonify({'type': 'error', 'message': 'Master product not found. Please type a valid masterlist product name.'}), 400
+
+    linked_master_id, linked_master_name = best_match
+    try:
+        existing_alias = ProductAlias.query.filter_by(normalized_alias=normalized_alias).first()
+        if existing_alias:
+            previous_master_id = existing_alias.product_master_id
+            existing_alias.alias_name = alias_name
+            existing_alias.product_master_id = int(linked_master_id)
+            existing_alias.created_by = current_user.id
+            action = 'updated'
+        else:
+            previous_master_id = None
+            db.session.add(
+                ProductAlias(
+                    alias_name=alias_name,
+                    normalized_alias=normalized_alias,
+                    product_master_id=int(linked_master_id),
+                    created_by=current_user.id,
+                )
+            )
+            action = 'created'
+
+        log_audit_event(
+            action='admin.product_alias.link',
+            entity_type='ProductAlias',
+            entity_id=normalized_alias,
+            reason='Linked detected product name to product masterlist.',
+            details={
+                'alias_name': alias_name,
+                'normalized_alias': normalized_alias,
+                'master_product_id': int(linked_master_id),
+                'master_product_name': linked_master_name,
+                'previous_master_id': previous_master_id,
+                'action': action,
+            },
+        )
+        db.session.commit()
+        return jsonify({
+            'type': 'success',
+            'message': f'Linked "{alias_name}" to "{linked_master_name}". POS and RSO matching will now use the master product.',
+            'data': {
+                'alias_name': alias_name,
+                'master_product_name': linked_master_name,
+                'action': action,
+            },
+        })
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'type': 'error', 'message': f'Error linking product alias: {str(exc)}'}), 500
+
+
+
+# ================================
+# System Analyzer Section End
+# ================================
+ 
+
+# ================================
+# Inv Sync Section Start
+# ================================
+
+
+def _serialize_update_status(status):
+    
+    if not status:
+        return None
+    latest_date = status.get('latest_date')
+    return {
+        'is_up_to_date': status.get('is_up_to_date', False),
+        'latest_date': latest_date.strftime('%b %d, %Y') if latest_date else None,
+        'missing_count': status.get('missing_count', 0),
+        'missing_dates': [
+            {'label': d.get('label') if isinstance(d, dict) else str(d)}
+            for d in (status.get('missing_dates') or [])
+        ],
+        'missing_ranges': [
+            {'label': r.get('label') if isinstance(r, dict) else str(r)}
+            for r in (status.get('missing_ranges') or [])
+        ],
+    }
+    
+
+
+def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return {
+            key: {
+                'is_up_to_date': False,
+                'missing_dates': [],
+                'missing_ranges': [],
+                'missing_count': 0,
+                'latest_date': None,
+            }
+            for key in ('inventory', 'pos_sold', 'delivery')
+        }
+
+    today = date.today()
+    previous_day_cutoff = min(cutoff_date, today - timedelta(days=1))
+    finalized_dates = {
+        row.inventory_date for row in DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= month_start,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).with_entities(DailyEndingInventory.inventory_date).all()
+        if row.inventory_date
+    }
+
+    pos_sold_dates = set()
+    delivery_dates = set()
+    if previous_day_cutoff >= month_start:
+        pos_sold_dates = {
+            row.report_date for row in (
+                db.session.query(DailyReport.report_date)
+                .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+                .filter(
+                    DailyReport.store_id == store_id,
+                    DailyReport.report_date >= month_start,
+                    DailyReport.report_date <= previous_day_cutoff,
+                )
+                .distinct()
+                .all()
+            )
+            if row.report_date
+        }
+        staged_pos_dates = {
+            row.report_date for row in PosSoldStaging.query.filter(
+                PosSoldStaging.store_id == store_id,
+                PosSoldStaging.report_date >= month_start,
+                PosSoldStaging.report_date <= previous_day_cutoff,
+            ).with_entities(PosSoldStaging.report_date).distinct().all()
+            if row.report_date
+        }
+        pos_sold_dates |= staged_pos_dates
+        inv_item_pos_dates = {
+            row.inventory_date for row in (
+                db.session.query(DailyEndingInventory.inventory_date)
+                .join(DailyEndingInventoryItem, DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id)
+                .filter(
+                    DailyEndingInventory.store_id == store_id,
+                    DailyEndingInventory.inventory_date >= month_start,
+                    DailyEndingInventory.inventory_date <= previous_day_cutoff,
+                    func.coalesce(DailyEndingInventoryItem.quantity_sold, 0) > 0,
+                )
+                .distinct()
+                .all()
+            )
+            if row.inventory_date
+        }
+        pos_sold_dates |= inv_item_pos_dates
+        delivery_dates = {
+            row.report_date for row in (
+                db.session.query(RsoDelivery.report_date)
+                .filter(
+                    RsoDelivery.store_id == store_id,
+                    RsoDelivery.report_date >= month_start,
+                    RsoDelivery.report_date <= previous_day_cutoff,
+                )
+                .distinct()
+                .all()
+            )
+            if row.report_date
+        }
+
+    inventory_status = _build_single_update_status(finalized_dates, today, month_start, cutoff_date, 'inventory')
+    pos_sold_status = _build_single_update_status(pos_sold_dates, today, month_start, previous_day_cutoff, 'pos_sold')
+    delivery_status = _build_single_update_status(delivery_dates, today, month_start, previous_day_cutoff, 'delivery')
+    return {
+        'inventory': inventory_status,
+        'pos_sold': pos_sold_status,
+        'delivery': delivery_status,
+    }
+
+
+def _build_single_update_status(dates_set, today, month_start, cutoff_date, label):
+    missing_date_values = []
+    missing_dates = []
+    cursor = month_start
+    while cursor <= cutoff_date:
+        if cursor == today:
+            cursor += timedelta(days=1)
+            continue
+        if cursor not in dates_set:
+            missing_date_values.append(cursor)
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+
+    def format_missing_range(start, end):
+        if start == end:
+            return f"{start.strftime('%b')} {start.day}, {start.year}"
+        if start.year == end.year and start.month == end.month:
+            return f"{start.strftime('%b')} {start.day}-{end.day}, {start.year}"
+        if start.year == end.year:
+            return f"{start.strftime('%b')} {start.day} - {end.strftime('%b')} {end.day}, {start.year}"
+        return f"{start.strftime('%b')} {start.day}, {start.year} - {end.strftime('%b')} {end.day}, {end.year}"
+
+    missing_ranges = []
+    if missing_date_values:
+        range_start = missing_date_values[0]
+        previous = missing_date_values[0]
+        for missing_date in missing_date_values[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            missing_ranges.append({
+                'start': range_start.strftime('%Y-%m-%d'),
+                'end': previous.strftime('%Y-%m-%d'),
+                'label': format_missing_range(range_start, previous),
+            })
+            range_start = missing_date
+            previous = missing_date
+        missing_ranges.append({
+            'start': range_start.strftime('%Y-%m-%d'),
+            'end': previous.strftime('%Y-%m-%d'),
+            'label': format_missing_range(range_start, previous),
+        })
+
+    latest_date = max(dates_set) if dates_set else None
+    return {
+        'is_up_to_date': len(missing_dates) == 0,
+        'missing_dates': missing_dates,
+        'missing_ranges': missing_ranges,
+        'missing_count': len(missing_dates),
+        'latest_date': latest_date,
+    }
+
+
+
+def _get_global_invensync_config():
+    config = GlobalInvenSyncConfig.query.first()
+    if not config:
+        default_data = {
+            'hidden_rows': [],
+            'hidden_columns': [],
+            'hidden_cells': [],
+            'locked_rows': [],
+            'locked_columns': [],
+            'locked_cells': [],
+            'editable_columns': [],
+            'force_beginning_store_ids': [],
+            'store_configs': {},
+            'admin_unlocks': {},
+        }
+        config = GlobalInvenSyncConfig(config_data=json.dumps(default_data))
+        db.session.add(config)
+        db.session.commit()
+
+    try:
+        config_data = json.loads(config.config_data or '{}')
+    except ValueError:
+        config_data = {
+            'hidden_rows': [],
+            'hidden_columns': [],
+            'hidden_cells': [],
+            'locked_rows': [],
+            'locked_columns': [],
+            'locked_cells': [],
+            'editable_columns': [],
+            'force_beginning_store_ids': [],
+            'store_configs': {},
+            'admin_unlocks': {},
+        }
+
+    if not isinstance(config_data.get('store_configs'), dict):
+        config_data['store_configs'] = {}
+    if not isinstance(config_data.get('admin_unlocks'), dict):
+        config_data['admin_unlocks'] = {}
+
+    return config, config_data
+
+
+@api_handles.route('/get_invensync_data', methods=['GET'])
+@login_required
+def get_invensync_data():
+    """Fetch all data needed to render the Invensync admin page (v2)."""
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    from .views import (
+        _apply_store_scope_filter,
+        _get_invensync_data_state,
+        _get_latest_meaningful_invensync_by_store,
+        _get_user_presence_states,
+    )
+
+    try:
+        selected_date = date.today()
+        update_cutoff_date = selected_date - timedelta(days=1)
+        month_start = selected_date.replace(day=1)
+
+        stores = Store.query.order_by(Store.name.asc()).all()
+        stores = _apply_store_scope_filter(stores, request)
+
+        inventory_by_store = _get_latest_meaningful_invensync_by_store(
+            [store.id for store in stores]
+        )
+        manager_presence = _get_user_presence_states(store.manager_id for store in stores)
+
+        store_summaries = []
+        for store in stores:
+            inventory = inventory_by_store.get(store.id)
+            data_state = _get_invensync_data_state(inventory)
+            update_status = _build_admin_invensync_update_status(store.id, month_start, update_cutoff_date)
+
+            store_summaries.append({
+                'store': {
+                    'id': store.id,
+                    'name': store.name,
+                    'manager_id': store.manager_id,
+                    'store_group': store.store_group,
+                },
+                'inventory': {
+                    'inventory_date': inventory.inventory_date.strftime('%b %d, %Y') if inventory and inventory.inventory_date else None,
+                } if inventory else None,
+                'has_data': data_state != 'empty',
+                'data_state': data_state,
+                'presence_state': manager_presence.get(store.manager_id, 'offline'),
+                'update_status': {
+                    'inventory': _serialize_update_status(update_status.get('inventory')),
+                    'pos_sold': _serialize_update_status(update_status.get('pos_sold')),
+                    'delivery': _serialize_update_status(update_status.get('delivery')),
+                },
+            })
+
+        config, config_data = _get_global_invensync_config()
+
+        config_fields = [
+            {'value': 'beginning_qty', 'label': 'Beg'},
+            {'value': 'delivery_qty', 'label': 'Delivery'},
+            {'value': 'trans_in_qty', 'label': 'Trans-In'},
+            {'value': 'bo_qty', 'label': 'BO'},
+            {'value': 'adv_del_qty', 'label': 'Booth Sales'},
+            {'value': 'trans_out_qty', 'label': 'Trans-Out'},
+            {'value': 'wastage_qty', 'label': 'Waste Qty'},
+            {'value': 'wastage_amount', 'label': 'Waste Amt'},
+            {'value': 'csi_qty', 'label': 'CSI'},
+            {'value': 'quantity_sold', 'label': 'Sold'},
+            {'value': 'ending_d5_qty', 'label': 'D+5'},
+            {'value': 'ending_d4_qty', 'label': 'D+4'},
+            {'value': 'ending_d3_qty', 'label': 'D+3'},
+            {'value': 'total_ending_qty', 'label': 'Total EI'},
+            {'value': 'total_peso_srp', 'label': 'Total Peso'},
+            {'value': 'theo_ending_qty', 'label': 'THEO'},
+            {'value': 'variance_qty', 'label': 'Var'},
+            {'value': 'variance_peso', 'label': 'Var Peso'},
+            {'value': 'remarks', 'label': 'Remarks'},
+        ]
+
+        return {
+            'type': 'success',
+            'stores': [{'id': s.id, 'name': s.name} for s in stores],
+            'store_summaries': store_summaries,
+            'selected_date': selected_date.strftime('%Y-%m-%d'),
+            'update_cutoff_date': update_cutoff_date.strftime('%Y-%m-%d'),
+            'today': date.today().strftime('%Y-%m-%d'),
+            'global_invensync_config': config_data,
+            'store_invensync_configs': config_data.get('store_configs', {}),
+            'config_fields': config_fields,
+        }
+    except Exception as e:
+        return {'type': 'error', 'message': str(e)} 
+
+
+
+@api_handles.route('/update_invensync_config', methods=['POST'])
+@login_required
+def update_invensync_config():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        config, existing_data = _get_global_invensync_config()
+
+        normalized_data = {
+            'hidden_rows': [str(item).strip() for item in data.get('hidden_rows', []) if str(item).strip()],
+            'hidden_columns': [str(item).strip() for item in data.get('hidden_columns', []) if str(item).strip()],
+            'hidden_cells': [str(item).strip() for item in data.get('hidden_cells', []) if str(item).strip()],
+            'locked_rows': [str(item).strip() for item in data.get('locked_rows', []) if str(item).strip()],
+            'locked_columns': [str(item).strip() for item in data.get('locked_columns', []) if str(item).strip()],
+            'locked_cells': [str(item).strip() for item in data.get('locked_cells', []) if str(item).strip()],
+            'editable_columns': [str(item).strip() for item in data.get('editable_columns', []) if str(item).strip()],
+            'force_beginning_store_ids': [
+                int(item)
+                for item in data.get('force_beginning_store_ids', existing_data.get('force_beginning_store_ids', []))
+                if str(item).isdigit()
+            ],
+            'store_configs': existing_data.get('store_configs', {}) if isinstance(existing_data.get('store_configs'), dict) else {},
+            'admin_unlocks': existing_data.get('admin_unlocks', {}) if isinstance(existing_data.get('admin_unlocks'), dict) else {},
+        }
+
+        config.config_data = json.dumps(normalized_data)
+        db.session.commit()
+
+        return {'type': 'success', 'message': 'Global Invensync settings updated.'}
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/update_store_invensync_config', methods=['POST'])
+@login_required
+def update_store_invensync_config():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        store_id = int(data.get('store_id', 0) or 0)
+        store = Store.query.get(store_id)
+        if not store:
+            return {'type': 'error', 'message': 'Store not found.'}
+
+        config, config_data = _get_global_invensync_config()
+        store_configs = config_data.get('store_configs', {})
+        if not isinstance(store_configs, dict):
+            store_configs = {}
+
+        store_configs[str(store_id)] = {
+            'hidden_columns': [str(item).strip() for item in data.get('hidden_columns', []) if str(item).strip()],
+            'locked_columns': [str(item).strip() for item in data.get('locked_columns', []) if str(item).strip()],
+            'editable_columns': [str(item).strip() for item in data.get('editable_columns', []) if str(item).strip()],
+        }
+
+        config_data['store_configs'] = store_configs
+        config.config_data = json.dumps(config_data)
+        db.session.commit()
+
+        return {'type': 'success', 'message': f'Invensync settings saved for {store.name}.'}
+    except (TypeError, ValueError):
+        return {'type': 'error', 'message': 'Select a valid store.'}
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/save_invensync_inventory_correction', methods=['POST'])
+@login_required
+def save_invensync_inventory_correction():
+    """Apply explicit, cell-level corrections without changing the day's lock state."""
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    editable_fields = {
+        'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
+        'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+        'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
+        'ending_d3_qty', 'remarks',
+    }
+    numeric_fields = editable_fields - {'remarks'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return {'type': 'error', 'message': 'Inventory not found.'}
+
+        changes = data.get('changes', [])
+        if not isinstance(changes, list) or not changes:
+            return {'type': 'error', 'message': 'No changes were submitted.'}
+
+        changed_items = {}
+        audit_changes = []
+        for change in changes:
+            field = str(change.get('field', '')).strip()
+            if field not in editable_fields:
+                return {'type': 'error', 'message': f'{field or "Unknown field"} cannot be edited.'}
+
+            item_id = int(change.get('item_id', 0) or 0)
+            item = DailyEndingInventoryItem.query.filter_by(
+                id=item_id,
+                inventory_id=inventory.id,
+            ).first()
+            if not item:
+                return {'type': 'error', 'message': 'An inventory item was not found.'}
+
+            old_value = getattr(item, field)
+            if field in numeric_fields:
+                raw_value = change.get('value', 0)
+                new_value = int(float(raw_value)) if str(raw_value).strip() else 0
+            else:
+                new_value = str(change.get('value', '') or '').strip()
+
+            if field == 'quantity_sold' and new_value in (None, 0):
+                new_value = None
+
+            setattr(item, field, new_value)
+            changed_items[item.id] = item
+            audit_changes.append({
+                'item_id': item.id,
+                'product': item.product_description,
+                'field': field,
+                'old': old_value,
+                'new': new_value,
+            })
+
+        from .views import _recalculate_inventory_item
+        for item in changed_items.values():
+            _recalculate_inventory_item(item)
+
+        # log_audit_event not available in api_handles — import separately if needed
+        # log_audit_event(
+        #     action='UPDATE',
+        #     entity_type='InvenSync Admin Correction',
+        #     entity_id=inventory.id,
+        #     details={
+        #         'store_id': inventory.store_id,
+        #         'inventory_date': str(inventory.inventory_date),
+        #         'changes': audit_changes,
+        #     },
+        # )
+        db.session.commit()
+        return {'type': 'success', 'message': f'{len(audit_changes)} inventory cell change(s) saved.'}
+    except (TypeError, ValueError):
+        db.session.rollback()
+        return {'type': 'error', 'message': 'Enter a valid whole number.'}
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/update_invensync_unlock_scope', methods=['POST'])
+@login_required
+def update_invensync_unlock_scope():
+    """Persist admin unlock/lock scope for a selected store/date inventory page."""
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        action = str(data.get('action') or '').strip().lower()
+        scope = str(data.get('scope') or '').strip().lower()
+        raw_cells = data.get('cells', [])
+
+        if action not in ('unlock', 'lock') or scope not in ('all', 'cells'):
+            return {'type': 'error', 'message': 'Invalid lock action.'}
+
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return {'type': 'error', 'message': 'Inventory not found.'}
+
+        allowed_fields = {
+            'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
+            'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+            'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
+            'ending_d3_qty', 'remarks',
+        }
+        valid_item_ids = {
+            int(item_id)
+            for item_id, in (
+                db.session.query(DailyEndingInventoryItem.id)
+                .filter(DailyEndingInventoryItem.inventory_id == inventory.id)
+                .all()
+            )
+        }
+
+        normalized_cells = []
+        if isinstance(raw_cells, list):
+            for cell in raw_cells:
+                if not isinstance(cell, dict):
+                    continue
+                item_id = int(cell.get('item_id', 0) or 0)
+                field = str(cell.get('field') or '').strip()
+                if item_id in valid_item_ids and field in allowed_fields:
+                    normalized_cells.append(f'{item_id}|{field}')
+
+        config, config_data = _get_global_invensync_config()
+        admin_unlocks = config_data.get('admin_unlocks', {})
+        if not isinstance(admin_unlocks, dict):
+            admin_unlocks = {}
+        store_key = str(inventory.store_id)
+        date_key = inventory.inventory_date.isoformat()
+        store_unlocks = admin_unlocks.get(store_key, {})
+        if not isinstance(store_unlocks, dict):
+            store_unlocks = {}
+        unlock_data = store_unlocks.get(date_key, {})
+        if not isinstance(unlock_data, dict):
+            unlock_data = {}
+
+        current_cells = {
+            str(item).strip()
+            for item in unlock_data.get('cells', [])
+            if str(item).strip()
+        }
+
+        if action == 'unlock' and scope == 'all':
+            unlock_data['all'] = True
+            unlock_data['cells'] = []
+        elif action == 'lock' and scope == 'all':
+            unlock_data = {}
+        elif action == 'unlock' and scope == 'cells':
+            if not normalized_cells:
+                return {'type': 'error', 'message': 'No valid cells selected.'}
+            current_cells.update(normalized_cells)
+            unlock_data['all'] = bool(unlock_data.get('all'))
+            unlock_data['cells'] = sorted(current_cells)
+        elif action == 'lock' and scope == 'cells':
+            current_cells.difference_update(normalized_cells)
+            unlock_data['all'] = bool(unlock_data.get('all'))
+            unlock_data['cells'] = sorted(current_cells)
+
+        if unlock_data.get('all') or unlock_data.get('cells'):
+            unlock_data['updated_by'] = current_user.id
+            unlock_data['updated_at'] = datetime.now().isoformat()
+            store_unlocks[date_key] = unlock_data
+            admin_unlocks[store_key] = store_unlocks
+        else:
+            store_unlocks.pop(date_key, None)
+            if store_unlocks:
+                admin_unlocks[store_key] = store_unlocks
+            else:
+                admin_unlocks.pop(store_key, None)
+
+        cutoff_date = (datetime.now() - timedelta(days=30)).date()
+        for s_key in list(admin_unlocks.keys()):
+            s_unlocks = admin_unlocks.get(s_key, {})
+            if not isinstance(s_unlocks, dict):
+                continue
+            for d_key in list(s_unlocks.keys()):
+                try:
+                    d = datetime.strptime(d_key, '%Y-%m-%d').date()
+                    if d < cutoff_date:
+                        del s_unlocks[d_key]
+                except (ValueError, TypeError):
+                    del s_unlocks[d_key]
+            if s_unlocks:
+                admin_unlocks[s_key] = s_unlocks
+            else:
+                admin_unlocks.pop(s_key, None)
+
+        config_data['admin_unlocks'] = admin_unlocks
+        config.config_data = json.dumps(config_data)
+        db.session.commit()
+
+        # log_audit_event not available in api_handles — import separately if needed
+        # log_audit_event(
+        #     action=f'admin.invensync.{action}_{scope}',
+        #     entity_type='DailyEndingInventory',
+        #     entity_id=inventory.id,
+        #     details={
+        #         'store_id': inventory.store_id,
+        #         'inventory_date': date_key,
+        #         'scope': scope,
+        #         'cell_count': len(normalized_cells),
+        #     },
+        #     commit=True,
+        # )
+
+        message = (
+            'All InvenSync cells are now unlocked for this store/date.'
+            if action == 'unlock' and scope == 'all'
+            else 'All InvenSync cells are now locked again for this store/date.'
+            if action == 'lock' and scope == 'all'
+            else f'{len(normalized_cells)} selected cell(s) {"unlocked" if action == "unlock" else "locked"} for this store/date.'
+        )
+        return {'type': 'success', 'message': message}
+    except (TypeError, ValueError):
+        return {'type': 'error', 'message': 'Invalid unlock request.'}
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/force_invensync_beginning', methods=['POST'])
+@login_required
+def force_invensync_beginning():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        store_id = int(data.get('store_id', 0) or 0)
+        store = Store.query.get(store_id)
+        if not store:
+            return {'type': 'error', 'message': 'Store not found.'}
+
+        config, config_data = _get_global_invensync_config()
+        forced_ids = {
+            int(item) for item in config_data.get('force_beginning_store_ids', [])
+            if str(item).isdigit()
+        }
+        forced_ids.add(store_id)
+        config_data['force_beginning_store_ids'] = sorted(forced_ids)
+        config.config_data = json.dumps(config_data)
+        db.session.commit()
+        return {
+            'type': 'success',
+            'message': f'Beginning entry enabled for {store.name}. It will turn off after Beginning is saved.',
+        }
+    except (TypeError, ValueError):
+        return {'type': 'error', 'message': 'Select a valid store.'}
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/backfill_pos_sold', methods=['POST'])
+@login_required
+def backfill_pos_sold():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        from .views import backfill_pos_sold_from_staging
+        result = backfill_pos_sold_from_staging(user_id=current_user.id)
+        db.session.commit()
+        return {
+            'type': 'success',
+            'message': (
+                f'Backfill complete. {result["created"]} date(s) had PosSold created from staging. '
+                f'{result["skipped"]} already had PosSold or had no data. '
+                f'{result["total_staging"]} total staging record(s) checked.'
+            ),
+        }
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/unfinalize_inventory', methods=['POST'])
+@login_required
+def unfinalize_inventory():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        inventory_id = int(data.get('inventory_id', 0) or 0)
+        if not inventory_id:
+            return {'type': 'error', 'message': 'Missing inventory_id.'}
+
+        inventory = DailyEndingInventory.query.get(inventory_id)
+        if not inventory:
+            return {'type': 'error', 'message': 'Inventory record not found.'}
+        if not inventory.is_finalized:
+            return {'type': 'error', 'message': 'This inventory is not finalized.'}
+
+        inventory.is_finalized = False
+        inventory.finalized_at = None
+        inventory.finalized_by = None
+
+        config, config_data = _get_global_invensync_config()
+        admin_unlocks = config_data.get('admin_unlocks', {})
+        store_key = str(inventory.store_id)
+        date_key = inventory.inventory_date.isoformat() if hasattr(inventory.inventory_date, 'isoformat') else str(inventory.inventory_date)
+        if store_key in admin_unlocks and isinstance(admin_unlocks[store_key], dict):
+            admin_unlocks[store_key].pop(date_key, None)
+            if not admin_unlocks[store_key]:
+                del admin_unlocks[store_key]
+        config.config_data = json.dumps(config_data)
+
+        db.session.commit()
+        return {
+            'type': 'success',
+            'message': f'Inventory for {inventory.inventory_date.strftime("%b %d, %Y")} has been unfinalized. Store can now edit and save.',
+        }
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(exc)}
+
+
+@api_handles.route('/update_store_pricing', methods=['POST'])
+@login_required
+def update_store_pricing():
+    """Update store pricing tier (premium/non_premium)"""
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        data = request.get_json(force=True) or {}
+        store_id = data.get('store_id')
+        tier = data.get('tier')
+
+        if not store_id or tier not in ('premium', 'non_premium'):
+            return {'type': 'error', 'message': 'Invalid data.'}
+
+        store = Store.query.get(store_id)
+        if not store:
+            return {'type': 'error', 'message': 'Store not found.'}
+
+        old_tier = store.store_group
+        store.store_group = tier
+        db.session.commit()
+
+        try:
+            from .views import log_audit_event
+            log_audit_event(
+                action='UPDATE_STORE_PRICING',
+                entity_type='Store',
+                entity_id=store.id,
+                details=f'Changed store "{store.name}" pricing tier from {old_tier} to {tier}',
+                actor_user=current_user.id
+            )
+        except Exception as audit_error:
+            print(f'Audit logging error: {audit_error}')
+
+        return {'type': 'success', 'message': f'Updated to {tier}'}
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Server error: {str(e)}'}
+
+
+def _serialize_inventory_item(item):
+    """Convert a DailyEndingInventoryItem into a JSON-safe dict."""
+    if not item:
+        return None
+    srp_price = float(item.srp_price or 0)
+    total_ending_qty = int(item.total_ending_qty or 0)
+    theo_ending_qty = int(item.theo_ending_qty or 0)
+    wastage_qty = int(item.wastage_qty or 0)
+    variance_qty = total_ending_qty - theo_ending_qty
+
+    return {
+        'id': item.id,
+        'product_master_id': item.product_master_id,
+        'srp_price': srp_price,
+        'beginning_qty': item.beginning_qty,
+        'delivery_qty': item.delivery_qty,
+        'trans_in_qty': item.trans_in_qty,
+        'bo_qty': item.bo_qty,
+        'adv_del_qty': item.adv_del_qty,
+        'trans_out_qty': item.trans_out_qty,
+        'wastage_qty': item.wastage_qty,
+        'wastage_amount': round(wastage_qty * srp_price, 2),
+        'csi_qty': item.csi_qty,
+        'quantity_sold': item.quantity_sold,
+        'draft_quantity_sold': getattr(item, 'draft_quantity_sold', None),
+        'ending_d5_qty': item.ending_d5_qty,
+        'ending_d4_qty': item.ending_d4_qty,
+        'ending_d3_qty': item.ending_d3_qty,
+        'total_ending_qty': item.total_ending_qty,
+        'total_peso_srp': round(total_ending_qty * srp_price, 2),
+        'theo_ending_qty': item.theo_ending_qty,
+        'variance_qty': variance_qty,
+        'variance_peso': round(variance_qty * srp_price, 2),
+        'remarks': item.remarks or '',
+        'adjustment_type': getattr(item, 'adjustment_type', '') or '',
+        'adjustment_product_master_id': getattr(item, 'adjustment_product_master_id', None),
+        'adjustment_qty': getattr(item, 'adjustment_qty', None),
+        'adjustment_charges': getattr(item, 'adjustment_charges', '') or '',
+        'pos_reviewed_source': getattr(item, 'pos_reviewed_source', None),
+        'pos_reviewed_date': item.pos_reviewed_date.strftime('%Y-%m-%d') if getattr(item, 'pos_reviewed_date', None) else None,
+        'bitbit_sold_tags': getattr(item, 'bitbit_sold_tags', None) or [],
+        'motif_sold_tags': getattr(item, 'motif_sold_tags', None) or [],
+    }
+
+
+def _serialize_product_row(product, inv_item):
+    """Combine a ProductMaster row with its inventory item for this date."""
+    return {
+        'id': product.id,
+        'description': product.description or 'No Description',
+        'code': product.code or '',
+        'category': product.category or '',
+        'tp': float(product.tp) if product.tp else 0,
+        'inventory_item': _serialize_inventory_item(inv_item),
+    }
+
+
+
+
+@api_handles.route('/get_invensync_detail_data', methods=['GET','POST'])
+@login_required
+def get_invensync_detail_data():
+    """Fetch all data needed to render the InvenSync per-store/date detail page (v2)."""
+    if current_user.role not in ['Store Manager', 'Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor', 'Area Manager']:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    if current_user.role == 'Inventory Staff':
+        store_id = request.args.get('store_id', type=int) or request.form.get('store_id', type=int)
+        if not store_id:
+            return {'type': 'error', 'message': 'store_id is required for Inventory Staff.', 'redirect': 'inventory_staff_dashboard'}
+
+    try:
+        role = (current_user.role or '').strip()
+        if role == 'Store Manager':
+            store = Store.query.filter_by(manager_id=current_user.id).first()
+        elif role == 'Inventory Staff':
+            store_id = request.args.get('store_id', type=int) or request.form.get('store_id', type=int)
+            assigned_store_ids = _inventory_staff_assigned_store_ids()
+            store = Store.query.get(store_id) if store_id in assigned_store_ids else None
+        elif role == 'Cluster Manager':
+            store_id = request.args.get('store_id', type=int) or request.form.get('store_id', type=int)
+            if not store_id:
+                return {'type': 'error', 'message': 'store_id is required for Cluster Manager.', 'redirect': 'cluster_manager_invensync'}
+            from .models import Cluster
+            cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+            store = Store.query.get(store_id) if store_id else None
+            if store and cluster and store.cluster_id != cluster.id:
+                return {'type': 'error', 'message': 'Access denied. Store does not belong to your cluster.'}
+        else:
+            store_id = request.args.get('store_id', type=int) or request.form.get('store_id', type=int)
+            if not store_id:
+                return {'type': 'error', 'message': 'store_id is required.', 'redirect': 'admin_dashboard'}
+            store = Store.query.get(store_id) if store_id else None
+
+        if not store:
+            return {'type': 'error', 'message': 'Store not found or not assigned.'}
+
+        selected_date_str = request.args.get('date', '')
+        if selected_date_str:
+            try:
+                selected_date = datetime.strptime(selected_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                selected_date = date.today()
+        else:
+            selected_date = date.today()
+
+        missing_invensync_dates = []
+        if current_user.role == 'Store Manager' and not selected_date_str:
+            today_date = date.today()
+            month_start = today_date.replace(day=1)
+            cutoff_date = today_date - timedelta(days=1)
+            missing_invensync_dates = _build_missing_invensync_dates(store.id, month_start, cutoff_date)
+
+        inventory = DailyEndingInventory.query.filter_by(
+            store_id=store.id,
+            inventory_date=selected_date
+        ).first()
+
+        if not inventory:
+            inventory = DailyEndingInventory(
+                store_id=store.id,
+                inventory_date=selected_date,
+                created_by=current_user.id
+            )
+            db.session.add(inventory)
+            db.session.commit()
+
+        products = ProductMaster.query.all()
+        motif_product_options = [
+            {
+                'id': int(product.id),
+                'code': product.code,
+                'description': product.description,
+                'price': float(product.sp_p or product.sp_np or 0.0),
+            }
+            for product in sorted(products, key=lambda item: (item.description or '').lower())
+            if (
+                (product.description or '').strip()
+                and not (
+                    'additional charge' in (product.description or '').strip().lower()
+                    and 'motif' in (product.description or '').strip().lower()
+                )
+            )
+        ]
+
+        category_order = {
+            'breads': 1, 'trayproducts': 2, 'rolls': 3, 'greetingcakes': 4,
+            'premium': 5, 'cremadefruta': 6, 'gmproducts': 7, 'candles': 8, 'addons': 9,
+        }
+
+        def _product_category_label(product):
+            return (product.category or '').strip() or 'Uncategorized'
+
+        def _category_dom_id(category_name):
+            normalized = re.sub(r'[^a-z0-9]+', '', (category_name or '').lower())
+            return normalized or 'uncategorized'
+
+        def _product_category_key(product):
+            return _category_dom_id(_product_category_label(product))
+
+        products.sort(key=lambda p: (
+            category_order.get(_product_category_key(p), 99),
+            _product_category_key(p),
+            p.id,
+        ))
+
+        category_groups_by_key = OrderedDict()
+        for product in products:
+            category_label = _product_category_label(product)
+            category_key = _product_category_key(product)
+            group = category_groups_by_key.setdefault(category_key, {
+                'id': _category_dom_id(category_label),
+                'display_name': category_label,
+                'products': [],
+            })
+            group['products'].append(product)
+        category_groups = list(category_groups_by_key.values())
+
+        prev_inventory = DailyEndingInventory.query.filter_by(
+            store_id=store.id,
+            inventory_date=selected_date - timedelta(days=1),
+        ).first()
+        finalized_prev_totals = {}
+        if prev_inventory and prev_inventory.is_finalized:
+            finalized_prev_totals = {
+                prev_item.product_master_id: int(prev_item.total_ending_qty or 0)
+                for prev_item in prev_inventory.items
+                if prev_item.product_master_id is not None
+            }
+
+        existing_items = {
+            int(item.product_master_id): item
+            for item in DailyEndingInventoryItem.query.filter_by(inventory_id=inventory.id).all()
+            if item.product_master_id is not None
+        }
+        inventory_items = {}
+        new_items_to_add = []
+        products_by_id = {p.id: p for p in products}
+
+        for product in products:
+            item = existing_items.get(product.id)
+            beginning_qty = finalized_prev_totals.get(product.id, 0)
+            if not item:
+                srp = product.sp_p if store.store_group == 'premium' else product.sp_np
+                item = DailyEndingInventoryItem(
+                    inventory_id=inventory.id,
+                    product_master_id=product.id,
+                    product_code=str(product.code) if product.code else '',
+                    product_description=product.description,
+                    srp_price=srp or 0,
+                    beginning_qty=beginning_qty,
+                )
+                new_items_to_add.append(item)
+            elif product.id in finalized_prev_totals:
+                item.beginning_qty = beginning_qty
+            inventory_items[product.id] = item
+
+        if new_items_to_add:
+            db.session.add_all(new_items_to_add)
+        db.session.commit()
+
+        if not inventory.is_finalized:
+            tier_srp_by_product = {
+                p.id: float((p.sp_p if store.store_group == 'premium' else (p.sp_np or p.sp_p)) or 0.0)
+                for p in products
+            }
+            price_dirty = False
+            for inv_item in inventory_items.values():
+                if not inv_item.product_master_id:
+                    continue
+                tier_srp = tier_srp_by_product.get(inv_item.product_master_id)
+                if tier_srp is not None and float(inv_item.srp_price or 0.0) != tier_srp:
+                    inv_item.srp_price = tier_srp
+                    price_dirty = True
+            if price_dirty:
+                db.session.commit()
+
+        rso_deliveries = RsoDelivery.query.filter_by(
+            store_id=store.id,
+            report_date=selected_date
+        ).filter(RsoDelivery.delivery_reviewed_date.isnot(None)).all()
+
+        if rso_deliveries:
+            rso_alias_master_lookup = {
+                str(normalized_alias or '').strip(): int(product_master_id)
+                for normalized_alias, product_master_id in (
+                    db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
+                    .all()
+                )
+                if str(normalized_alias or '').strip()
+            }
+
+            for inv_item in inventory_items.values():
+                if inv_item.product_master_id:
+                    product = products_by_id.get(inv_item.product_master_id)
+                    if product:
+                        regular_delivery_qty = 0
+                        bulk_order_qty = 0
+                        has_regular_delivery = False
+                        has_bulk_order = False
+                        latest_reviewed_date = None
+
+                        for rso_item in rso_deliveries:
+                            if not _match_rso_to_inventory(rso_item, product, rso_alias_master_lookup):
+                                continue
+
+                            reviewed_qty = int(
+                                rso_item.received_quantity
+                                if rso_item.received_quantity is not None
+                                else (rso_item.quantity or 0)
+                            )
+                            upload_source = str(rso_item.upload_source or 'delivery').strip().lower()
+                            if upload_source == 'bulk':
+                                bulk_order_qty += reviewed_qty
+                                has_bulk_order = True
+                            else:
+                                regular_delivery_qty += reviewed_qty
+                                has_regular_delivery = True
+                                if (
+                                    rso_item.delivery_reviewed_date
+                                    and (
+                                        latest_reviewed_date is None
+                                        or rso_item.delivery_reviewed_date > latest_reviewed_date
+                                    )
+                                ):
+                                    latest_reviewed_date = rso_item.delivery_reviewed_date
+
+                        if has_regular_delivery:
+                            if int(inv_item.delivery_qty or 0) == 0:
+                                inv_item.delivery_qty = regular_delivery_qty
+                                inv_item.delivery_reviewed_date = latest_reviewed_date
+                        elif has_bulk_order and int(inv_item.delivery_qty or 0) == bulk_order_qty:
+                            inv_item.delivery_qty = 0
+
+                        if has_bulk_order:
+                            inv_item.bo_qty = bulk_order_qty
+
+        taf_trans_out_map = _build_taf_trans_out_quantity_by_master_id(store, selected_date)
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            inv_item.trans_out_qty = int(taf_trans_out_map.get(inv_item.product_master_id, 0) or 0)
+
+        taf_trans_in_map = _build_taf_trans_in_quantity_by_master_id(store, selected_date)
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            inv_item.trans_in_qty = int(taf_trans_in_map.get(inv_item.product_master_id, 0) or 0)
+
+        taf_csi_map = _build_taf_csi_quantity_by_master_id(store, selected_date)
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            inv_item.csi_qty = int(taf_csi_map.get(inv_item.product_master_id, 0) or 0)
+
+        taf_wastage_map = _build_taf_wastage_quantity_by_master_id(store, selected_date)
+        for inv_item in inventory_items.values():
+            if not inv_item.product_master_id:
+                continue
+            inv_item.wastage_qty = int(taf_wastage_map.get(inv_item.product_master_id, 0) or 0)
+
+        saved_sales_map = {}
+        saved_bitbit_sold_details = {}
+        saved_motif_sold_details = {}
+        motif_charge_payload = None
+
+        for item in inventory_items.values():
+            _recalculate_inventory_item(item)
+
+        saved_report = DailyReport.query.filter_by(
+            store_id=store.id,
+            report_date=selected_date,
+        ).first()
+        saved_report_id = saved_report.id if saved_report else None
+        final_pos_items = PosSold.query.filter_by(daily_report_id=saved_report_id).all() if saved_report_id else []
+        pos_staging = _get_pos_sold_staging(store.id, selected_date)
+        staged_pos_items = _get_staged_pos_sold_items(pos_staging)
+
+        if final_pos_items:
+            saved_motif_items = [
+                {
+                    'product_name': item.product_name,
+                    'quantity': item.quantity,
+                    'gross_sales': item.gross_sales,
+                    'discount': item.discount,
+                    'net_sales': item.net_sales,
+                }
+                for item in final_pos_items
+            ]
+            saved_motif_rows = _get_saved_motif_rows(saved_report.pos_motif_breakdown_json)
+            saved_sales_map, saved_bitbit_sold_details = _build_complete_pos_quantities(
+                saved_motif_items, saved_motif_rows, include_bitbit_details=True,
+            )
+            saved_motif_sold_details = _build_motif_sold_details(saved_motif_rows)
+        elif staged_pos_items:
+            saved_motif_rows = _get_saved_motif_rows(pos_staging.motif_breakdown_json)
+            saved_sales_map, saved_bitbit_sold_details = _build_complete_pos_quantities(
+                staged_pos_items, saved_motif_rows, include_bitbit_details=True,
+            )
+            saved_motif_sold_details = _build_motif_sold_details(saved_motif_rows)
+
+        motif_source_items = final_pos_items if final_pos_items else (staged_pos_items if staged_pos_items else [])
+
+        if motif_source_items:
+            motif_payload_items = []
+            for item in motif_source_items:
+                if isinstance(item, dict):
+                    motif_payload_items.append({
+                        'product_name': item.get('product_name'),
+                        'quantity': item.get('quantity'),
+                        'gross_sales': item.get('gross_sales'),
+                        'discount': item.get('discount'),
+                        'net_sales': item.get('net_sales'),
+                    })
+                else:
+                    motif_payload_items.append({
+                        'product_name': getattr(item, 'product_name', None),
+                        'quantity': getattr(item, 'quantity', None),
+                        'gross_sales': getattr(item, 'gross_sales', None),
+                        'discount': getattr(item, 'discount', None),
+                        'net_sales': getattr(item, 'net_sales', None),
+                    })
+            motif_charge_payload = _build_motif_charge_payload_from_pos_items(motif_payload_items)
+
+        if final_pos_items or staged_pos_items:
+            for inv_item in inventory_items.values():
+                if inv_item.product_master_id:
+                    sold_qty = saved_sales_map.get(inv_item.product_master_id)
+                    inv_item.quantity_sold = int(sold_qty) if sold_qty else None
+                    inv_item.pos_reviewed_source = 'saved'
+                    inv_item.pos_reviewed_date = selected_date
+                    _recalculate_inventory_item(inv_item)
+                if inv_item.product_master_id and inv_item.product_master_id in saved_bitbit_sold_details:
+                    inv_item.bitbit_sold_tags = saved_bitbit_sold_details[inv_item.product_master_id]
+                if inv_item.product_master_id and inv_item.product_master_id in saved_motif_sold_details:
+                    inv_item.motif_sold_tags = saved_motif_sold_details[inv_item.product_master_id]
+
+        db.session.commit()
+
+        _, global_config_data = _get_or_create_global_invensync_config()
+        effective_config_data = _get_effective_invensync_config(global_config_data, store.id)
+        admin_unlock_scope = _get_invensync_admin_unlock(global_config_data, store.id, selected_date)
+        force_beginning_entry = store.id in {
+            int(item) for item in global_config_data.get('force_beginning_store_ids', [])
+            if str(item).isdigit()
+        }
+        store_beginning_baseline_finalized = DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store.id,
+            DailyEndingInventory.is_beginning_finalized.is_(True),
+        ).first() is not None
+
+        has_any_beginning = any(
+            item.beginning_qty and item.beginning_qty > 0
+            for item in inventory_items.values()
+        )
+        prev_inventory_exists = DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store.id,
+            DailyEndingInventory.inventory_date < selected_date
+        ).first() is not None
+        is_first_time = (not store_beginning_baseline_finalized) and not has_any_beginning and not prev_inventory_exists
+        allow_beginning_stock_entry = (is_first_time or force_beginning_entry) and current_user.role == 'Store Manager'
+        has_no_wastage = all(int(item.wastage_qty or 0) == 0 for item in inventory_items.values())
+
+        cluster_sidebar_ctx = {}
+        if role == 'Cluster Manager':
+            from .models import Cluster
+            cm_cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+            if cm_cluster:
+                cm_stores = Store.query.filter_by(cluster_id=cm_cluster.id).all()
+                cluster_sidebar_ctx = {
+                    'cluster': {'id': cm_cluster.id, 'name': cm_cluster.name},
+                    'team_name': _get_team_name(cm_cluster),
+                    'cluster_sidebar_stores': _build_cluster_sidebar_stores(cm_stores),
+                }
+
+        category_groups_payload = [
+            {
+                'id': group['id'],
+                'display_name': group['display_name'],
+                'products': [
+                    _serialize_product_row(product, inventory_items.get(product.id))
+                    for product in group['products']
+                    if product.id not in global_config_data.get('hidden_rows', [])
+                ],
+            }
+            for group in category_groups
+        ]
+
+        adj_product_options = [
+            {
+                'id': int(p.id),
+                'description': p.description,
+                'code': str(p.code or ''),
+                'price': float((p.sp_p if store.store_group == 'premium' else (p.sp_np or p.sp_p)) or 0.0),
+            }
+            for p in sorted(products, key=lambda x: (x.description or '').lower())
+            if (p.description or '').strip()
+        ]
+
+        return {
+            'type': 'success',
+            'store': {
+                'id': store.id,
+                'name': store.name,
+                'store_group': store.store_group,
+                'manager_id': store.manager_id,
+                'cluster_id': store.cluster_id,
+            },
+            'inventory': {
+                'id': inventory.id,
+                'inventory_date': inventory.inventory_date.strftime('%Y-%m-%d'),
+                'is_finalized': bool(inventory.is_finalized),
+                'is_beginning_finalized': bool(getattr(inventory, 'is_beginning_finalized', False)),
+            },
+            'category_groups': category_groups_payload,
+            'selected_date': selected_date.strftime('%Y-%m-%d'),
+            'today': date.today().strftime('%Y-%m-%d'),
+            'global_config_data': effective_config_data,
+            'admin_unlock_scope': admin_unlock_scope,
+            'is_first_time': is_first_time,
+            'allow_beginning_stock_entry': allow_beginning_stock_entry,
+            'store_beginning_baseline_finalized': store_beginning_baseline_finalized,
+            'has_no_wastage': has_no_wastage,
+            'missing_dates': missing_invensync_dates,
+            'next_missing_date': missing_invensync_dates[0]['iso'] if missing_invensync_dates else None,
+            'motif_charge_payload': motif_charge_payload,
+            'motif_product_options': motif_product_options,
+            'adj_product_options': adj_product_options,
+            'show_trans_trace': current_user.role in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'),
+            'is_edit_adjustments': (current_user.role == 'Inventory Staff'),
+            'is_view_only': current_user.role in ['Inventory Staff', 'Cluster Manager', 'Admin', 'Superadmin', 'Auditor', 'Area Manager'],
+            **cluster_sidebar_ctx,
+        }
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': str(e)}
+
+
+
+def _build_missing_invensync_dates(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return []
+
+    first_inventory_date = (
+        DailyEndingInventory.query
+        .filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.is_finalized.is_(True),
+        )
+        .with_entities(func.min(DailyEndingInventory.inventory_date))
+        .scalar()
+    )
+    if not first_inventory_date or first_inventory_date > cutoff_date:
+        return []
+
+    start_date = max(month_start, first_inventory_date)
+    existing_dates = {
+        row.inventory_date for row in DailyEndingInventory.query.filter(
+            DailyEndingInventory.store_id == store_id,
+            DailyEndingInventory.inventory_date >= start_date,
+            DailyEndingInventory.inventory_date <= cutoff_date,
+            DailyEndingInventory.is_finalized.is_(True),
+        ).all()
+        if row.inventory_date
+    }
+
+    missing_dates = []
+    cursor = start_date
+    while cursor <= cutoff_date:
+        if cursor not in existing_dates:
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+    return missing_dates
+
+
+
+def _build_taf_trans_out_quantity_by_master_id(store, transaction_date):
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(['product transfer', 'egi plant transfer']))
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(quantity or 0)
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+
+def _build_taf_trans_in_quantity_by_master_id(store, transaction_date):
+    if not store or not transaction_date:
+        return {}
+
+    normalized_store_name = str(store.name or '').strip().lower()
+    if not normalized_store_name:
+        return {}
+
+    transfer_rows = (
+        db.session.query(
+            TafTransferItem.item_name,
+            TafTransferItem.quantity,
+            TafTransferItem.received_quantity,
+        )
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(func.coalesce(TafTransfer.received_date, TafTransfer.transaction_date) == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'product transfer')
+        .filter(func.lower(func.trim(TafTransfer.transfer_to)) == normalized_store_name)
+        .filter(func.lower(func.trim(TafTransfer.status)) != 'pending')
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, sent_quantity, received_quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(received_quantity if received_quantity is not None else (sent_quantity or 0))
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+
+
+def _build_taf_csi_quantity_by_master_id(store, transaction_date):
+    """Return CSI quantities from Charge Slips (charge_type != 'Spoilage')."""
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip')
+        .filter(func.lower(func.trim(func.coalesce(TafTransfer.charge_type, 'charge'))) != 'spoilage')
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        if not master_id:
+            continue
+
+        quantity = int(quantity or 0)
+        if quantity <= 0:
+            continue
+
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+
+def _build_taf_wastage_quantity_by_master_id(store, transaction_date):
+    """Return sent wastage quantities, including TAFs that are still pending."""
+    if not store or not transaction_date:
+        return {}
+
+    transfer_rows = (
+        db.session.query(TafTransferItem.item_name, TafTransferItem.quantity)
+        .join(TafTransfer, TafTransfer.id == TafTransferItem.transfer_id)
+        .filter(TafTransfer.store_id == store.id)
+        .filter(TafTransfer.transaction_date == transaction_date)
+        .filter(
+            (func.lower(func.trim(TafTransfer.transaction_type)) == 'wastage transfer') |
+            (
+                (func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip') &
+                (func.lower(func.trim(func.coalesce(TafTransfer.charge_type, ''))) == 'spoilage')
+            )
+        )
+        .all()
+    )
+    if not transfer_rows:
+        return {}
+
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    master_quantities = {}
+    for item_name, sent_quantity in transfer_rows:
+        master_id = _resolve_pos_sold_master_id(item_name, alias_lookup, master_lookup)
+        quantity = int(sent_quantity or 0)
+        if not master_id or quantity <= 0:
+            continue
+        master_quantities[master_id] = int(master_quantities.get(master_id, 0) or 0) + quantity
+
+    return master_quantities
+
+
+
+def _recalculate_inventory_item(item, sold_override=None):
+    """Recalculate all derived fields for an inventory item"""
+    sold_qty = int(sold_override) if sold_override is not None else int(item.quantity_sold or 0)
+
+    # Wastage amount
+    item.wastage_amount = (item.wastage_qty or 0) * (item.srp_price or 0)
+
+    # Total ending
+    item.total_ending_qty = (
+        int(item.ending_d5_qty or 0)
+        + int(item.ending_d4_qty or 0)
+        + int(item.ending_d3_qty or 0)
+    )
+    item.total_peso_srp = item.total_ending_qty * (item.srp_price or 0)
+
+    # THEO ending
+    item.theo_ending_qty = (
+        int(item.beginning_qty or 0)
+        + int(item.delivery_qty or 0)
+        + int(item.trans_in_qty or 0)
+        + int(item.bo_qty or 0)
+        + int(item.adv_del_qty or 0)
+        - int(item.trans_out_qty or 0)
+        - int(item.wastage_qty or 0)
+        - int(item.csi_qty or 0)
+        - sold_qty
+    )
+
+    # Variance
+    item.variance_qty = item.total_ending_qty - item.theo_ending_qty
+    item.variance_peso = item.variance_qty * (item.srp_price or 0)
+
+    
+
+def _get_pos_sold_staging(store_id, report_date):
+    return PosSoldStaging.query.filter_by(store_id=store_id, report_date=report_date).first()
+
+
+def _get_staged_pos_sold_items(staging):
+    if not staging:
+        return []
+    try:
+        raw_items = json.loads(staging.items_json or '[]')
+    except (TypeError, ValueError):
+        raw_items = []
+    return _sanitize_pos_sold_items(raw_items if isinstance(raw_items, list) else [])
+
+
+
+
+def _get_or_create_global_invensync_config():
+    default_data = {
+        'hidden_rows': [],
+        'hidden_columns': [],
+        'hidden_cells': [],
+        'locked_rows': [],
+        'locked_columns': [],
+        'locked_cells': [],
+        'editable_columns': [],
+        'force_beginning_store_ids': [],
+        'store_configs': {},
+        'admin_unlocks': {},
+    }
+    config = GlobalInvenSyncConfig.query.first()
+    if not config:
+        config = GlobalInvenSyncConfig(config_data=json.dumps(default_data))
+        db.session.add(config)
+        return config, default_data
+
+    try:
+        config_data = json.loads(config.config_data or '{}')
+    except ValueError:
+        config_data = {}
+
+    for key, value in default_data.items():
+        expected_type = dict if isinstance(value, dict) else list
+        if key not in config_data or not isinstance(config_data.get(key), expected_type):
+            config_data[key] = dict(value) if isinstance(value, dict) else list(value)
+
+    return config, config_data
+
+
+
+def _get_effective_invensync_config(global_config_data, store_id):
+    effective_config = dict(global_config_data or {})
+    store_configs = effective_config.get('store_configs', {})
+    store_config = store_configs.get(str(store_id), {}) if isinstance(store_configs, dict) else {}
+    if not isinstance(store_config, dict):
+        store_config = {}
+
+    for key in ['hidden_columns', 'locked_columns', 'editable_columns']:
+        if key in store_config and isinstance(store_config.get(key), list):
+            effective_config[key] = store_config.get(key, [])
+
+    return effective_config
+
+
+
+
+def _get_invensync_admin_unlock(global_config_data, store_id, inventory_date):
+    admin_unlocks = (global_config_data or {}).get('admin_unlocks', {})
+    if not isinstance(admin_unlocks, dict):
+        return {'all': False, 'cells': []}
+
+    store_unlocks = admin_unlocks.get(str(store_id), {})
+    if not isinstance(store_unlocks, dict):
+        return {'all': False, 'cells': []}
+
+    date_key = inventory_date.isoformat() if hasattr(inventory_date, 'isoformat') else str(inventory_date or '')
+    unlock_data = store_unlocks.get(date_key, {})
+    if not isinstance(unlock_data, dict):
+        return {'all': False, 'cells': []}
+
+    return {
+        'all': bool(unlock_data.get('all')),
+        'cells': [str(item).strip() for item in unlock_data.get('cells', []) if str(item).strip()],
+    }
+
+
+def _normalize_product_name(name):
+    """Normalize product name for comparison: lowercase, strip, collapse spaces."""
+    if not name:
+        return ''
+    # Convert to lowercase, strip whitespace, collapse multiple spaces
+    normalized = ' '.join(str(name).lower().strip().split())
+    return normalized
+
+
+def _match_rso_to_inventory(rso_item, product, alias_master_lookup=None):
+    """
+    Match RSO delivery item to inventory product.
+    Priority: Product Code > Full Product Name (exact normalized match)
+    
+    Rules:
+    - Do NOT use partial/substring matching
+    - Only accept exact full name matches after normalization
+    - Case-insensitive, trim spaces, normalize formatting
+    """
+    # Normalize both names
+    rso_name_normalized = _normalize_product_name(rso_item.product_name)
+    rso_alias_key = _normalize_product_text(rso_item.product_name)
+    product_desc_normalized = _normalize_product_name(product.description)
+    product_desc_key = _normalize_product_text(product.description)
+    product_code_str = str(product.code or '').strip()
+
+    # Product aliases are linked to a master product in System Analyzer. Resolve
+    # them at display time so aliases also apply to RSO rows uploaded before the
+    # link was created.
+    if (
+        rso_alias_key
+        and alias_master_lookup
+        and alias_master_lookup.get(rso_alias_key) == product.id
+    ):
+        return True
+    
+    # Try matching by product code if RSO item has a code embedded in product_name
+    # Some Excel files might have format: "CODE - Product Name" or "CODE Product Name"
+    rso_name_upper = str(rso_item.product_name).strip()
+    
+    # Check if RSO product_name starts with a number (potential product code)
+    code_match = re.match(r'^(\d+)\s*[-–—]?\s*(.+)$', rso_name_upper)
+    if code_match:
+        rso_code_from_name = code_match.group(1).strip()
+        if rso_code_from_name == product_code_str:
+            return True
+    
+    # Primary matching: Exact normalized product name comparison
+    if rso_name_normalized and product_desc_normalized:
+        if rso_name_normalized == product_desc_normalized:
+            return True
+
+    # Treat formatting-only differences the same way System Analyzer does.
+    # Example: "Pizza Bread - Cheeseburger" and
+    # "Pizza Bread (Cheese Burger)" both become "pizzabreadcheeseburger".
+    if rso_alias_key and product_desc_key and rso_alias_key == product_desc_key:
+        return True
+    
+    # Secondary matching: If product code in RSO matches product.code exactly
+    # (for cases where RSO product_name IS the product code)
+    if rso_name_normalized == product_code_str.lower():
+        return True
+    
+    return False
+
+
+
+def _build_pos_sold_master_lookups():
+    alias_lookup = {}
+    master_lookup = {}
+
+    for alias_text, product_master_id in DEFAULT_POS_SOLD_ALIASES.items():
+        norm = _normalize_product_text(alias_text)
+        if norm:
+            alias_lookup[norm] = int(product_master_id)
+
+    for normalized_alias, product_master_id in (
+        db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
+        .all()
+    ):
+        alias_text = str(normalized_alias or '').strip()
+        if alias_text:
+            alias_lookup[alias_text] = int(product_master_id)
+
+    for product_id, description in (
+        db.session.query(ProductMaster.id, ProductMaster.description).all()
+    ):
+        normalized_description = _normalize_product_text(description)
+        if normalized_description:
+            master_lookup[normalized_description] = int(product_id)
+
+    return alias_lookup, master_lookup
+
+
+# ================================
+# Inv Sync Section End
+# ================================
+ 
+ 
+ 
+# ================================
+# Oracle Section Start
+# ================================
+@api_handles.route('/get_oracle_data', methods=['GET', 'POST'])
+@login_required
+def get_oracle_data():
+    from datetime import datetime, date as _date
+    from sqlalchemy.orm import joinedload
+    from .models import OracleOrder, ProductMaster, Store, StoreProductBuffer
+    from .views import (
+        _fetch_oracle_invensync_data,
+        _build_oracle_pos_sales_data,
+        _build_oracle_bulk_order_weeks,
+        _build_oracle_bulk_order_product_data,
+        _resolve_oracle_store_for_manager,
+    )
+
+    role = (current_user.role or '').strip()
+    if role == 'Store Manager':
+        store = _resolve_oracle_store_for_manager(current_user)
+        if not store:
+            return {'type': 'error', 'message': 'A single store is not assigned to your account.'}, 404
+    elif role in ('Cluster Manager', 'Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        try:
+            store_id = int(request.form.get('store_id') or request.args.get('store_id') or 0)
+        except (ValueError, TypeError):
+            store_id = 0
+        store = Store.query.filter_by(id=store_id).first() if store_id else None
+        if not store:
+            return {'type': 'error', 'message': 'Store not found.'}
+
+        from .models import Cluster
+        from .views import _apply_store_scope_filter, _get_area_manager_cluster_ids
+        if not _apply_store_scope_filter([store], request):
+            return {'type': 'error', 'message': 'Access denied.'}, 403
+        if role == 'Cluster Manager':
+            cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+            if not cluster or store.cluster_id != cluster.id:
+                return {'type': 'error', 'message': 'Access denied.'}, 403
+        elif role == 'Area Manager':
+            allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+            if store.cluster_id not in allowed_cluster_ids:
+                return {'type': 'error', 'message': 'Access denied.'}, 403
+    else:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    oracle_date = None
+    date_str = request.form.get('date') or request.args.get('date') or ''
+    if date_str:
+        try:
+            oracle_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            oracle_date = None
+    if oracle_date is None:
+        oracle_date = _date.today()
+
+    products = ProductMaster.query.all()
+    is_premium = store.store_group == 'premium'
+    product_rows = [{
+        'id': p.id,
+        'code': p.code if p.code is not None else p.id,
+        'name': p.description,
+        'category': p.category,
+        'plantPrice': float(p.tp or 0),
+        'sellingPrice': float((p.sp_p if is_premium else p.sp_np) or 0),
+    } for p in products]
+
+    saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
+    store_buffers = {
+        str(b.product_id): float(b.buffer_pct)
+        for b in saved if b.buffer_pct is not None
+    }
+
+    incoming_orders = OracleOrder.query.filter_by(store_id=store.id, status='approved').filter(
+        OracleOrder.delivery_date >= oracle_date
+    ).all()
+    oracle_incoming_orders = {}
+    for order in incoming_orders:
+        product_orders = oracle_incoming_orders.setdefault(str(order.product_id), {})
+        delivery_key = order.delivery_date.isoformat()
+        product_orders[delivery_key] = product_orders.get(delivery_key, 0) + order.quantity
+
+    history_orders = (
+        OracleOrder.query
+        .options(joinedload(OracleOrder.product), joinedload(OracleOrder.creator))
+        .filter_by(store_id=store.id)
+        .order_by(OracleOrder.created_at.desc())
+        .all()
+    )
+    oracle_order_history = [{
+        'id': f'ORD-{order.id}',
+        'orderDateActual': order.order_date.isoformat(),
+        'delivDate': order.delivery_date.isoformat(),
+        'dayName': order.delivery_date.strftime('%A'),
+        'mode': 'Avg Consumption',
+        'productId': order.product_id,
+        'productName': order.product.description if order.product else str(order.product_id),
+        'suggested': order.suggested_qty,
+        'minSug': order.min_suggested_qty,
+        'maxSug': order.max_suggested_qty,
+        'finalOrder': order.quantity,
+        'unitCost': float(order.product.tp or 0) if order.product else 0,
+        'totalCost': float(order.quantity * (order.product.tp or 0)) if order.product else 0,
+        'multiplier': 1,
+        'manager': order.creator.username if order.creator else '',
+        'timestamp': order.created_at.isoformat() if order.created_at else '',
+        'status': order.status,
+    } for order in history_orders]
+
+    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
+    pos_sales_data = _build_oracle_pos_sales_data(store, products, oracle_date)
+    bulk_order_weeks = _build_oracle_bulk_order_weeks(store, oracle_date)
+    bulk_order_product_data = _build_oracle_bulk_order_product_data(store, products, oracle_date)
+
+    return {
+        'type': 'success',
+        'store': {'id': store.id, 'name': store.name, 'store_group': store.store_group},
+        'oracle_date': oracle_date.isoformat(),
+        'products': product_rows,
+        'store_buffers': store_buffers,
+        'oracle_incoming_orders': oracle_incoming_orders,
+        'oracle_order_history': oracle_order_history,
+        'invensync_data': invensync_data,
+        'prev_inventory_date': prev_inventory_date,
+        'pos_sales_data': pos_sales_data,
+        'bulk_order_weeks': bulk_order_weeks,
+        'bulk_order_product_data': bulk_order_product_data,
+    }
+ 
+ 
+ 
+# ================================
+# Oracle Section End
+# ================================
+ 
+ 
+ 
+ 
+ 
+# ================================
+# Users Section Start
+# ================================
+@api_handles.route('/users', methods=['POST', 'GET'])
+@login_required
+def api_users():
+    if not _can_manage_users():
+        return {'type': 'error', 'message': 'Access denied. Only Admin or Superadmin can access this page.'}, 403
+
+    try:
+        current_page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        current_page = 1
+
+    per_page = post_per_page
+
+    query = User.query.options(
+        selectinload(User.assigned_stores),
+        selectinload(User.assigned_clusters),
+        selectinload(User.managed_stores),
+        selectinload(User.managed_clusters),
+    )
+
+    # -- Search -----------------------------------------------
+    search = request.form.get('search')
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                User.full_name.ilike(pattern),
+                User.username.ilike(pattern),
+                User.email.ilike(pattern),
+                User.role.ilike(pattern),
+            )
+        )
+
+    # -- Sorting ----------------------------------------------
+    sortby = request.form.get('sort')
+    order = request.form.get('order_by', 'asc').lower()
+
+    sortable_columns = {
+        'id':         User.id,
+        'full_name':  User.full_name,
+        'username':   User.username,
+        'email':      User.email,
+        'role':       User.role,
+        'date_added': User.date_added,
+    }
+
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col))
+    else:
+        query = query.order_by(User.date_added.desc(), User.id.desc())
+
+    # -- Pagination -------------------------------------------
+    pagination = query.paginate(page=current_page, per_page=per_page, error_out=False)
+    results      = pagination.items
+    total_pages  = pagination.pages
+    total_results = pagination.total
+
+    # -- Serialize --------------------------------------------
+    user_list = []
+    for u in results:
+        # assigned store display — mirrors the Jinja logic
+        if u.role == 'Store Manager':
+            managed_store = u.managed_stores[0].name if u.managed_stores else None
+        else:
+            managed_store = None
+
+        if u.role == 'Cluster Manager':
+            managed_cluster = u.managed_clusters[0].name if u.managed_clusters else None
+        else:
+            managed_cluster = None
+
+        user_list.append({
+            'id':                  u.id,
+            'full_name':           u.full_name  or '',
+            'username':            u.username   or '',
+            'email':               u.email      or '',
+            'role':                u.role       or '',
+            'date_added':          u.date_added.strftime('%b %d, %Y') if u.date_added else None,
+            # for display in the assigned store column
+            'managed_store':       managed_store,
+            'managed_cluster':     managed_cluster,
+            'assigned_clusters':   [c.name for c in u.assigned_clusters],
+            'assigned_stores':     [s.name for s in u.assigned_stores],
+            # for edit modal checkbox pre-selection
+            'assigned_store_ids':  [s.id   for s in u.assigned_stores],
+            'assigned_cluster_ids':[c.id   for c in u.assigned_clusters],
+        })
+
+    return {
+        'type': 'success',
+        'users': user_list,
+        'pagination_data': {
+            'current_page':  current_page,
+            'total_pages':   total_pages,
+            'total_results': total_results,
+        }
+    }
+
+
+@api_handles.route('/users/create', methods=['POST'])
+@login_required
+def api_create_user():
+    if not _can_manage_users():
+        return {'type': 'error', 'message': 'Access denied. Only Admin or Superadmin can manage users.'}, 403
+
+    try:
+        full_name        = (request.form.get('full_name')        or '').strip()
+        username         = (request.form.get('username')         or '').strip()
+        email            = (request.form.get('email')            or '').strip()
+        role             = (request.form.get('role')             or '').strip()
+        password         = request.form.get('password')          or ''
+        confirm_password = request.form.get('confirm_password')  or ''
+        assigned_store_ids_raw   = request.form.getlist('assigned_store_ids')
+        assigned_cluster_ids_raw = request.form.getlist('assigned_cluster_ids')
+
+        # -- Validation -------------------------------------------
+        if not full_name or not username or not email or not role or not password:
+            return {'type': 'error', 'message': 'All required fields must be filled.'}, 400
+
+        if password != confirm_password:
+            return {'type': 'error', 'message': 'Passwords do not match.'}, 400
+
+        if len(password) < 6:
+            return {'type': 'error', 'message': 'Password must be at least 6 characters.'}, 400
+
+        if User.query.filter_by(email=email).first():
+            return {'type': 'error', 'message': 'Email already exists.'}, 409
+
+        if User.query.filter_by(username=username).first():
+            return {'type': 'error', 'message': 'Username already exists.'}, 409
+
+        # -- Assigned stores ---------------------------------------
+        assigned_store_id = None
+        assigned_stores   = []
+        if role == 'Inventory Staff':
+            assigned_store_ids = [int(v) for v in assigned_store_ids_raw if str(v).isdigit()]
+            assigned_stores = Store.query.filter(Store.id.in_(assigned_store_ids)).order_by(Store.name.asc()).all() if assigned_store_ids else []
+            if not assigned_stores:
+                return {'type': 'error', 'message': 'At least one Assigned Store is required for Inventory Staff.'}, 400
+            assigned_store_id = assigned_stores[0].id
+
+        # -- Assigned clusters -------------------------------------
+        assigned_clusters = []
+        if role == 'Area Manager':
+            assigned_cluster_ids = [int(v) for v in assigned_cluster_ids_raw if str(v).isdigit()]
+            assigned_clusters = Cluster.query.filter(Cluster.id.in_(assigned_cluster_ids)).order_by(Cluster.name.asc()).all() if assigned_cluster_ids else []
+            if not assigned_clusters:
+                return {'type': 'error', 'message': 'At least one Cluster must be assigned to an Area Manager.'}, 400
+            if len(assigned_clusters) > 6:
+                return {'type': 'error', 'message': 'An Area Manager can be assigned a maximum of 6 clusters.'}, 400
+
+        # -- Create ------------------------------------------------
+        new_user = User(
+            full_name        = full_name,
+            username         = username,
+            email            = email,
+            role             = role,
+            assigned_store_id= assigned_store_id,
+            password         = generate_password_hash(password, method='pbkdf2:sha256')
+        )
+
+        db.session.add(new_user)
+        db.session.flush()
+        new_user.assigned_stores   = assigned_stores
+        new_user.assigned_clusters = assigned_clusters
+
+        log_audit_event(
+            action='admin.user.create',
+            entity_type='User',
+            entity_id=new_user.id,
+            reason='New user account created by administrator.',
+            details={
+                'username':            new_user.username,
+                'email':               new_user.email,
+                'role':                new_user.role,
+                'assigned_store_id':   new_user.assigned_store_id,
+                'assigned_store_ids':  [s.id for s in new_user.assigned_stores],
+                'assigned_cluster_ids':[c.id for c in new_user.assigned_clusters],
+            },
+        )
+
+        db.session.commit()
+        return {'type': 'success', 'message': f'User {username} created successfully.'}
+
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error creating user: {str(e)}'}, 500
+ 
+ 
+@api_handles.route('/users/<int:user_id>/update', methods=['POST'])
+@login_required
+def api_update_user(user_id):
+    if not _can_manage_users():
+        return {'type': 'error', 'message': 'Access denied. Only Admin or Superadmin can manage users.'}, 403
+
+    try:
+        user = User.query.get_or_404(user_id)
+
+        previous_state = {
+            'full_name':           user.full_name,
+            'username':            user.username,
+            'email':               user.email,
+            'role':                user.role,
+            'assigned_store_id':   user.assigned_store_id,
+            'assigned_store_ids':  [s.id for s in user.assigned_stores],
+            'assigned_cluster_ids':[c.id for c in user.assigned_clusters],
+        }
+
+        full_name = (request.form.get('full_name') or '').strip()
+        username  = (request.form.get('username')  or '').strip()
+        email     = (request.form.get('email')     or '').strip()
+        role      = (request.form.get('role')      or '').strip()
+        new_password         = request.form.get('new_password')         or ''
+        confirm_new_password = request.form.get('confirm_new_password') or ''
+        assigned_store_ids_raw   = request.form.getlist('assigned_store_ids')
+        assigned_cluster_ids_raw = request.form.getlist('assigned_cluster_ids')
+
+        # -- Validation ----------------------------------------
+        if not full_name or not username or not email or not role:
+            return {'type': 'error', 'message': 'Full name, username, email, and role are required.'}, 400
+
+        if User.query.filter(User.email == email, User.id != user_id).first():
+            return {'type': 'error', 'message': 'Email already exists.'}, 409
+
+        if User.query.filter(User.username == username, User.id != user_id).first():
+            return {'type': 'error', 'message': 'Username already exists.'}, 409
+
+        # -- Apply fields --------------------------------------
+        user.full_name = full_name
+        user.username  = username
+        user.email     = email
+        user.role      = role
+
+        # -- Assigned stores -----------------------------------
+        if role == 'Inventory Staff':
+            assigned_store_ids = [int(v) for v in assigned_store_ids_raw if str(v).isdigit()]
+            assigned_stores = Store.query.filter(Store.id.in_(assigned_store_ids)).order_by(Store.name.asc()).all() if assigned_store_ids else []
+            if not assigned_stores:
+                return {'type': 'error', 'message': 'At least one Assigned Store is required for Inventory Staff.'}, 400
+            user.assigned_stores    = assigned_stores
+            user.assigned_store_id  = assigned_stores[0].id
+        else:
+            user.assigned_stores   = []
+            user.assigned_store_id = None
+
+        # -- Assigned clusters ---------------------------------
+        if role == 'Area Manager':
+            assigned_cluster_ids = [int(v) for v in assigned_cluster_ids_raw if str(v).isdigit()]
+            assigned_clusters = Cluster.query.filter(Cluster.id.in_(assigned_cluster_ids)).order_by(Cluster.name.asc()).all() if assigned_cluster_ids else []
+            if not assigned_clusters:
+                return {'type': 'error', 'message': 'At least one Cluster must be assigned to an Area Manager.'}, 400
+            if len(assigned_clusters) > 6:
+                return {'type': 'error', 'message': 'An Area Manager can be assigned a maximum of 6 clusters.'}, 400
+            user.assigned_clusters = assigned_clusters
+        else:
+            user.assigned_clusters = []
+
+        # -- Password ------------------------------------------
+        if new_password or confirm_new_password:
+            if new_password != confirm_new_password:
+                return {'type': 'error', 'message': 'New password and confirm password do not match.'}, 400
+            if len(new_password) < 6:
+                return {'type': 'error', 'message': 'New password must be at least 6 characters.'}, 400
+            user.password = generate_password_hash(new_password, method='pbkdf2:sha256')
+
+        # -- Audit ---------------------------------------------
+        log_audit_event(
+            action='admin.user.update',
+            entity_type='User',
+            entity_id=user.id,
+            reason='User account updated by administrator.',
+            details={
+                'before': previous_state,
+                'after': {
+                    'full_name':           user.full_name,
+                    'username':            user.username,
+                    'email':               user.email,
+                    'role':                user.role,
+                    'assigned_store_id':   user.assigned_store_id,
+                    'assigned_store_ids':  [s.id for s in user.assigned_stores],
+                    'assigned_cluster_ids':[c.id for c in user.assigned_clusters],
+                    'password_changed':    bool(new_password),
+                },
+            },
+        )
+
+        db.session.commit()
+        return {'type': 'success', 'message': f'User {user.username} updated successfully.'}
+
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error updating user: {str(e)}'}, 500
+
+
+
+@api_handles.route('/users/<int:user_id>/delete', methods=['POST'])
+@login_required
+def api_delete_user(user_id):
+    if not _can_manage_users():
+        return {'type': 'error', 'message': 'Access denied. Only Admin or Superadmin can manage users.'}, 403
+
+    try:
+        user = User.query.get_or_404(user_id)
+
+        if current_user.id == user.id:
+            return {'type': 'error', 'message': 'You cannot delete your own account.'}, 400
+
+        deleted_snapshot = {
+            'username': user.username,
+            'email':    user.email,
+            'role':     user.role,
+        }
+
+        log_audit_event(
+            action='admin.user.delete',
+            entity_type='User',
+            entity_id=user.id,
+            reason='User account deleted by administrator.',
+            details=deleted_snapshot,
+        )
+
+        db.session.delete(user)
+        db.session.commit()
+        return {'type': 'success', 'message': f'User {user.username} deleted successfully.'}
+
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error deleting user: {str(e)}'}, 500
+       
+# ================================
+# Users Section End
+# ================================
+
+
+
+
+# ================================
+# Other Section
+# ================================
+def is_admin(silent=False):
+    if current_user.type == 1 or current_user.type == '1':
+        return 1
+    else:
+        return 0
+
+# ================================
+# Other Section End
+# ================================
+

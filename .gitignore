@@ -1,0 +1,30 @@
+# Virtual Environment
+venv/
+/venv
+
+# Database files (DO NOT COMMIT DATABASE)
+*.db
+*.sqlite
+*.sqlite3
+instance/
+instance/*.db
+instance/database.db
+
+# Python cache & artifacts
+__pycache__/
+*.pyc
+/website/__pycache__
+*.pyo
+*.pyd
+
+# Environment & IDE
+.env
+.vscode/
+.idea/
+
+# Ignore iPayroll
+iPayroll/
+scratch/
+*.zip
+
+*.pyc

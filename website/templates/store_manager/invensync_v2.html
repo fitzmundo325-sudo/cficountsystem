@@ -1,0 +1,641 @@
+
+{% extends "base_headless.html" %}
+
+{% block title %}Ending Inventory{% endblock %}
+
+{% block content %}
+
+<style>
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; }
+
+  .skeleton { background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 37%, #e2e8f0 63%); background-size: 400% 100%; animation: skeleton-loading 1.4s ease infinite; }
+  @keyframes skeleton-loading { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+
+  #main-content table thead th, #main-content table tbody tr[data-product-id] td { border-right: 1px solid rgba(203, 213, 225, 0.55); }
+  #main-content table thead th:last-child, #main-content table tbody tr[data-product-id] td:last-child { border-right: none; }
+
+  /* Fullscreen uses the custom page scrollbar; hide its native scrollbars. */
+  #fullscreen-scroll-container {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  #fullscreen-scroll-container::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  #fullscreen-modal,
+  #fullscreen-modal * {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  #fullscreen-modal::-webkit-scrollbar,
+  #fullscreen-modal *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  html:has(#fullscreen-modal:not(.hidden)),
+  body:has(#fullscreen-modal:not(.hidden)) {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  html:has(#fullscreen-modal:not(.hidden))::-webkit-scrollbar,
+  body:has(#fullscreen-modal:not(.hidden))::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+
+  @keyframes bounceIn { 0% { opacity: 0; transform: scale(0.7); } 50% { transform: scale(1.03); } 100% { opacity: 1; transform: scale(1); } }
+  .animate-bounce-in { animation: bounceIn 0.4s ease-out; }
+
+  .beginning-spotlight-panel { position: fixed; z-index: 9998; background: rgba(15, 23, 42, 0.72); pointer-events: auto; }
+  .beginning-spotlight-target { position: relative; z-index: 9999; box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35), 0 0 24px rgba(14, 165, 233, 0.5); }
+  thead th.beginning-spotlight-target { position: sticky; }
+  .beginning-spotlight-label { position: fixed; z-index: 10000; max-width: min(360px, calc(100vw - 32px)); background: #0f172a; color: #ffffff; padding: 18px 20px; border-radius: 14px; border: 1px solid rgba(148, 163, 184, 0.32); font-size: 17px; font-weight: 700; line-height: 1.35; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45); box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95); pointer-events: auto; }
+  .beginning-spotlight-label button { margin-top: 14px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: #ffffff; color: #0f172a; padding: 10px 24px; font-size: 14px; font-weight: 800; text-shadow: none; box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28); transition: background-color 0.15s ease, transform 0.15s ease; }
+  .beginning-spotlight-label button:hover { background: #f8fafc; transform: translateY(-1px); }
+
+  .motif-tour-panel { position: fixed; z-index: 10030; background: rgba(15, 23, 42, 0.72); pointer-events: auto; }
+  .motif-button-badge { position: absolute; top: 4px; right: 4px; transform: translate(50%, -50%); width: 14px; height: 14px; min-width: 14px; padding: 0; border-radius: 9999px; background: #ef4444; border: 2px solid #0f172a; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; line-height: 1; color: #ffffff; font-weight: 700; animation: motifBadgePulse 1.8s ease-in-out infinite; }
+  .motif-button-badge.motif-button-badge--count { width: auto; min-width: 20px; height: 20px; padding: 0 6px; }
+  @keyframes motifBadgePulse { 0%, 100% { transform: translate(50%, -50%) scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 50% { transform: translate(50%, -50%) scale(1.15); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); } }
+  .motif-tour-target { position: relative; z-index: 10031 !important; box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.45), 0 0 24px rgba(14, 165, 233, 0.6); }
+  .motif-tour-label { position: fixed; z-index: 10032; max-width: min(360px, calc(100vw - 32px)); background: #0f172a; color: #ffffff; padding: 18px 20px; border-radius: 14px; border: 1px solid rgba(148, 163, 184, 0.32); font-size: 17px; font-weight: 700; line-height: 1.35; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45); box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95); pointer-events: auto; }
+  .motif-tour-label button { margin-top: 14px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: #ffffff; color: #0f172a; padding: 10px 24px; font-size: 14px; font-weight: 800; text-shadow: none; box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28); transition: background-color 0.15s ease, transform 0.15s ease; }
+  .motif-tour-label button:hover { background: #f8fafc; transform: translateY(-1px); }
+
+  .trans-trace-tooltip { position: fixed; z-index: 9999; min-width: 340px; max-width: 500px; max-height: 340px; overflow: auto; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38); padding: 10px 12px; font-size: 12px; line-height: 1.45; opacity: 0; visibility: hidden; transform: translateY(-4px); transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease; }
+  .trans-trace-tooltip.show { opacity: 1; visibility: visible; transform: translateY(0); }
+  .trans-trace-hover:hover { background: #eef2ff; border-radius: 6px; box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.35); }
+  
+  
+  .missing_dates_modal{
+	z-index:999;
+  }
+
+  /* External, always-visible horizontal control for the wide inventory table. */
+  .invensync-horizontal-scrollbar {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 3px;
+    z-index: 10040;
+    display: none;
+    padding: 4px 0;
+    overflow: hidden !important;
+    overflow-y: hidden !important;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: rgba(248, 250, 252, 0.97);
+    box-shadow: 0 5px 14px rgba(15, 23, 42, 0.18);
+    scrollbar-width: auto !important;
+    -ms-overflow-style: auto !important;
+  }
+
+  .invensync-horizontal-scrollbar.is-active { display: block; }
+  body.invensync-fullscreen-active #invensync-main-horizontal-scrollbar { display: none !important; pointer-events: none; }
+  html.invensync-fullscreen-active,
+  html.invensync-fullscreen-active body {
+    overflow: hidden !important;
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  html.invensync-fullscreen-active::-webkit-scrollbar,
+  html.invensync-fullscreen-active body::-webkit-scrollbar,
+  html.invensync-fullscreen-active *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  html.invensync-fullscreen-active * {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  body.invensync-fullscreen-active,
+  body.invensync-fullscreen-active #main-content,
+  body.invensync-fullscreen-active #main-content * {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  body.invensync-fullscreen-active::-webkit-scrollbar,
+  body.invensync-fullscreen-active #main-content::-webkit-scrollbar,
+  body.invensync-fullscreen-active #main-content *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  .invensync-horizontal-scrollbar__rail { position: relative; height: 10px; margin: 0 4px; border-radius: 999px; background: #e2e8f0; }
+  .invensync-horizontal-scrollbar__thumb { position: absolute; top: 0; left: 0; height: 10px; min-width: 48px; border-radius: 999px; background: #475569; cursor: grab; touch-action: none; }
+  .invensync-horizontal-scrollbar__thumb:hover, .invensync-horizontal-scrollbar__thumb.is-dragging { background: #1e293b; cursor: grabbing; }
+  html.admin-dark .invensync-horizontal-scrollbar { border-color: #475569; background: rgba(30, 41, 59, 0.97); }
+  html.admin-dark .invensync-horizontal-scrollbar__rail { background: #334155; }
+  html.admin-dark .invensync-horizontal-scrollbar__thumb { background: #94a3b8; }
+  html.admin-dark .invensync-horizontal-scrollbar__thumb:hover, html.admin-dark .invensync-horizontal-scrollbar__thumb.is-dragging { background: #cbd5e1; }
+
+  
+  
+</style>
+
+<script>
+let currentUserRole = {{ user.role|tojson }};
+let initialStoreId = {{ request.args.get('store_id', '')|tojson }};
+let initialDate = {{ request.args.get('date', '')|tojson }};
+let initialGuideParam = {{ request.args.get('guide', '')|tojson }};
+window.INVENSYNC_URLS = {
+  saveAdjustments: {{ url_for('views.save_invensync_adjustments')|tojson }},
+  transferTrace: {{ url_for('api_handles.invensync_transfer_trace')|tojson }},
+  dataExportBase: {{ url_for('views.store_manager_data_export')|tojson }},
+  storeExcelExportBase: {{ url_for('admin.export_invensync_store_excel', store_id=0)|tojson }}
+};
+</script>
+<!-- Top Header -->
+<header class="sticky top-0 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-2 min-h-14 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between hide_element bluring_element" style="z-index:99;">
+  <div class="flex items-center gap-3 sm:gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <a href="{{ url_for('views.invensync_v2') }}" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" title="Back to Invensync Dashboard" data-visible-role="Admin,Superadmin">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </a>
+
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500" data-visible-role="Admin,Superadmin">
+      <span class="hover:text-slate-900 cursor-pointer">Admin</span><span class="mx-2">/</span><span class="hover:text-slate-900 cursor-pointer">InvenSync</span><span class="mx-2">/</span><span class="text-slate-900">Store Details</span>
+    </nav>
+	
+	
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500" data-visible-role="Inventory Staff,Cluster Manager,Auditor,Area Manager">
+      <span class="hover:text-slate-900 cursor-pointer">Inventory Staff</span><span class="mx-2">/</span><span class="text-slate-900">InvenSync</span><span class="mx-2">/</span>
+      <span class="px-2 py-0.5 bg-violet-100 text-violet-700 text-xs rounded-full font-semibold" data-visible-when="is_edit_adjustments">Adjustments Editable</span>
+      <span class="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full font-semibold" data-visible-when="not:is_edit_adjustments">View Only</span>
+    </nav>
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500" data-visible-role="Store Manager">
+      <span class="hover:text-slate-900 cursor-pointer">Store Manager</span><span class="mx-2">/</span><span class="text-slate-900">InvenSync</span>
+    </nav>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-3 sm:justify-end">
+    <button onclick="startBeginningStockGuide(true)" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50" title="Restart InvenSync guide" data-visible-role="Store Manager">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4"></path><path d="M12 17h.01"></path></svg>
+      <span>Help</span>
+    </button>
+
+    <button id="openExportInvenSyncModal" type="button" class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 text-white px-3 py-2 text-xs font-semibold hover:bg-emerald-700 transition-colors shadow-sm" title="Export Store InvenSync to Excel" data-visible-role="Area Manager,Admin,Superadmin">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+      <span>Export Excel</span>
+    </button>
+
+    <label for="selected_date" class="text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">Date</label>
+	
+	
+	<div id="dateNavSection" class="relative inline-flex items-center gap-1">
+		  <button type="button" onclick="navigateInvenSyncDateOffset(-1)" class="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-colors" title="Previous Day">
+			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"></path></svg>
+		  </button>
+		  <input type="date" id="selected_date" name="selected_date" required="" class="w-40 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none shadow-sm" onchange="changeDate(this.value)">
+		  <button type="button" onclick="navigateInvenSyncDateOffset(1)" class="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-colors" title="Next Day">
+			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"></path></svg>
+		  </button>
+	</div>
+	
+	
+    <div class="text-sm font-medium text-slate-600"><span class="text-slate-900" id="headerStoreName"></span></div>
+  </div>
+</header>
+
+<!-- Export InvenSync Modal (Area Manager / Admin / Superadmin) -->
+<div id="exportInvenSyncModal" class="fixed inset-0 z-[9999] hidden overflow-y-auto">
+  <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm" data-modal-backdrop></div>
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl" data-modal-content>
+      <div class="border-b border-slate-200 px-6 py-4">
+        <h3 class="text-xl font-bold text-slate-900">Export InvenSync Data</h3>
+        <p class="mt-1 text-sm text-slate-500">Choose what data to export for <span id="exportModalStoreName"></span></p>
+      </div>
+	  
+	  <div id="exportInvenSyncForm" class="space-y-4 px-6 py-5">
+  <div id="exportFieldsView">
+    <div>
+      <label class="block text-sm font-semibold text-slate-700 mb-3">Export Type</label>
+      <div class="space-y-2">
+        <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+          <input type="radio" name="export_type" value="single" checked class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+          <div><p class="font-medium text-slate-900">Single Date</p><p class="text-xs text-slate-500">Export data for one specific date</p></div>
+        </label>
+        <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+          <input type="radio" name="export_type" value="range" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+          <div><p class="font-medium text-slate-900">Date Range</p><p class="text-xs text-slate-500">Export data for a range of dates</p></div>
+        </label>
+        <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+          <input type="radio" name="export_type" value="all" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+          <div><p class="font-medium text-slate-900">All Dates</p><p class="text-xs text-slate-500">Export all historical data for this store</p></div>
+        </label>
+      </div>
+    </div>
+    <div id="singleDateFields" class="mt-4">
+      <label for="export_single_date" class="mb-1 block text-sm font-semibold text-slate-700">Date</label>
+      <input type="date" id="export_single_date" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
+    </div>
+    <div id="rangeDateFields" class="hidden mt-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label for="export_start_date" class="mb-1 block text-sm font-semibold text-slate-700">Start Date</label>
+          <input type="date" id="export_start_date" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"></div>
+        <div><label for="export_end_date" class="mb-1 block text-sm font-semibold text-slate-700">End Date</label>
+          <input type="date" id="export_end_date" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="exportProgressView" class="hidden py-4">
+    <p class="mb-2 text-sm font-semibold text-slate-700" id="exportProgressLabel">Preparing export...</p>
+    <div class="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
+      <div id="exportProgressBar" class="h-full bg-emerald-600 transition-all duration-150" style="width: 0%"></div>
+    </div>
+    <p class="mt-2 text-xs text-slate-500" id="exportProgressDetail"></p>
+  </div>
+
+  <div class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+    <button type="button" data-modal-close class="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100">Cancel</button>
+    <button type="button" id="exportInvenSyncSubmitBtn" class="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700">Export Excel</button>
+  </div>
+</div>
+	  
+	  
+	  
+     </div>
+  </div>
+</div>
+<!-- Content -->
+<div id="invensync-page-shell" class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-[2400px] w-full mx-auto space-y-6">
+
+  <!-- Page Header -->
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Ending Inventory - <span id="pageStoreName"></span></h1>
+      <p class="mt-1 text-slate-600">Daily stock counts, deliveries, transfers, wastage, and variance tracking.</p>
+    </div>
+    <div class="flex items-center gap-2 blur_element bluring_element">
+      <button id="admin-unfinalize-btn" type="button" onclick="unfinalizeInventory()" class="flex items-center gap-2 border border-red-300 bg-red-50 text-red-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-red-100 transition-all" title="Revert this day to editable so the store can re-enter data and attach files" data-visible-role="Admin,Superadmin" data-visible-when="is_day_locked">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        <span>Unfinalize</span>
+      </button>
+      <button id="admin-unlock-selected-btn" data-admin-selected-toggle type="button" onclick="toggleAdminSelectedCell()" class="flex items-center gap-2 border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-amber-100 transition-all" title="Unlock the selected cells, row, or column" data-visible-role="Admin,Superadmin">
+        <span>Unlock Selected</span>
+      </button>
+      <button id="admin-unlock-all-btn" data-admin-all-toggle type="button" onclick="toggleAllAdminCells()" class="flex items-center gap-2 border border-sky-300 bg-sky-50 text-sky-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-sky-100 transition-all" title="Unlock every input cell on this page" data-visible-role="Admin,Superadmin">
+        <span>Unlock All</span>
+      </button>
+      <button id="admin-save-corrections-btn" data-admin-save-corrections type="button" onclick="saveAdminCorrections()" disabled class="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300" data-visible-role="Admin,Superadmin">
+        Save Changes
+      </button>
+      <button onclick="syncProducts()" class="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-all" title="Sync products from Product Masterlist" data-visible-when="not:is_view_only">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+        <span>Sync</span>
+      </button>
+      <button id="motif-breakdown-button" type="button" onclick="openMotifBreakdownModal()" class="relative flex items-center gap-2 border border-slate-300 bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-slate-800 transition-all" title="Open Additional Charge for Motif breakdown" data-visible-role="Store Manager" data-visible-when="motif_charge_payload">
+        <span>Motif Breakdown</span>
+        <span id="motif-breakdown-badge" class="motif-button-badge hidden"></span>
+      </button>
+      <button type="button" onclick="openInvensyncExportModal()" class="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-all" title="Export InvenSync data to Excel" data-visible-role="Inventory Staff">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span>Export Excel</span>
+      </button>
+      <button id="save-adjustments-btn" type="button" onclick="saveAdjustments()" disabled class="px-4 py-2 bg-violet-600 text-white text-sm font-semibold rounded-lg hover:bg-violet-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:hover:bg-slate-300" data-visible-role="Inventory Staff" data-visible-when="is_edit_adjustments">
+        Save Adjustments
+      </button>
+      <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-all">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+        <span>Fullscreen</span>
+      </button>
+      <button id="save-inventory-btn" data-save-inventory type="button" onclick="saveAll()" disabled class="px-4 py-2 bg-sky-600 text-white text-sm font-semibold rounded-lg hover:bg-sky-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:hover:bg-slate-300" data-visible-when="not:is_view_only">
+        Save
+      </button>
+    </div>
+  </section>
+
+  <!-- Status Banners -->
+  <div id="noWastageBanner" class="hidden rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">No wastage was recorded for this store on the selected inventory date.</div>
+  <div id="lockedNoWastageBanner" class="hidden rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">This inventory day is finalized and locked. No wastage was recorded for this store on the selected date.</div>
+  <div id="lockedAdminBanner" class="hidden rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">This inventory day is finalized and locked. Admin users can edit unlocked cells, rows, or columns directly.</div>
+  <div id="lockedAdminUnlockBanner" class="hidden rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">This inventory day is finalized and locked. Certain cells, rows, or columns have been unlocked by an Admin and may be editable. If you want other changes, please ask IT through our ticketing system.</div>
+  <div id="lockedViewOnlyBanner" class="hidden rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">This inventory day is finalized and locked. Users can view it, but they can no longer edit or save changes for this date. If you want changes, please ask IT through our ticketing system.</div>
+
+  <!-- First Time User Popup Modal -->
+  <div id="first-time-modal" class="hidden fixed inset-0 z-[9999] flex items-center justify-center bg-black/40" style="margin-top: 0;">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
+      <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
+        <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        </div>
+        <div><h2 class="text-white font-bold text-lg leading-tight">Welcome to InvenSync!</h2><p class="text-slate-400 text-xs mt-0.5" id="firstTimeModalStoreName"></p></div>
+      </div>
+      <div class="px-6 py-5 space-y-4">
+        <div class="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-500 flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <p class="text-sm text-slate-700">It looks like this is your first time here. This walkthrough explains the complete InvenSync inventory flow.</p>
+        </div>
+        <p class="text-sm text-slate-600">You will see how Beginning Stock connects with Delivery, TransAct transfers, Wastage, POS Sold, ending counts, theoretical ending, and variance.</p>
+      </div>
+      <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+        <button onclick="startBeginningStockGuide(true)" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">Got it, let me start!</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="space-y-3">
+    <div id="inventory-search-guide-target" class="relative max-w-md">
+      <input id="product-search-input" type="search" autocomplete="off" placeholder="Search product, code, or price" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pl-9 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100">
+      <svg xmlns="http://www.w3.org/2000/svg" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+    </div>
+    <div id="inventory-category-guide-target" class="flex flex-wrap items-center gap-2">
+      <button type="button" class="category-filter-btn px-3 py-2 rounded-lg border border-slate-300 bg-slate-900 text-white text-sm font-semibold transition fancy_button" data-category-filter="all" onclick="filterInventoryCategory('all')">All</button>
+    </div>
+  </div>
+
+  <!-- Products Table -->
+  <div id="main-content" class="bg-white rounded-xl border border-slate-200 shadow-sm">
+    <div class="relative border border-slate-200 rounded-xl">
+      <div class="inventory-scroll-container overflow-x-auto overflow-y-visible">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-100 text-black" id="invensyncTableHead"></thead>
+          <tbody class="divide-y divide-slate-200" id="invensyncTableBody"></tbody>
+        </table>
+      </div>
+      <div id="invensync-main-horizontal-scrollbar" class="invensync-horizontal-scrollbar" aria-label="Scroll inventory table horizontally" tabindex="0">
+        <div class="invensync-horizontal-scrollbar__rail"><div class="invensync-horizontal-scrollbar__thumb"></div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<!-- Missing InvenSync Dates Modal -->
+<div id="missing-dates-modal" class="fixed inset-0 z-20 hidden missing_dates_modal">
+  <div id="missing-dates-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+    <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200">
+        <h3 class="text-lg font-bold text-slate-900">Missing InvenSync Dates</h3>
+        <p class="text-sm text-red-600 mt-1" id="missingDatesCount"></p>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to open the oldest missing date and finalize InvenSync.</p>
+        <div class="max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100" id="missingDatesList"></div>
+      </div>
+      <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
+        <button id="missing-dates-go" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-slate-700 hover:bg-slate-800 rounded-lg transition-colors shadow-sm">Go</button>
+      </div>
+    </div>
+  </div>
+</div>
+<template id="missingDateRowTemplate">
+  <div class="px-3 py-2 flex items-center justify-between" data-cell="row">
+    <span class="text-sm font-semibold text-red-700" data-cell="label"></span>
+    <span class="text-xs text-red-500" data-cell="iso"></span>
+  </div>
+</template>
+
+<!-- Motif Breakdown Modal -->
+<div id="motif-breakdown-modal" class="fixed inset-0 z-[9998] hidden">
+  <div class="absolute inset-0 bg-slate-950/60"></div>
+  <div class="relative z-10 flex min-h-full items-center justify-center p-4">
+    <div class="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div class="w-[calc(100%+1.25rem)] bg-slate-900 px-6 py-4 text-white">
+        <h3 class="text-xl font-bold">Additional Charge for Motif Detected</h3>
+        <p class="mt-1 text-sm text-slate-200">Enter the 2 or 3 products included in this motif charge, their prices, and any discount.</p>
+      </div>
+      <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-950">
+          <div class="text-xs font-bold uppercase text-slate-700">Quantity</div>
+          <div class="mt-1 text-lg font-black" id="motifQuantityDisplay"></div>
+        </div>
+        <div id="motif-groups" class="space-y-4"></div>
+      </div>
+      <div class="shrink-0 flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <button type="button" onclick="closeMotifBreakdownModal()" class="rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-100">Close</button>
+        <button id="motif-save-guide-target" type="button" onclick="saveMotifBreakdown()" class="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 hover:bg-slate-800">Save Breakdown</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<template id="motifGroupTemplate">
+  <div class="motif-group overflow-hidden rounded-xl border border-slate-200" data-cell="group">
+    <div class="flex items-center justify-between bg-slate-50 px-4 py-3">
+      <h4 class="text-sm font-black text-slate-950" data-cell="title"></h4>
+      <span class="text-xs font-semibold text-slate-700">Select 2 or 3 products</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-3 py-2 text-left text-xs font-bold uppercase text-slate-500">Product Included / Combo With</th>
+            <th class="w-28 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Sold Qty</th>
+            <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Net Price</th>
+            <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Discount</th>
+            <th class="w-12 px-3 py-2 text-center text-xs font-bold uppercase text-slate-500">Clear</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100" data-cell="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</template>
+<template id="motifRowTemplate">
+  <tr data-cell="row">
+    <td class="px-3 py-2">
+      <div class="relative">
+        <input type="search" class="motif-product-input w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-500" placeholder="Type to search Product Master" autocomplete="off">
+        <div class="motif-product-dropdown fixed z-[10020] hidden max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl"></div>
+      </div>
+    </td>
+    <td class="px-3 py-2"><input type="number" min="0" step="1" class="motif-qty-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0"></td>
+    <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="motif-price-input w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-right text-sm font-semibold text-slate-600 outline-none" placeholder="0.00" readonly title="Calculated as Unit Price × Sold Qty − Discount"></td>
+    <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="motif-discount-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0.00"></td>
+    <td class="px-3 py-2 text-center"><button type="button" class="clear-motif-row inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100" title="Clear motif product row">×</button></td>
+  </tr>
+</template>
+
+
+<template id="theadFieldCellTemplate">
+  <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40" data-cell="th"></th>
+</template>
+
+<template id="theadSpacerCellTemplate">
+  <th class="h-8 bg-emerald-50 sticky top-[44px] z-40" aria-hidden="true" data-cell="spacer"></th>
+</template>
+
+<template id="theadEndingBannerCellTemplate">
+  <th class="h-8 px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-x border-slate-300 sticky top-[44px] z-40" data-cell="banner">Ending Inventory</th>
+</template>
+
+<template id="theadAdjustCellTemplate">
+  <th class="px-2 py-2 text-center font-semibold bg-violet-50 text-black border-r border-slate-300 sticky top-[42px] z-40" data-cell="th"></th>
+</template>
+
+
+
+<template id="skeletonRowTemplate">
+  <tr data-cell="row">
+    <td class="px-2 py-3 bg-sky-50 sticky left-0 z-10 border-r border-slate-200 shadow-lg">
+      <div class="skeleton h-4 w-32 rounded mb-1.5"></div>
+      <div class="skeleton h-3 w-20 rounded"></div>
+    </td>
+    <td colspan="100" class="px-2 py-3">
+      <div class="skeleton h-4 w-full rounded"></div>
+    </td>
+  </tr>
+</template>
+
+
+
+<div id="motif-guide-start-modal" class="fixed inset-0 z-[10040] hidden items-center justify-center bg-black/40">
+  <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
+    <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
+      <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+      </div>
+      <div><h2 class="text-white font-bold text-lg leading-tight">Motif Breakdown Guide</h2><p class="text-slate-400 text-xs mt-0.5" id="motifGuideStoreName"></p></div>
+    </div>
+    <div class="px-6 py-5 space-y-4">
+      <div class="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-500 flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <p class="text-sm text-slate-700">Additional Charge for Motif was detected. Please tell the system what products are included in each motif charge.</p>
+      </div>
+      <p class="text-sm text-slate-600">This guide will point you to product search, quantity, price/discount, and save.</p>
+    </div>
+    <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+      <button type="button" onclick="startMotifBreakdownGuide()" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">Got it, start guide!</button>
+    </div>
+  </div>
+</div>
+
+<!-- Inventory Staff Export Modal -->
+<div id="invensync-export-modal" class="hidden fixed inset-0 z-[10000] bg-slate-950/60 px-4 py-6">
+  <div class="mx-auto flex min-h-full max-w-lg items-center justify-center">
+    <div class="w-full overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <div class="bg-slate-900 px-6 py-5 text-white">
+        <h2 class="text-2xl font-bold">Export InvenSync Excel</h2>
+        <p class="mt-1 text-sm text-slate-300">Choose what data you want to download for <span id="invExportModalStoreName"></span>.</p>
+      </div>
+      <div class="space-y-4 px-6 py-6">
+        <a id="invExportCurrentDateLink" href="#" class="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-left transition hover:border-emerald-400 hover:bg-emerald-100">
+          <span><span class="block text-lg font-bold text-slate-900">Current Date</span><span class="mt-1 block text-sm text-slate-600" id="invExportCurrentDateLabel"></span></span>
+          <span class="rounded-lg bg-emerald-600 px-3 py-1 text-sm font-semibold text-white">Excel</span>
+        </a>
+        <a id="invExportMonthLink" href="#" class="flex items-center justify-between rounded-xl border border-sky-200 bg-sky-50 px-5 py-4 text-left transition hover:border-sky-400 hover:bg-sky-100">
+          <span><span class="block text-lg font-bold text-slate-900">Whole Month</span><span class="mt-1 block text-sm text-slate-600">Export every InvenSync record in the selected month.</span></span>
+          <span class="rounded-lg bg-sky-600 px-3 py-1 text-sm font-semibold text-white">Excel</span>
+        </a>
+      </div>
+      <div class="flex justify-end border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <button type="button" onclick="closeInvensyncExportModal()" class="rounded-lg bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-100">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Fullscreen Modal -->
+<div id="fullscreen-modal" class="hidden fixed inset-0 z-50 bg-white" style="z-index:100;">
+  <div class="h-full flex flex-col">
+    <div class="flex-none bg-white border-b border-slate-200 px-6 h-16 flex items-center justify-between shadow-sm">
+      <div class="flex items-center gap-4"><div class="text-sm text-slate-600" id="fullscreen-subtitle"></div></div>
+      <div class="flex items-center gap-3">
+        <button type="button" onclick="unfinalizeInventory()" class="flex items-center gap-2 border border-red-300 bg-red-50 text-red-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-red-100 transition-all" title="Revert this day to editable so the store can re-enter data and attach files" data-visible-role="Admin,Superadmin" data-visible-when="is_day_locked"><span>Unfinalize</span></button>
+        <button data-admin-selected-toggle type="button" onclick="toggleAdminSelectedCell()" class="flex items-center gap-2 border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-amber-100 transition-all" title="Unlock the selected cells, row, or column" data-visible-role="Admin,Superadmin"><span>Unlock Selected</span></button>
+        <button data-admin-all-toggle type="button" onclick="toggleAllAdminCells()" class="flex items-center gap-2 border border-sky-300 bg-sky-50 text-sky-800 px-3 py-2 rounded-lg text-sm font-semibold hover:bg-sky-100 transition-all" title="Unlock every input cell on this page" data-visible-role="Admin,Superadmin"><span>Unlock All</span></button>
+        <button data-admin-save-corrections type="button" onclick="saveAdminCorrections()" disabled class="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300" data-visible-role="Admin,Superadmin">Save Changes</button>
+        <button onclick="syncProducts()" class="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-all" title="Sync products from Product Masterlist" data-visible-when="not:is_view_only">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg><span>Sync</span>
+        </button>
+        <button type="button" onclick="openMotifBreakdownModal()" class="flex items-center gap-2 border border-slate-300 bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-slate-800 transition-all" title="Open Additional Charge for Motif breakdown" data-visible-role="Store Manager" data-visible-when="motif_charge_payload"><span>Motif Breakdown</span></button>
+        <button type="button" onclick="openInvensyncExportModal()" class="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-all" title="Export InvenSync data to Excel" data-visible-role="Inventory Staff">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>Export Excel</span>
+        </button>
+        <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-all">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg><span>Exit Fullscreen</span>
+        </button>
+        <button data-save-inventory type="button" onclick="saveAll()" disabled class="px-4 py-2 bg-sky-600 text-white text-sm font-semibold rounded-lg hover:bg-sky-700 transition-colors disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:hover:bg-slate-300" data-visible-when="not:is_view_only">Save</button>
+      </div>
+    </div>
+<div id="fullscreen-scroll-container" class="flex-1 overflow-auto bg-white"><div id="modal-content" class="transition-all duration-300 ease-in-out"></div></div>
+<div id="invensync-fullscreen-horizontal-scrollbar" class="invensync-horizontal-scrollbar" aria-label="Scroll inventory table horizontally" tabindex="0"><div class="invensync-horizontal-scrollbar__rail"><div class="invensync-horizontal-scrollbar__thumb"></div></div></div>
+  </div>
+</div>
+
+<template id="categoryHeaderRowTemplate">
+  <tr class="bg-slate-100 category-header" data-cell="row">
+    <td class="px-4 py-3 bg-slate-100 sticky left-0 z-20 border-r border-slate-200 shadow-lg">
+      <div class="flex items-center gap-3">
+        <span class="font-bold text-slate-700" data-cell="name"></span>
+        <span class="invensync-category-count px-2 py-0.5 primary_background_darker text-slate-600 text-xs rounded-full" data-cell="count"></span>
+      </div>
+    </td>
+    <td class="px-4 py-3" data-cell="spacer"></td>
+  </tr>
+</template>
+
+
+
+<template id="productRowTemplate">
+  <tr class="hover:bg-slate-50 blur_element bluring_element" data-cell="row">
+    <td class="px-2 py-2 bg-sky-50 sticky left-0 z-10 border-r border-slate-200 shadow-lg">
+      <div class="font-medium text-slate-900 text-sm" data-cell="description"></div>
+      <div class="text-xs text-slate-500 truncate max-w-[260px]" data-cell="code-price"></div>
+    </td>
+    <td class="px-2 py-2 text-center border-l-2 border-emerald-400" data-field="beginning_qty">
+      <input type="number" placeholder="0" class="beginning-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="beginning_qty">
+      <span class="beginning-qty hidden" data-cell="beginning_qty_span"></span>
+    </td>
+    <td class="px-2 py-2" data-field="delivery_qty"><input type="number" class="delivery-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none trans-trace-hover" data-cell="delivery_qty" data-trace="delivery"></td>
+    <td class="px-2 py-2" data-field="trans_in_qty"><input type="number" class="trans-in-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none trans-trace-hover" data-cell="trans_in_qty" data-trace="in"></td>
+    <td class="px-2 py-2" data-field="bo_qty"><input type="number" class="bo-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="bo_qty"></td>
+    <td class="px-2 py-2" data-field="adv_del_qty"><input type="number" class="adv-del-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="adv_del_qty"></td>
+    <td class="px-2 py-2" data-field="trans_out_qty"><input type="number" class="trans-out-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none trans-trace-hover" data-cell="trans_out_qty" data-trace="out"></td>
+    <td class="px-2 py-2" data-field="wastage_qty"><input type="number" class="wastage-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="wastage_qty"></td>
+    <td class="px-2 py-2 text-center text-slate-600 wastage-amount" data-field="wastage_amount" data-cell="wastage_amount"></td>
+    <td class="px-2 py-2" data-field="csi_qty"><input type="number" class="csi-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="csi_qty"></td>
+    <td class="px-2 py-2" data-field="quantity_sold"><input type="number" class="sold-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none trans-trace-hover" data-cell="quantity_sold" data-trace="sold"></td>
+    <td class="px-2 py-2" data-field="ending_d5_qty"><input type="number" class="ending-d5-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="ending_d5_qty"></td>
+    <td class="px-2 py-2" data-field="ending_d4_qty"><input type="number" class="ending-d4-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="ending_d4_qty"></td>
+    <td class="px-2 py-2" data-field="ending_d3_qty"><input type="number" class="ending-d3-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="ending_d3_qty"></td>
+    <td class="px-2 py-2 text-center font-semibold text-slate-900 total-ending" data-field="total_ending_qty" data-cell="total_ending_qty"></td>
+    <td class="px-2 py-2 text-center text-slate-600 total-peso" data-field="total_peso_srp" data-cell="total_peso_srp"></td>
+    <td class="px-2 py-2 text-center bg-green-100 text-green-800 theo-ending" data-field="theo_ending_qty" data-cell="theo_ending_qty"></td>
+    <td class="px-2 py-2 text-center text-slate-600 variance" data-field="variance_qty" data-cell="variance_qty"></td>
+    <td class="px-2 py-2 text-center text-slate-600 variance-peso" data-field="variance_peso" data-cell="variance_peso"></td>
+    <td class="px-2 py-2 text-center" data-field="remarks"><input type="text" class="remarks-input w-28 px-2 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="remarks"></td>
+    <td class="px-2 py-2 text-center" data-adjust="type">
+      <select class="adjust-type inv-adjust-only w-24 px-1.5 py-1.5 text-xs bg-white border border-slate-200 rounded" data-cell="adjustment_type">
+        <option value="">-</option>
+        <option value="Swapping">Swapping</option>
+        <option value="OFFSET">OFFSET</option>
+        <option value="Variance">Variance</option>
+      </select>
+    </td>
+    <td class="px-2 py-2" data-adjust="product">
+      <div class="adjust-product-wrap relative">
+        <input type="text" class="adjust-product-input inv-adjust-only w-32 px-1.5 py-1.5 text-xs bg-white border border-slate-200 rounded" placeholder="Search product" autocomplete="off" data-cell="adjustment_product_input">
+        <input type="hidden" class="adjust-product inv-adjust-only" data-cell="adjustment_product_id">
+      </div>
+    </td>
+    <td class="px-2 py-2 text-center" data-adjust="qty"><input type="number" class="adjust-qty inv-adjust-only w-14 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm" data-cell="adjustment_qty"></td>
+    <td class="px-2 py-2 text-center hidden" data-adjust="charges" id="charges-cell"><input type="text" class="adjust-charges inv-adjust-only w-24 px-1.5 py-1.5 text-xs bg-white border border-slate-200 rounded" data-cell="adjustment_charges"></td>
+    <input type="hidden" class="inv-item-id" data-cell="item-id">
+    <input type="hidden" class="srp-price" data-cell="srp-price">
+  </tr>
+</template>
+
+
+
+<script defer src="{{ url_for('static', filename='js/handles/inv_sync_store_manager_page_handles.js') }}?v=invensync-scrollbar-20261010-7"></script>
+
+<script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+
+
+{% endblock %}

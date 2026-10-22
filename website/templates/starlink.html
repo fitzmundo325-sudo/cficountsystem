@@ -1,0 +1,63 @@
+{% if current_user.role in ['Admin', 'Superadmin'] %}
+  {% extends "admin_base.html" %}
+{% else %}
+  {% extends "base.html" %}
+{% endif %}
+
+{% block title %}Starlink{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 flex min-h-16 items-center border-b border-slate-200 bg-white/80 px-6 backdrop-blur-md">
+  <div class="flex items-center gap-3">
+    <button id="toggle-mobile" class="rounded-lg p-2 text-slate-600 transition-colors hover:bg-slate-100 lg:hidden" aria-label="Open navigation">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <nav class="text-sm font-medium text-slate-500">
+      <span>{{ 'Admin' if current_user.role in ['Admin', 'Superadmin'] else 'Cluster Manager' }}</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Starlink</span>
+    </nav>
+  </div>
+</header>
+
+<main class="mx-auto w-full max-w-7xl space-y-6 px-6 py-8">
+  <section class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <h1 class="text-3xl font-bold tracking-tight text-slate-900">Starlink</h1>
+      <p class="mt-1 text-slate-600">Store sales and transaction performance for {{ period_label }}.</p>
+    </div>
+    <span class="inline-flex rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">{{ period_label }}</span>
+  </section>
+
+  <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-900 text-white">
+          <tr>
+            <th class="px-5 py-3 text-left text-xs font-bold uppercase tracking-wider">Starlink Store</th>
+            <th class="px-5 py-3 text-right text-xs font-bold uppercase tracking-wider">Net Sales</th>
+            <th class="px-5 py-3 text-right text-xs font-bold uppercase tracking-wider">TC</th>
+            <th class="px-5 py-3 text-right text-xs font-bold uppercase tracking-wider">ADS</th>
+            <th class="px-5 py-3 text-right text-xs font-bold uppercase tracking-wider">ADTC</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for row in starlink_rows %}
+          <tr class="odd:bg-white even:bg-slate-50 hover:bg-sky-50">
+            <td class="px-5 py-4 text-sm font-bold text-slate-900">{{ row.store.name }}</td>
+            <td class="px-5 py-4 text-right text-sm font-semibold text-slate-800">₱{{ "{:,.2f}".format(row.net_sales) }}</td>
+            <td class="px-5 py-4 text-right text-sm text-slate-700">{{ "{:,}".format(row.transaction_count) }}</td>
+            <td class="px-5 py-4 text-right text-sm font-semibold text-emerald-700">₱{{ "{:,.2f}".format(row.ads) }}</td>
+            <td class="px-5 py-4 text-right text-sm font-semibold text-indigo-700">{{ "{:,.2f}".format(row.adtc) }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="px-5 py-12 text-center text-sm text-slate-500">No stores with “Starlink” in their name are available for this account.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+{% endblock %}

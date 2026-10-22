@@ -1,0 +1,1561 @@
+﻿{% extends "base.html" %}
+{% block title %}POS Sold - {{ store.name }}{% endblock %}
+
+{% block content %}
+<style>
+  @keyframes bounceIn {
+    0% { opacity: 0; transform: scale(0.7); }
+    50% { transform: scale(1.03); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+
+  .animate-bounce-in {
+    animation: bounceIn 0.4s ease-out;
+  }
+
+  .pos-tour-panel {
+    position: fixed;
+    z-index: 9998;
+    background: rgba(15, 23, 42, 0.72);
+    pointer-events: auto;
+  }
+
+  .pos-tour-target {
+    position: relative;
+    z-index: 9999;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.35), 0 0 24px rgba(245, 158, 11, 0.55);
+  }
+
+  .pos-tour-label {
+    position: fixed;
+    z-index: 10000;
+    max-width: min(360px, calc(100vw - 32px));
+    background: #0f172a;
+    color: #ffffff;
+    padding: 18px 20px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.35;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
+    pointer-events: auto;
+  }
+
+  .pos-tour-label button {
+    margin-top: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 800;
+    text-shadow: none;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .pos-tour-label button:hover {
+    background: #f8fafc;
+    transform: translateY(-1px);
+  }
+
+  .motif-tour-panel {
+    position: fixed;
+    z-index: 10030;
+    background: rgba(15, 23, 42, 0.72);
+    pointer-events: auto;
+  }
+
+  .motif-tour-target {
+    position: relative;
+    z-index: 10031 !important;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.45), 0 0 24px rgba(14, 165, 233, 0.6);
+  }
+
+  .motif-tour-label {
+    position: fixed;
+    z-index: 10032;
+    max-width: min(360px, calc(100vw - 32px));
+    background: #0f172a;
+    color: #ffffff;
+    padding: 18px 20px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.35;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
+    pointer-events: auto;
+  }
+
+  .motif-tour-label button {
+    margin-top: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 800;
+    text-shadow: none;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .motif-tour-label button:hover {
+    background: #f8fafc;
+    transform: translateY(-1px);
+  }
+</style>
+
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div class="flex items-center gap-3 sm:gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Store Manager</span>
+      <span class="mx-2">/</span>
+      <a href="{{ url_for('views.store_manager_report', date=selected_report_date) }}" class="hover:text-slate-900">Daily Report</a>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">POS Sold</span>
+    </nav>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-3 sm:justify-end">
+    {% if user and user.role == 'Inventory Staff' %}
+    <a href="{{ url_for('views.store_manager_data_export', type='pos-sold', store_id=store.id, date=selected_report_date if selected_report_date else today) }}" class="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700" title="Download POS Sold Excel">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+      <span>Export Excel</span>
+    </a>
+    {% endif %}
+    <button id="pos-tour-help-btn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50" title="Restart help guide">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4"></path>
+        <path d="M12 17h.01"></path>
+      </svg>
+      <span>Help</span>
+    </button>
+    <label for="report_date" class="text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
+      Report Date
+    </label>
+    <input
+      type="date"
+      id="report_date"
+      name="report_date"
+      required
+      value="{{ selected_report_date if selected_report_date else today }}"
+      class="w-40 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none shadow-sm"
+    >
+    <div class="text-sm font-medium text-slate-600">
+      <span class="text-slate-900">{{ store.name }}</span>
+    </div>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">POS Sold</h1>
+      <p class="mt-1 text-slate-600">Upload and review POS sold extract for {{ store.name }}</p>
+    </div>
+  </section>
+
+  <section class="border border-slate-200 bg-white shadow-sm">
+    <div class="px-4 md:px-5 py-3 bg-amber-50/70 border-b border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+      <div>
+        <h3 class="text-sm md:text-base font-bold text-slate-900">POS Sold Extract / File</h3>
+        <p class="text-xs text-slate-500 mt-0.5">Extracted rows are preview-only and do not affect InvenSync until you click Save.</p>
+      </div>
+      {% if selected_report and pos_sold_source != 'draft' %}
+      <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium {{ 'bg-amber-100 text-amber-700' if selected_report.status == 'Pending' else ('bg-emerald-100 text-emerald-700' if selected_report.status == 'Approved' else 'bg-rose-100 text-rose-700') }}">
+        {{ selected_report.status }}
+      </span>
+      {% elif pos_sold_source == 'draft' and pos_scan_success %}
+      <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-sky-100 text-sky-700">
+        Draft scanned ΓÇö Save to submit
+      </span>
+      {% endif %}
+    </div>
+    <div class="p-4 space-y-3">
+      {% if user and user.role == 'Store Manager' and pos_sold_day_finalized %}
+      <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+        <p class="text-xs font-semibold text-emerald-800">
+          End of Day is already done for {{ selected_report_date if selected_report_date else today }} — POS Sold is locked and can no longer be edited or deleted.
+          Contact an Admin to unfinalize the day.
+        </p>
+      </div>
+      {% endif %}
+      {% if user and user.role == 'Store Manager' %}
+      <form action="{{ url_for('views.review_pos_sold_excel') }}" method="POST" enctype="multipart/form-data" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 lg:items-end">
+        <input type="hidden" name="report_date" id="pos-upload-report-date" value="{{ selected_report_date if selected_report_date else today }}">
+        <div>
+          <label for="pos_file" class="block text-sm font-semibold text-slate-800 mb-1">POS Excel File</label>
+          <p class="text-xs text-slate-500 mb-1">Upload the POS sold extract file.</p>
+          <div class="flex flex-wrap items-center gap-2">
+            {% if not pos_sold_locked %}
+            <input id="pos_file" name="pos_file" type="file" accept=".xls,.xlsx" required class="sr-only pos-file-input" data-file-label="pos-file-label">
+            <label id="pos-file-guide-target" for="pos_file" class="flex flex-1 min-h-[44px] cursor-pointer items-center overflow-hidden rounded-none border border-slate-200 bg-white text-sm transition-colors hover:border-amber-300">
+              <span class="shrink-0 border-r border-slate-200 bg-slate-50 px-3 py-2 font-medium text-slate-800">Choose File</span>
+              <span id="pos-file-label" class="truncate px-3 py-2 text-slate-500">No file chosen</span>
+            </label>
+            {% else %}
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-600 shrink-0"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span class="text-xs font-semibold text-emerald-800">POS Sold saved for {{ selected_report_date }}</span>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          {% if pos_sold_source in ('staged', 'saved') %}
+          <a
+            href="{{ url_for('views.store_manager_report', date=selected_report_date) }}"
+            class="h-10 w-full sm:w-auto px-5 inline-flex items-center justify-center text-xs font-semibold text-white bg-amber-600 rounded-md hover:bg-amber-700 transition-all shadow-sm shadow-amber-600/20 text-center"
+          >
+            Next
+          </a>
+          {% if not pos_sold_day_finalized %}
+          <form method="POST" action="{{ url_for('views.delete_all_pos_sold_data') }}" onsubmit="return confirm('Delete ALL saved POS Sold records for {{ selected_report_date if selected_report_date else today }}? Sold quantities in InvenSync will be cleared.');">
+            <input type="hidden" name="report_date" value="{{ selected_report_date if selected_report_date else today }}">
+            <button type="submit" class="h-10 inline-flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-3 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100" title="Delete all saved POS Sold rows for this date">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              Delete All
+            </button>
+          </form>
+          {% endif %}
+          {% elif pos_sold_source == 'draft' and pos_sold_items %}
+          <button
+            id="go-daily-summary-btn"
+            type="button"
+            class="h-10 w-full sm:w-auto px-5 inline-flex items-center justify-center text-xs font-semibold text-white bg-emerald-600 rounded-md hover:bg-emerald-700 transition-all shadow-sm shadow-emerald-600/20 text-center"
+          >
+            Save
+          </button>
+          <button type="button" id="clear-pos-inline-btn" class="h-10 w-10 shrink-0 inline-flex items-center justify-center text-rose-700 bg-rose-50 border border-rose-200 rounded-md hover:bg-rose-100 transition-colors" title="Clear Extracted Data" aria-label="Clear Extracted Data">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+          {% else %}
+          <button id="pos-scan-guide-target" type="submit" class="h-10 w-full sm:w-auto px-5 text-xs font-semibold bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-all shadow-sm shadow-amber-600/20">
+            Scan Data
+          </button>
+          {% endif %}
+        </div>
+      </form>
+      {% if pos_sold_source == 'draft' and pos_sold_items %}
+      <form id="pos-save-form" action="{{ url_for('views.submit_pos_sold_report') }}" method="POST" enctype="multipart/form-data" class="hidden">
+        <input type="hidden" name="report_date" value="{{ selected_report_date if selected_report_date else today }}">
+        <input type="hidden" id="pos-save-motif-json" name="motif_breakdown_json" value="">
+        <input type="hidden" id="pos-save-redirect-to" name="redirect_to" value="daily_report">
+      </form>
+      {% endif %}
+
+
+      <div id="pos-tour-sample-card" class="hidden rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p class="text-[11px] font-semibold text-amber-700">Showing extracted preview data (not yet saved).</p>
+          <div class="flex items-center gap-2">
+            <a id="pos-tour-next-target" href="{{ url_for('views.store_manager_report', date=selected_report_date, lock_date=1) }}" class="h-10 px-5 inline-flex items-center justify-center text-xs font-semibold text-white bg-indigo-600 rounded-md shadow-sm shadow-indigo-600/20">
+              Next
+            </a>
+            <button id="pos-tour-clear-target" type="button" class="h-10 w-10 shrink-0 inline-flex items-center justify-center text-rose-700 bg-rose-50 border border-rose-200 rounded-md" title="Clear Extracted Data" aria-label="Clear Extracted Data">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="overflow-x-auto border border-slate-200 rounded-md bg-white">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-100/80">
+              <tr>
+                <th class="px-4 py-2 text-left text-[11px] font-bold text-slate-500 uppercase">Product</th>
+                <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Qty</th>
+                <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Gross</th>
+                <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Discount</th>
+                <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Net Sales</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr class="bg-white">
+                <td class="px-4 py-2.5 text-xs text-slate-700">Sample Product</td>
+                <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">12</td>
+                <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">0.00</td>
+                <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">0.00</td>
+                <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">0.00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% elif pos_sold_items %}
+      <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+        <p class="text-xs font-semibold text-emerald-800">POS sold already uploaded for this report date (one-time upload only).</p>
+      </div>
+      {% endif %}
+
+      {% if pos_sold_source == 'draft' and pos_sold_items %}
+      <form id="clear-pos-inline-form" action="{{ url_for('views.clear_pos_sold_review_data') }}" method="POST" class="hidden">
+        <input type="hidden" name="report_date" id="pos-clear-report-date" value="{{ selected_report_date if selected_report_date else today }}">
+      </form>
+      {% endif %}
+
+      {% if pos_sold_items %}
+      {% if pos_sold_source == 'draft' %}
+      <p class="text-[11px] font-semibold text-amber-700">Showing extracted preview data (not yet saved).</p>
+      {% elif pos_sold_source == 'staged' %}
+      <p class="text-[11px] font-semibold text-emerald-700">Saved POS Sold ΓÇö reflected in InvenSync and awaiting Daily Report submission.</p>
+      {% endif %}
+      {% if user and user.role == 'Store Manager' and not pos_sold_day_finalized and pos_sold_source in ('staged', 'saved') %}
+      <p class="text-xs text-slate-500">Saved POS Sold rows can be deleted until End of Day.</p>
+      {% endif %}
+      <div class="overflow-x-auto border border-slate-200 rounded-md">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-100/80">
+            <tr>
+              <th class="px-4 py-2 text-left text-[11px] font-bold text-slate-500 uppercase">Product</th>
+              <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Qty</th>
+              <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Gross</th>
+              <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Discount</th>
+              <th class="px-4 py-2 text-right text-[11px] font-bold text-slate-500 uppercase">Net Sales</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for item in pos_sold_items %}
+            <tr class="odd:bg-white even:bg-slate-50/70 hover:bg-amber-50/40 transition-colors">
+              <td class="px-4 py-2.5 text-xs text-slate-700">{{ item.product_name }}</td>
+              <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">{{ item.quantity }}</td>
+              <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">{{ '%.2f'|format(item.gross_sales or 0) }}</td>
+              <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">{{ '%.2f'|format(item.discount or 0) }}</td>
+              <td class="px-4 py-2.5 text-xs text-slate-900 text-right font-semibold">{{ '%.2f'|format(item.net_sales or 0) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5">
+        <p class="text-xs text-rose-700">No extracted POS sold data yet for this selected report date.</p>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="border border-slate-200 bg-white shadow-sm">
+    <div class="px-4 py-2.5 bg-gradient-to-r from-violet-50 to-fuchsia-50 border-b border-slate-200">
+      <h3 class="text-sm font-bold text-slate-900">Z Reading Image <span class="text-slate-500">(Optional)</span></h3>
+      <p class="text-[11px] text-slate-500 mt-0.5">You may attach now or upload later after POS Sold upload.</p>
+    </div>
+    <div class="p-3.5 space-y-3">
+      {% if current_z_reading_image_preview_url %}
+      <div class="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-2.5">
+        <div class="w-28 shrink-0 rounded-md border border-emerald-200 overflow-hidden bg-white">
+          <img
+            src="{{ current_z_reading_image_preview_url }}"
+            alt="Current Attached Z Reading Image"
+            class="w-full h-auto max-h-28 object-contain"
+            loading="lazy"
+          >
+        </div>
+        <div class="min-w-0">
+          <p class="text-xs font-semibold text-emerald-800">Attached Z Reading Image</p>
+          <p class="text-[11px] text-emerald-700">The image will be stored when you click <span class="font-semibold">Save</span>.</p>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if user and user.role == 'Store Manager' and (not current_z_reading_image_link) and (not pos_sold_locked) %}
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 space-y-2">
+          <div class="flex flex-col gap-2 md:flex-row md:items-end">
+            <div class="flex-1">
+              <label for="z_reading_image_required" class="block text-[11px] font-medium text-slate-700 mb-1">Attach Z Reading (.png / .jpg / .jpeg / .webp)</label>
+              <input id="z_reading_image_required" name="z_reading_image" form="pos-save-form" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-400 outline-none">
+            </div>
+          </div>
+          <div id="z-reading-local-preview" class="hidden items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-2.5">
+            <div class="w-28 shrink-0 rounded-md border border-emerald-200 overflow-hidden bg-white">
+              <img id="z-reading-local-preview-img" src="" alt="Selected Z Reading Image Preview" class="w-full h-auto max-h-28 object-contain" loading="lazy">
+            </div>
+            <div class="min-w-0">
+              <p class="text-xs font-semibold text-emerald-800">Selected Z Reading Image</p>
+              <p id="z-reading-local-preview-name" class="text-[11px] text-emerald-700 truncate"></p>
+            </div>
+          </div>
+        </div>
+      {% elif user and user.role == 'Store Manager' and (not current_z_reading_image_link) and pos_sold_locked %}
+        <form action="{{ url_for('views.upload_pos_sold_z_reading') }}" method="POST" enctype="multipart/form-data" class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2.5">
+          <input type="hidden" name="report_date" value="{{ selected_report_date if selected_report_date else today }}">
+          <div>
+            <label for="z_reading_image_late" class="block text-[11px] font-medium text-slate-700 mb-1">Upload Z Reading Now (.png / .jpg / .jpeg / .webp)</label>
+            <input id="z_reading_image_late" name="z_reading_image" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" required class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-400 outline-none">
+          </div>
+          <div class="md:self-end">
+            <button type="submit" class="w-full md:w-auto px-4 py-2 text-xs font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-all shadow-sm shadow-violet-600/25">
+              Upload Z Reading
+            </button>
+          </div>
+        </form>
+      {% elif user and user.role == 'Inventory Staff' and (not current_z_reading_image_link) %}
+        <div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5">
+          <p class="text-xs text-rose-700">No attached Z Reading image for this selected report date.</p>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+</div>
+
+{% if user and user.role == 'Store Manager' and missing_dates %}
+<div id="missing-dates-modal" class="fixed inset-0 z-50 hidden">
+  <div id="missing-dates-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+    <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200">
+        <h3 class="text-lg font-bold text-slate-900">Missing Report Dates</h3>
+        <p class="text-sm text-red-600 mt-1">
+          {{ missing_dates|length }} missing date{{ '' if missing_dates|length == 1 else 's' }} found for this month.
+        </p>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to auto-select the oldest missing date.</p>
+        <div class="max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100">
+          {% for missing in missing_dates %}
+          <div class="px-3 py-2 flex items-center justify-between">
+            <span class="text-sm font-semibold text-red-700">{{ missing.label }}</span>
+            <span class="text-xs text-red-500">{{ missing.iso }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
+        <button id="missing-dates-go" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-slate-700 hover:bg-slate-800 rounded-lg transition-colors shadow-sm">
+          Go
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div id="pos-tour-start-modal" class="fixed inset-0 z-[9999] items-center justify-center bg-black/40 {% if show_pos_flow_guide or request.args.get('guide') == '1' %}flex{% else %}hidden{% endif %}" style="margin-top: 0;">
+  <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
+    <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
+      <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
+          <path d="M3 3v18h18"></path>
+          <path d="m19 9-5 5-4-4-3 3"></path>
+        </svg>
+      </div>
+      <div>
+        <h2 class="text-white font-bold text-lg leading-tight">POS Sold Guide</h2>
+        <p class="text-slate-400 text-xs mt-0.5">{{ store.name }}</p>
+      </div>
+    </div>
+    <div class="px-6 py-5 space-y-4">
+      <div class="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-500 flex-shrink-0 mt-0.5">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M12 16v-4M12 8h.01"></path>
+        </svg>
+        <p class="text-sm text-slate-700">No POS Sold data has been uploaded yet for this report date.</p>
+      </div>
+      <p class="text-sm text-slate-600">Use this guide to scan the POS Excel file, review the extracted rows, and continue to Daily Report submission.</p>
+    </div>
+    <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+      <button id="pos-tour-start-btn" type="button" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+        Got it, start guide!
+      </button>
+    </div>
+  </div>
+</div>
+
+{% if user and user.role == 'Store Manager' and motif_charge_payload %}
+<div id="pos-motif-breakdown-modal" class="fixed inset-0 z-[9998] hidden">
+  <div class="absolute inset-0 bg-slate-950/60"></div>
+  <div class="relative z-10 flex min-h-full items-center justify-center p-4">
+    <div class="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div class="w-[calc(100%+1.25rem)] bg-slate-900 px-6 py-4 text-white">
+        <h3 class="text-xl font-bold">Additional Charge for Motif Detected</h3>
+        <p class="mt-1 text-sm text-slate-200">Enter the 2 or 3 products included in this motif charge, their prices, and any discount.</p>
+      </div>
+      <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-950">
+          <div class="text-xs font-bold uppercase text-slate-700">Quantity</div>
+          <div class="mt-1 text-lg font-black">{{ motif_charge_payload.quantity }}</div>
+        </div>
+
+        <div id="pos-motif-groups" class="space-y-4">
+          {% for motif_num in range(1, (motif_charge_payload.quantity|int) + 1) %}
+          <div class="pos-motif-group overflow-hidden rounded-xl border border-slate-200" data-motif-index="{{ motif_num }}">
+            <div class="flex items-center justify-between bg-slate-50 px-4 py-3">
+              <h4 class="text-sm font-black text-slate-950">Motif #{{ motif_num }}</h4>
+              <span class="text-xs font-semibold text-slate-700">Select 2 or 3 products</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                  <tr>
+                    <th class="px-3 py-2 text-left text-xs font-bold uppercase text-slate-500">Product Included / Combo With</th>
+                    <th class="w-28 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Sold Qty</th>
+                    <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Net Price</th>
+                    <th class="w-36 px-3 py-2 text-right text-xs font-bold uppercase text-slate-500">Discount</th>
+                    <th class="w-12 px-3 py-2 text-center text-xs font-bold uppercase text-slate-500">Clear</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  {% for row_num in range(1, 4) %}
+                  <tr data-motif-index="{{ motif_num }}" data-row-index="{{ row_num }}">
+                    <td class="px-3 py-2">
+                      <div class="relative">
+                        <input type="search" class="pos-motif-product-input w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-500" placeholder="Type to search Product Master" autocomplete="off">
+                        <div class="pos-motif-product-dropdown fixed z-[10020] hidden max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl"></div>
+                      </div>
+                    </td>
+                    <td class="px-3 py-2">
+                      <input type="number" min="0" step="1" class="pos-motif-qty-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0">
+                    </td>
+                    <td class="px-3 py-2">
+                      <input type="number" min="0" step="0.01" class="pos-motif-price-input w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-right text-sm font-semibold text-slate-600 outline-none" placeholder="0.00" readonly title="Calculated as Unit Price ├ù Sold Qty ΓêÆ Discount">
+                    </td>
+                    <td class="px-3 py-2">
+                      <input type="number" min="0" step="0.01" class="pos-motif-discount-input w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold outline-none focus:border-slate-500" placeholder="0.00">
+                    </td>
+                    <td class="px-3 py-2 text-center">
+                      <button type="button" class="clear-pos-motif-row inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100" title="Clear motif product row">├ù</button>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="shrink-0 flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <button type="button" id="pos-motif-close-btn" class="rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-100">Close</button>
+        <button type="button" id="pos-motif-save-btn" class="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 hover:bg-slate-800">Save Breakdown</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="pos-motif-guide-start-modal" class="fixed inset-0 z-[10040] hidden items-center justify-center bg-black/40">
+  <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
+    <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
+      <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+      </div>
+      <div>
+        <h2 class="text-white font-bold text-lg leading-tight">Motif Breakdown Guide</h2>
+        <p class="text-slate-400 text-xs mt-0.5">{{ store.name }}</p>
+      </div>
+    </div>
+    <div class="px-6 py-5 space-y-4">
+      <div class="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-500 flex-shrink-0 mt-0.5">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 16v-4M12 8h.01"/>
+        </svg>
+        <p class="text-sm text-slate-700">Additional Charge for Motif was detected. Please tell the system what products are included in each motif charge.</p>
+      </div>
+      <p class="text-sm text-slate-600">This guide will point you to product search, quantity, price/discount, and save.</p>
+    </div>
+    <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+      <button type="button" id="pos-motif-guide-start-btn" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+        Got it, start guide!
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const reportDateInput = document.getElementById('report_date');
+    const posUploadDateInput = document.getElementById('pos-upload-report-date');
+    const posClearDateInput = document.getElementById('pos-clear-report-date');
+    const goDailySummaryBtn = document.getElementById('go-daily-summary-btn');
+
+    const posSaveForm = document.getElementById('pos-save-form');
+    const posSaveRedirectTo = document.getElementById('pos-save-redirect-to');
+    const posSaveMotifJson = document.getElementById('pos-save-motif-json');
+    const clearPosInlineBtn = document.getElementById('clear-pos-inline-btn');
+    const clearPosInlineForm = document.getElementById('clear-pos-inline-form');
+    const baseUrl = {{ url_for('views.store_manager_pos_sold')|tojson }};
+    const isStoreManagerRole = {{ ((user and user.role == 'Store Manager') | tojson) }};
+    const posScanSuccess = {{ (pos_scan_success | default(false)) | tojson }};
+    const posScanRows = {{ (pos_scan_rows | default(0)) | tojson }};
+    const selectedReportDate = {{ selected_report_date|tojson }};
+    const motifChargePayload = {{ motif_charge_payload|default(none)|tojson }};
+    const motifProductOptions = {{ motif_product_options|default([])|tojson }};
+    const motifBreakdownKey = `invensyncMotifBreakdown:{{ store.id }}:${selectedReportDate}`;
+    const missingDates = {{ missing_dates|tojson }};
+    const nextMissingDate = {{ next_missing_date|tojson }};
+    const isPosGuideMode = {{ (request.args.get('guide') == '1')|tojson }};
+    if (isPosGuideMode && window.history && window.history.replaceState) {
+      const cleanGuideUrl = new URL(window.location.href);
+      cleanGuideUrl.searchParams.delete('guide');
+      window.history.replaceState({}, '', `${cleanGuideUrl.pathname}${cleanGuideUrl.search}${cleanGuideUrl.hash}`);
+    }
+    const missingDatesModal = document.getElementById('missing-dates-modal');
+    const missingDatesGoBtn = document.getElementById('missing-dates-go');
+    const shouldShowPosTour = {{ (show_pos_flow_guide | default(false)) | tojson }};
+    const posTourSampleCard = document.getElementById('pos-tour-sample-card');
+    const posTourStartModal = document.getElementById('pos-tour-start-modal');
+    const posTourStartBtn = document.getElementById('pos-tour-start-btn');
+    const posTourHelpBtn = document.getElementById('pos-tour-help-btn');
+    const posTourCompletionKey = 'pos-tour-completed-store-{{ store.id }}';
+    const posFileInput = document.getElementById('pos_file');
+    const posFileLabel = document.getElementById('pos-file-label');
+    const zReadingRequiredInput = document.getElementById('z_reading_image_required');
+    const zReadingLocalPreview = document.getElementById('z-reading-local-preview');
+    const zReadingLocalPreviewImg = document.getElementById('z-reading-local-preview-img');
+    const zReadingLocalPreviewName = document.getElementById('z-reading-local-preview-name');
+    let posTourActive = false;
+    let posTourStepIndex = 0;
+    let motifGuideActive = false;
+    let motifGuideStepIndex = 0;
+    const motifGuideSeenKey = 'motifBreakdownGuideSeenV2';
+
+    function notifyPos(message, type = 'info') {
+      if (typeof toast !== 'undefined' && typeof toast.show === 'function') {
+        toast.show(message, type);
+      } else {
+        alert(message);
+      }
+    }
+
+    function formatPeso(value) {
+      return `Γé▒${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+
+    function findMotifProductOption(productName) {
+      const normalizedName = String(productName || '').trim().toLowerCase();
+      if (!normalizedName) return null;
+      return (motifProductOptions || []).find(product => String(product.description || '').trim().toLowerCase() === normalizedName) || null;
+    }
+
+    function resetMotifRow(row) {
+      if (!row) return;
+      const productInput = row.querySelector('.pos-motif-product-input');
+      if (productInput) {
+        productInput.value = '';
+        productInput.classList.remove('border-red-300');
+        productInput.title = '';
+      }
+      row.querySelectorAll('.pos-motif-qty-input, .pos-motif-price-input, .pos-motif-discount-input').forEach(input => {
+        input.value = '';
+        input.disabled = true;
+        input.classList.add('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+      });
+    }
+
+    function disableMotifRowFields(row) {
+      if (!row) return;
+      row.querySelectorAll('.pos-motif-qty-input, .pos-motif-price-input, .pos-motif-discount-input').forEach(input => {
+        input.value = '';
+        input.disabled = true;
+        input.classList.add('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+      });
+    }
+
+    function enableMotifRow(row) {
+      if (!row) return;
+      row.querySelectorAll('.pos-motif-qty-input, .pos-motif-price-input, .pos-motif-discount-input').forEach(input => {
+        input.disabled = false;
+        input.classList.remove('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+      });
+      const priceInput = row.querySelector('.pos-motif-price-input');
+      if (priceInput) {
+        priceInput.readOnly = true;
+        priceInput.classList.add('bg-slate-100', 'text-slate-600', 'cursor-not-allowed');
+      }
+    }
+
+    function recalculateMotifPrice(row) {
+      if (!row) return;
+      const selectedProduct = findMotifProductOption(row.querySelector('.pos-motif-product-input')?.value || '');
+      const priceInput = row.querySelector('.pos-motif-price-input');
+      if (!priceInput) return;
+      if (!selectedProduct) {
+        priceInput.value = '';
+        return;
+      }
+      const quantity = Math.max(0, Number(row.querySelector('.pos-motif-qty-input')?.value || 0));
+      const discount = Math.max(0, Number(row.querySelector('.pos-motif-discount-input')?.value || 0));
+      priceInput.value = Math.max(0, (Number(selectedProduct.price || 0) * quantity) - discount).toFixed(2);
+    }
+
+    function hidePosMotifProductDropdown(input) {
+      const dropdown = input?.closest('td')?.querySelector('.pos-motif-product-dropdown');
+      if (dropdown) dropdown.classList.add('hidden');
+    }
+
+    function positionPosMotifProductDropdown(input, dropdown) {
+      if (!input || !dropdown) return;
+      const rect = input.getBoundingClientRect();
+      dropdown.style.left = `${rect.left}px`;
+      dropdown.style.top = `${rect.bottom + 4}px`;
+      dropdown.style.width = `${rect.width}px`;
+    }
+
+    function renderPosMotifProductDropdown(input) {
+      const dropdown = input?.closest('td')?.querySelector('.pos-motif-product-dropdown');
+      if (!input || !dropdown) return;
+      const query = String(input.value || '').trim().toLowerCase();
+      const products = (motifProductOptions || [])
+        .filter(product => {
+          const description = String(product.description || '').toLowerCase();
+          const code = String(product.code || '').toLowerCase();
+          return !query || description.includes(query) || code.includes(query);
+        })
+        .slice(0, 80);
+
+      dropdown.innerHTML = '';
+      positionPosMotifProductDropdown(input, dropdown);
+      if (!products.length) {
+        const empty = document.createElement('div');
+        empty.className = 'px-3 py-2 text-sm text-slate-500';
+        empty.textContent = 'No product found';
+        dropdown.appendChild(empty);
+        dropdown.classList.remove('hidden');
+        return;
+      }
+
+      products.forEach(product => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-950';
+        const name = document.createElement('span');
+        name.className = 'font-semibold';
+        name.textContent = product.description || '';
+        const meta = document.createElement('span');
+        meta.className = 'mt-0.5 block text-[11px] text-slate-500';
+        meta.textContent = `${product.code || '-'} ┬╖ ${formatPeso(product.price || 0)}`;
+        button.appendChild(name);
+        button.appendChild(meta);
+        button.addEventListener('mousedown', function(event) {
+          event.preventDefault();
+          input.value = product.description || '';
+          hidePosMotifProductDropdown(input);
+          syncMotifProductInput(input, { clearInvalid: true });
+        });
+        dropdown.appendChild(button);
+      });
+      dropdown.classList.remove('hidden');
+    }
+
+    function syncMotifProductInput(input, options = {}) {
+      const row = input.closest('tr');
+      const selectedProduct = findMotifProductOption(input.value);
+      input.classList.toggle('border-red-300', Boolean(input.value.trim()) && !selectedProduct);
+      input.title = selectedProduct ? `Product Master Code: ${selectedProduct.code || '-'}` : (input.value.trim() ? 'Select a product from Product Master' : '');
+      if (!selectedProduct) {
+        if (options.clearInvalid) {
+          resetMotifRow(row);
+        } else {
+          disableMotifRowFields(row);
+        }
+        return;
+      }
+      enableMotifRow(row);
+      const qtyInput = row.querySelector('.pos-motif-qty-input');
+      if (qtyInput && !qtyInput.value) qtyInput.value = '1';
+      recalculateMotifPrice(row);
+    }
+
+    function readMotifRows() {
+      const modal = document.getElementById('pos-motif-breakdown-modal');
+      if (!modal) return [];
+      return Array.from(modal.querySelectorAll('tbody tr')).map(row => {
+        const productInput = row.querySelector('.pos-motif-product-input');
+        const selectedProduct = findMotifProductOption(productInput?.value || '');
+        return {
+          product: selectedProduct?.description || '',
+          product_id: selectedProduct?.id || null,
+          product_code: selectedProduct?.code || null,
+          motif_index: Number(row.dataset.motifIndex || row.closest('.pos-motif-group')?.dataset.motifIndex || 1),
+          row_index: Number(row.dataset.rowIndex || 1),
+          quantity: Number(row.querySelector('.pos-motif-qty-input')?.value || 0),
+          unit_price: Number(selectedProduct?.price || 0),
+          price: Number(row.querySelector('.pos-motif-price-input')?.value || 0),
+          discount: Number(row.querySelector('.pos-motif-discount-input')?.value || 0)
+        };
+      });
+    }
+
+    function loadMotifRows() {
+      const modal = document.getElementById('pos-motif-breakdown-modal');
+      if (!modal) return false;
+      let saved = null;
+      try {
+        saved = JSON.parse(localStorage.getItem(motifBreakdownKey) || 'null');
+      } catch (_) {
+        saved = null;
+      }
+      if (!saved || !Array.isArray(saved.rows)) return false;
+      Array.from(modal.querySelectorAll('tbody tr')).forEach((row, index) => {
+        const savedRow = (saved.rows || []).find(item =>
+          Number(item.motif_index || 1) === Number(row.dataset.motifIndex || 1)
+          && Number(item.row_index || 1) === Number(row.dataset.rowIndex || 1)
+        ) || saved.rows[index] || {};
+        const productInput = row.querySelector('.pos-motif-product-input');
+        const qtyInput = row.querySelector('.pos-motif-qty-input');
+        const priceInput = row.querySelector('.pos-motif-price-input');
+        const discountInput = row.querySelector('.pos-motif-discount-input');
+        if (productInput) productInput.value = savedRow.product || '';
+        if (qtyInput) qtyInput.value = savedRow.quantity || '';
+        if (priceInput) priceInput.value = savedRow.price || '';
+        if (discountInput) discountInput.value = savedRow.discount || '';
+        if (productInput) syncMotifProductInput(productInput);
+      });
+      return true;
+    }
+
+    function openMotifModal() {
+      const modal = document.getElementById('pos-motif-breakdown-modal');
+      if (!modal) return;
+      loadMotifRows();
+      modal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+    }
+
+    function closeMotifModal() {
+      const modal = document.getElementById('pos-motif-breakdown-modal');
+      if (!modal) return;
+      clearMotifGuide();
+      hideMotifGuideStartModal();
+      modal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    function getMotifGuideStartModal() {
+      return document.getElementById('pos-motif-guide-start-modal');
+    }
+
+    function showMotifGuideStartModal() {
+      const modal = getMotifGuideStartModal();
+      if (!modal || localStorage.getItem(motifGuideSeenKey) === '1') return;
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    }
+
+    function hideMotifGuideStartModal() {
+      const modal = getMotifGuideStartModal();
+      if (!modal) return;
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+
+    function getMotifElementGroupRect(elements) {
+      const visibleElements = elements.filter(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (!visibleElements.length) return null;
+      const rects = visibleElements.map(function(el) {
+        return el.getBoundingClientRect();
+      });
+      const padding = 10;
+      return {
+        top: Math.max(0, Math.min.apply(null, rects.map(function(rect) { return rect.top; })) - padding),
+        left: Math.max(0, Math.min.apply(null, rects.map(function(rect) { return rect.left; })) - padding),
+        right: Math.min(window.innerWidth, Math.max.apply(null, rects.map(function(rect) { return rect.right; })) + padding),
+        bottom: Math.min(window.innerHeight, Math.max.apply(null, rects.map(function(rect) { return rect.bottom; })) + padding)
+      };
+    }
+
+    function getMotifGuideStep() {
+      const modal = document.getElementById('pos-motif-breakdown-modal');
+      if (!modal) return null;
+      const firstRow = modal.querySelector('tbody tr[data-motif-index="1"][data-row-index="1"]');
+      const priceDiscountFields = [
+        firstRow?.querySelector('.pos-motif-price-input'),
+        firstRow?.querySelector('.pos-motif-discount-input')
+      ].filter(Boolean);
+      const steps = [
+        {
+          elements: [firstRow?.querySelector('.pos-motif-product-input')],
+          text: 'Type the product included in this motif, then select it from Product Master.',
+          placement: 'right',
+          nextText: 'Next'
+        },
+        {
+          elements: [firstRow?.querySelector('.pos-motif-qty-input')],
+          text: 'Enter how many pieces of this product belong to this motif.',
+          placement: 'left',
+          nextText: 'Next'
+        },
+        {
+          elements: priceDiscountFields,
+          text: 'Price will follow the selected product. Add discount only if this motif product has one.',
+          placement: 'left',
+          nextText: 'Next'
+        },
+        {
+          elements: [document.getElementById('pos-motif-save-btn')],
+          text: 'Click Save Breakdown so the motif products reflect in the InvenSync Sold column.',
+          placement: 'top',
+          nextText: 'Finish'
+        }
+      ];
+      return steps[motifGuideStepIndex] || null;
+    }
+
+    function removeMotifPanels() {
+      document.querySelectorAll('.motif-tour-panel').forEach(function(panel) {
+        panel.remove();
+      });
+      document.querySelectorAll('.motif-tour-label').forEach(function(label) {
+        label.remove();
+      });
+    }
+
+    function clearMotifGuide() {
+      motifGuideActive = false;
+      motifGuideStepIndex = 0;
+      removeMotifPanels();
+      document.querySelectorAll('.motif-tour-target').forEach(function(el) {
+        el.classList.remove('motif-tour-target');
+      });
+    }
+
+    function applyMotifGuideTarget() {
+      document.querySelectorAll('.motif-tour-target').forEach(function(el) {
+        el.classList.remove('motif-tour-target');
+      });
+      const step = getMotifGuideStep();
+      if (!step) return;
+      step.elements.forEach(function(el) {
+        if (el) el.classList.add('motif-tour-target');
+      });
+    }
+
+    function renderMotifGuideSpotlight() {
+      removeMotifPanels();
+      const step = getMotifGuideStep();
+      if (!step) {
+        localStorage.setItem(motifGuideSeenKey, '1');
+        clearMotifGuide();
+        return;
+      }
+      const rect = getMotifElementGroupRect(step.elements);
+      if (!rect) return;
+      [
+        { top: 0, left: 0, width: window.innerWidth, height: rect.top },
+        { top: rect.bottom, left: 0, width: window.innerWidth, height: window.innerHeight - rect.bottom },
+        { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
+        { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top }
+      ].forEach(function(panel) {
+        const el = document.createElement('div');
+        el.className = 'motif-tour-panel';
+        el.style.top = `${panel.top}px`;
+        el.style.left = `${panel.left}px`;
+        el.style.width = `${Math.max(0, panel.width)}px`;
+        el.style.height = `${Math.max(0, panel.height)}px`;
+        document.body.appendChild(el);
+      });
+
+      const label = document.createElement('div');
+      label.className = 'motif-tour-label';
+      const message = document.createElement('div');
+      message.textContent = step.text;
+      const nextButton = document.createElement('button');
+      nextButton.type = 'button';
+      nextButton.textContent = step.nextText;
+      nextButton.addEventListener('click', nextMotifGuideStep);
+      label.appendChild(message);
+      label.appendChild(nextButton);
+
+      if (step.placement === 'top') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.max(24, rect.top - 130)}px`;
+      } else if (step.placement === 'left') {
+        label.style.left = `${Math.max(16, rect.left - 380)}px`;
+        label.style.top = `${Math.max(24, rect.top)}px`;
+      } else if (step.placement === 'bottom') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+      } else {
+        const labelLeft = rect.right + 24;
+        const hasRightSpace = labelLeft + 320 <= window.innerWidth;
+        label.style.left = `${hasRightSpace ? labelLeft : Math.max(16, rect.left - 340)}px`;
+        label.style.top = `${Math.max(24, rect.top)}px`;
+      }
+      document.body.appendChild(label);
+    }
+
+    function showMotifGuideStep() {
+      const step = getMotifGuideStep();
+      if (!step) {
+        localStorage.setItem(motifGuideSeenKey, '1');
+        clearMotifGuide();
+        return;
+      }
+      const target = step.elements.find(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+      setTimeout(function() {
+        applyMotifGuideTarget();
+        renderMotifGuideSpotlight();
+      }, 350);
+    }
+
+    function nextMotifGuideStep() {
+      motifGuideStepIndex += 1;
+      showMotifGuideStep();
+    }
+
+    function startMotifGuide() {
+      hideMotifGuideStartModal();
+      localStorage.setItem(motifGuideSeenKey, '1');
+      clearMotifGuide();
+      motifGuideActive = true;
+      motifGuideStepIndex = 0;
+      showMotifGuideStep();
+    }
+
+    function saveMotifRows() {
+      const rows = readMotifRows();
+      const filledRows = rows.filter(row => row.product_id);
+      if (filledRows.length === 0) {
+        localStorage.removeItem(motifBreakdownKey);
+        notifyPos('Motif breakdown cleared for this store/date.', 'info');
+        closeMotifModal();
+        return;
+      }
+      if (filledRows.length === 1) {
+        notifyPos('Please select at least 2 Product Master items for the motif breakdown.', 'warning');
+        return;
+      }
+      const invalidGroups = Array.from(document.querySelectorAll('#pos-motif-groups .pos-motif-group')).filter(group => {
+        const groupRows = filledRows.filter(row => Number(row.motif_index || 1) === Number(group.dataset.motifIndex || 1));
+        return groupRows.length < 2;
+      });
+      if (invalidGroups.length) {
+        notifyPos('Each Motif # must have at least 2 Product Master items, or clear all rows to remove the breakdown.', 'warning');
+        return;
+      }
+      if (filledRows.some(row => !Number(row.quantity || 0))) {
+        notifyPos('Please enter Sold Qty for each motif product.', 'warning');
+        return;
+      }
+      localStorage.setItem(motifBreakdownKey, JSON.stringify({
+        saved_at: new Date().toISOString(),
+        pos_payload: motifChargePayload,
+        rows: rows.map(row => row.product_id ? row : {
+          product: '',
+          product_id: null,
+          product_code: null,
+          motif_index: row.motif_index,
+          row_index: row.row_index,
+          quantity: 0,
+          unit_price: 0,
+          price: 0,
+          discount: 0
+        })
+      }));
+      notifyPos('Motif breakdown saved. It will reflect in InvenSync for this store/date.', 'success');
+      closeMotifModal();
+    }
+
+    function hasCompleteMotifBreakdown() {
+      if (!motifChargePayload?.detected) return true;
+      let saved = null;
+      try {
+        saved = JSON.parse(localStorage.getItem(motifBreakdownKey) || 'null');
+      } catch (_) {
+        return false;
+      }
+      if (!saved || !Array.isArray(saved.rows)) return false;
+      if (Number(saved.pos_payload?.quantity || 0) !== Number(motifChargePayload.quantity || 0)) return false;
+      const expectedMotifCount = Math.max(1, Number(motifChargePayload.quantity || 0));
+      for (let motifIndex = 1; motifIndex <= expectedMotifCount; motifIndex += 1) {
+        const completedRows = saved.rows.filter(row =>
+          Number(row?.motif_index || 1) === motifIndex
+          && Boolean(row?.product_id)
+          && Number(row?.quantity || 0) > 0
+        );
+        if (completedRows.length < 2 || completedRows.length > 3) return false;
+      }
+      return true;
+    }
+
+    function formatReportDateLong(isoDate) {
+      if (!isoDate) return '--';
+      const parsedDate = new Date(`${isoDate}T00:00:00`);
+      if (Number.isNaN(parsedDate.getTime())) return isoDate;
+      return parsedDate.toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+      });
+    }
+
+    function syncPosDateFields() {
+      if (!reportDateInput) return;
+      const dateValue = reportDateInput.value || '';
+      if (posUploadDateInput) posUploadDateInput.value = dateValue;
+      if (posClearDateInput) posClearDateInput.value = dateValue;
+    }
+
+    function shouldPromptForMotifBreakdown() {
+      return Boolean(motifChargePayload?.detected && !hasCompleteMotifBreakdown());
+    }
+
+    if (reportDateInput) {
+      reportDateInput.addEventListener('change', function() {
+        syncPosDateFields();
+        const selectedDate = reportDateInput.value;
+        if (selectedDate) {
+          window.location.href = `${baseUrl}?date=${encodeURIComponent(selectedDate)}`;
+        }
+      });
+      reportDateInput.addEventListener('input', syncPosDateFields);
+    }
+
+    if (posFileInput && posFileLabel) {
+      posFileInput.addEventListener('change', function() {
+        const fileName = posFileInput.files && posFileInput.files.length ? posFileInput.files[0].name : 'No file chosen';
+        posFileLabel.textContent = fileName;
+        posFileLabel.classList.toggle('text-slate-700', fileName !== 'No file chosen');
+        posFileLabel.classList.toggle('font-semibold', fileName !== 'No file chosen');
+        posFileLabel.classList.toggle('text-slate-500', fileName === 'No file chosen');
+      });
+    }
+
+    if (zReadingRequiredInput) {
+      zReadingRequiredInput.addEventListener('change', function() {
+        const selectedFile = zReadingRequiredInput.files && zReadingRequiredInput.files[0];
+        if (!selectedFile) {
+          if (zReadingLocalPreview) zReadingLocalPreview.classList.add('hidden');
+          return;
+        }
+        if (zReadingLocalPreviewImg) {
+          zReadingLocalPreviewImg.src = URL.createObjectURL(selectedFile);
+        }
+        if (zReadingLocalPreviewName) {
+          zReadingLocalPreviewName.textContent = selectedFile.name || '';
+        }
+        if (zReadingLocalPreview) {
+          zReadingLocalPreview.classList.remove('hidden');
+          zReadingLocalPreview.classList.add('flex');
+        }
+      });
+    }
+
+    if (clearPosInlineBtn && clearPosInlineForm) {
+      clearPosInlineBtn.addEventListener('click', function() {
+        localStorage.removeItem(motifBreakdownKey);
+        clearPosInlineForm.submit();
+      });
+    }
+
+    if (goDailySummaryBtn) {
+      goDailySummaryBtn.addEventListener('click', function(event) {
+        event.preventDefault();
+        const savingDate = reportDateInput ? reportDateInput.value : selectedReportDate;
+        if (shouldPromptForMotifBreakdown()) {
+          notifyPos('Additional Charge for Motif was detected. You can save POS Sold now and complete the breakdown later in InvenSync.', 'warning');
+        }
+        if (posSaveMotifJson) {
+          posSaveMotifJson.value = localStorage.getItem(motifBreakdownKey) || '';
+        }
+        if (posSaveRedirectTo) {
+          posSaveRedirectTo.value = 'pos_sold';
+        }
+        const savePosSold = function() {
+          if (!posSaveForm || goDailySummaryBtn.disabled) return;
+          goDailySummaryBtn.disabled = true;
+          goDailySummaryBtn.textContent = 'Saving...';
+          goDailySummaryBtn.classList.add('cursor-not-allowed', 'opacity-70');
+          posSaveForm.submit();
+        };
+        if (typeof showConfirmationModal === 'function') {
+          showConfirmationModal({
+            title: 'Save POS Sold?',
+            size: 'large',
+            modalWidth: '980px',
+            messageHtml: `
+              <div class="rounded-3xl border border-amber-200 bg-amber-50 px-8 py-7 text-left">
+                <p class="text-base font-bold uppercase tracking-wide text-amber-700">Saving Date Indicator</p>
+                <p class="mt-3 text-4xl font-extrabold leading-tight text-slate-900">You are saving for the day of: ${formatReportDateLong(savingDate)}</p>
+                <p class="mt-3 text-lg text-slate-600">This follows the date selected in the calendar.</p>
+              </div>
+              <p class="mt-7 text-xl text-slate-700">Saving will permanently store the scanned POS Sold data and reflect it in InvenSync. A <strong>Next</strong> button will appear to proceed to the Daily Report.</p>
+            `,
+            confirmText: 'Yes, Save',
+            cancelText: 'Cancel',
+            onConfirm: savePosSold
+          });
+          return;
+        }
+        savePosSold();
+      });
+    }
+
+    // A newly scanned file must be evaluated as new data. An older saved
+    // breakdown for the same store/date must not suppress the detection modal.
+    if (posScanSuccess) {
+      localStorage.removeItem(motifBreakdownKey);
+    }
+
+    if (posScanSuccess && typeof toast !== 'undefined' && typeof toast.show === 'function') {
+      const itemLabel = posScanRows === 1 ? 'item' : 'items';
+      toast.show(`Successfully scanned ${posScanRows} POS sold ${itemLabel} for ${selectedReportDate}.`, 'success');
+
+      const currentUrl = new URL(window.location.href);
+      currentUrl.searchParams.delete('pos_scan_success');
+      currentUrl.searchParams.delete('pos_scan_rows');
+      window.history.replaceState({}, document.title, currentUrl.toString());
+    }
+
+    const motifModal = document.getElementById('pos-motif-breakdown-modal');
+    if (motifModal && motifChargePayload?.detected) {
+      document.getElementById('pos-motif-guide-start-btn')?.addEventListener('click', startMotifGuide);
+      motifModal.querySelectorAll('tbody tr').forEach(resetMotifRow);
+      motifModal.querySelectorAll('.pos-motif-product-input').forEach(input => {
+        input.addEventListener('input', function() {
+          renderPosMotifProductDropdown(input);
+          syncMotifProductInput(input);
+        });
+        input.addEventListener('change', function() {
+          syncMotifProductInput(input, { clearInvalid: true });
+        });
+        input.addEventListener('focus', function() {
+          renderPosMotifProductDropdown(input);
+        });
+        input.addEventListener('blur', function() {
+          setTimeout(() => hidePosMotifProductDropdown(input), 150);
+        });
+      });
+      motifModal.querySelectorAll('.pos-motif-qty-input, .pos-motif-discount-input').forEach(input => {
+        input.addEventListener('input', function() {
+          recalculateMotifPrice(input.closest('tr'));
+        });
+        input.addEventListener('change', function() {
+          recalculateMotifPrice(input.closest('tr'));
+        });
+      });
+      document.getElementById('pos-motif-close-btn')?.addEventListener('click', closeMotifModal);
+      document.getElementById('pos-motif-save-btn')?.addEventListener('click', saveMotifRows);
+      motifModal.querySelectorAll('.clear-pos-motif-row').forEach(button => {
+        button.addEventListener('click', function() {
+          resetMotifRow(button.closest('tr'));
+        });
+      });
+      const hasSavedMotifRows = loadMotifRows();
+      if (posScanSuccess && !hasSavedMotifRows) {
+        setTimeout(function() {
+          openMotifModal();
+          showMotifGuideStartModal();
+        }, 250);
+      }
+    }
+
+    window.addEventListener('resize', function() {
+      document.querySelectorAll('.pos-motif-product-input').forEach(input => hidePosMotifProductDropdown(input));
+      if (motifGuideActive) renderMotifGuideSpotlight();
+    });
+
+    document.addEventListener('scroll', function(event) {
+      if (event.target && event.target.closest?.('#pos-motif-breakdown-modal')) {
+        document.querySelectorAll('.pos-motif-product-input').forEach(input => hidePosMotifProductDropdown(input));
+      }
+      if (motifGuideActive) renderMotifGuideSpotlight();
+    }, true);
+
+    function showMissingDatesModal() {
+      if (!missingDatesModal) return;
+      missingDatesModal.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+    }
+
+    function hideMissingDatesModal() {
+      if (!missingDatesModal) return;
+      missingDatesModal.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    if (missingDatesGoBtn) {
+      missingDatesGoBtn.addEventListener('click', function() {
+        if (!nextMissingDate) {
+          hideMissingDatesModal();
+          return;
+        }
+        window.location.href = `${baseUrl}?date=${encodeURIComponent(nextMissingDate)}`;
+      });
+    }
+
+    if (!isPosGuideMode && isStoreManagerRole && Array.isArray(missingDates) && missingDates.length > 0) {
+      showMissingDatesModal();
+    }
+
+    function getPosTourElementGroupRect(elements) {
+      const visibleElements = elements.filter(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (!visibleElements.length) return null;
+
+      const rects = visibleElements.map(function(el) {
+        return el.getBoundingClientRect();
+      });
+      const padding = 10;
+      return {
+        top: Math.max(0, Math.min.apply(null, rects.map(function(rect) { return rect.top; })) - padding),
+        left: Math.max(0, Math.min.apply(null, rects.map(function(rect) { return rect.left; })) - padding),
+        right: Math.min(window.innerWidth, Math.max.apply(null, rects.map(function(rect) { return rect.right; })) + padding),
+        bottom: Math.min(window.innerHeight, Math.max.apply(null, rects.map(function(rect) { return rect.bottom; })) + padding)
+      };
+    }
+
+    function getPosTourStep() {
+      const nextTarget = document.getElementById('go-daily-summary-btn') || document.getElementById('pos-tour-next-target');
+      const steps = [
+        {
+          elements: [document.getElementById('pos-file-guide-target')],
+          text: 'Choose the POS Excel file for this report date.',
+          placement: 'bottom',
+          nextText: 'Next',
+          showSample: false
+        },
+        {
+          elements: [document.getElementById('pos-scan-guide-target')],
+          text: 'Click Scan Data to extract the POS sold rows.',
+          placement: 'left',
+          nextText: 'Next',
+          showSample: false
+        },
+        {
+          elements: [document.getElementById('pos-tour-sample-card')],
+          text: 'After scanning, extracted POS rows will appear here for preview.',
+          placement: 'bottom-right',
+          align: 'right',
+          nextText: 'Next',
+          showSample: true
+        },
+        {
+          elements: [nextTarget],
+          text: 'Click Next to permanently store the scanned POS Sold rows and proceed to the Daily Report.',
+          placement: 'bottom',
+          nextText: 'Next',
+          showSample: true
+        },
+        {
+          elements: [document.getElementById('z_reading_image_required')],
+          text: 'Z Reading image is optional for now and can be uploaded later.',
+          placement: 'top',
+          nextText: 'Finish',
+          showSample: true
+        }
+      ];
+      const availableSteps = steps.filter(function(step) {
+        return step.elements.some(function(el) { return Boolean(el); });
+      });
+      return availableSteps[posTourStepIndex] || null;
+    }
+
+    function removePosTourPanels() {
+      document.querySelectorAll('.pos-tour-panel').forEach(function(panel) {
+        panel.remove();
+      });
+      document.querySelectorAll('.pos-tour-label').forEach(function(label) {
+        label.remove();
+      });
+    }
+
+    function clearPosTour() {
+      posTourActive = false;
+      posTourStepIndex = 0;
+      removePosTourPanels();
+      document.querySelectorAll('.pos-tour-target').forEach(function(el) {
+        el.classList.remove('pos-tour-target');
+      });
+      if (posTourSampleCard) {
+        posTourSampleCard.classList.add('hidden');
+      }
+    }
+
+    function applyPosTourTarget() {
+      document.querySelectorAll('.pos-tour-target').forEach(function(el) {
+        el.classList.remove('pos-tour-target');
+      });
+
+      const step = getPosTourStep();
+      if (!step) return;
+
+      step.elements.forEach(function(el) {
+        if (el) el.classList.add('pos-tour-target');
+      });
+    }
+
+    function renderPosTourSpotlight() {
+      removePosTourPanels();
+
+      const step = getPosTourStep();
+      if (!step) {
+        clearPosTour();
+        return;
+      }
+
+      const rect = getPosTourElementGroupRect(step.elements);
+      if (!rect) return;
+
+      const panels = [
+        { top: 0, left: 0, width: window.innerWidth, height: rect.top },
+        { top: rect.bottom, left: 0, width: window.innerWidth, height: window.innerHeight - rect.bottom },
+        { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
+        { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top }
+      ];
+
+      panels.forEach(function(panel) {
+        const el = document.createElement('div');
+        el.className = 'pos-tour-panel';
+        el.style.top = `${panel.top}px`;
+        el.style.left = `${panel.left}px`;
+        el.style.width = `${Math.max(0, panel.width)}px`;
+        el.style.height = `${Math.max(0, panel.height)}px`;
+        document.body.appendChild(el);
+      });
+
+      const label = document.createElement('div');
+      label.className = 'pos-tour-label';
+      const message = document.createElement('div');
+      message.textContent = step.text;
+      const nextButton = document.createElement('button');
+      nextButton.type = 'button';
+      nextButton.textContent = step.nextText;
+      nextButton.addEventListener('click', nextPosTourStep);
+      label.appendChild(message);
+      label.appendChild(nextButton);
+      if (step.align === 'right') {
+        label.style.textAlign = 'right';
+      }
+
+      if (step.placement === 'bottom') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+      } else if (step.placement === 'bottom-right') {
+        label.style.left = `${Math.max(16, Math.min(rect.right - 360, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+      } else if (step.placement === 'top') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.max(24, rect.top - 118)}px`;
+      } else if (step.placement === 'left') {
+        label.style.left = `${Math.max(16, rect.left - 380)}px`;
+        label.style.top = `${Math.max(24, rect.top)}px`;
+      } else {
+        const labelLeft = rect.right + 24;
+        const hasRightSpace = labelLeft + 320 <= window.innerWidth;
+        label.style.left = `${hasRightSpace ? labelLeft : Math.max(16, rect.left - 340)}px`;
+        label.style.top = `${Math.max(24, rect.top + Math.min(96, Math.max(0, (rect.bottom - rect.top) / 3)))}px`;
+      }
+      document.body.appendChild(label);
+    }
+
+    function showPosTourStep() {
+      const step = getPosTourStep();
+      if (!step) {
+        clearPosTour();
+        return;
+      }
+
+      if (posTourSampleCard) {
+        posTourSampleCard.classList.toggle('hidden', !step.showSample);
+      }
+
+      const target = step.elements.find(function(el) {
+        return el && el.offsetParent !== null;
+      });
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+
+      setTimeout(function() {
+        applyPosTourTarget();
+        renderPosTourSpotlight();
+      }, 350);
+    }
+
+    function nextPosTourStep() {
+      posTourStepIndex += 1;
+      if (!getPosTourStep()) {
+        try {
+          window.localStorage.setItem(posTourCompletionKey, '1');
+        } catch (error) {
+          return;
+        }
+        clearPosTour();
+        return;
+      }
+      showPosTourStep();
+    }
+
+    function startPosTour(force = false) {
+      if (!force && !shouldShowPosTour) return;
+      if (posTourStartModal) {
+        posTourStartModal.remove();
+      }
+      clearPosTour();
+      posTourActive = true;
+      posTourStepIndex = 0;
+      showPosTourStep();
+    }
+
+    try {
+      if (!isPosGuideMode && window.localStorage.getItem(posTourCompletionKey) === '1') {
+        posTourStartModal?.remove();
+      }
+    } catch (error) {
+      // Keep the first-time guide available when browser storage is blocked.
+    }
+
+    if (posTourStartBtn) {
+      posTourStartBtn.addEventListener('click', function() {
+        startPosTour(isPosGuideMode);
+      });
+    } else if (shouldShowPosTour) {
+      setTimeout(startPosTour, 550);
+    }
+    if (posTourHelpBtn) {
+      posTourHelpBtn.addEventListener('click', function() {
+        startPosTour(true);
+      });
+    }
+
+    window.addEventListener('resize', function() {
+      if (posTourActive) renderPosTourSpotlight();
+    });
+    window.addEventListener('scroll', function() {
+      if (posTourActive) renderPosTourSpotlight();
+    }, { passive: true });
+
+  });
+</script>
+
+{% endblock %}

@@ -1,0 +1,1206 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="application-name" content="iDashboard">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="iDashboard">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>{% block title %}{% endblock %} - Admin Panel</title>
+  <script>
+    try {
+      if (localStorage.getItem('adminTheme') === 'dark') {
+        document.documentElement.classList.add('admin-dark');
+      }
+    } catch (error) {}
+  </script>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+  <link href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" rel="stylesheet">
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
+    #sidebar nav.custom-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    #sidebar nav.custom-scrollbar::-webkit-scrollbar,
+    #sidebar nav.custom-scrollbar::-webkit-scrollbar-button {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+
+    .app-page-shell {
+      width: 100%;
+      max-width: 2400px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 1rem 1rem 1.5rem;
+      overflow-x: hidden;
+    }
+
+    @media (min-width: 768px) {
+      .app-page-shell {
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+      }
+    }
+    html.admin-dark { color-scheme: dark; }
+    html.admin-dark body,
+    html.admin-dark #main-content {
+      background-color: #020617 !important;
+      color: #e2e8f0;
+    }
+    html.admin-dark #sidebar {
+      background-color: #172554 !important;
+      border-color: #1e3a8a !important;
+    }
+    html.admin-dark #sidebar > div,
+    html.admin-dark #sidebar .border-slate-800 {
+      border-color: #1e3a8a !important;
+    }
+    html.admin-dark #sidebar .nav-item.bg-slate-800,
+    html.admin-dark #sidebar .nav-item-group > button.bg-slate-800 {
+      background-color: #1d4ed8 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #sidebar .nav-item:hover,
+    html.admin-dark #sidebar .nav-item-group > button:hover {
+      background-color: #1e40af !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #sidebar .bg-slate-700 {
+      background-color: #1e40af !important;
+    }
+    html.admin-dark #sidebar .bg-slate-800\/70,
+    html.admin-dark #sidebar .hover\:bg-slate-800:hover {
+      background-color: #1e3a8a !important;
+    }
+    html.admin-dark #sidebar .text-slate-500,
+    html.admin-dark #sidebar .text-slate-400,
+    html.admin-dark #sidebar .text-slate-300 {
+      color: #dbeafe !important;
+    }
+    html.admin-dark #main-content .bg-white,
+    html.admin-dark #main-content .bg-white\/80,
+    html.admin-dark #main-content .bg-white\/85,
+    html.admin-dark #main-content .bg-slate-50,
+    html.admin-dark #main-content .bg-slate-100,
+    html.admin-dark #main-content .bg-sky-50,
+    html.admin-dark #main-content .bg-indigo-50,
+    html.admin-dark #main-content .bg-blue-50,
+    html.admin-dark #main-content .bg-amber-50,
+    html.admin-dark #main-content .bg-emerald-50,
+    html.admin-dark #main-content .bg-green-50,
+    html.admin-dark #main-content .bg-rose-50 {
+      background-color: #0f172a !important;
+    }
+    html.admin-dark #main-content .text-slate-900,
+    html.admin-dark #main-content .text-slate-800,
+    html.admin-dark #main-content .text-black {
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content .text-slate-700,
+    html.admin-dark #main-content .text-slate-600,
+    html.admin-dark #main-content .text-slate-500,
+    html.admin-dark #main-content .text-slate-400 {
+      color: #cbd5e1 !important;
+    }
+    html.admin-dark #main-content .text-slate-300 {
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content .text-indigo-700,
+    html.admin-dark #main-content .text-indigo-600 {
+      color: #a5b4fc !important;
+    }
+    html.admin-dark #main-content .text-sky-800,
+    html.admin-dark #main-content .text-sky-700,
+    html.admin-dark #main-content .text-blue-800,
+    html.admin-dark #main-content .text-blue-700 {
+      color: #7dd3fc !important;
+    }
+    html.admin-dark #main-content .text-emerald-800,
+    html.admin-dark #main-content .text-emerald-700,
+    html.admin-dark #main-content .text-green-800,
+    html.admin-dark #main-content .text-green-700 {
+      color: #6ee7b7 !important;
+    }
+    html.admin-dark #main-content .text-amber-900,
+    html.admin-dark #main-content .text-amber-800,
+    html.admin-dark #main-content .text-amber-700,
+    html.admin-dark #main-content .text-orange-700 {
+      color: #fcd34d !important;
+    }
+    html.admin-dark #main-content .text-red-800,
+    html.admin-dark #main-content .text-red-700,
+    html.admin-dark #main-content .text-rose-700 {
+      color: #fda4af !important;
+    }
+    html.admin-dark #main-content a:not([class*="text-white"]):hover {
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .border-slate-100,
+    html.admin-dark #main-content .border-slate-200,
+    html.admin-dark #main-content .border-slate-300 {
+      border-color: #334155 !important;
+    }
+    html.admin-dark #main-content input,
+    html.admin-dark #main-content select,
+    html.admin-dark #main-content textarea {
+      background-color: #0f172a;
+      border-color: #475569;
+      color: #f8fafc;
+    }
+    html.admin-dark #main-content input::placeholder,
+    html.admin-dark #main-content textarea::placeholder {
+      color: #64748b;
+    }
+    html.admin-dark #main-content button.bg-white,
+    html.admin-dark #main-content a.bg-white {
+      background-color: #1e293b !important;
+      border-color: #475569 !important;
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content button.bg-slate-900,
+    html.admin-dark #main-content a.bg-slate-900,
+    html.admin-dark #main-content button.bg-slate-800,
+    html.admin-dark #main-content a.bg-slate-800,
+    html.admin-dark #main-content button.bg-slate-700,
+    html.admin-dark #main-content a.bg-slate-700,
+    html.admin-dark #main-content button.bg-slate-600,
+    html.admin-dark #main-content a.bg-slate-600 {
+      background-color: #334155 !important;
+      border-color: #475569 !important;
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-slate-800:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-800:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-700:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-700:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-600:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-600:hover {
+      background-color: #475569 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-slate-300,
+    html.admin-dark #main-content a.bg-slate-300,
+    html.admin-dark #main-content button.bg-slate-200,
+    html.admin-dark #main-content a.bg-slate-200,
+    html.admin-dark #main-content button.bg-slate-100,
+    html.admin-dark #main-content a.bg-slate-100 {
+      background-color: #1e293b !important;
+      border-color: #475569 !important;
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-slate-300:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-300:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-200:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-200:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-100:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-100:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-50:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-50:hover {
+      background-color: #334155 !important;
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content button.bg-indigo-600,
+    html.admin-dark #main-content a.bg-indigo-600,
+    html.admin-dark #main-content button.bg-violet-600,
+    html.admin-dark #main-content a.bg-violet-600 {
+      background-color: #4f46e5 !important;
+      border-color: #6366f1 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-indigo-700:hover,
+    html.admin-dark #main-content a.hover\:bg-indigo-700:hover,
+    html.admin-dark #main-content button.hover\:bg-violet-700:hover,
+    html.admin-dark #main-content a.hover\:bg-violet-700:hover {
+      background-color: #6366f1 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-indigo-100,
+    html.admin-dark #main-content a.bg-indigo-100,
+    html.admin-dark #main-content button.bg-indigo-50,
+    html.admin-dark #main-content a.bg-indigo-50 {
+      background-color: #312e81 !important;
+      border-color: #4f46e5 !important;
+      color: #c7d2fe !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-indigo-200:hover,
+    html.admin-dark #main-content a.hover\:bg-indigo-200:hover,
+    html.admin-dark #main-content button.hover\:bg-indigo-100:hover,
+    html.admin-dark #main-content a.hover\:bg-indigo-100:hover {
+      background-color: #4338ca !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-sky-600,
+    html.admin-dark #main-content a.bg-sky-600,
+    html.admin-dark #main-content button.bg-blue-600,
+    html.admin-dark #main-content a.bg-blue-600,
+    html.admin-dark #main-content button.bg-cyan-600,
+    html.admin-dark #main-content a.bg-cyan-600 {
+      background-color: #0284c7 !important;
+      border-color: #38bdf8 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-sky-700:hover,
+    html.admin-dark #main-content a.hover\:bg-sky-700:hover,
+    html.admin-dark #main-content button.hover\:bg-blue-700:hover,
+    html.admin-dark #main-content a.hover\:bg-blue-700:hover,
+    html.admin-dark #main-content button.hover\:bg-cyan-700:hover,
+    html.admin-dark #main-content a.hover\:bg-cyan-700:hover {
+      background-color: #0ea5e9 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-emerald-600,
+    html.admin-dark #main-content a.bg-emerald-600,
+    html.admin-dark #main-content button.bg-green-600,
+    html.admin-dark #main-content a.bg-green-600 {
+      background-color: #047857 !important;
+      border-color: #10b981 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-emerald-700:hover,
+    html.admin-dark #main-content a.hover\:bg-emerald-700:hover,
+    html.admin-dark #main-content button.hover\:bg-green-700:hover,
+    html.admin-dark #main-content a.hover\:bg-green-700:hover,
+    html.admin-dark #main-content button.hover\:bg-emerald-100:hover,
+    html.admin-dark #main-content a.hover\:bg-emerald-100:hover {
+      background-color: #059669 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-emerald-100,
+    html.admin-dark #main-content a.bg-emerald-100,
+    html.admin-dark #main-content button.bg-emerald-50,
+    html.admin-dark #main-content a.bg-emerald-50 {
+      background-color: #064e3b !important;
+      border-color: #10b981 !important;
+      color: #a7f3d0 !important;
+    }
+    html.admin-dark #main-content button.bg-amber-600,
+    html.admin-dark #main-content a.bg-amber-600,
+    html.admin-dark #main-content button.bg-amber-500,
+    html.admin-dark #main-content a.bg-amber-500 {
+      background-color: #b45309 !important;
+      border-color: #f59e0b !important;
+      color: #fff7ed !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-amber-700:hover,
+    html.admin-dark #main-content a.hover\:bg-amber-700:hover,
+    html.admin-dark #main-content button.hover\:bg-amber-600:hover,
+    html.admin-dark #main-content a.hover\:bg-amber-600:hover,
+    html.admin-dark #main-content button.hover\:bg-amber-400:hover,
+    html.admin-dark #main-content a.hover\:bg-amber-400:hover {
+      background-color: #d97706 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-amber-100,
+    html.admin-dark #main-content a.bg-amber-100,
+    html.admin-dark #main-content button.bg-amber-50,
+    html.admin-dark #main-content a.bg-amber-50 {
+      background-color: #78350f !important;
+      border-color: #f59e0b !important;
+      color: #fde68a !important;
+    }
+    html.admin-dark #main-content button.bg-red-600,
+    html.admin-dark #main-content a.bg-red-600,
+    html.admin-dark #main-content button.bg-rose-600,
+    html.admin-dark #main-content a.bg-rose-600 {
+      background-color: #be123c !important;
+      border-color: #fb7185 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-red-700:hover,
+    html.admin-dark #main-content a.hover\:bg-red-700:hover,
+    html.admin-dark #main-content button.hover\:bg-rose-700:hover,
+    html.admin-dark #main-content a.hover\:bg-rose-700:hover {
+      background-color: #e11d48 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-rose-100,
+    html.admin-dark #main-content a.bg-rose-100,
+    html.admin-dark #main-content button.bg-rose-50,
+    html.admin-dark #main-content a.bg-rose-50,
+    html.admin-dark #main-content button.bg-red-100,
+    html.admin-dark #main-content a.bg-red-100,
+    html.admin-dark #main-content button.bg-red-50,
+    html.admin-dark #main-content a.bg-red-50 {
+      background-color: #4c0519 !important;
+      border-color: #be123c !important;
+      color: #fecdd3 !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-rose-200:hover,
+    html.admin-dark #main-content a.hover\:bg-rose-200:hover,
+    html.admin-dark #main-content button.hover\:bg-rose-100:hover,
+    html.admin-dark #main-content a.hover\:bg-rose-100:hover,
+    html.admin-dark #main-content button.hover\:bg-red-50:hover,
+    html.admin-dark #main-content a.hover\:bg-red-50:hover {
+      background-color: #881337 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button:disabled,
+    html.admin-dark #main-content a[aria-disabled="true"] {
+      background-color: #475569 !important;
+      border-color: #64748b !important;
+      color: #cbd5e1 !important;
+      opacity: 0.7;
+    }
+    html.admin-dark #main-content .bg-indigo-50,
+    html.admin-dark #main-content .bg-indigo-100,
+    html.admin-dark #main-content .bg-violet-50,
+    html.admin-dark #main-content .bg-violet-100,
+    html.admin-dark #main-content .bg-purple-50,
+    html.admin-dark #main-content .bg-purple-100 {
+      background-color: #312e81 !important;
+      border-color: #4f46e5 !important;
+    }
+    html.admin-dark #main-content .bg-indigo-200,
+    html.admin-dark #main-content .bg-violet-200,
+    html.admin-dark #main-content .bg-purple-200 {
+      background-color: #4338ca !important;
+      border-color: #6366f1 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .bg-indigo-500,
+    html.admin-dark #main-content .bg-indigo-600,
+    html.admin-dark #main-content .bg-violet-500,
+    html.admin-dark #main-content .bg-violet-600,
+    html.admin-dark #main-content .bg-purple-500,
+    html.admin-dark #main-content .bg-purple-600 {
+      background-color: #4f46e5 !important;
+      border-color: #818cf8 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .text-indigo-900,
+    html.admin-dark #main-content .text-indigo-800,
+    html.admin-dark #main-content .text-violet-900,
+    html.admin-dark #main-content .text-violet-800,
+    html.admin-dark #main-content .text-purple-900,
+    html.admin-dark #main-content .text-purple-800,
+    html.admin-dark #main-content .text-purple-700,
+    html.admin-dark #main-content .text-purple-600 {
+      color: #c4b5fd !important;
+    }
+    html.admin-dark #main-content .border-indigo-200,
+    html.admin-dark #main-content .border-indigo-300,
+    html.admin-dark #main-content .border-violet-200,
+    html.admin-dark #main-content .border-violet-300,
+    html.admin-dark #main-content .border-purple-200,
+    html.admin-dark #main-content .border-purple-300 {
+      border-color: #6366f1 !important;
+    }
+    html.admin-dark #main-content .bg-sky-50,
+    html.admin-dark #main-content .bg-sky-100,
+    html.admin-dark #main-content .bg-blue-50,
+    html.admin-dark #main-content .bg-blue-100,
+    html.admin-dark #main-content .bg-cyan-50,
+    html.admin-dark #main-content .bg-cyan-100 {
+      background-color: #0c4a6e !important;
+      border-color: #0284c7 !important;
+    }
+    html.admin-dark #main-content .bg-sky-200,
+    html.admin-dark #main-content .bg-blue-200,
+    html.admin-dark #main-content .bg-cyan-200 {
+      background-color: #0369a1 !important;
+      border-color: #38bdf8 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .bg-sky-500,
+    html.admin-dark #main-content .bg-sky-600,
+    html.admin-dark #main-content .bg-blue-500,
+    html.admin-dark #main-content .bg-blue-600,
+    html.admin-dark #main-content .bg-cyan-500,
+    html.admin-dark #main-content .bg-cyan-600 {
+      background-color: #0284c7 !important;
+      border-color: #7dd3fc !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .text-sky-900,
+    html.admin-dark #main-content .text-sky-600,
+    html.admin-dark #main-content .text-blue-900,
+    html.admin-dark #main-content .text-blue-600,
+    html.admin-dark #main-content .text-cyan-900,
+    html.admin-dark #main-content .text-cyan-800,
+    html.admin-dark #main-content .text-cyan-700,
+    html.admin-dark #main-content .text-cyan-600 {
+      color: #7dd3fc !important;
+    }
+    html.admin-dark #main-content .border-sky-200,
+    html.admin-dark #main-content .border-sky-300,
+    html.admin-dark #main-content .border-blue-200,
+    html.admin-dark #main-content .border-blue-300,
+    html.admin-dark #main-content .border-cyan-200,
+    html.admin-dark #main-content .border-cyan-300 {
+      border-color: #0284c7 !important;
+    }
+    html.admin-dark #main-content .bg-emerald-50,
+    html.admin-dark #main-content .bg-emerald-100,
+    html.admin-dark #main-content .bg-green-50,
+    html.admin-dark #main-content .bg-green-100 {
+      background-color: #064e3b !important;
+      border-color: #059669 !important;
+    }
+    html.admin-dark #main-content .bg-emerald-200,
+    html.admin-dark #main-content .bg-green-200 {
+      background-color: #047857 !important;
+      border-color: #34d399 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .bg-emerald-500,
+    html.admin-dark #main-content .bg-emerald-600,
+    html.admin-dark #main-content .bg-green-500,
+    html.admin-dark #main-content .bg-green-600 {
+      background-color: #047857 !important;
+      border-color: #6ee7b7 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .text-emerald-900,
+    html.admin-dark #main-content .text-emerald-600,
+    html.admin-dark #main-content .text-green-900,
+    html.admin-dark #main-content .text-green-600 {
+      color: #6ee7b7 !important;
+    }
+    html.admin-dark #main-content .border-emerald-200,
+    html.admin-dark #main-content .border-emerald-300,
+    html.admin-dark #main-content .border-green-200,
+    html.admin-dark #main-content .border-green-300 {
+      border-color: #059669 !important;
+    }
+    html.admin-dark #main-content .bg-amber-50,
+    html.admin-dark #main-content .bg-amber-100,
+    html.admin-dark #main-content .bg-yellow-50,
+    html.admin-dark #main-content .bg-yellow-100,
+    html.admin-dark #main-content .bg-orange-50,
+    html.admin-dark #main-content .bg-orange-100 {
+      background-color: #78350f !important;
+      border-color: #d97706 !important;
+    }
+    html.admin-dark #main-content .bg-amber-200,
+    html.admin-dark #main-content .bg-yellow-200,
+    html.admin-dark #main-content .bg-orange-200 {
+      background-color: #92400e !important;
+      border-color: #f59e0b !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .bg-amber-500,
+    html.admin-dark #main-content .bg-amber-600,
+    html.admin-dark #main-content .bg-yellow-500,
+    html.admin-dark #main-content .bg-yellow-600,
+    html.admin-dark #main-content .bg-orange-500,
+    html.admin-dark #main-content .bg-orange-600 {
+      background-color: #b45309 !important;
+      border-color: #fcd34d !important;
+      color: #fff7ed !important;
+    }
+    html.admin-dark #main-content .text-yellow-900,
+    html.admin-dark #main-content .text-yellow-800,
+    html.admin-dark #main-content .text-yellow-700,
+    html.admin-dark #main-content .text-yellow-600,
+    html.admin-dark #main-content .text-orange-900,
+    html.admin-dark #main-content .text-orange-800,
+    html.admin-dark #main-content .text-orange-600 {
+      color: #fcd34d !important;
+    }
+    html.admin-dark #main-content .border-amber-200,
+    html.admin-dark #main-content .border-amber-300,
+    html.admin-dark #main-content .border-yellow-200,
+    html.admin-dark #main-content .border-yellow-300,
+    html.admin-dark #main-content .border-orange-200,
+    html.admin-dark #main-content .border-orange-300 {
+      border-color: #d97706 !important;
+    }
+    html.admin-dark #main-content .bg-red-50,
+    html.admin-dark #main-content .bg-red-100,
+    html.admin-dark #main-content .bg-rose-50,
+    html.admin-dark #main-content .bg-rose-100 {
+      background-color: #4c0519 !important;
+      border-color: #be123c !important;
+    }
+    html.admin-dark #main-content .bg-red-200,
+    html.admin-dark #main-content .bg-rose-200 {
+      background-color: #881337 !important;
+      border-color: #fb7185 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .bg-red-500,
+    html.admin-dark #main-content .bg-red-600,
+    html.admin-dark #main-content .bg-rose-500,
+    html.admin-dark #main-content .bg-rose-600 {
+      background-color: #be123c !important;
+      border-color: #fda4af !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .text-red-900,
+    html.admin-dark #main-content .text-red-600,
+    html.admin-dark #main-content .text-rose-900,
+    html.admin-dark #main-content .text-rose-800,
+    html.admin-dark #main-content .text-rose-600 {
+      color: #fda4af !important;
+    }
+    html.admin-dark #main-content .border-red-200,
+    html.admin-dark #main-content .border-red-300,
+    html.admin-dark #main-content .border-rose-200,
+    html.admin-dark #main-content .border-rose-300 {
+      border-color: #be123c !important;
+    }
+    html.admin-dark #main-content .bg-white\/10 {
+      background-color: rgba(148, 163, 184, 0.12) !important;
+    }
+    html.admin-dark #main-content .bg-white\/20 {
+      background-color: rgba(148, 163, 184, 0.18) !important;
+    }
+    html.admin-dark #main-content .border-white\/20 {
+      border-color: rgba(203, 213, 225, 0.28) !important;
+    }
+    html.admin-dark #main-content .ring-slate-200,
+    html.admin-dark #main-content .ring-slate-300 {
+      --tw-ring-color: #475569 !important;
+    }
+    html.admin-dark #main-content .ring-indigo-200,
+    html.admin-dark #main-content .ring-indigo-300 {
+      --tw-ring-color: #6366f1 !important;
+    }
+    html.admin-dark #main-content [class*="shadow"] {
+      --tw-shadow-color: rgba(0, 0, 0, 0.35);
+    }
+    html.admin-dark #main-content tr.hover\:bg-slate-50:hover,
+    html.admin-dark #main-content .hover\:bg-slate-50:hover,
+    html.admin-dark #main-content .hover\:bg-slate-100:hover {
+      background-color: #1e293b !important;
+    }
+    html.admin-dark #main-content table {
+      background-color: #0f172a !important;
+      color: #e2e8f0;
+    }
+    html.admin-dark #main-content table thead,
+    html.admin-dark #main-content table thead tr,
+    html.admin-dark #main-content table th {
+      background-color: #1e293b !important;
+      border-color: #475569 !important;
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content table tbody,
+    html.admin-dark #main-content table tbody tr,
+    html.admin-dark #main-content table td {
+      background-color: #0f172a !important;
+      border-color: #334155 !important;
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content table tbody tr:nth-child(even) td {
+      background-color: #111827 !important;
+    }
+    html.admin-dark #main-content table tbody tr:hover td {
+      background-color: #1e293b !important;
+    }
+    html.admin-dark #main-content table .bg-white,
+    html.admin-dark #main-content table .bg-slate-50,
+    html.admin-dark #main-content table .bg-slate-100,
+    html.admin-dark #main-content table .bg-sky-50,
+    html.admin-dark #main-content table .bg-sky-100,
+    html.admin-dark #main-content table .bg-emerald-50,
+    html.admin-dark #main-content table .bg-emerald-100,
+    html.admin-dark #main-content table .bg-green-100 {
+      background-color: #172033 !important;
+    }
+    html.admin-dark #main-content table input,
+    html.admin-dark #main-content table select,
+    html.admin-dark #main-content table textarea {
+      background-color: #020617 !important;
+      border-color: #475569 !important;
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content table [class*="divide-"] > :not([hidden]) ~ :not([hidden]) {
+      border-color: #334155 !important;
+    }
+    html.admin-dark #main-content .admin-dashboard-surface {
+      background-color: #020617 !important;
+    }
+    html.admin-dark #main-content .admin-dashboard-surface .bg-slate-50\/50,
+    html.admin-dark #main-content .admin-dashboard-surface .bg-slate-200,
+    html.admin-dark #main-content .admin-dashboard-surface .bg-amber-100,
+    html.admin-dark #main-content .admin-dashboard-surface .bg-emerald-100,
+    html.admin-dark #main-content .admin-dashboard-surface .bg-green-100,
+    html.admin-dark #main-content .admin-dashboard-surface .bg-indigo-100,
+    html.admin-dark #main-content .admin-dashboard-surface .bg-orange-100,
+    html.admin-dark #main-content .admin-dashboard-surface .bg-red-100,
+    html.admin-dark #main-content .admin-dashboard-surface .bg-yellow-100,
+    html.admin-dark #main-content .admin-dashboard-surface .bg-purple-50,
+    html.admin-dark #main-content .admin-dashboard-surface .bg-red-50 {
+      background-color: #172033 !important;
+    }
+    html.admin-dark #main-content .admin-dashboard-surface .bg-gradient-to-b {
+      background-image: none !important;
+      background-color: #0f172a !important;
+    }
+    html.admin-dark #main-content .admin-dashboard-surface .chart-zoom-trigger {
+      z-index: 10;
+      pointer-events: auto;
+    }
+    html.admin-dark #main-content .admin-dashboard-surface .text-xs,
+    html.admin-dark #main-content .admin-dashboard-surface .text-\[11px\],
+    html.admin-dark #main-content .admin-dashboard-surface .text-\[10px\] {
+      font-weight: 600;
+      letter-spacing: 0.015em;
+    }
+    html.admin-dark #main-content .admin-dashboard-surface .text-slate-900,
+    html.admin-dark #main-content .admin-dashboard-surface .text-slate-800 {
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .admin-dashboard-surface .text-slate-700,
+    html.admin-dark #main-content .admin-dashboard-surface .text-slate-600 {
+      color: #f1f5f9 !important;
+    }
+    html.admin-dark #main-content .admin-dashboard-surface .text-slate-500,
+    html.admin-dark #main-content .admin-dashboard-surface .text-slate-400,
+    html.admin-dark #main-content .admin-dashboard-surface .text-slate-300 {
+      color: #e2e8f0 !important;
+    }
+
+    /* SPA Centered Page Loading Overlay */
+    #spa-loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 9998;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(248, 250, 252, 0.75);
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+      transition-delay: 0s;
+    }
+    html.admin-dark #spa-loading-overlay {
+      background: rgba(15, 23, 42, 0.75) !important;
+    }
+    @media (min-width: 1024px) {
+      #spa-loading-overlay {
+        left: 256px; /* lg:ml-64 — only covers main content, not sidebar */
+      }
+    }
+    #spa-loading-overlay.spa-visible {
+      opacity: 1;
+      pointer-events: all;
+      transition-delay: 300ms; /* Delay showing spinner to avoid flicker on fast loads */
+    }
+    .spa-spinner {
+      width: 44px;
+      height: 44px;
+      border: 3.5px solid #e2e8f0;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spa-spin 0.7s linear infinite;
+    }
+    html.admin-dark .spa-spinner {
+      border-color: #334155 !important;
+      border-top-color: #6366f1 !important;
+    }
+    @keyframes spa-spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+  <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-no-spinner-20260727"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
+  <script src="{{ url_for('static', filename='js/auto_scrollbar.js') }}?v=scrollbar-fade-4"></script>
+
+  
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="m-0 overflow-x-hidden">
+
+  <!-- Mobile Overlay -->
+  <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden backdrop-blur-sm lg:hidden"></div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar-transition fixed inset-y-0 left-0 h-screen max-h-screen z-40 w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex min-h-0 flex-col -translate-x-full lg:translate-x-0">
+    
+    <!-- Logo Section -->
+    <div class="flex items-center justify-between h-20 px-6 border-b border-slate-800 shrink-0">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-slate-700 flex items-center justify-center shrink-0 shadow-lg">
+          <span class="text-white font-bold text-lg">A</span>
+        </div>
+        <span class="logo-text text-xl font-bold text-white tracking-tight">
+          Admin<span class="text-slate-400">Panel</span>
+        </span>
+      </div>
+      
+      <!-- Toggle Button (Desktop) -->
+      <button id="toggle-desktop" class="hidden lg:flex items-center justify-center w-8 h-8 rounded-md hover:bg-slate-800 text-slate-400 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+    </div>
+
+    
+    <!-- Navigation -->
+    <nav class="min-h-0 flex-1 px-3 space-y-1 custom-scrollbar overflow-y-auto overscroll-contain mt-2 pb-3">
+      
+      <!-- Global Store Scope Filter -->
+      <div class="mb-2 rounded-xl border border-slate-700/60 bg-slate-800/40 p-2">
+        <p class="px-1 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Store View</p>
+        <div class="grid grid-cols-2 gap-1">
+          {% set store_scope = (request.cookies.get('store_scope') or 'official')|lower %}
+          <button type="button" class="store-scope-btn rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition-colors {% if store_scope == 'official' %}bg-indigo-500 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}" data-scope="official">Official</button>
+          <button type="button" class="store-scope-btn rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition-colors {% if store_scope == 'starlink' %}bg-indigo-500 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}" data-scope="starlink">Starlink</button>
+        </div>
+      </div>
+
+      <!-- Dashboard -->
+      <a href="{% if user and user.role == 'Area Manager' %}/admin/area-manager-dashboard{% else %}/admin/dashboard{% endif %}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/dashboard') or request.path.startswith('/admin/area-manager-dashboard') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Dashboard">
+        <div class="shrink-0 {% if request.path.startswith('/admin/dashboard') or request.path.startswith('/admin/area-manager-dashboard') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <polyline points="9 22 9 12 15 12 15 22"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Dashboard</span>
+      </a>
+
+      {% if user and user.role == 'General Manager' %}
+      <!-- Store Targets for General Manager -->
+      <a href="/admin/targets" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/targets') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Store Targets">
+        <div class="shrink-0 {% if request.path.startswith('/admin/targets') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <path d="M12 18v-6"/>
+            <path d="M9 15h6"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Store Targets</span>
+      </a>
+      {% endif %}
+
+      {% if user and user.role == 'Area Manager' %}
+      <!-- Clusters for Area Manager -->
+      <a href="/admin/clusters" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if '/admin/clusters' in request.path %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Clusters">
+        <div class="shrink-0 {% if '/admin/clusters' in request.path %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect width="7" height="9" x="3" y="3" rx="1"/>
+            <rect width="7" height="5" x="14" y="3" rx="1"/>
+            <rect width="7" height="9" x="14" y="12" rx="1"/>
+            <rect width="7" height="5" x="3" y="16" rx="1"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Clusters</span>
+      </a>
+      {% endif %}
+
+      {% if not user or user.role not in ('General Manager', 'Auditor', 'Area Manager') %}
+      <div class="pt-4 pb-2">
+        <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider nav-label">Administration</p>
+      </div>
+
+      <!-- Users -->
+      <a href="/admin/users" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/users') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Users">
+        <div class="shrink-0 {% if request.path.startswith('/admin/users') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Users</span>
+      </a>
+
+      <!-- Clusters -->
+      <a href="/admin/clusters" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if '/admin/clusters' in request.path %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Clusters">
+        <div class="shrink-0 {% if '/admin/clusters' in request.path %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect width="7" height="9" x="3" y="3" rx="1"/>
+            <rect width="7" height="5" x="14" y="3" rx="1"/>
+            <rect width="7" height="9" x="14" y="12" rx="1"/>
+            <rect width="7" height="5" x="3" y="16" rx="1"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Clusters</span>
+      </a>
+
+      <!-- Stores -->
+      <a href="/admin/stores" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/stores') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Stores">
+        <div class="shrink-0 {% if request.path.startswith('/admin/stores') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+            <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+            <path d="M2 7h20"/>
+            <path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Stores</span>
+      </a>
+
+      <!-- Store Targets -->
+      <a href="/admin/targets" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/targets') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Store Targets">
+        <div class="shrink-0 {% if request.path.startswith('/admin/targets') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <path d="M12 18v-6"/>
+            <path d="M9 15h6"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Store Targets</span>
+      </a>
+
+      <!-- Product Masterlist -->
+      <a href="/admin/product-masterlist" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/product-masterlist') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Product Masterlist">
+        <div class="shrink-0 {% if request.path.startswith('/admin/product-masterlist') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 7h-9" />
+            <path d="M14 17H5" />
+            <circle cx="17" cy="17" r="3" />
+            <circle cx="7" cy="7" r="3" />
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Product Masterlist</span>
+      </a>
+
+      <!-- Supply Management -->
+      <a href="/admin/supply" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/supply') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Supply Management">
+        <div class="shrink-0 {% if request.path.startswith('/admin/supply') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+            <path d="m3.3 7 8.7 5 8.7-5"/>
+            <path d="M12 22V12"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Supply Management</span>
+      </a>
+
+      <!-- System Analyzer -->
+      <a href="/admin/system-analyzer" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/system-analyzer') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="System Analyzer">
+        <div class="shrink-0 {% if request.path.startswith('/admin/system-analyzer') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 3v18h18" />
+            <path d="m7 14 3-3 3 2 4-5" />
+            <circle cx="7" cy="14" r="1.2" />
+            <circle cx="10" cy="11" r="1.2" />
+            <circle cx="13" cy="13" r="1.2" />
+            <circle cx="17" cy="8" r="1.2" />
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">System Analyzer</span>
+      </a>
+
+      <!-- Audit Logs -->
+      <a href="/admin/audit-logs" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/audit-logs') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Audit Logs">
+        <div class="shrink-0 {% if request.path.startswith('/admin/audit-logs') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 11l3 3L22 4"/>
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Audit Logs</span>
+      </a>
+      {% endif %}
+
+      <!-- POS Sold -->
+      <a href="/admin/pos-sold" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/pos-sold') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="POS Sold">
+        <div class="shrink-0 {% if request.path.startswith('/admin/pos-sold') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 5h18" />
+            <path d="M3 12h18" />
+            <path d="M3 19h18" />
+            <circle cx="7" cy="5" r="1" />
+            <circle cx="12" cy="12" r="1" />
+            <circle cx="17" cy="19" r="1" />
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">POS Sold</span>
+      </a>
+
+      <!-- Delivery -->
+      <a href="/admin/delivery" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/delivery') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Delivery">
+        <div class="shrink-0 {% if request.path.startswith('/admin/delivery') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="1" y="3" width="15" height="13" rx="2"/>
+            <path d="M16 8h4l3 3v5h-7"/>
+            <circle cx="5.5" cy="18.5" r="2.5"/>
+            <circle cx="18.5" cy="18.5" r="2.5"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Delivery</span>
+      </a>
+
+      <!-- Section: Tools -->
+      <div class="pt-4 pb-2">
+        <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider nav-label">Tools</p>
+      </div>
+
+      <!-- InvenSync -->
+      <a href="/admin/invensync" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/invensync') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="InvenSync">
+        <div class="shrink-0 {% if request.path.startswith('/admin/invensync') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 14 3-3 3 2 4-5"/><circle cx="7" cy="14" r="1.2"/><circle cx="10" cy="11" r="1.2"/><circle cx="13" cy="13" r="1.2"/><circle cx="17" cy="8" r="1.2"/><rect x="3" y="14" width="18" height="6" rx="1"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">InvenSync</span>
+      </a>
+      <a href="/admin/oracle" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/oracle') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Oracle">
+        <div class="shrink-0 {% if request.path.startswith('/admin/oracle') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Oracle</span>
+      </a>
+      <!-- TransAct Form -->
+      <a href="/admin/taf" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/taf') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="TransAct Form">
+        <div class="shrink-0 {% if request.path.startswith('/admin/taf') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <path d="M16 13H8"/>
+            <path d="M16 17H8"/>
+            <path d="M10 9H8"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">TransAct Form</span>
+      </a>
+
+      <!-- Charge Slips -->
+      <a href="/admin/charge-slips" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/charge-slips') or request.path.startswith('/admin/charge-slip') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Charge Slips">
+        <div class="shrink-0 {% if request.path.startswith('/admin/charge-slips') or request.path.startswith('/admin/charge-slip') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Charge Slips</span>
+      </a>
+
+      <!-- Section: Reports -->
+      <div class="pt-4 pb-2">
+        <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider nav-label">Reports</p>
+      </div>
+
+      <!-- Analytics -->
+      <a href="#" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl hover:bg-slate-800 hover:text-white transition-all group" data-tooltip="Analytics">
+        <div class="shrink-0 text-slate-400 group-hover:text-white">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" x2="12" y1="20" y2="10"/>
+            <line x1="18" x2="18" y1="20" y2="4"/>
+            <line x1="6" x2="6" y1="20" y2="16"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Analytics</span>
+      </a>
+
+      {% if not user or user.role not in ('General Manager', 'Auditor', 'Area Manager') %}
+      <!-- Settings -->
+      <div class="pt-4 pb-2">
+        <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider nav-label">System</p>
+      </div>
+
+      <a href="{{ url_for('admin.settings') }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/admin/settings') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Settings">
+        <div class="shrink-0 {% if request.path.startswith('/admin/settings') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Settings</span>
+      </a>
+
+      <form method="POST" action="{{ url_for('admin.toggle_maintenance_mode') }}" class="mt-2 rounded-xl border {% if system_maintenance_mode and system_maintenance_mode.is_enabled %}border-amber-500/50 bg-amber-500/10{% else %}border-slate-700 bg-slate-800/40{% endif %} p-2">
+        <textarea name="message" rows="2" class="nav-label mb-2 w-full resize-none rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white placeholder:text-slate-500" placeholder="Maintenance message">{{ system_maintenance_mode.message if system_maintenance_mode else '' }}</textarea>
+        <button type="submit" class="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm font-semibold {% if system_maintenance_mode and system_maintenance_mode.is_enabled %}bg-emerald-600 text-white hover:bg-emerald-500{% else %}bg-amber-500 text-slate-950 hover:bg-amber-400{% endif %}">
+          <span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-black/10">⚙</span>
+          <span class="nav-label">{% if system_maintenance_mode and system_maintenance_mode.is_enabled %}Disable Maintenance{% else %}Enable Maintenance{% endif %}</span>
+        </button>
+      </form>
+      {% endif %}
+    </nav>
+
+    <!-- User Section -->
+    <div class="mt-auto border-t border-slate-800 p-4 shrink-0">
+      <button id="admin-theme-toggle" type="button" class="mb-3 flex w-full items-center gap-3 rounded-xl border border-slate-700 bg-slate-800/70 p-2 text-left text-slate-200 transition-colors hover:bg-slate-800" aria-label="Switch to dark theme" title="Toggle Admin theme">
+        <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-700 text-amber-300">
+          <svg data-admin-theme-sun xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
+          <svg data-admin-theme-moon class="hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </span>
+        <span class="nav-label text-sm font-semibold" data-admin-theme-label>Dark Theme</span>
+      </button>
+      <button type="button" class="pwa-install-btn mb-3 w-full flex items-center gap-3 rounded-xl border border-indigo-400/20 bg-indigo-500/10 p-2 text-left text-indigo-100 transition-colors hover:bg-indigo-500/20" data-tooltip="Install App">
+        <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12"></path>
+            <path d="m7 10 5 5 5-5"></path>
+            <path d="M5 21h14"></path>
+          </svg>
+        </span>
+        <span class="nav-label min-w-0">
+          <span class="block text-sm font-semibold text-white">Install App</span>
+          <span class="block truncate text-xs text-indigo-200">Desktop shortcut</span>
+        </span>
+      </button>
+      <div class="flex items-center gap-2 hover:bg-slate-800/50 p-2 rounded-xl cursor-pointer transition-colors group">
+        <div class="relative">
+          <div class="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold border-2 border-slate-800 group-hover:border-indigo-500 transition-colors">
+            {% if user %}{{ user.username[:1].upper() }}{% else %}A{% endif %}
+          </div>
+          <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-900 rounded-full"></div>
+        </div>
+        <div class="user-info min-w-0 flex-1 pr-1">
+          <p class="text-sm font-semibold text-white truncate">{% if user %}{{ user.full_name }}{% else %}Administrator{% endif %}</p>
+          <p class="text-xs text-slate-500 truncate">{% if user %}{{ user.role }}{% else %}System Admin{% endif %}</p>
+        </div>
+        <a href="/logout" class="ml-auto inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-500 transition-colors" title="Logout" aria-label="Logout">
+          <svg class="block h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" x2="9" y1="12" y2="12"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <!-- SPA Centered Loading Overlay (outside #main-content so it survives swaps) -->
+  <div id="spa-loading-overlay" class="htmx-indicator" aria-hidden="true">
+    <div class="spa-spinner"></div>
+  </div>
+
+  <!-- Main Content Area -->
+  <main id="main-content" class="sidebar-transition flex-1 min-h-screen lg:ml-64 flex flex-col">
+    {% block content %}{% endblock %}
+  </main>
+      
+    <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
+    <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
+    <script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=modal-no-spinner-20260902"></script>
+    <script>
+      (function () {
+        const button = document.getElementById('admin-theme-toggle');
+        if (!button) return;
+        const themeColor = document.querySelector('meta[name="theme-color"]');
+
+        function refreshAdminThemeButton() {
+          const dark = document.documentElement.classList.contains('admin-dark');
+          button.querySelector('[data-admin-theme-sun]').classList.toggle('hidden', dark);
+          button.querySelector('[data-admin-theme-moon]').classList.toggle('hidden', !dark);
+          button.querySelector('[data-admin-theme-label]').textContent = dark ? 'Light Theme' : 'Dark Theme';
+          button.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+          if (themeColor) themeColor.content = dark ? '#020617' : '#0f172a';
+        }
+
+        button.addEventListener('click', function () {
+          const dark = document.documentElement.classList.toggle('admin-dark');
+          try {
+            localStorage.setItem('adminTheme', dark ? 'dark' : 'light');
+          } catch (error) {}
+          refreshAdminThemeButton();
+          if (document.querySelector('.admin-dashboard-surface canvas')) {
+            window.setTimeout(function () {
+              window.location.reload();
+            }, 80);
+          }
+        });
+        refreshAdminThemeButton();
+      })();
+    </script>
+    <script>
+      (function () {
+        const buttons = Array.from(document.querySelectorAll('.store-scope-btn'));
+        if (!buttons.length) return;
+
+        function updateButtonStyles(activeScope) {
+          buttons.forEach((btn) => {
+            const isSelected = (btn.getAttribute('data-scope') || 'official').toLowerCase() === activeScope.toLowerCase();
+            if (isSelected) {
+              btn.classList.add('bg-indigo-500', 'text-white');
+              btn.classList.remove('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+            } else {
+              btn.classList.remove('bg-indigo-500', 'text-white');
+              btn.classList.add('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+            }
+          });
+        }
+
+        buttons.forEach((btn) => {
+          btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            const scope = (this.getAttribute('data-scope') || 'official').toLowerCase();
+            const maxAge = 60 * 60 * 24 * 365;
+            document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${maxAge}; samesite=lax`;
+
+            updateButtonStyles(scope);
+
+            const url = new URL(window.location.href);
+            if (url.searchParams.has('store_id')) {
+              url.searchParams.delete('store_id');
+              window.history.replaceState({}, '', url.toString());
+            }
+
+            if (typeof window.reloadDashboard === 'function') {
+              window.reloadDashboard(true);
+            } else {
+              const mainContent = document.getElementById('main-content');
+              if (mainContent) {
+                mainContent.style.opacity = '0.5';
+                fetch(window.location.href)
+                  .then((res) => res.text())
+                  .then((html) => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const newMain = doc.getElementById('main-content');
+                    if (newMain) {
+                      mainContent.innerHTML = newMain.innerHTML;
+                      Array.from(mainContent.querySelectorAll('script')).forEach((oldScript) => {
+                        const newScript = document.createElement('script');
+                        Array.from(oldScript.attributes).forEach((attr) => newScript.setAttribute(attr.name, attr.value));
+                        newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                        oldScript.parentNode.replaceChild(newScript, oldScript);
+                      });
+                    }
+                  })
+                  .catch(() => {
+                    window.location.reload();
+                  })
+                  .finally(() => {
+                    mainContent.style.opacity = '1';
+                  });
+              } else {
+                window.location.reload();
+              }
+            }
+          });
+        });
+      })();
+    </script>
+      
+    <!-- Flash Messages as Toast Notifications -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <script>
+          document.addEventListener('DOMContentLoaded', function() {
+            {% for category, message in messages %}
+              if (window.toast && typeof window.toast.show === 'function') {
+                window.toast.show({{ message|tojson }}, {{ category|tojson }});
+              }
+            {% endfor %}
+          });
+        </script>
+      {% endif %}
+    {% endwith %}
+</body>
+</html>

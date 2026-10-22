@@ -1,0 +1,1439 @@
+{% extends "base.html" %}
+{% block title %}Transaction Activity Form - {{ store.name }}{% endblock %}
+
+{% block content %}
+<style>
+  @keyframes bounceIn {
+    0% { opacity: 0; transform: scale(0.7); }
+    50% { transform: scale(1.03); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+
+  .animate-bounce-in {
+    animation: bounceIn 0.4s ease-out;
+  }
+
+  .taf-tour-panel {
+    position: fixed;
+    z-index: 9998;
+    background: rgba(15, 23, 42, 0.72);
+    pointer-events: auto;
+  }
+
+  .taf-tour-target {
+    position: relative;
+    z-index: 9999;
+    box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.35), 0 0 24px rgba(6, 182, 212, 0.55);
+  }
+
+  .taf-tour-label {
+    position: fixed;
+    z-index: 10000;
+    max-width: min(360px, calc(100vw - 32px));
+    background: #0f172a;
+    color: #ffffff;
+    padding: 18px 20px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.35;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
+    pointer-events: auto;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+  }
+
+  .taf-tour-label button {
+    margin-top: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 800;
+    text-shadow: none;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .taf-tour-label button:hover {
+    background: #f8fafc;
+    transform: translateY(-1px);
+  }
+</style>
+
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div class="flex items-center gap-3 sm:gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span>Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Transaction Activity Form</span>
+    </nav>
+  </div>
+  <div class="flex flex-wrap items-center gap-3 sm:justify-end">
+    <button id="taf-tour-help-btn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50" title="Restart help guide">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-cyan-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4"></path>
+        <path d="M12 17h.01"></path>
+      </svg>
+      <span>Help</span>
+    </button>
+    <div class="text-sm font-medium text-slate-600">
+      <span class="text-slate-900">{{ store.name }}</span>
+    </div>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  <section class="rounded-none border border-slate-200 bg-white shadow-sm">
+    <!-- Form Navigation Tabs -->
+    <div class="px-4 md:px-6 pt-3 pb-0 bg-slate-100/90 border-b border-slate-200 flex flex-wrap items-end justify-between gap-3">
+      <div class="flex items-center gap-2 -mb-px overflow-x-auto">
+        <a href="{{ url_for('views.store_manager_transaction_activity_form') }}" class="px-4 py-2.5 sm:px-5 sm:py-2.5 text-xs sm:text-sm font-extrabold text-slate-950 bg-amber-400 border border-amber-500 border-b-amber-400 rounded-t-lg shadow-xs flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-slate-950" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+          </svg>
+          <span>Transaction Activity Form (TAF)</span>
+        </a>
+        <a href="{{ url_for('views.store_manager_charge_slip') }}" class="px-4 py-2.5 sm:px-5 sm:py-2.5 text-xs sm:text-sm font-bold text-slate-600 hover:text-slate-900 bg-slate-200/70 hover:bg-slate-300/80 border border-transparent rounded-t-lg transition-all flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+            <line x1="7" y1="8" x2="17" y2="8"></line>
+            <line x1="7" y1="12" x2="17" y2="12"></line>
+            <line x1="7" y1="16" x2="13" y2="16"></line>
+          </svg>
+          <span>Charge Slip</span>
+        </a>
+      </div>
+      <p class="text-xs font-medium text-slate-500 pb-2.5 hidden lg:block">Product Transfer is now enabled for submission.</p>
+    </div>
+
+    <form id="taf-form" class="p-4 md:p-5 space-y-3" method="post">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="md:col-span-2 flex flex-wrap items-center gap-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <label for="taf_date" class="text-sm font-semibold text-slate-700">Date:</label>
+            <input id="taf_date" name="taf_date" type="date" value="{{ selected_report_date if selected_report_date else today }}" class="w-[180px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+          </div>
+          {% if taf_date_finalized %}
+          <div class="w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 md:w-auto">
+            <p class="text-xs font-semibold text-emerald-800">
+              End of Day is already done for this date — Wastage Transfer can no longer be entered or edited.
+              Contact an Admin to unfinalize the day.
+            </p>
+          </div>
+          {% endif %}
+          <div class="flex flex-wrap items-center gap-2 sm:ml-auto">
+            <label for="control_no" class="text-sm font-semibold text-slate-700">Control No:</label>
+            <input id="control_no" name="control_no" type="text" placeholder="Enter control number" value="{{ request.form.get('control_no', '') if request.form else '' }}" required class="w-[230px] px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+          </div>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-xs font-medium text-slate-700 mb-1">Transaction Type</label>
+          <input id="transaction_type" name="transaction_type" type="hidden" value="Product Transfer">
+          <div id="transaction_type_cards" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+            <button type="button" data-transaction-type="Product Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
+                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-cyan-100 text-cyan-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M5 12h14"></path>
+                    <path d="m12 5 7 7-7 7"></path>
+                  </svg>
+                </span>
+                <span class="text-sm font-semibold text-slate-800">Product Transfer</span>
+            </button>
+            <button type="button" data-transaction-type="Wastage Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-emerald-200 hover:bg-emerald-50 transition-colors" {% if taf_date_finalized %}data-locked="1" title="End of Day is already done for this date. Wastage can no longer be entered or edited."{% endif %}>
+                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 6h18"></path>
+                    <path d="M8 6V4h8v2"></path>
+                    <path d="M19 6l-1 14H6L5 6"></path>
+                  </svg>
+                </span>
+                <span class="text-sm font-semibold text-slate-800">Wastage Transfer</span>
+            </button>
+            <button type="button" data-transaction-type="EGI Plant Transfer" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
+                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 21h18"></path>
+                    <path d="M5 21V9l5 3V9l5 3V6h4v15"></path>
+                    <path d="M8 16h2"></path>
+                    <path d="M13 16h2"></path>
+                    <path d="M8 20c0-1.7 1.8-3 4-3s4 1.3 4 3"></path>
+                  </svg>
+                </span>
+                <span class="text-sm font-semibold text-slate-800">EGI Plant Transfer</span>
+            </button>
+            <button type="button" data-transaction-type="Supplies Request" class="transaction-type-card inline-flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left hover:border-cyan-300 hover:bg-cyan-50 transition-colors">
+                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <path d="M12 8v8"></path>
+                    <path d="M8 12h8"></path>
+                  </svg>
+                </span>
+                <span class="text-sm font-semibold text-slate-800">Supplies Request</span>
+            </button>
+          </div>
+        </div>
+        <div id="supplies-toggle-wrap" class="md:col-span-2 hidden">
+          <label class="block text-xs font-medium text-slate-700 mb-1">Request Type</label>
+          <input id="supplies_request_mode" type="hidden" name="supplies_request_mode" value="other_store">
+          <div class="inline-flex items-center rounded-lg border border-slate-200 bg-slate-100 p-1 gap-1">
+            <button type="button" id="supplies-mode-other" data-supplies-mode="other_store" class="supplies-mode-btn px-3 py-1.5 text-xs font-semibold rounded-md bg-white text-slate-900 shadow-sm">Other Store</button>
+            <button type="button" id="supplies-mode-main" data-supplies-mode="main_office" class="supplies-mode-btn px-3 py-1.5 text-xs font-semibold rounded-md text-slate-500 hover:text-slate-700">Main Office</button>
+          </div>
+          <p class="text-xs text-slate-500 mt-1">Other Store sends a supplies transfer to another store. Main Office submits a supply request to the main office.</p>
+        </div>
+        <div id="taf-transfer-section" class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label for="transfer_from" class="block text-xs font-medium text-slate-700 mb-1">Transfer From</label>
+            <input id="transfer_from" name="transfer_from" type="text" placeholder="Source store/location" value="{{ store.name }}" data-current-store="{{ store.name }}" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+          </div>
+          <div id="taf-transfer-to-guide-target">
+            <label for="transfer_to" class="block text-xs font-medium text-slate-700 mb-1">Transfer To</label>
+            <input id="transfer_to" name="transfer_to" type="text" placeholder="Destination store/location" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+            <select id="transfer_to_store" class="hidden w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+              <option value="" selected disabled>Select destination store</option>
+              {% for store_option in all_stores %}
+              <option value="{{ store_option.name }}">{{ store_option.name }}</option>
+              {% endfor %}
+            </select>
+            <select id="transfer_to_wastage" class="hidden w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-400 outline-none">
+              <option value="Main Office">Main Office</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div id="taf-items-section">
+      <div id="taf-items-guide-target" class="rounded-lg border border-slate-200 overflow-hidden">
+        <div class="bg-slate-100 px-3 py-2 flex items-center justify-between">
+          <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Items</p>
+          <button id="add-item-row-btn" type="button" class="px-3 py-1.5 text-xs font-semibold bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors">
+            Add Row
+          </button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-white">
+              <tr>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Item Name</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Unit Cost</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Qty</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Total</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Remarks</th>
+                <th class="px-3 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+              </tr>
+            </thead>
+            <tbody id="taf-items-body" class="divide-y divide-slate-100 bg-white"></tbody>
+            <tfoot class="bg-slate-50">
+              <tr>
+                <td colspan="3" class="px-3 py-2 text-right text-sm font-semibold text-slate-700">Grand Total</td>
+                <td class="px-3 py-2 text-right text-sm font-bold text-slate-900" id="taf-grand-total">0.00</td>
+                <td colspan="2"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+      </div>
+
+      <div id="taf-signatories-section">
+      <div id="taf-signatories-guide-target" class="rounded-lg border border-slate-200 overflow-hidden">
+        <div class="bg-slate-100 px-3 py-2">
+          <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Signatories</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-white">
+              <tr>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Prepared By</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Received By</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 bg-white">
+              <tr>
+                <td class="px-3 py-2">
+                  <input id="prepared_by_name" name="prepared_by_name" type="text" placeholder="Name" required class="w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+                </td>
+                <td class="px-3 py-2">
+                  <input id="received_by_name" name="received_by_name" type="text" placeholder="Disabled for sender side" disabled class="w-full px-2.5 py-1.5 text-sm bg-slate-100 border border-slate-200 rounded-md outline-none text-slate-500 cursor-not-allowed">
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </div>
+
+      <div id="taf-submit-section">
+      <div id="taf-submit-guide-target" class="flex items-center justify-end gap-2 pt-1">
+        <button id="taf-submit-btn" type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors">
+          Submit Product Transfer
+        </button>
+      </div>
+      </div>
+
+      <datalist id="taf-product-options">
+        {% for product_name in product_names %}
+        <option value="{{ product_name }}"></option>
+        {% endfor %}
+      </datalist>
+    </form>
+
+    <div id="supplies-panel" class="p-4 md:p-5 space-y-4 hidden">
+      <div class="space-y-3">
+        <div>
+          <div class="grid gap-3 sm:grid-cols-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Category</label>
+              <select id="sr-category" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100">
+                <option value="">All Categories</option>
+                {% for category in supply_categories %}
+                <option value="{{ category }}">{{ category }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Item</label>
+              <select id="sr-item" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100">
+                <option value="">Select an item</option>
+                {% for item in supply_items %}
+                <option value="{{ item.id }}" data-category="{{ item.category }}" data-stock="{{ item.available_stock }}">{{ item.item_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Quantity</label>
+              <input id="sr-qty" type="number" min="1" value="1" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">&nbsp;</label>
+              <button id="sr-add-btn" type="button" class="w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">Add</button>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+            <table class="min-w-full divide-y divide-slate-200">
+              <thead class="bg-slate-100">
+                <tr>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Item</th>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Category</th>
+                  <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Qty</th>
+                  <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+                </tr>
+              </thead>
+              <tbody id="sr-cart-body" class="divide-y divide-slate-100">
+                <tr>
+                  <td colspan="4" class="px-4 py-6 text-center text-sm text-slate-400">No items added yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Remarks <span class="font-normal text-slate-400">(optional)</span></label>
+            <textarea id="sr-remarks" rows="2" maxlength="500" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" placeholder="Notes for the admin..."></textarea>
+          </div>
+
+          <div class="flex items-center justify-end gap-2">
+            <button id="sr-clear" type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors">Clear</button>
+            <button id="sr-submit" type="button" class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+              Submit Request
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-slate-200 overflow-hidden">
+        <div class="px-4 py-2.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h4 class="text-xs font-bold text-slate-700 uppercase">My Requests</h4>
+            <p class="text-xs text-slate-500 mt-0.5">Supply requests submitted by this store.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="sr-hist-count-label" class="text-xs text-slate-500 font-medium"></span>
+            <input id="sr-hist-search" type="search" placeholder="Search..." class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 w-44">
+          </div>
+        </div>
+        <div class="p-4">
+          {% if supply_requests %}
+          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+            <table class="min-w-full divide-y divide-slate-200">
+              <thead class="bg-slate-100">
+                <tr>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Request No</th>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Date</th>
+                  <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Items</th>
+                  <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Status</th>
+                  <th class="px-4 py-2 text-center text-xs font-semibold text-slate-500 uppercase">Details</th>
+                </tr>
+              </thead>
+              <tbody id="sr-hist-tbody" class="divide-y divide-slate-100">
+                {% for req in supply_requests %}
+                <tr class="odd:bg-white even:bg-slate-50">
+                  <td class="px-4 py-2 text-sm font-semibold text-slate-900">{{ req.request_no }}</td>
+                  <td class="px-4 py-2 text-sm text-slate-700">{{ req.created_at.strftime('%b %d, %Y %I:%M %p') }}</td>
+                  <td class="px-4 py-2 text-sm text-slate-700">{{ req.items|length }}</td>
+                  <td class="px-4 py-2 text-center">
+                    <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold {% if req.status == 'Pending' %}bg-amber-100 text-amber-700{% elif req.status == 'Approved' %}bg-emerald-100 text-emerald-700{% elif req.status == 'Rejected' %}bg-rose-100 text-rose-700{% else %}bg-slate-100 text-slate-700{% endif %}">
+                      {{ req.status }}
+                    </span>
+                  </td>
+                  <td class="px-4 py-2 text-center">
+                    <button type="button" onclick="toggleRequestDetails(this)" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors" title="View items" aria-label="View items">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                  </td>
+                </tr>
+                <tr class="sr-detail-row hidden bg-slate-50/70">
+                  <td colspan="5" class="px-4 py-3">
+                    <div class="text-xs text-slate-500 mb-1">Requested by {{ req.requester.username if req.requester else '-' }}{% if req.remarks %} · Remarks: {{ req.remarks }}{% endif %}{% if req.status == 'Approved' and req.approver %} · Approved by {{ req.approver.username }}{% endif %}{% if req.status == 'Rejected' and req.rejecter %} · Rejected by {{ req.rejecter.username }}{% endif %}</div>
+                    <table class="min-w-full divide-y divide-slate-100">
+                      <thead>
+                        <tr>
+                          <th class="px-3 py-1.5 text-left text-[11px] font-semibold text-slate-500 uppercase">Item</th>
+                          <th class="px-3 py-1.5 text-left text-[11px] font-semibold text-slate-500 uppercase">Category</th>
+                          <th class="px-3 py-1.5 text-right text-[11px] font-semibold text-slate-500 uppercase">Qty</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for line in req.items %}
+                        <tr>
+                          <td class="px-3 py-1.5 text-sm text-slate-700">{{ line.item_name }}</td>
+                          <td class="px-3 py-1.5 text-sm text-slate-500">{{ line.category or '-' }}</td>
+                          <td class="px-3 py-1.5 text-sm text-slate-700 text-right font-semibold">{{ line.quantity }}</td>
+                        </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div id="sr-hist-pagination" class="flex items-center justify-between mt-4 flex-wrap gap-2"></div>
+          {% else %}
+          <p class="text-sm text-slate-500">No supply requests submitted yet.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="taf-tour-start-modal" class="fixed inset-0 z-[9999] items-center justify-center bg-black/40 {% if show_taf_guide or request.args.get('guide') == '1' %}flex{% else %}hidden{% endif %}" style="margin-top: 0;">
+  <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-bounce-in">
+    <div class="bg-slate-900 px-6 py-5 flex items-center gap-4">
+      <div class="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
+          <path d="M8 6h13"></path>
+          <path d="M8 12h13"></path>
+          <path d="M8 18h13"></path>
+          <path d="M3 6h.01"></path>
+          <path d="M3 12h.01"></path>
+          <path d="M3 18h.01"></path>
+        </svg>
+      </div>
+      <div>
+        <h2 class="text-white font-bold text-lg leading-tight">TAF Guide</h2>
+        <p class="text-slate-400 text-xs mt-0.5">{{ store.name }}</p>
+      </div>
+    </div>
+    <div class="px-6 py-5 space-y-4">
+      <div class="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-500 flex-shrink-0 mt-0.5">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M12 16v-4M12 8h.01"></path>
+        </svg>
+        <p class="text-sm text-slate-700">Use this guide to complete a Transaction Activity Form step by step.</p>
+      </div>
+      <p class="text-sm text-slate-600">You will enter the control number, choose the transaction type and destination, add transfer items and quantity, then prepare and submit the form. For the new Supply Request flow, choose <span class="font-semibold text-slate-800">Other Store</span> to send supplies to another store, or <span class="font-semibold text-slate-800">Main Office</span> to submit a request to the Main Office.</p>
+    </div>
+    <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+      <button id="taf-tour-start-btn" type="button" class="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+        Got it, start guide!
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    const productNames = {{ product_names | default([], true) | tojson }};
+    const normalizeProductName = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const productNameLookup = new Map(
+      productNames.map((productName) => [normalizeProductName(productName), productName])
+    );
+    const productPriceMapRaw = {{ product_price_map | default({}, true) | tojson }};
+    const productPriceMap = {};
+    Object.keys(productPriceMapRaw || {}).forEach((key) => {
+      const normalizedKey = String(key || '').trim().toLowerCase();
+      if (!normalizedKey) return;
+      const value = Number(productPriceMapRaw[key]);
+      if (Number.isFinite(value)) {
+        productPriceMap[normalizedKey] = value;
+      }
+    });
+    const body = document.getElementById('taf-items-body');
+    const addBtn = document.getElementById('add-item-row-btn');
+    const formEl = document.getElementById('taf-form');
+    const submitBtnEl = document.getElementById('taf-submit-btn');
+    const tafDateEl = document.getElementById('taf_date');
+    const grandTotalEl = document.getElementById('taf-grand-total');
+    const transactionTypeEl = document.getElementById('transaction_type');
+    const transactionTypeCardEls = document.querySelectorAll('.transaction-type-card');
+    const controlNoEl = document.getElementById('control_no');
+    const transferFromEl = document.getElementById('transfer_from');
+    const transferToEl = document.getElementById('transfer_to');
+    const transferToStoreEl = document.getElementById('transfer_to_store');
+    const transferToWastageEl = document.getElementById('transfer_to_wastage');
+    const preparedByEl = document.getElementById('prepared_by_name');
+    const suppliesToggleWrapEl = document.getElementById('supplies-toggle-wrap');
+    const suppliesModeEl = document.getElementById('supplies_request_mode');
+    const suppliesModeBtnsEl = document.querySelectorAll('.supplies-mode-btn');
+    const suppliesPanelEl = document.getElementById('supplies-panel');
+    const tafTransferSectionEl = document.getElementById('taf-transfer-section');
+    const tafItemsSectionEl = document.getElementById('taf-items-section');
+    const tafSignatoriesSectionEl = document.getElementById('taf-signatories-section');
+    const tafSubmitSectionEl = document.getElementById('taf-submit-section');
+    const tafTourStartModal = document.getElementById('taf-tour-start-modal');
+    const tafTourStartBtn = document.getElementById('taf-tour-start-btn');
+    const tafTourHelpBtn = document.getElementById('taf-tour-help-btn');
+    const isTafGuideMode = {{ (request.args.get('guide') == '1')|tojson }};
+    const tafTourCompletionKey = 'taf-tour-completed-store-{{ store.id }}';
+    const productTransferCardEl = document.querySelector('[data-transaction-type="Product Transfer"]');
+    const wastageTransferCardEl = document.querySelector('[data-transaction-type="Wastage Transfer"]');
+    const egiPlantTransferCardEl = document.querySelector('[data-transaction-type="EGI Plant Transfer"]');
+    const suppliesRequestCardEl = document.querySelector('[data-transaction-type="Supplies Request"]');
+    const EGI_PLANT_DESTINATION = 'EGI Plant';
+    const transferToStoreOptions = Array.from(transferToStoreEl?.options || []).map((option) => ({
+      text: option.text,
+      value: option.value,
+      disabled: option.disabled,
+      selected: option.selected
+    }));
+    let tafTourActive = false;
+    let tafTourStepIndex = 0;
+    let hasConfirmedSubmit = false;
+    let isSubmittingTaf = false;
+    const tafWastageLocked = {{ 'true' if taf_date_finalized else 'false' }};
+
+    function asNumber(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function rowTemplate() {
+      return `
+        <tr class="taf-row odd:bg-white even:bg-slate-50">
+          <td class="px-3 py-2">
+            <input type="text" name="item_name[]" list="taf-product-options" required autocomplete="off" placeholder="Type to search Product Master" class="taf-item-name w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="unit_cost[]" min="0" step="0.01" placeholder="0.00" class="taf-unit-cost w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2">
+            <input type="number" name="qty[]" min="0" step="1" placeholder="0" class="taf-qty w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2 text-right text-sm font-semibold text-slate-900 taf-row-total">0.00</td>
+          <td class="px-3 py-2">
+            <input type="text" name="remarks[]" placeholder="Remarks" class="taf-remarks w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-cyan-300">
+          </td>
+          <td class="px-3 py-2 text-center">
+            <button type="button" class="taf-remove-row px-2.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md hover:bg-rose-100">Remove</button>
+          </td>
+        </tr>
+      `;
+    }
+
+    function refreshTotals() {
+      let grand = 0;
+      body.querySelectorAll('.taf-row').forEach((row) => {
+        const unitCost = asNumber(row.querySelector('.taf-unit-cost')?.value);
+        const qty = asNumber(row.querySelector('.taf-qty')?.value);
+        const rowTotal = unitCost * qty;
+        row.querySelector('.taf-row-total').textContent = rowTotal.toFixed(2);
+        grand += rowTotal;
+      });
+      grandTotalEl.textContent = grand.toFixed(2);
+    }
+
+    function usesProductMasterLookup(transactionType) {
+      return transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer' || transactionType === 'Supplies Transfer';
+    }
+
+    function syncItemNameMode() {
+      const transactionType = transactionTypeEl?.value || '';
+      const shouldUseProductMaster = usesProductMasterLookup(transactionType);
+      body.querySelectorAll('.taf-item-name').forEach((input) => {
+        input.required = shouldUseProductMaster;
+        input.setAttribute('list', 'taf-product-options');
+      });
+      if (shouldUseProductMaster) {
+        body.querySelectorAll('.taf-row').forEach((row) => {
+          const itemName = row.querySelector('.taf-item-name')?.value || '';
+          autoFillUnitCostForRow(row, itemName);
+        });
+        refreshTotals();
+      }
+    }
+
+    function setSelectOptions(selectEl, options, selectedValue) {
+      if (!selectEl) return;
+      selectEl.replaceChildren();
+      options.forEach((item) => {
+        const option = new Option(item.text, item.value);
+        option.disabled = Boolean(item.disabled);
+        option.selected = item.value === selectedValue || (!selectedValue && Boolean(item.selected));
+        selectEl.add(option);
+      });
+      if (selectedValue) {
+        selectEl.value = selectedValue;
+      }
+    }
+
+    function syncTransferMode() {
+      const transactionType = transactionTypeEl?.value || '';
+      const isProductTransfer = transactionType === 'Product Transfer';
+      const isWastageTransfer = transactionType === 'Wastage Transfer';
+      const isEgiPlantTransfer = transactionType === 'EGI Plant Transfer';
+      const isSuppliesTransfer = transactionType === 'Supplies Transfer';
+      const currentStoreName = transferFromEl?.dataset?.currentStore || '';
+      if (!transferFromEl || !transferToEl || !transferToStoreEl || !transferToWastageEl) return;
+
+      if (isProductTransfer || isEgiPlantTransfer || isSuppliesTransfer) {
+        transferFromEl.value = currentStoreName;
+        transferFromEl.readOnly = true;
+        transferFromEl.classList.add('cursor-not-allowed', 'text-slate-600');
+
+        transferToEl.classList.add('hidden');
+        transferToEl.removeAttribute('name');
+        transferToEl.required = false;
+        transferToStoreEl.classList.remove('hidden');
+        transferToStoreEl.setAttribute('name', 'transfer_to');
+        transferToStoreEl.required = true;
+        if (isEgiPlantTransfer) {
+          setSelectOptions(transferToStoreEl, [{ text: EGI_PLANT_DESTINATION, value: EGI_PLANT_DESTINATION }], EGI_PLANT_DESTINATION);
+        } else {
+          setSelectOptions(transferToStoreEl, transferToStoreOptions, '');
+        }
+        transferToWastageEl.classList.add('hidden');
+        transferToWastageEl.removeAttribute('name');
+        transferToWastageEl.required = false;
+      } else if (isWastageTransfer) {
+        transferFromEl.value = currentStoreName;
+        transferFromEl.readOnly = true;
+        transferFromEl.classList.add('cursor-not-allowed', 'text-slate-600');
+
+        transferToEl.classList.add('hidden');
+        transferToEl.removeAttribute('name');
+        transferToEl.required = false;
+        transferToStoreEl.classList.add('hidden');
+        transferToStoreEl.removeAttribute('name');
+        transferToStoreEl.required = false;
+        transferToWastageEl.classList.remove('hidden');
+        transferToWastageEl.setAttribute('name', 'transfer_to');
+        transferToWastageEl.required = true;
+      } else {
+        transferFromEl.readOnly = false;
+        transferFromEl.classList.remove('cursor-not-allowed', 'text-slate-600');
+
+        transferToStoreEl.classList.add('hidden');
+        transferToStoreEl.removeAttribute('name');
+        transferToStoreEl.required = false;
+        transferToWastageEl.classList.add('hidden');
+        transferToWastageEl.removeAttribute('name');
+        transferToWastageEl.required = false;
+        transferToEl.classList.remove('hidden');
+        transferToEl.setAttribute('name', 'transfer_to');
+        transferToEl.required = true;
+      }
+    }
+
+    function syncSubmitMode() {
+      const transactionType = transactionTypeEl?.value || '';
+      let canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer' || transactionType === 'Supplies Transfer';
+      if (tafWastageLocked && transactionType === 'Wastage Transfer') {
+        canSubmit = false;
+      }
+      if (submitBtnEl) {
+        if (isSubmittingTaf) {
+          submitBtnEl.disabled = true;
+          submitBtnEl.classList.add('opacity-60', 'cursor-not-allowed');
+          submitBtnEl.textContent = 'Submitting...';
+          return;
+        }
+        submitBtnEl.disabled = !canSubmit;
+        submitBtnEl.classList.toggle('opacity-60', !canSubmit);
+        submitBtnEl.classList.toggle('cursor-not-allowed', !canSubmit);
+        submitBtnEl.textContent = canSubmit ? `Submit ${transactionType}` : 'Submission Disabled';
+      }
+      if (preparedByEl) {
+        preparedByEl.required = canSubmit;
+      }
+    }
+
+    function markTafSubmitting() {
+      isSubmittingTaf = true;
+      if (!submitBtnEl) return;
+      submitBtnEl.disabled = true;
+      submitBtnEl.classList.add('opacity-60', 'cursor-not-allowed');
+      submitBtnEl.textContent = 'Submitting...';
+    }
+
+    function autoFillUnitCostForRow(row, itemName) {
+      const normalizedName = String(itemName || '').trim().toLowerCase();
+      if (!normalizedName) return;
+      const unitCostInput = row.querySelector('.taf-unit-cost');
+      if (!unitCostInput) return;
+      const matchedPrice = productPriceMap[normalizedName];
+      if (!Number.isFinite(matchedPrice)) return;
+      unitCostInput.value = matchedPrice.toFixed(2);
+    }
+
+    function validateProductMasterInput(input, canonicalize = false) {
+      const rawValue = String(input?.value || '').trim();
+      if (!input) return false;
+      if (!rawValue) {
+        input.setCustomValidity('Please select a Product Master item.');
+        return false;
+      }
+      const canonicalName = productNameLookup.get(normalizeProductName(rawValue));
+      if (!canonicalName) {
+        input.setCustomValidity('Select a valid item from Product Master.');
+        return false;
+      }
+      input.setCustomValidity('');
+      if (canonicalize) input.value = canonicalName;
+      return true;
+    }
+
+    function renderTransactionTypeCards() {
+      const selectedType = transactionTypeEl?.value || '';
+      transactionTypeCardEls.forEach((card) => {
+        const cardType = card.dataset.transactionType || '';
+        const isActive = (cardType === selectedType) || (cardType === 'Supplies Request' && selectedType === 'Supplies Transfer');
+        const isWastage = cardType === 'Wastage Transfer';
+        const isLocked = card.dataset.locked === '1';
+        card.classList.toggle('opacity-50', isLocked);
+        card.classList.toggle('cursor-not-allowed', isLocked);
+        card.classList.toggle('border-cyan-500', isActive && !isWastage);
+        card.classList.toggle('bg-cyan-50', isActive && !isWastage);
+        card.classList.toggle('border-emerald-200', isActive && isWastage);
+        card.classList.toggle('bg-emerald-50', isActive && isWastage);
+        card.classList.toggle('ring-2', isActive);
+        card.classList.toggle('ring-cyan-200', isActive && !isWastage);
+        card.classList.toggle('ring-emerald-100', isActive && isWastage);
+      });
+    }
+
+    function syncSuppliesMode() {
+      const transactionType = transactionTypeEl?.value || '';
+      const isSuppliesRequestType = transactionType === 'Supplies Request' || transactionType === 'Supplies Transfer';
+      suppliesToggleWrapEl?.classList.toggle('hidden', !isSuppliesRequestType);
+      if (!isSuppliesRequestType) {
+        suppliesModeEl.value = 'other_store';
+        suppliesPanelEl?.classList.add('hidden');
+        tafTransferSectionEl?.classList.remove('hidden');
+        tafItemsSectionEl?.classList.remove('hidden');
+        tafSignatoriesSectionEl?.classList.remove('hidden');
+        tafSubmitSectionEl?.classList.remove('hidden');
+        renderSuppliesModeButtons();
+        return;
+      }
+      const isMainOffice = suppliesModeEl.value === 'main_office';
+      if (isMainOffice) {
+        transactionTypeEl.value = 'Supplies Request';
+        suppliesPanelEl?.classList.remove('hidden');
+        tafTransferSectionEl?.classList.add('hidden');
+        tafItemsSectionEl?.classList.add('hidden');
+        tafSignatoriesSectionEl?.classList.add('hidden');
+        tafSubmitSectionEl?.classList.add('hidden');
+      } else {
+        transactionTypeEl.value = 'Supplies Transfer';
+        suppliesPanelEl?.classList.add('hidden');
+        tafTransferSectionEl?.classList.remove('hidden');
+        tafItemsSectionEl?.classList.remove('hidden');
+        tafSignatoriesSectionEl?.classList.remove('hidden');
+        tafSubmitSectionEl?.classList.remove('hidden');
+      }
+      renderSuppliesModeButtons();
+      syncItemNameMode();
+      syncTransferMode();
+    }
+
+    function renderSuppliesModeButtons() {
+      const isMainOffice = suppliesModeEl?.value === 'main_office';
+      suppliesModeBtnsEl?.forEach((btn) => {
+        const isActive = (btn.dataset.suppliesMode === 'main_office') === isMainOffice;
+        btn.classList.toggle('bg-white', isActive);
+        btn.classList.toggle('text-slate-900', isActive);
+        btn.classList.toggle('shadow-sm', isActive);
+        btn.classList.toggle('text-slate-500', !isActive);
+      });
+    }
+
+    function selectTransactionType(typeValue) {
+      if (!transactionTypeEl) return;
+      if ((transactionTypeEl.value || '') === typeValue) return;
+      transactionTypeEl.value = typeValue;
+      renderTransactionTypeCards();
+      transactionTypeEl.dispatchEvent(new Event('change'));
+    }
+
+    function addRow() {
+      body.insertAdjacentHTML('beforeend', rowTemplate());
+      syncItemNameMode();
+      refreshTotals();
+    }
+
+    function getTafTourElementGroupRect(elements) {
+      const visibleElements = elements.filter((el) => el && el.offsetParent !== null);
+      if (!visibleElements.length) return null;
+
+      const rects = visibleElements.map((el) => el.getBoundingClientRect());
+      const padding = 10;
+      return {
+        top: Math.max(0, Math.min(...rects.map((rect) => rect.top)) - padding),
+        left: Math.max(0, Math.min(...rects.map((rect) => rect.left)) - padding),
+        right: Math.min(window.innerWidth, Math.max(...rects.map((rect) => rect.right)) + padding),
+        bottom: Math.min(window.innerHeight, Math.max(...rects.map((rect) => rect.bottom)) + padding)
+      };
+    }
+
+    function getVisibleTransferToTarget() {
+      if (suppliesModeEl?.value === 'main_office') return suppliesPanelEl;
+      return [transferToStoreEl, transferToWastageEl, transferToEl].find((el) => el && el.offsetParent !== null) || document.getElementById('taf-transfer-to-guide-target');
+    }
+
+    function getFirstItemTargets() {
+      if (suppliesModeEl?.value === 'main_office') return [suppliesPanelEl].filter(Boolean);
+      const firstRow = body?.querySelector('.taf-row');
+      return [
+        firstRow?.querySelector('.taf-item-name'),
+        firstRow?.querySelector('.taf-qty')
+      ].filter(Boolean);
+    }
+
+    function getPreparedGuideTarget() {
+      return suppliesModeEl?.value === 'main_office' ? suppliesPanelEl : preparedByEl;
+    }
+
+    function getSubmitGuideTarget() {
+      return suppliesModeEl?.value === 'main_office' ? document.getElementById('sr-submit') : submitBtnEl;
+    }
+
+    function getSupplyRequestGuideTarget() {
+      return suppliesToggleWrapEl && suppliesToggleWrapEl.offsetParent !== null
+        ? suppliesToggleWrapEl
+        : document.getElementById('transaction_type_cards');
+    }
+
+    function getTafTourStep() {
+      const steps = [
+        {
+          elements: [controlNoEl],
+          text: 'Enter the TAF control number here.',
+          placement: 'bottom',
+          nextText: 'Next'
+        },
+        {
+          elements: [productTransferCardEl],
+          text: 'Product Transfer moves products from this store to another store or location.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => selectTransactionType('Product Transfer')
+        },
+        {
+          elements: [wastageTransferCardEl],
+          text: 'Wastage Transfer records products that were wasted or discarded. Select the Wastage Transfer card when this is the transaction you are recording.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => selectTransactionType('Wastage Transfer')
+        },
+        {
+          elements: [egiPlantTransferCardEl],
+          text: 'EGI Plant Transfer records a transfer of products to or from the EGI Plant.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => selectTransactionType('EGI Plant Transfer')
+        },
+        {
+          elements: [suppliesRequestCardEl],
+          text: 'Supplies Request is used to request supply items. Select it to choose whether the request is for another store or for the Main Office.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => {
+            selectTransactionType('Supplies Request');
+            if (suppliesModeEl) suppliesModeEl.value = 'other_store';
+            syncSuppliesMode();
+          }
+        },
+        {
+          elements: [getSupplyRequestGuideTarget()],
+          text: 'Choose Other Store when this store is sending a supplies transfer to another store. Select the destination store, add the supply items and quantities, then submit the TAF.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => {
+            if (suppliesModeEl) suppliesModeEl.value = 'other_store';
+            syncSuppliesMode();
+          }
+        },
+        {
+          elements: [getSupplyRequestGuideTarget()],
+          text: 'Choose Main Office when this store needs supplies from the Main Office. Select the supply items and quantities in the request panel, add optional remarks, then submit the Supply Request.',
+          placement: 'bottom',
+          nextText: 'Next',
+          prepare: () => {
+            if (suppliesModeEl) suppliesModeEl.value = 'main_office';
+            syncSuppliesMode();
+          }
+        },
+        {
+          elements: [getVisibleTransferToTarget()],
+          text: 'Select the destination store or location to transfer to. Supply Requests use the Other Store or Main Office choice shown above.',
+          placement: 'bottom',
+          nextText: 'Next'
+        },
+        {
+          elements: getFirstItemTargets().length ? getFirstItemTargets() : [document.getElementById('taf-items-guide-target')],
+          text: 'Select an item from Product Master, then enter the quantity.',
+          placement: 'bottom',
+          nextText: 'Next'
+        },
+        {
+          elements: [getPreparedGuideTarget()],
+          text: 'Complete the request details, or enter the name of the person who prepared this TAF.',
+          placement: 'top',
+          nextText: 'Next'
+        },
+        {
+          elements: [getSubmitGuideTarget()],
+          text: 'Submit the Supply Request or TAF when the details are complete.',
+          placement: 'top',
+          nextText: 'Finish'
+        }
+      ];
+      return steps.filter((step) => step.elements.some(Boolean))[tafTourStepIndex] || null;
+    }
+
+    function removeTafTourPanels() {
+      document.querySelectorAll('.taf-tour-panel').forEach((panel) => panel.remove());
+      document.querySelectorAll('.taf-tour-label').forEach((label) => label.remove());
+    }
+
+    function clearTafTour() {
+      tafTourActive = false;
+      tafTourStepIndex = 0;
+      removeTafTourPanels();
+      document.querySelectorAll('.taf-tour-target').forEach((el) => el.classList.remove('taf-tour-target'));
+    }
+
+    function completeTafTour() {
+      try {
+        window.localStorage.setItem(tafTourCompletionKey, '1');
+      } catch (error) {
+        // Ignore storage restrictions; the tour can still be replayed manually.
+      }
+      clearTafTour();
+    }
+
+    function applyTafTourTarget() {
+      document.querySelectorAll('.taf-tour-target').forEach((el) => el.classList.remove('taf-tour-target'));
+      const step = getTafTourStep();
+      if (!step) return;
+      step.elements.forEach((el) => {
+        if (el) el.classList.add('taf-tour-target');
+      });
+    }
+
+    function renderTafTourSpotlight() {
+      removeTafTourPanels();
+
+      const step = getTafTourStep();
+      if (!step) {
+        clearTafTour();
+        return;
+      }
+
+      const rect = getTafTourElementGroupRect(step.elements);
+      if (!rect) return;
+
+      [
+        { top: 0, left: 0, width: window.innerWidth, height: rect.top },
+        { top: rect.bottom, left: 0, width: window.innerWidth, height: window.innerHeight - rect.bottom },
+        { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
+        { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top }
+      ].forEach((panel) => {
+        const el = document.createElement('div');
+        el.className = 'taf-tour-panel';
+        el.style.top = `${panel.top}px`;
+        el.style.left = `${panel.left}px`;
+        el.style.width = `${Math.max(0, panel.width)}px`;
+        el.style.height = `${Math.max(0, panel.height)}px`;
+        document.body.appendChild(el);
+      });
+
+      const label = document.createElement('div');
+      label.className = 'taf-tour-label';
+      const message = document.createElement('div');
+      message.textContent = step.text;
+      const nextButton = document.createElement('button');
+      nextButton.type = 'button';
+      nextButton.textContent = step.nextText;
+      nextButton.addEventListener('click', nextTafTourStep);
+      label.appendChild(message);
+      label.appendChild(nextButton);
+
+      if (step.placement === 'bottom') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+      } else if (step.placement === 'top') {
+        label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 376))}px`;
+        label.style.top = `${Math.max(24, rect.top - 118)}px`;
+      } else if (step.placement === 'left') {
+        label.style.left = `${Math.max(16, rect.left - 380)}px`;
+        label.style.top = `${Math.max(24, rect.top)}px`;
+      } else {
+        const labelLeft = rect.right + 24;
+        const hasRightSpace = labelLeft + 320 <= window.innerWidth;
+        label.style.left = `${hasRightSpace ? labelLeft : Math.max(16, rect.left - 340)}px`;
+        label.style.top = `${Math.max(24, rect.top + Math.min(96, Math.max(0, (rect.bottom - rect.top) / 3)))}px`;
+      }
+      document.body.appendChild(label);
+
+      const labelRect = label.getBoundingClientRect();
+      const viewportMargin = 16;
+      const maxTop = Math.max(viewportMargin, window.innerHeight - labelRect.height - viewportMargin);
+      const maxLeft = Math.max(viewportMargin, window.innerWidth - labelRect.width - viewportMargin);
+      const requestedTop = Number.parseFloat(label.style.top) || viewportMargin;
+      const requestedLeft = Number.parseFloat(label.style.left) || viewportMargin;
+      label.style.top = `${Math.min(Math.max(requestedTop, viewportMargin), maxTop)}px`;
+      label.style.left = `${Math.min(Math.max(requestedLeft, viewportMargin), maxLeft)}px`;
+    }
+
+    function showTafTourStep() {
+      let step = getTafTourStep();
+      if (!step) {
+        clearTafTour();
+        return;
+      }
+
+      step.prepare?.();
+      step = getTafTourStep();
+
+      const target = step.elements.find((el) => el && el.offsetParent !== null);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+
+      setTimeout(() => {
+        applyTafTourTarget();
+        renderTafTourSpotlight();
+      }, 350);
+    }
+
+    function nextTafTourStep() {
+      tafTourStepIndex += 1;
+      if (!getTafTourStep()) {
+        completeTafTour();
+        return;
+      }
+      showTafTourStep();
+    }
+
+    function startTafTour() {
+      if (tafTourStartModal) {
+        tafTourStartModal.remove();
+      }
+      clearTafTour();
+      tafTourActive = true;
+      tafTourStepIndex = 0;
+      showTafTourStep();
+    }
+
+    try {
+      if (!isTafGuideMode && window.localStorage.getItem(tafTourCompletionKey) === '1') {
+        tafTourStartModal?.remove();
+      }
+    } catch (error) {
+      // The intro modal remains available when browser storage is blocked.
+    }
+
+    addBtn?.addEventListener('click', addRow);
+    tafDateEl?.addEventListener('change', () => {
+      const selectedDate = tafDateEl.value || '';
+      if (!selectedDate) return;
+      const targetUrl = new URL(window.location.href);
+      targetUrl.searchParams.set('date', selectedDate);
+      window.location.href = targetUrl.toString();
+    });
+    transactionTypeCardEls.forEach((card) => {
+      card.addEventListener('click', () => {
+        const selectedValue = card.dataset.transactionType || '';
+        if (tafWastageLocked && selectedValue === 'Wastage Transfer') {
+          alert('End of Day is already done for this date. Wastage can no longer be entered or edited. Contact an Admin to unfinalize the day.');
+          return;
+        }
+        selectTransactionType(selectedValue);
+      });
+    });
+    transactionTypeEl?.addEventListener('change', () => {
+      syncItemNameMode();
+      syncTransferMode();
+      syncSuppliesMode();
+      syncSubmitMode();
+      renderTransactionTypeCards();
+    });
+
+    suppliesModeBtnsEl?.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (suppliesModeEl) suppliesModeEl.value = btn.dataset.suppliesMode || 'other_store';
+        syncSuppliesMode();
+        syncSubmitMode();
+        renderTransactionTypeCards();
+      });
+    });
+
+    body?.addEventListener('input', (event) => {
+      const target = event.target;
+      if (target.classList.contains('taf-unit-cost') || target.classList.contains('taf-qty')) {
+        refreshTotals();
+        return;
+      }
+      if (target.classList.contains('taf-item-name')) {
+        const transactionType = transactionTypeEl?.value || '';
+        if (!usesProductMasterLookup(transactionType)) return;
+        const row = target.closest('.taf-row');
+        if (!row) return;
+        const isValidProduct = validateProductMasterInput(target);
+        if (isValidProduct) autoFillUnitCostForRow(row, target.value);
+        refreshTotals();
+      }
+    });
+
+    body?.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!target.classList.contains('taf-item-name')) return;
+      const row = target.closest('.taf-row');
+      if (!row) return;
+      if (!validateProductMasterInput(target, true)) return;
+      autoFillUnitCostForRow(row, target.value);
+      refreshTotals();
+    });
+
+    body?.addEventListener('click', (event) => {
+      const button = event.target.closest('.taf-remove-row');
+      if (!button) return;
+      const rows = body.querySelectorAll('.taf-row');
+      if (rows.length <= 1) {
+        const row = rows[0];
+        if (row) {
+          row.querySelectorAll('input, select').forEach((input) => { input.value = ''; });
+        }
+      } else {
+        button.closest('.taf-row')?.remove();
+      }
+      refreshTotals();
+    });
+
+    formEl?.addEventListener('submit', (event) => {
+      if (hasConfirmedSubmit) {
+        return;
+      }
+      event.preventDefault();
+      const transactionType = transactionTypeEl?.value || '';
+      let canSubmit = transactionType === 'Product Transfer' || transactionType === 'Wastage Transfer' || transactionType === 'EGI Plant Transfer';
+      if (tafWastageLocked && transactionType === 'Wastage Transfer') {
+        canSubmit = false;
+      }
+      if (!canSubmit) {
+        return;
+      }
+
+      if (!preparedByEl?.value?.trim()) {
+        preparedByEl?.focus();
+        return;
+      }
+
+      const invalidProductInput = Array.from(body.querySelectorAll('.taf-item-name'))
+        .find((input) => !validateProductMasterInput(input, true));
+      if (invalidProductInput) {
+        invalidProductInput.reportValidity();
+        invalidProductInput.focus();
+        return;
+      }
+
+      if (typeof showConfirmationModal !== 'function') {
+        hasConfirmedSubmit = true;
+        markTafSubmitting();
+        formEl.submit();
+        return;
+      }
+
+      showConfirmationModal({
+        title: `Submit ${transactionType}`,
+        cancelText: 'No, Go Back',
+        confirmText: 'Yes, Submit',
+        message: 'Are you sure you want to submit?',
+        onConfirm: () => {
+          hasConfirmedSubmit = true;
+          markTafSubmitting();
+          formEl.submit();
+        },
+      });
+    });
+
+    addRow();
+    syncItemNameMode();
+    syncTransferMode();
+    syncSuppliesMode();
+    syncSubmitMode();
+    renderTransactionTypeCards();
+
+    if (tafTourStartBtn) {
+      tafTourStartBtn.addEventListener('click', startTafTour);
+    }
+    if (tafTourHelpBtn) {
+      tafTourHelpBtn.addEventListener('click', startTafTour);
+    }
+    window.addEventListener('resize', () => {
+      if (tafTourActive) renderTafTourSpotlight();
+    });
+    window.addEventListener('scroll', () => {
+      if (tafTourActive) renderTafTourSpotlight();
+    }, { passive: true });
+  })();
+</script>
+
+<script>
+(function() {
+  const categorySelect = document.getElementById('sr-category');
+  const itemSelect = document.getElementById('sr-item');
+  const qtyInput = document.getElementById('sr-qty');
+  const cartBody = document.getElementById('sr-cart-body');
+  if (!categorySelect || !itemSelect || !cartBody) return;
+  const cart = [];
+
+  const optionItems = Array.from(itemSelect.options).slice(1).map(o => ({ id: o.value, name: o.textContent, category: o.dataset.category, stock: parseInt(o.dataset.stock || '0') }));
+
+  function applyCategoryFilter() {
+    const cat = categorySelect.value;
+    const item = itemSelect.value;
+    itemSelect.innerHTML = '<option value="">Select an item</option>';
+    optionItems
+      .filter(o => !cat || o.category === cat)
+      .forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.id;
+        opt.dataset.category = o.category;
+        opt.dataset.stock = o.stock;
+        opt.textContent = o.name;
+        itemSelect.appendChild(opt);
+      });
+    if (item && optionItems.some(o => o.id === item && (!cat || o.category === cat))) itemSelect.value = item;
+  }
+
+  function renderCart() {
+    const rowClass = 'px-4 py-2 text-sm text-slate-700';
+    if (cart.length === 0) {
+      cartBody.innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-sm text-slate-400">No items added yet.</td></tr>';
+    } else {
+      cartBody.innerHTML = cart.map((entry, idx) => `
+        <tr class="odd:bg-white even:bg-slate-50">
+          <td class="${rowClass} font-semibold text-slate-900">${entry.name}</td>
+          <td class="${rowClass} text-slate-500">${entry.category}</td>
+          <td class="${rowClass} text-center font-semibold">${entry.qty}</td>
+          <td class="px-4 py-2 text-center">
+            <button type="button" onclick="window.removeCartItem(${idx})" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-rose-500 hover:bg-rose-50 transition-colors" title="Remove" aria-label="Remove">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+            </button>
+          </td>
+        </tr>`).join('');
+    }
+  }
+
+  window.removeCartItem = function(idx) {
+    cart.splice(idx, 1);
+    renderCart();
+  };
+
+  function addItem() {
+    const selected = itemSelect.options[itemSelect.selectedIndex];
+    if (!selected || !selected.value) { alert('Please select an item first.'); return; }
+    const qty = parseInt(qtyInput.value, 10);
+    if (!qty || qty < 1) { alert('Enter a quantity greater than zero.'); return; }
+    const existing = cart.findIndex(e => e.id === selected.value);
+    if (existing >= 0) {
+      cart[existing].qty += qty;
+    } else {
+      cart.push({ id: selected.value, name: selected.textContent, category: selected.dataset.category || '', stock: parseInt(selected.dataset.stock || '0'), qty: qty });
+    }
+    itemSelect.value = '';
+    qtyInput.value = '1';
+    renderCart();
+  }
+
+  document.getElementById('sr-submit').addEventListener('click', async function() {
+    if (cart.length === 0) { alert('Add at least one item to the request.'); return; }
+    const payload = {
+      items: cart.map(e => ({ supply_item_id: parseInt(e.id), quantity: e.qty })),
+      remarks: document.getElementById('sr-remarks').value,
+      request_type: 'taf'
+    };
+    this.disabled = true;
+    const original = this.textContent;
+    this.textContent = 'Submitting...';
+    try {
+      const res = await fetch('/store-manager/supply-request/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message || 'Request submitted.');
+        window.location.reload();
+      } else {
+        alert(data.error || 'Failed to submit request.');
+      }
+    } catch (err) {
+      alert('Network error while submitting the request.');
+    } finally {
+      this.disabled = false;
+      this.textContent = original;
+    }
+  });
+
+  document.getElementById('sr-clear').addEventListener('click', function() {
+    cart.length = 0;
+    document.getElementById('sr-remarks').value = '';
+    renderCart();
+  });
+
+  document.getElementById('sr-add-btn').addEventListener('click', addItem);
+  qtyInput.addEventListener('keydown', function(event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addItem();
+    }
+  });
+  categorySelect.addEventListener('change', applyCategoryFilter);
+  applyCategoryFilter();
+  renderCart();
+})();
+</script>
+
+<script>
+(function() {
+  const tbody = document.getElementById('sr-hist-tbody');
+  const paginationEl = document.getElementById('sr-hist-pagination');
+  const countLabel = document.getElementById('sr-hist-count-label');
+  const searchInput = document.getElementById('sr-hist-search');
+  if (!tbody) return;
+
+  const allRows = Array.from(tbody.querySelectorAll('tr.sr-detail-row')).length
+    ? Array.from(tbody.querySelectorAll('tr:not(.sr-detail-row)'))
+    : Array.from(tbody.querySelectorAll('tr'));
+  let filteredRows = allRows.slice();
+  let currentPage = 1;
+  const perPage = 10;
+
+  function applySearch(query) {
+    const q = (query || '').toLowerCase().trim();
+    filteredRows = q ? allRows.filter(r => r.textContent.toLowerCase().includes(q)) : allRows.slice();
+    currentPage = 1;
+    render();
+  }
+
+  function render() {
+    const total = filteredRows.length;
+    const totalPages = Math.max(1, Math.ceil(total / perPage));
+    if (currentPage > totalPages) currentPage = totalPages;
+    const start = (currentPage - 1) * perPage;
+    const end = start + perPage;
+
+    tbody.querySelectorAll('tr').forEach(r => { r.style.display = 'none'; });
+    filteredRows.slice(start, end).forEach(r => {
+      r.style.display = '';
+      const detail = r.nextElementSibling;
+      if (detail && detail.classList.contains('sr-detail-row')) detail.style.display = 'none';
+    });
+
+    if (countLabel) {
+      countLabel.textContent = total === 0 ? 'No results' : `${start + 1}–${Math.min(end, total)} of ${total}`;
+    }
+
+    if (!paginationEl) return;
+    if (totalPages <= 1) { paginationEl.innerHTML = ''; return; }
+
+    const btnClass = 'inline-flex h-8 min-w-8 items-center justify-center rounded-lg border border-slate-200 px-2.5 text-xs font-semibold transition-colors';
+    const activeClass = 'bg-indigo-600 text-white border-indigo-600';
+    const inactiveClass = 'bg-white text-slate-700 hover:bg-slate-50';
+
+    let pages = [];
+    for (let i = 1; i <= totalPages; i++) {
+      if (i === 1 || i === totalPages || (i >= currentPage - 2 && i <= currentPage + 2)) pages.push(i);
+      else if (pages[pages.length - 1] !== '…') pages.push('…');
+    }
+
+    paginationEl.innerHTML = `
+      <span class="text-xs text-slate-500">Page ${currentPage} of ${totalPages}</span>
+      <div class="flex items-center gap-1">
+        <button type="button" data-page="prev" class="${btnClass} ${currentPage===1?'opacity-40 cursor-not-allowed bg-white text-slate-400':inactiveClass}" ${currentPage===1?'disabled':''}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        ${pages.map(p => p === '…' ? `<span class="px-1 text-slate-400 text-xs">…</span>` : `<button type="button" data-page="${p}" class="${btnClass} ${p===currentPage?activeClass:inactiveClass}">${p}</button>`).join('')}
+        <button type="button" data-page="next" class="${btnClass} ${currentPage===totalPages?'opacity-40 cursor-not-allowed bg-white text-slate-400':inactiveClass}" ${currentPage===totalPages?'disabled':''}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>`;
+
+    paginationEl.querySelectorAll('button[data-page]').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const p = this.getAttribute('data-page');
+        if (p === 'prev') { if (currentPage > 1) currentPage--; }
+        else if (p === 'next') { if (currentPage < totalPages) currentPage++; }
+        else currentPage = parseInt(p);
+        render();
+        tbody.closest('section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  }
+
+  if (searchInput) searchInput.addEventListener('input', function() { applySearch(this.value); });
+  render();
+})();
+</script>
+
+<script>
+function toggleRequestDetails(btn) {
+  const detailRow = btn.closest('tr').nextElementSibling;
+  if (detailRow && detailRow.classList.contains('sr-detail-row')) {
+    const open = detailRow.classList.contains('hidden') || detailRow.style.display === 'none';
+    detailRow.classList.toggle('hidden', !open);
+    detailRow.style.display = open ? '' : 'none';
+    btn.querySelector('svg').innerHTML = open ? '<polyline points="18 15 12 9 6 15"/>' : '<polyline points="6 9 12 15 18 9"/>';
+  }
+}
+</script>
+{% endblock %}

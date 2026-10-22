@@ -1,0 +1,1089 @@
+{% extends "base.html" %}
+{% block title %}CSI - {{ store.name }}{% endblock %}
+
+{% block content %}
+<style>
+  /* Hide native Chrome, Safari, Edge, Opera number input arrows */
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  /* Hide native Firefox number input arrows */
+  input[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+</style>
+
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span>Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">CSI</span>
+    </nav>
+  </div>
+  <div class="flex items-center gap-3">
+    {% if user.role in ['Inventory Staff', 'Admin', 'Superadmin'] %}
+    <!-- Show All Stores Checkbox in Topbar -->
+    <label class="inline-flex items-center gap-2 text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 shadow-xs cursor-pointer hover:bg-slate-50 transition-colors">
+      <input type="checkbox" id="chk-show-all-stores" {% if show_all_stores %}checked{% endif %} onchange="toggleShowAllStores(this.checked)" class="w-4 h-4 text-cyan-600 border-slate-300 rounded focus:ring-cyan-500">
+      <span>Show All Stores</span>
+    </label>
+
+    <!-- View Toggle (Summary vs Spreadsheet) -->
+    <div class="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 shadow-xs" role="group">
+      <button type="button" id="btn-view-summary" onclick="switchCsView('summary')" class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-md bg-slate-900 text-white shadow-xs transition-all">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+        <span>Summary View</span>
+      </button>
+      <button type="button" id="btn-view-spreadsheet" onclick="switchCsView('spreadsheet')" class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-md text-slate-600 hover:text-slate-900 transition-all">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
+        <span>Spreadsheet (Itemized)</span>
+      </button>
+    </div>
+
+    <!-- Export CSV Button (Visible in Spreadsheet Mode) -->
+    <button id="export-spreadsheet-csv-btn" onclick="exportSpreadsheetCSV()" class="hidden inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 rounded-lg hover:bg-emerald-200 transition-colors shadow-xs">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-emerald-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+      <span>Export CSV</span>
+    </button>
+    {% endif %}
+
+    <span class="text-sm font-medium text-slate-900">{{ store.name }}</span>
+  </div>
+</header>
+
+<div class="px-3 py-4 md:px-6 md:py-6 w-full mx-auto space-y-4">
+  <!-- Charge Slips History Table -->
+  <section class="border border-slate-200 bg-white shadow-sm rounded-lg overflow-hidden">
+    <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-cyan-50 to-blue-50 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
+      <div>
+        <h3 class="text-sm md:text-base font-bold text-slate-900">All Charge Slips History</h3>
+        <p class="text-xs text-slate-500 mt-0.5">Complete history of all submitted Charge and Spoilage slips for {{ store.name }}.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="cs-history-count-label" class="text-xs text-slate-500 font-medium"></span>
+        <input id="cs-history-search" type="search" placeholder="Search control no, payee, item..." class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 w-52 md:w-64">
+      </div>
+    </div>
+
+    <div class="p-0">
+      {% if charge_slips %}
+      <!-- Standard Summary View -->
+      <div id="cs-summary-view-container">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-100">
+              <tr>
+                {% if show_all_stores %}
+                <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Store</th>
+                {% endif %}
+                <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Date</th>
+                <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Control No</th>
+                <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Name</th>
+                <th scope="col" class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Type</th>
+                <th scope="col" class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Items</th>
+                <th scope="col" class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Subtotal</th>
+                <th scope="col" class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Discount</th>
+                <th scope="col" class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Net Charges</th>
+                <th scope="col" class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Status</th>
+                <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Validated By</th>
+                <th scope="col" class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+              </tr>
+            </thead>
+            <tbody id="cs-history-tbody" class="divide-y divide-slate-100 bg-white">
+              {% for slip in charge_slips %}
+              {% set is_locked = finalized_dates_map.get(slip.id, False) %}
+              {% set val_user_name = (slip.validator.full_name or slip.validator.username or ('User #' ~ slip.validated_by)) if slip.validator else ('User #' ~ slip.validated_by if slip.validated_by else '') %}
+              <tr class="odd:bg-white even:bg-slate-50 hover:bg-slate-100/80 transition-colors">
+                {% if show_all_stores %}
+                <td class="px-4 py-3 text-sm font-semibold text-slate-800 whitespace-nowrap">{{ slip.store.name if slip.store else '' }}</td>
+                {% endif %}
+                <td class="px-4 py-3 text-sm text-slate-700 whitespace-nowrap">{{ slip.transaction_date.strftime('%b %d, %Y') if slip.transaction_date else '' }}</td>
+                <td class="px-4 py-3 text-sm font-semibold text-slate-900 whitespace-nowrap">{{ slip.control_no }}</td>
+                <td class="px-4 py-3 text-sm font-medium text-slate-900 whitespace-nowrap">{{ slip.customer_name if slip.customer_name else '—' }}</td>
+                <td class="px-4 py-3 text-center whitespace-nowrap">
+                  <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold {% if slip.charge_type == 'Spoilage' %}bg-amber-100 text-amber-800{% else %}bg-cyan-100 text-cyan-800{% endif %}">
+                    {{ slip.charge_type or 'Charge' }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-slate-900 text-right font-semibold whitespace-nowrap">{{ item_count_by_transfer.get(slip.id, 0) }}</td>
+                <td class="px-4 py-3 text-sm text-right text-slate-700 whitespace-nowrap">₱{{ '%.2f'|format(slip.grand_total or 0) }}</td>
+                <td class="px-4 py-3 text-sm text-right text-slate-600 whitespace-nowrap">{{ '%.1f'|format(slip.discount_percent or 0) }}%</td>
+                <td class="px-4 py-3 text-sm text-right font-extrabold text-slate-900 whitespace-nowrap">₱{{ '%.2f'|format(slip.net_total or 0) }}</td>
+                <td class="px-4 py-3 text-center whitespace-nowrap">
+                  <span class="status-badge-slip-{{ slip.id }} inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold {% if slip.status == 'Pending' or not slip.status %}bg-amber-100 text-amber-800 border border-amber-200{% else %}bg-emerald-100 text-emerald-800 border border-emerald-200{% endif %}">
+                    {{ slip.status or 'Pending' }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-slate-700 whitespace-nowrap val-by-slip-{{ slip.id }}">
+                  {% if slip.status == 'Validated' %}
+                    {{ val_user_name if val_user_name else '—' }}
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td class="px-4 py-3 text-center whitespace-nowrap">
+                  <div class="flex items-center justify-center gap-1.5">
+                    <!-- View Button -->
+                    <a href="{{ url_for('views.store_manager_charge_slip', view_id=slip.id) }}" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors" title="View Charge Slip Details" aria-label="View Charge Slip Details">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                      </svg>
+                    </a>
+
+                    {% set can_edit_slip = (user.role in ['Inventory Staff', 'Admin', 'Superadmin']) or ((slip.status or 'Pending') == 'Pending' and not is_locked) %}
+                    {% if can_edit_slip %}
+                      <!-- Edit Button -->
+                      <a href="{{ url_for('views.store_manager_charge_slip', edit_id=slip.id) }}" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-amber-600 hover:bg-amber-50 hover:text-amber-800 transition-colors" title="Edit Charge Slip" aria-label="Edit Charge Slip">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                      </a>
+                    {% else %}
+                      <!-- Disabled Edit Button -->
+                      <button type="button" disabled class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-300 cursor-not-allowed" title="Locked - End of Day Finalized">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                      </button>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination Controls for Summary View -->
+        <div id="cs-history-pagination" class="flex items-center justify-between p-4 border-t border-slate-200 flex-wrap gap-2"></div>
+      </div>
+
+      {% if user.role in ['Inventory Staff', 'Admin', 'Superadmin'] %}
+      <!-- Datalist for Item Description Search Dropdown -->
+      <datalist id="cs-product-datalist">
+        {% for p_name in product_names %}
+          <option value="{{ p_name }}">
+        {% endfor %}
+      </datalist>
+
+      <!-- Spreadsheet / Itemized Table View (Inventory Staff Exclusive) -->
+      <div id="cs-spreadsheet-view-container" class="hidden border border-slate-300 rounded-lg overflow-hidden shadow-xs bg-white my-2">
+        <div class="overflow-x-auto">
+          <table id="cs-spreadsheet-table" class="min-w-full divide-y divide-slate-300 text-sm border-collapse">
+            <thead class="bg-slate-800 text-white font-bold uppercase tracking-wider text-xs sm:text-sm">
+              <tr>
+                <th scope="col" class="px-3.5 py-3 text-left border-r border-slate-700">
+                  <div class="flex items-center gap-2">
+                    <span>BRANCH</span>
+                    <button type="button" onclick="addNewBlankSpreadsheetRowAtTop()" class="inline-flex items-center justify-center h-6 w-6 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-all cursor-pointer" title="Add New Blank Row at Top">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                      </svg>
+                    </button>
+                  </div>
+                </th>
+                <th scope="col" class="px-3.5 py-3 text-left border-r border-slate-700">Month</th>
+                <th scope="col" class="px-3.5 py-3 text-left border-r border-slate-700">DATE</th>
+                <th scope="col" class="px-3.5 py-3 text-left border-r border-slate-700">payee</th>
+                <th scope="col" class="px-3.5 py-3 text-left border-r border-slate-700">ref#</th>
+                <th scope="col" class="px-3.5 py-3 text-left border-r border-slate-700">item_description</th>
+                <th scope="col" class="px-3.5 py-3 text-right border-r border-slate-700">qty</th>
+                <th scope="col" class="px-3.5 py-3 text-right border-r border-slate-700">price</th>
+                <th scope="col" class="px-3.5 py-3 text-right border-r border-slate-700">TOTAL</th>
+                <th scope="col" class="px-3.5 py-3 text-right border-r border-slate-700">% disc.</th>
+                <th scope="col" class="px-3.5 py-3 text-right border-r border-slate-700">disc</th>
+                <th scope="col" class="px-3.5 py-3 text-right border-r border-slate-700">total</th>
+                <th scope="col" class="px-3.5 py-3 text-left border-r border-slate-700">REMARKS</th>
+                <th scope="col" class="px-3.5 py-3 text-left border-r border-slate-700">VALIDATED BY</th>
+                <th scope="col" class="sticky right-0 z-20 bg-slate-800 text-white font-bold uppercase tracking-wider text-xs sm:text-sm px-3.5 py-3 text-center border-l-2 border-slate-600 shadow-md">ACTION</th>
+              </tr>
+            </thead>
+            <tbody id="cs-spreadsheet-tbody" class="divide-y divide-slate-200 bg-white">
+              {% for slip in charge_slips %}
+                {% set branch_name = slip.store.name if slip.store else store.name %}
+                {% set month_str = slip.transaction_date.strftime('%B') if slip.transaction_date else '' %}
+                {% set date_str = slip.transaction_date.strftime('%Y-%m-%d') if slip.transaction_date else '' %}
+                {% set payee_str = slip.customer_name if slip.customer_name else '' %}
+                {% set ref_str = slip.control_no %}
+                {% set disc_pct = slip.discount_percent or 0.0 %}
+                {% set slip_remarks = slip.remarks or '' %}
+                {% set slip_status = slip.status or 'Pending' %}
+                {% set val_user_name = (slip.validator.full_name or slip.validator.username or ('User #' ~ slip.validated_by)) if slip.validator else ('User #' ~ slip.validated_by if slip.validated_by else '') %}
+                {% set val_time_info = ' on ' ~ slip.validated_at.strftime('%b %d, %Y %I:%M %p') if slip.validated_at else '' %}
+                {% set val_full_str = val_user_name if slip_status == 'Validated' else '—' %}
+                {% set val_title = ('Validated by ' ~ val_full_str ~ val_time_info ~ '. Double-click to revert to Pending.') if slip_status == 'Validated' else 'Click to Validate' %}
+                
+                {% if slip.items %}
+                  {% for item in slip.items %}
+                    {% set item_qty = item.quantity or 0 %}
+                    {% set item_price = item.unit_cost or 0.0 %}
+                    {% set item_total = item_qty * item_price %}
+                    {% set disc_val = item_total * (disc_pct / 100.0) %}
+                    {% set total_sales = item_total - disc_val %}
+                    {% set item_remarks = item.remarks if item.remarks else slip_remarks %}
+                    <tr data-slip-id="{{ slip.id }}" data-item-id="{{ item.id }}" data-store-id="{{ slip.store_id }}" data-status="{{ slip_status }}" class="cs-spreadsheet-row odd:bg-white even:bg-slate-50 hover:bg-amber-50/70 transition-colors text-sm text-slate-800 group border-b border-slate-200">
+                      <td class="px-3.5 py-2.5 whitespace-nowrap font-semibold text-slate-900 border-r border-slate-200 cursor-pointer" data-col="branch" title="Double click to edit">{{ branch_name }}</td>
+                      <td class="px-3.5 py-2.5 whitespace-nowrap text-slate-600 border-r border-slate-200" data-col="month">{{ month_str }}</td>
+                      <td class="px-3.5 py-2.5 whitespace-nowrap text-slate-700 font-mono border-r border-slate-200 cursor-pointer" data-col="date" data-val="{{ date_str }}" title="Double click to edit">{{ date_str }}</td>
+                      <td class="px-3.5 py-2.5 whitespace-nowrap text-slate-900 font-medium border-r border-slate-200 cursor-pointer" data-col="payee" data-val="{{ payee_str }}" title="Double click to edit">{{ payee_str if payee_str else '—' }}</td>
+                      <td class="px-3.5 py-2.5 whitespace-nowrap text-cyan-700 font-semibold font-mono border-r border-slate-200 cursor-pointer" data-col="ref" data-val="{{ ref_str }}" title="Double click to edit">{{ ref_str }}</td>
+                      <td class="px-3.5 py-2.5 whitespace-normal font-semibold text-slate-900 border-r border-slate-200 min-w-[200px] cursor-pointer" data-col="item_name" data-val="{{ item.item_name }}" title="Double click to edit">{{ item.item_name }}</td>
+                      <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-bold text-slate-900 font-mono border-r border-slate-200 cursor-pointer" data-col="qty" data-val="{{ item_qty }}" title="Double click to edit">{{ item_qty }}</td>
+                      <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-mono text-slate-700 border-r border-slate-200 cursor-pointer" data-col="price" data-val="{{ '%.2f'|format(item_price) }}" title="Double click to edit">₱{{ '%.2f'|format(item_price) }}</td>
+                      <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-bold font-mono text-slate-900 border-r border-slate-200" data-col="item_total">₱{{ '%.2f'|format(item_total) }}</td>
+                      <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-mono text-slate-600 border-r border-slate-200 cursor-pointer" data-col="disc_pct" data-val="{{ '%.1f'|format(disc_pct) }}" title="Double click to edit">{{ '%.1f'|format(disc_pct) }}%</td>
+                      <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-mono text-rose-700 font-semibold border-r border-slate-200" data-col="disc_val">₱{{ '%.2f'|format(disc_val) }}</td>
+                      <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-extrabold font-mono text-emerald-800 border-r border-slate-200" data-col="total_sales">₱{{ '%.2f'|format(total_sales) }}</td>
+                      <td class="px-3.5 py-2.5 whitespace-normal text-slate-500 max-w-xs border-r border-slate-200 cursor-pointer" data-col="remarks" data-val="{{ item_remarks }}" title="Double click to edit">{{ item_remarks if item_remarks else '—' }}</td>
+                      <td class="px-3.5 py-2.5 whitespace-nowrap text-slate-700 font-medium border-r border-slate-200 val-by-slip-{{ slip.id }}" data-col="validated_by">{{ val_full_str }}</td>
+                      <td class="sticky right-0 z-10 bg-white group-even:bg-slate-50 group-hover:bg-amber-50/90 border-l-2 border-slate-300 px-3.5 py-2.5 text-center whitespace-nowrap shadow-xs" data-col="action">
+                        {% if slip_status == 'Validated' %}
+                          <button type="button" data-slip-id="{{ slip.id }}" ondblclick="toggleValidateSlip({{ slip.id }}, this)" class="btn-validate-slip inline-flex h-8 w-8 items-center justify-center rounded-md border transition-all shadow-xs bg-slate-200 hover:bg-slate-300 text-slate-500 border-slate-300 cursor-pointer mx-auto" title="{{ val_title }}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                              <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                          </button>
+                        {% else %}
+                          <button type="button" data-slip-id="{{ slip.id }}" onclick="toggleValidateSlip({{ slip.id }}, this)" class="btn-validate-slip inline-flex h-8 w-8 items-center justify-center rounded-md border transition-all shadow-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 cursor-pointer mx-auto" title="{{ val_title }}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                              <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                          </button>
+                        {% endif %}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr data-slip-id="{{ slip.id }}" data-item-id="" data-store-id="{{ slip.store_id }}" data-status="{{ slip_status }}" class="cs-spreadsheet-row odd:bg-white even:bg-slate-50 hover:bg-amber-50/70 transition-colors text-sm text-slate-800 group border-b border-slate-200">
+                    <td class="px-3.5 py-2.5 whitespace-nowrap font-semibold text-slate-900 border-r border-slate-200 cursor-pointer" data-col="branch" title="Double click to edit">{{ branch_name }}</td>
+                    <td class="px-3.5 py-2.5 whitespace-nowrap text-slate-600 border-r border-slate-200" data-col="month">{{ month_str }}</td>
+                    <td class="px-3.5 py-2.5 whitespace-nowrap text-slate-700 font-mono border-r border-slate-200 cursor-pointer" data-col="date" data-val="{{ date_str }}" title="Double click to edit">{{ date_str }}</td>
+                    <td class="px-3.5 py-2.5 whitespace-nowrap text-slate-900 font-medium border-r border-slate-200 cursor-pointer" data-col="payee" data-val="{{ payee_str }}" title="Double click to edit">{{ payee_str if payee_str else '—' }}</td>
+                    <td class="px-3.5 py-2.5 whitespace-nowrap text-cyan-700 font-semibold font-mono border-r border-slate-200 cursor-pointer" data-col="ref" data-val="{{ ref_str }}" title="Double click to edit">{{ ref_str }}</td>
+                    <td class="px-3.5 py-2.5 whitespace-normal text-slate-400 italic border-r border-slate-200" data-col="item_name" data-val="">No items listed</td>
+                    <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-mono border-r border-slate-200" data-col="qty" data-val="0">0</td>
+                    <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-mono border-r border-slate-200" data-col="price" data-val="0.00">₱0.00</td>
+                    <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-mono border-r border-slate-200" data-col="item_total">₱0.00</td>
+                    <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-mono border-r border-slate-200 cursor-pointer" data-col="disc_pct" data-val="{{ '%.1f'|format(disc_pct) }}" title="Double click to edit">{{ '%.1f'|format(disc_pct) }}%</td>
+                    <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-mono border-r border-slate-200" data-col="disc_val">₱0.00</td>
+                    <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-mono border-r border-slate-200" data-col="total_sales">₱0.00</td>
+                    <td class="px-3.5 py-2.5 whitespace-normal text-slate-500 max-w-xs border-r border-slate-200 cursor-pointer" data-col="remarks" data-val="{{ slip_remarks }}" title="Double click to edit">{{ slip_remarks if slip_remarks else '—' }}</td>
+                    <td class="px-3.5 py-2.5 whitespace-nowrap text-slate-700 font-medium border-r border-slate-200 val-by-slip-{{ slip.id }}" data-col="validated_by">{{ val_full_str }}</td>
+                    <td class="sticky right-0 z-10 bg-white group-even:bg-slate-50 group-hover:bg-amber-50/90 border-l-2 border-slate-300 px-3.5 py-2.5 text-center whitespace-nowrap shadow-xs" data-col="action">
+                      {% if slip_status == 'Validated' %}
+                        <button type="button" data-slip-id="{{ slip.id }}" ondblclick="toggleValidateSlip({{ slip.id }}, this)" class="btn-validate-slip inline-flex h-8 w-8 items-center justify-center rounded-md border transition-all shadow-xs bg-slate-200 hover:bg-slate-300 text-slate-500 border-slate-300 cursor-pointer mx-auto" title="{{ val_title }}">
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        </button>
+                      {% else %}
+                        <button type="button" data-slip-id="{{ slip.id }}" onclick="toggleValidateSlip({{ slip.id }}, this)" class="btn-validate-slip inline-flex h-8 w-8 items-center justify-center rounded-md border transition-all shadow-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 cursor-pointer mx-auto" title="{{ val_title }}">
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        </button>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      {% else %}
+      <div class="p-8 text-center text-slate-500 text-sm">
+        No Charge Slips submitted yet for {{ store.name }}.
+      </div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+
+<script>
+  function tablePaginator(opts) {
+    const tbody = document.getElementById(opts.tbodyId);
+    const paginationEl = document.getElementById(opts.paginationId);
+    const countLabel = document.getElementById(opts.countLabelId);
+    const searchInput = document.getElementById(opts.searchId);
+    if (!tbody) return null;
+
+    const allRows = Array.from(tbody.querySelectorAll('tr'));
+    let filteredRows = allRows.slice();
+    let currentPage = 1;
+    const perPage = opts.perPage || 20;
+
+    function getRowText(row) {
+      return row.textContent.toLowerCase();
+    }
+
+    function applySearch(query) {
+      const q = (query || '').toLowerCase().trim();
+      filteredRows = q ? allRows.filter(r => getRowText(r).includes(q)) : allRows.slice();
+      currentPage = 1;
+      render();
+    }
+
+    function render() {
+      const total = filteredRows.length;
+      const totalPages = Math.max(1, Math.ceil(total / perPage));
+      if (currentPage > totalPages) currentPage = totalPages;
+
+      const start = (currentPage - 1) * perPage;
+      const end = start + perPage;
+
+      allRows.forEach(r => { r.style.display = 'none'; });
+      filteredRows.slice(start, end).forEach(r => { r.style.display = ''; });
+
+      if (countLabel) {
+        if (total === 0) {
+          countLabel.textContent = 'No results';
+        } else {
+          countLabel.textContent = `${start + 1}–${Math.min(end, total)} of ${total}`;
+        }
+      }
+
+      if (!paginationEl) return;
+      if (totalPages <= 1) { paginationEl.innerHTML = ''; return; }
+
+      const btnClass = 'inline-flex h-8 min-w-8 items-center justify-center rounded-lg border border-slate-200 px-2.5 text-xs font-semibold transition-colors';
+      const activeClass = 'bg-cyan-600 text-white border-cyan-600';
+      const inactiveClass = 'bg-white text-slate-700 hover:bg-slate-50';
+
+      let pages = [];
+      for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= currentPage - 2 && i <= currentPage + 2)) {
+          pages.push(i);
+        } else if (pages[pages.length - 1] !== '…') {
+          pages.push('…');
+        }
+      }
+
+      const prevDisabled = currentPage === 1;
+      const nextDisabled = currentPage === totalPages;
+
+      paginationEl.innerHTML = `
+        <span class="text-xs text-slate-500">Page ${currentPage} of ${totalPages}</span>
+        <div class="flex items-center gap-1">
+          <button data-page="prev" class="${btnClass} ${prevDisabled ? 'opacity-40 cursor-not-allowed bg-white text-slate-400' : inactiveClass}" ${prevDisabled ? 'disabled' : ''}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          ${pages.map(p => p === '…'
+            ? `<span class="px-1 text-slate-400 text-xs">…</span>`
+            : `<button data-page="${p}" class="${btnClass} ${p === currentPage ? activeClass : inactiveClass}">${p}</button>`
+          ).join('')}
+          <button data-page="next" class="${btnClass} ${nextDisabled ? 'opacity-40 cursor-not-allowed bg-white text-slate-400' : inactiveClass}" ${nextDisabled ? 'disabled' : ''}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+      `;
+
+      paginationEl.querySelectorAll('button[data-page]').forEach(btn => {
+        btn.addEventListener('click', function() {
+          const p = this.getAttribute('data-page');
+          if (p === 'prev') { if (currentPage > 1) currentPage--; }
+          else if (p === 'next') { if (currentPage < totalPages) currentPage++; }
+          else { currentPage = parseInt(p); }
+          render();
+          tbody.closest('section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      });
+    }
+
+    if (searchInput) {
+      const handleInput = function() { applySearch(this.value); };
+      searchInput.removeEventListener('input', handleInput);
+      searchInput.addEventListener('input', handleInput);
+    }
+
+    render();
+
+    return {
+      applySearch: applySearch,
+      render: render
+    };
+  }
+
+  let paginatorSummary = null;
+
+  function filterSpreadsheetRows(query) {
+    const tbody = document.getElementById('cs-spreadsheet-tbody');
+    const countLabel = document.getElementById('cs-history-count-label');
+    if (!tbody) return;
+
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const q = (query || '').toLowerCase().trim();
+    let visibleCount = 0;
+
+    rows.forEach(r => {
+      const match = !q || r.textContent.toLowerCase().includes(q);
+      r.style.display = match ? '' : 'none';
+      if (match) visibleCount++;
+    });
+
+    if (countLabel) {
+      countLabel.textContent = `Showing all ${visibleCount} items`;
+    }
+  }
+
+  function switchCsView(mode) {
+    const summaryContainer = document.getElementById('cs-summary-view-container');
+    const spreadsheetContainer = document.getElementById('cs-spreadsheet-view-container');
+    const btnSummary = document.getElementById('btn-view-summary');
+    const btnSpreadsheet = document.getElementById('btn-view-spreadsheet');
+    const exportBtn = document.getElementById('export-spreadsheet-csv-btn');
+    const searchInput = document.getElementById('cs-history-search');
+
+    if (!summaryContainer || !spreadsheetContainer) return;
+
+    if (mode === 'spreadsheet') {
+      summaryContainer.classList.add('hidden');
+      spreadsheetContainer.classList.remove('hidden');
+      if (exportBtn) exportBtn.classList.remove('hidden');
+
+      if (btnSummary && btnSpreadsheet) {
+        btnSummary.className = 'inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-md text-slate-600 hover:text-slate-900 transition-all';
+        btnSpreadsheet.className = 'inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-md bg-slate-900 text-white shadow-xs transition-all';
+      }
+      localStorage.setItem('csi_view_mode', 'spreadsheet');
+
+      if (searchInput) {
+        filterSpreadsheetRows(searchInput.value);
+        searchInput.oninput = function() {
+          if (localStorage.getItem('csi_view_mode') === 'spreadsheet') {
+            filterSpreadsheetRows(this.value);
+          }
+        };
+      } else {
+        filterSpreadsheetRows('');
+      }
+    } else {
+      spreadsheetContainer.classList.add('hidden');
+      summaryContainer.classList.remove('hidden');
+      if (exportBtn) exportBtn.classList.add('hidden');
+
+      if (btnSummary && btnSpreadsheet) {
+        btnSummary.className = 'inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-md bg-slate-900 text-white shadow-xs transition-all';
+        btnSpreadsheet.className = 'inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-md text-slate-600 hover:text-slate-900 transition-all';
+      }
+      localStorage.setItem('csi_view_mode', 'summary');
+
+      if (!paginatorSummary) {
+        paginatorSummary = tablePaginator({
+          tbodyId: 'cs-history-tbody',
+          paginationId: 'cs-history-pagination',
+          countLabelId: 'cs-history-count-label',
+          searchId: 'cs-history-search',
+          perPage: 20
+        });
+      } else if (searchInput) {
+        paginatorSummary.applySearch(searchInput.value);
+      }
+    }
+  }
+
+  function toggleValidateSlip(slipId, btnEl) {
+    if (!slipId) return;
+    fetch(`/store-manager/charge-slip/validate/${slipId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        const valName = data.validated_by_name || '';
+        const valTime = data.validated_at_str ? ' on ' + data.validated_at_str : '';
+        const fullValStr = data.status === 'Validated' ? valName : '';
+        const titleStr = data.status === 'Validated'
+          ? `Validated by ${fullValStr}${valTime}. Double-click to revert to Pending.`
+          : 'Click to Validate';
+
+        const allBtns = document.querySelectorAll(`button[data-slip-id="${slipId}"]`);
+        allBtns.forEach(btn => {
+          btn.disabled = false;
+          btn.title = titleStr;
+          if (data.status === 'Validated') {
+            btn.className = 'btn-validate-slip inline-flex h-8 w-8 items-center justify-center rounded-md border transition-all shadow-xs bg-slate-200 hover:bg-slate-300 text-slate-500 border-slate-300 cursor-pointer mx-auto';
+            btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+            btn.removeAttribute('onclick');
+            btn.setAttribute('ondblclick', `toggleValidateSlip(${slipId}, this)`);
+          } else {
+            btn.className = 'btn-validate-slip inline-flex h-8 w-8 items-center justify-center rounded-md border transition-all shadow-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 cursor-pointer mx-auto';
+            btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+            btn.removeAttribute('ondblclick');
+            btn.setAttribute('onclick', `toggleValidateSlip(${slipId}, this)`);
+          }
+        });
+
+        const statusBadges = document.querySelectorAll(`.status-badge-slip-${slipId}`);
+        statusBadges.forEach(badge => {
+          badge.textContent = data.status;
+          if (data.status === 'Validated') {
+            badge.className = `status-badge-slip-${slipId} inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200`;
+          } else {
+            badge.className = `status-badge-slip-${slipId} inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200`;
+          }
+        });
+
+        const valByCells = document.querySelectorAll(`.val-by-slip-${slipId}`);
+        valByCells.forEach(cell => {
+          cell.textContent = data.status === 'Validated' ? (fullValStr || '—') : '—';
+        });
+
+        const slipRows = document.querySelectorAll(`tr[data-slip-id="${slipId}"]`);
+        slipRows.forEach(r => r.setAttribute('data-status', data.status));
+      } else {
+        alert(data.message || 'Error updating status');
+      }
+    })
+    .catch(err => {
+      console.error('Error validating slip:', err);
+    });
+  }
+
+  function toggleShowAllStores(isChecked) {
+    const url = new URL(window.location.href);
+    if (isChecked) {
+      url.searchParams.set('all_stores', '1');
+    } else {
+      url.searchParams.delete('all_stores');
+    }
+    window.location.href = url.toString();
+  }
+
+  function exportSpreadsheetCSV() {
+    const table = document.getElementById('cs-spreadsheet-table');
+    if (!table) return;
+
+    const rows = Array.from(table.querySelectorAll('tr'));
+    if (!rows.length) return;
+
+    const csvLines = [];
+    rows.forEach(row => {
+      if (row.style.display !== 'none') {
+        const cols = Array.from(row.querySelectorAll('th, td'));
+        const rowData = cols.map(c => {
+          let text = c.innerText.trim().replace(/\r?\n|\r/g, ' ');
+          if (text.includes(',') || text.includes('"')) {
+            text = '"' + text.replace(/"/g, '""') + '"';
+          }
+          return text;
+        });
+        csvLines.push(rowData.join(','));
+      }
+    });
+
+    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(csvLines.join('\n'));
+    const link = document.createElement('a');
+    link.setAttribute('href', csvContent);
+    link.setAttribute('download', `Charge_Slips_Spreadsheet_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    window.csAllStores = {{ (all_stores or []) | tojson }};
+    const savedMode = localStorage.getItem('csi_view_mode') || 'summary';
+    const spreadsheetContainer = document.getElementById('cs-spreadsheet-view-container');
+
+    if (savedMode === 'spreadsheet' && spreadsheetContainer) {
+      switchCsView('spreadsheet');
+    } else {
+      switchCsView('summary');
+    }
+
+    // Double-click inline cell editing for spreadsheet table
+    const tbody = document.getElementById('cs-spreadsheet-tbody');
+    if (tbody) {
+      tbody.addEventListener('dblclick', (e) => {
+        const cell = e.target.closest('td[data-col]');
+        if (!cell) return;
+        const colName = cell.getAttribute('data-col');
+        if (['month', 'item_total', 'disc_val', 'total_sales', 'action', 'validated_by'].includes(colName)) return;
+
+        const row = cell.closest('tr');
+        if (row) {
+          enableRowInlineEdit(row, colName);
+        }
+      });
+    }
+  });
+
+  function enableRowInlineEdit(row, focusCol) {
+    if (row.classList.contains('editing')) return;
+    row.classList.add('editing');
+
+    const editableCols = ['branch', 'date', 'payee', 'ref', 'item_name', 'qty', 'price', 'disc_pct', 'remarks'];
+    editableCols.forEach(col => {
+      const cell = row.querySelector(`td[data-col="${col}"]`);
+      if (!cell) return;
+      cell.classList.add('!p-0');
+      const currentVal = cell.getAttribute('data-val') || '';
+
+      let inputHtml = '';
+      if (col === 'branch') {
+        const curStoreId = row.getAttribute('data-store-id') || {{ store.id | tojson }};
+        const allStores = window.csAllStores || {{ (all_stores or []) | tojson }};
+        const opts = allStores.map(s => `<option value="${s.id}" ${s.id == curStoreId ? 'selected' : ''}>${s.name}</option>`).join('');
+        inputHtml = `<select name="store_id" class="cs-inline-inp w-full h-full min-h-[52px] px-2 py-2 text-xs font-semibold text-slate-900 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block">${opts}</select>`;
+      } else if (col === 'date') {
+        inputHtml = `<input type="date" name="date" class="cs-inline-inp w-full h-full min-h-[52px] px-2 py-2 text-xs font-mono bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="${currentVal}">`;
+      } else if (col === 'payee') {
+        inputHtml = `<input type="text" name="payee" placeholder="Payee" class="cs-inline-inp w-full h-full min-h-[52px] px-2.5 py-2 text-xs font-medium text-slate-900 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="${currentVal}">`;
+      } else if (col === 'ref') {
+        inputHtml = `<input type="text" name="ref" placeholder="Ref#" class="cs-inline-inp w-full h-full min-h-[52px] px-2.5 py-2 text-xs font-mono font-semibold text-cyan-800 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="${currentVal}">`;
+      } else if (col === 'item_name') {
+        inputHtml = `<input type="text" name="item_name" list="cs-product-datalist" placeholder="Search or select product..." class="cs-inline-inp w-full h-full min-h-[52px] px-2.5 py-2 text-xs font-semibold text-slate-900 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="${currentVal}">`;
+      } else if (col === 'qty') {
+        inputHtml = `<input type="number" name="qty" step="1" min="0" class="cs-inline-inp w-full h-full min-h-[52px] px-2 py-2 text-xs text-right font-mono font-bold text-slate-900 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="${currentVal}">`;
+      } else if (col === 'price') {
+        inputHtml = `<input type="number" name="price" step="0.01" min="0" class="cs-inline-inp w-full h-full min-h-[52px] px-2 py-2 text-xs text-right font-mono text-slate-800 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="${currentVal}">`;
+      } else if (col === 'disc_pct') {
+        inputHtml = `<input type="number" name="disc_pct" step="0.1" min="0" max="100" class="cs-inline-inp w-full h-full min-h-[52px] px-2 py-2 text-xs text-right font-mono text-slate-700 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="${currentVal}">`;
+      } else if (col === 'remarks') {
+        inputHtml = `<input type="text" name="remarks" placeholder="Remarks" class="cs-inline-inp w-full h-full min-h-[52px] px-2.5 py-2 text-xs text-slate-600 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="${currentVal === '—' ? '' : currentVal}">`;
+      }
+
+      cell.innerHTML = inputHtml;
+    });
+
+    // Replace ACTION column button with Save icon button
+    const actionTd = row.querySelector('td[data-col="action"]');
+    if (actionTd) {
+      actionTd.innerHTML = `
+        <button type="button" onclick="saveInlineRow(this)" class="btn-save-inline-row inline-flex h-8 w-8 items-center justify-center rounded-md border border-cyan-600 bg-cyan-600 hover:bg-cyan-700 text-white transition-all shadow-md mx-auto" title="Click to Save Changes">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+        </button>
+      `;
+    }
+
+    const dateInp = row.querySelector('input[name="date"]');
+    if (dateInp) {
+      dateInp.addEventListener('change', () => {
+        const monthTd = row.querySelector('td[data-col="month"]');
+        if (monthTd) {
+          if (dateInp.value) {
+            const d = new Date(dateInp.value + 'T00:00:00');
+            monthTd.textContent = d.toLocaleString('default', { month: 'long' });
+          } else {
+            monthTd.textContent = '—';
+          }
+        }
+      });
+    }
+
+    // Auto-update price when product is selected from datalist
+    const productPriceMap = {{ (product_price_map or {}) | tojson }};
+    const itemNameInp = row.querySelector('input[name="item_name"]');
+    if (itemNameInp) {
+      itemNameInp.addEventListener('input', () => {
+        const selectedName = itemNameInp.value.trim();
+        if (selectedName in productPriceMap) {
+          const priceInp = row.querySelector('input[name="price"]');
+          if (priceInp) {
+            priceInp.value = productPriceMap[selectedName].toFixed(2);
+            recalculateRowTotals(row);
+          }
+        }
+      });
+    }
+
+    // Attach input event listeners for live recalculations
+    const inputs = row.querySelectorAll('input.cs-inline-inp');
+    inputs.forEach(inp => {
+      inp.addEventListener('input', () => recalculateRowTotals(row));
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const saveBtn = row.querySelector('.btn-save-inline-row');
+          if (saveBtn) saveInlineRow(saveBtn);
+        }
+      });
+    });
+
+    if (focusCol) {
+      const targetInp = row.querySelector(`td[data-col="${focusCol}"] input, td[data-col="${focusCol}"] select`);
+      if (targetInp) {
+        targetInp.focus();
+        if (targetInp.type === 'text' || targetInp.type === 'number') {
+          targetInp.select();
+        }
+      }
+    }
+  }
+
+  function recalculateRowTotals(row) {
+    const qtyInp = row.querySelector('input[name="qty"]');
+    const priceInp = row.querySelector('input[name="price"]');
+    const discInp = row.querySelector('input[name="disc_pct"]');
+
+    const qty = parseFloat(qtyInp ? qtyInp.value : 0) || 0;
+    const price = parseFloat(priceInp ? priceInp.value : 0) || 0;
+    const discPct = parseFloat(discInp ? discInp.value : 0) || 0;
+
+    const itemTotal = qty * price;
+    const discVal = itemTotal * (discPct / 100.0);
+    const totalSales = itemTotal - discVal;
+
+    const itemTotalTd = row.querySelector('td[data-col="item_total"]');
+    const discValTd = row.querySelector('td[data-col="disc_val"]');
+    const totalSalesTd = row.querySelector('td[data-col="total_sales"]');
+
+    if (itemTotalTd) itemTotalTd.textContent = '₱' + itemTotal.toFixed(2);
+    if (discValTd) discValTd.textContent = '₱' + discVal.toFixed(2);
+    if (totalSalesTd) totalSalesTd.textContent = '₱' + totalSales.toFixed(2);
+  }
+
+  function addNewBlankSpreadsheetRowAtTop() {
+    const tbody = document.getElementById('cs-spreadsheet-tbody');
+    if (!tbody) return;
+
+    const allStores = window.csAllStores || {{ (all_stores or []) | tojson }};
+    const currentStoreId = {{ store.id | tojson }};
+    const storeOptions = allStores.map(s => `<option value="${s.id}" ${s.id == currentStoreId ? 'selected' : ''}>${s.name}</option>`).join('');
+
+    const newRow = document.createElement('tr');
+    newRow.setAttribute('data-slip-id', '');
+    newRow.setAttribute('data-item-id', 'new');
+    newRow.setAttribute('data-store-id', currentStoreId);
+    newRow.setAttribute('data-status', 'Pending');
+    newRow.className = 'cs-spreadsheet-row editing bg-cyan-50/40 hover:bg-cyan-50/70 transition-colors text-sm text-slate-800 group border-b border-slate-200';
+
+    newRow.innerHTML = `
+      <td class="!p-0 border-r border-slate-200" data-col="branch">
+        <select name="store_id" class="cs-inline-inp w-full h-full min-h-[52px] px-2 py-2 text-xs font-semibold text-slate-900 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block">
+          ${storeOptions}
+        </select>
+      </td>
+      <td class="px-3.5 py-2.5 whitespace-nowrap text-slate-600 border-r border-slate-200" data-col="month">—</td>
+      <td class="!p-0 border-r border-slate-200" data-col="date" data-val="">
+        <input type="date" name="date" class="cs-inline-inp w-full h-full min-h-[52px] px-2 py-2 text-xs font-mono bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="">
+      </td>
+      <td class="!p-0 border-r border-slate-200" data-col="payee" data-val="">
+        <input type="text" name="payee" placeholder="Payee" class="cs-inline-inp w-full h-full min-h-[52px] px-2.5 py-2 text-xs font-medium text-slate-900 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="">
+      </td>
+      <td class="!p-0 border-r border-slate-200" data-col="ref" data-val="">
+        <input type="text" name="ref" placeholder="Ref#" class="cs-inline-inp w-full h-full min-h-[52px] px-2.5 py-2 text-xs font-mono font-semibold text-cyan-800 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="">
+      </td>
+      <td class="!p-0 border-r border-slate-200 min-w-[200px]" data-col="item_name" data-val="">
+        <input type="text" name="item_name" list="cs-product-datalist" placeholder="Search or select product..." class="cs-inline-inp w-full h-full min-h-[52px] px-2.5 py-2 text-xs font-semibold text-slate-900 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="">
+      </td>
+      <td class="!p-0 border-r border-slate-200" data-col="qty" data-val="">
+        <input type="number" name="qty" step="1" min="0" placeholder="0" class="cs-inline-inp w-full h-full min-h-[52px] px-2 py-2 text-xs text-right font-mono font-bold text-slate-900 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="">
+      </td>
+      <td class="!p-0 border-r border-slate-200" data-col="price" data-val="">
+        <input type="number" name="price" step="0.01" min="0" placeholder="0.00" class="cs-inline-inp w-full h-full min-h-[52px] px-2 py-2 text-xs text-right font-mono text-slate-800 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="">
+      </td>
+      <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-bold font-mono text-slate-900 border-r border-slate-200" data-col="item_total">₱0.00</td>
+      <td class="!p-0 border-r border-slate-200" data-col="disc_pct" data-val="">
+        <input type="number" name="disc_pct" step="0.1" min="0" max="100" placeholder="0.0" class="cs-inline-inp w-full h-full min-h-[52px] px-2 py-2 text-xs text-right font-mono text-slate-700 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="">
+      </td>
+      <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-mono text-rose-700 font-semibold border-r border-slate-200" data-col="disc_val">₱0.00</td>
+      <td class="px-3.5 py-2.5 text-right whitespace-nowrap font-extrabold font-mono text-emerald-800 border-r border-slate-200" data-col="total_sales">₱0.00</td>
+      <td class="!p-0 border-r border-slate-200 max-w-xs" data-col="remarks" data-val="">
+        <input type="text" name="remarks" placeholder="Remarks" class="cs-inline-inp w-full h-full min-h-[52px] px-2.5 py-2 text-xs text-slate-600 bg-cyan-50/80 focus:bg-white border-0 outline-none ring-2 ring-inset ring-cyan-500 rounded-none block" value="">
+      </td>
+      <td class="px-3.5 py-2.5 whitespace-nowrap text-slate-700 font-medium border-r border-slate-200" data-col="validated_by">—</td>
+      <td class="sticky right-0 z-10 bg-white group-even:bg-slate-50 group-hover:bg-amber-50/90 border-l-2 border-slate-300 px-3.5 py-2.5 text-center whitespace-nowrap shadow-xs" data-col="action">
+        <div class="flex items-center justify-center gap-1">
+          <button type="button" onclick="saveInlineRow(this)" class="btn-save-inline-row inline-flex h-8 w-8 items-center justify-center rounded-md border border-cyan-600 bg-cyan-600 hover:bg-cyan-700 text-white transition-all shadow-md" title="Click to Save New Row">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+          </button>
+          <button type="button" onclick="discardNewRow(this)" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-300 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all shadow-xs" title="Cancel New Row">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </td>
+    `;
+
+    tbody.insertBefore(newRow, tbody.firstChild);
+
+    const dateInp = newRow.querySelector('input[name="date"]');
+    if (dateInp) {
+      dateInp.addEventListener('change', () => {
+        const monthTd = newRow.querySelector('td[data-col="month"]');
+        if (monthTd) {
+          if (dateInp.value) {
+            const d = new Date(dateInp.value + 'T00:00:00');
+            monthTd.textContent = d.toLocaleString('default', { month: 'long' });
+          } else {
+            monthTd.textContent = '—';
+          }
+        }
+      });
+    }
+
+    window.csProductPriceMap = {{ (product_price_map or {}) | tojson }};
+    const productPriceMap = window.csProductPriceMap;
+    const itemNameInp = newRow.querySelector('input[name="item_name"]');
+    if (itemNameInp) {
+      itemNameInp.addEventListener('input', () => {
+        const selectedName = itemNameInp.value.trim();
+        if (selectedName in productPriceMap) {
+          const priceInp = newRow.querySelector('input[name="price"]');
+          if (priceInp) {
+            priceInp.value = productPriceMap[selectedName].toFixed(2);
+            recalculateRowTotals(newRow);
+          }
+        }
+      });
+      itemNameInp.focus();
+    }
+
+    const inputs = newRow.querySelectorAll('input.cs-inline-inp, select.cs-inline-inp');
+    inputs.forEach(inp => {
+      inp.addEventListener('input', () => recalculateRowTotals(newRow));
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const saveBtn = newRow.querySelector('.btn-save-inline-row');
+          if (saveBtn) saveInlineRow(saveBtn);
+        }
+      });
+    });
+
+    recalculateRowTotals(newRow);
+  }
+
+  function discardNewRow(btnEl) {
+    const row = btnEl.closest('tr');
+    if (row && row.getAttribute('data-item-id') === 'new') {
+      row.remove();
+    }
+  }
+
+  function saveInlineRow(btnEl) {
+    const row = btnEl.closest('tr');
+    if (!row) return;
+
+    const transferId = row.getAttribute('data-slip-id');
+    const itemId = row.getAttribute('data-item-id');
+
+    const storeSelect = row.querySelector('select[name="store_id"]');
+    const storeId = storeSelect ? storeSelect.value : (row.getAttribute('data-store-id') || '');
+
+    const getInpVal = (name) => {
+      const inp = row.querySelector(`input[name="${name}"]`);
+      return inp ? inp.value.trim() : '';
+    };
+
+    const payload = {
+      transfer_id: transferId,
+      item_id: itemId,
+      store_id: storeId,
+      transaction_date: getInpVal('date'),
+      payee: getInpVal('payee'),
+      ref_no: getInpVal('ref'),
+      item_name: getInpVal('item_name'),
+      quantity: getInpVal('qty'),
+      unit_cost: getInpVal('price'),
+      discount_percent: getInpVal('disc_pct'),
+      remarks: getInpVal('remarks')
+    };
+
+    btnEl.disabled = true;
+    btnEl.innerHTML = `<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
+
+    fetch('/store-manager/charge-slip/inline-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        if (data.transfer_id) {
+          row.setAttribute('data-slip-id', data.transfer_id);
+        }
+        if (data.item_id) {
+          row.setAttribute('data-item-id', data.item_id);
+        }
+        if (data.store_id) {
+          row.setAttribute('data-store-id', data.store_id);
+        }
+        row.classList.remove('editing');
+        row.querySelectorAll('td[data-col]').forEach(td => td.classList.remove('!p-0'));
+
+        const branchTd = row.querySelector('td[data-col="branch"]');
+        const dateTd = row.querySelector('td[data-col="date"]');
+        const monthTd = row.querySelector('td[data-col="month"]');
+        const payeeTd = row.querySelector('td[data-col="payee"]');
+        const refTd = row.querySelector('td[data-col="ref"]');
+        const itemNameTd = row.querySelector('td[data-col="item_name"]');
+        const qtyTd = row.querySelector('td[data-col="qty"]');
+        const priceTd = row.querySelector('td[data-col="price"]');
+        const itemTotalTd = row.querySelector('td[data-col="item_total"]');
+        const discPctTd = row.querySelector('td[data-col="disc_pct"]');
+        const discValTd = row.querySelector('td[data-col="disc_val"]');
+        const totalSalesTd = row.querySelector('td[data-col="total_sales"]');
+        const remarksTd = row.querySelector('td[data-col="remarks"]');
+
+        if (branchTd) {
+          branchTd.className = 'px-3.5 py-2.5 whitespace-nowrap font-semibold text-slate-900 border-r border-slate-200 cursor-pointer';
+          branchTd.textContent = data.store_name || {{ store.name | tojson }};
+        }
+
+        if (dateTd && data.transaction_date) {
+          dateTd.setAttribute('data-val', data.transaction_date);
+          dateTd.textContent = data.transaction_date;
+        }
+        if (monthTd) {
+          monthTd.className = 'px-3.5 py-2.5 whitespace-nowrap text-slate-600 border-r border-slate-200';
+          monthTd.textContent = data.month_str || '';
+        }
+        if (payeeTd) {
+          payeeTd.setAttribute('data-val', data.customer_name || '');
+          payeeTd.textContent = data.customer_name ? data.customer_name : '—';
+        }
+        if (refTd && data.control_no) {
+          refTd.setAttribute('data-val', data.control_no);
+          refTd.textContent = data.control_no;
+        }
+        if (itemNameTd) {
+          itemNameTd.setAttribute('data-val', data.item_name || '');
+          itemNameTd.textContent = data.item_name || 'No items listed';
+        }
+        if (qtyTd) {
+          qtyTd.setAttribute('data-val', data.quantity);
+          qtyTd.textContent = data.quantity;
+        }
+        if (priceTd) {
+          priceTd.setAttribute('data-val', parseFloat(data.unit_cost).toFixed(2));
+          priceTd.textContent = '₱' + parseFloat(data.unit_cost).toFixed(2);
+        }
+        if (discPctTd) {
+          discPctTd.setAttribute('data-val', parseFloat(data.discount_percent).toFixed(1));
+          discPctTd.textContent = parseFloat(data.discount_percent).toFixed(1) + '%';
+        }
+
+        const qty = parseFloat(data.quantity || 0);
+        const unitCost = parseFloat(data.unit_cost || 0);
+        const discPct = parseFloat(data.discount_percent || 0);
+        const itemTotal = qty * unitCost;
+        const discVal = itemTotal * (discPct / 100.0);
+        const totalSales = itemTotal - discVal;
+
+        if (itemTotalTd) itemTotalTd.textContent = '₱' + itemTotal.toFixed(2);
+        if (discValTd) discValTd.textContent = '₱' + discVal.toFixed(2);
+        if (totalSalesTd) totalSalesTd.textContent = '₱' + totalSales.toFixed(2);
+        if (remarksTd) {
+          remarksTd.setAttribute('data-val', data.remarks || '');
+          remarksTd.textContent = data.remarks ? data.remarks : '—';
+        }
+
+        // Update peer rows of same transfer
+        const peerRows = document.querySelectorAll(`tr[data-slip-id="${transferId}"]`);
+        peerRows.forEach(pRow => {
+          if (pRow !== row) {
+            const pDate = pRow.querySelector('td[data-col="date"]');
+            const pMonth = pRow.querySelector('td[data-col="month"]');
+            const pPayee = pRow.querySelector('td[data-col="payee"]');
+            const pRef = pRow.querySelector('td[data-col="ref"]');
+            const pDiscPct = pRow.querySelector('td[data-col="disc_pct"]');
+
+            if (pDate && data.transaction_date) { pDate.setAttribute('data-val', data.transaction_date); pDate.textContent = data.transaction_date; }
+            if (pMonth && data.month_str) { pMonth.textContent = data.month_str; }
+            if (pPayee) { pPayee.setAttribute('data-val', data.customer_name || ''); pPayee.textContent = data.customer_name ? data.customer_name : '—'; }
+            if (pRef && data.control_no) { pRef.setAttribute('data-val', data.control_no); pRef.textContent = data.control_no; }
+            if (pDiscPct) {
+              pDiscPct.setAttribute('data-val', parseFloat(data.discount_percent).toFixed(1));
+              pDiscPct.textContent = parseFloat(data.discount_percent).toFixed(1) + '%';
+              const pQtyTd = pRow.querySelector('td[data-col="qty"]');
+              const pPriceTd = pRow.querySelector('td[data-col="price"]');
+              const pItemTotalTd = pRow.querySelector('td[data-col="item_total"]');
+              const pDiscValTd = pRow.querySelector('td[data-col="disc_val"]');
+              const pTotalSalesTd = pRow.querySelector('td[data-col="total_sales"]');
+              if (pQtyTd && pPriceTd) {
+                const pQ = parseFloat(pQtyTd.getAttribute('data-val') || 0);
+                const pP = parseFloat(pPriceTd.getAttribute('data-val') || 0);
+                const pTot = pQ * pP;
+                const pDV = pTot * (discPct / 100.0);
+                const pTS = pTot - pDV;
+                if (pItemTotalTd) pItemTotalTd.textContent = '₱' + pTot.toFixed(2);
+                if (pDiscValTd) pDiscValTd.textContent = '₱' + pDV.toFixed(2);
+                if (pTotalSalesTd) pTotalSalesTd.textContent = '₱' + pTS.toFixed(2);
+              }
+            }
+          }
+        });
+
+        // Restore action column button
+        const actionTd = row.querySelector('td[data-col="action"]');
+        const status = row.getAttribute('data-status') || 'Pending';
+        if (actionTd) {
+          if (status === 'Validated') {
+            actionTd.innerHTML = `
+              <button type="button" data-slip-id="${transferId}" ondblclick="toggleValidateSlip(${transferId}, this)" class="btn-validate-slip inline-flex h-8 w-8 items-center justify-center rounded-md border transition-all shadow-xs bg-slate-200 hover:bg-slate-300 text-slate-500 border-slate-300 cursor-pointer mx-auto" title="Double-click to revert to Pending">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
+            `;
+          } else {
+            actionTd.innerHTML = `
+              <button type="button" data-slip-id="${transferId}" onclick="toggleValidateSlip(${transferId}, this)" class="btn-validate-slip inline-flex h-8 w-8 items-center justify-center rounded-md border transition-all shadow-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 cursor-pointer mx-auto" title="Click to Validate">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
+            `;
+          }
+        }
+
+        // Temporary green flash animation
+        row.classList.add('bg-emerald-100/80');
+        setTimeout(() => {
+          row.classList.remove('bg-emerald-100/80');
+        }, 1200);
+
+      } else {
+        alert(data.message || 'Failed to save changes.');
+        btnEl.disabled = false;
+        btnEl.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+        `;
+      }
+    })
+    .catch(err => {
+      console.error('Error saving row:', err);
+      alert('An unexpected error occurred while saving.');
+      btnEl.disabled = false;
+    });
+  }
+</script>
+{% endblock %}
