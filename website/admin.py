@@ -3346,7 +3346,15 @@ def users():
     if not _can_manage_users():
         flash('Access denied. Only Admin or Superadmin can access this page.', category='error')
         return redirect(url_for('views.home'))
-
+    
+    #redirect Admin Accounts to the new v2 of the inv_sync
+    q = (request.args.get('q') or '').strip()
+    params = {'m': 'users'}
+    if q:
+        params['q'] = q
+    return redirect(url_for('views.v2_main', **params))
+    
+    
     from .views import _apply_store_scope_filter
 
     q = (request.args.get('q') or '').strip()
