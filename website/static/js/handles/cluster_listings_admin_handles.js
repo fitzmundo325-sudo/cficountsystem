@@ -52,7 +52,9 @@ let tmpl = document.getElementById('tmpl-cluster-card');
 let card = tmpl.content.cloneNode(true);
 
 card.querySelector('[data-cell="store-count"]').textContent       = cluster.store_count + ' stores';
-card.querySelector('[data-cell="view-data-link"]').href           = '/cluster-manager/cluster-data?cluster_id=' + cluster.id;
+
+card.querySelector('[data-cell="view-data-link"]').href           = '/cluster-manager/cluster_data_v2?cluster_id=' + cluster.id;
+
 card.querySelector('[data-cell="name"]').textContent              = cluster.name;
 card.querySelector('[data-cell="description"]').textContent       = cluster.description || 'No description';
 card.querySelector('[data-cell="manager-avatar"]').textContent    = cluster.manager_initial;
