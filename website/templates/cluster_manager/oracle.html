@@ -94,7 +94,11 @@
 
         <div class="px-4 py-3 bg-slate-50 border-t border-slate-200">
           <div class="grid grid-cols-1 gap-2">
+<<<<<<< HEAD
             <button type="button" data-approval-store-id="{{ s.id }}" onclick="navigateStoreApprovals({{ s.id }})"
+=======
+            <button type="button" onclick="navigate('approvals')"
+>>>>>>> origin/main
                     class="inline-flex items-center justify-center gap-1 px-2.5 py-2 text-[11px] font-semibold rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition">
               <i class="bi bi-check2-circle"></i>
               Approvals
@@ -201,6 +205,7 @@ const STORES = [
   {% endfor %}
 ];
 const SAVED_BUFFERS = {{ buffers_map | tojson }};  // {[store_id, product_id]: pct}
+<<<<<<< HEAD
 const CAN_APPROVE_ORACLE_ORDERS = {{ can_approve_oracle_orders | tojson }};
 const ORACLE_CLUSTER_ID = {{ cluster.id | tojson }};
 const DB={
@@ -215,6 +220,17 @@ DB.pendingApprovals.forEach(order=>{
   const storeId=Number(order.storeId);
   DB.pendingApprovalCounts[storeId]=(DB.pendingApprovalCounts[storeId]||0)+1;
 });
+=======
+const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const fmt=d=>d.toISOString().split('T')[0];
+
+const DB={
+  pendingApprovals:[],
+  approvalHistory:[],
+  storeBuffers:{},
+  settings:{clusterName:'{{ cluster.name }}',defaultBuffer:20,leadTime:1}
+};
+>>>>>>> origin/main
 
 // Initialize store product buffers, seeding from server-saved values
 STORES.forEach(s=>{
@@ -225,8 +241,12 @@ STORES.forEach(s=>{
   });
 });
 
+<<<<<<< HEAD
 function navigate(id, storeId=null){
   if(id==='approvals')DB.selectedApprovalStoreId=storeId===null?null:Number(storeId);
+=======
+function navigate(id){
+>>>>>>> origin/main
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.o-tab').forEach(t=>t.classList.remove('active'));
   const view=document.getElementById('view-'+id);if(!view)return;
@@ -236,25 +256,34 @@ function navigate(id, storeId=null){
   if(breadcrumbBack){
     breadcrumbBack.classList.toggle('hidden', !['approvals','store-performance'].includes(id));
   }
+<<<<<<< HEAD
   if(id==='approvals'){
     loadOracleApprovals(DB.selectedApprovalStoreId);
     return;
   }
   ({  'dashboard':renderDashboard,
+=======
+  ({  'dashboard':renderDashboard,
+      'approvals':renderApprovals,
+>>>>>>> origin/main
       'cluster-dashboard':renderClusterDashboard,
       'store-performance':renderStorePerformance}[id]||Function)();
 }
 
+<<<<<<< HEAD
 function navigateStoreApprovals(storeId){
   navigate('approvals',storeId);
 }
 
+=======
+>>>>>>> origin/main
 function renderDashboard(){
   updateApprovalsBadge();
 }
 
 function updateApprovalsBadge(){
   const b=document.getElementById('badge-approvals');
+<<<<<<< HEAD
   const total=Object.values(DB.pendingApprovalCounts).reduce((sum,count)=>sum+Number(count||0),0);
   if(b){
     if(total>0){b.classList.remove('hidden');b.textContent=total;}else b.classList.add('hidden');
@@ -291,6 +320,16 @@ async function loadOracleApprovals(storeId=DB.selectedApprovalStoreId){
   }
 }
 
+=======
+  if(b){
+    if(DB.pendingApprovals.length>0){b.classList.remove('hidden');b.textContent=DB.pendingApprovals.length;}else b.classList.add('hidden');
+  }
+  document.querySelectorAll('.approval-button-count').forEach(el=>{
+    if(DB.pendingApprovals.length>0){el.classList.remove('hidden');el.textContent=DB.pendingApprovals.length;}else el.classList.add('hidden');
+  });
+}
+
+>>>>>>> origin/main
 function renderApprovals(){
   const tbody=document.getElementById('approvals-tbody');
   if(!DB.pendingApprovals.length){
@@ -298,6 +337,7 @@ function renderApprovals(){
     return;
   }
   tbody.innerHTML=[...DB.pendingApprovals].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).map(a=>{
+<<<<<<< HEAD
     const timestamp=new Date(a.timestamp);
     const t=Number.isNaN(timestamp.getTime())?'':timestamp.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
     const variance=a.suggested>0?Math.round((a.finalOrder-a.suggested)/a.suggested*100):0;
@@ -316,10 +356,29 @@ function renderApprovals(){
       <td class="px-3 py-2.5 text-slate-500 text-xs">${escapeOracleHtml(a.manager)}</td>
       <td class="px-3 py-2.5 text-center"><span class="px-2 py-1 rounded-full text-[10px] font-semibold ${varianceColor} ${variance>0?'bg-rose-50':'bg-amber-50'}">${variance>0?'+':''}${variance}%</span></td>
       <td class="px-3 py-2.5 text-center"><div class="flex gap-2 justify-center">${actions}</div></td>
+=======
+    const t=new Date(a.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    const variance=a.suggested>0?Math.round((a.finalOrder-a.suggested)/a.suggested*100):0;
+    const varianceColor=variance>20?'text-rose-600':variance<-20?'text-amber-600':'text-slate-600';
+    return `<tr class="hover:bg-slate-50">
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${a.orderDate}</div><div class="text-[10px] text-slate-400">${t}</div></td>
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${a.storeName}</div><div class="text-[10px] text-slate-400">Store ${a.storeId}</div></td>
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${a.productName}</div><div class="text-[10px] text-slate-400">${a.productId}</div></td>
+      <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"><span class="text-[10px] text-slate-500">${a.minSug}</span><span class="font-bold text-emerald-600">${a.suggested}</span><span class="text-[10px] text-slate-500">${a.maxSug}</span></div></td>
+      <td class="px-3 py-2.5 text-center font-bold text-rose-500 text-sm">${a.finalOrder}</td>
+      <td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${a.totalCost.toLocaleString()}</td>
+      <td class="px-3 py-2.5 text-slate-500 text-xs">${a.manager}</td>
+      <td class="px-3 py-2.5 text-center"><span class="px-2 py-1 rounded-full text-[10px] font-semibold ${varianceColor} ${variance>0?'bg-rose-50':'bg-amber-50'}">${variance>0?'+':''}${variance}%</span></td>
+      <td class="px-3 py-2.5 text-center"><div class="flex gap-2 justify-center">
+        <button onclick="approveOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors" title="Approve this order"><i class="bi bi-check-lg"></i> Approve</button>
+        <button onclick="rejectOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 text-rose-500 rounded-lg text-xs font-semibold hover:bg-rose-50 transition-colors" title="Reject this order"><i class="bi bi-x-lg"></i> Reject</button>
+      </div></td>
+>>>>>>> origin/main
     </tr>`;
   }).join('');
 }
 
+<<<<<<< HEAD
 function escapeOracleHtml(value){
   return String(value ?? '').replace(/[&<>"']/g, char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 }
@@ -351,6 +410,28 @@ async function decideOracleOrder(id, decision){
   }catch(error){
     showToast(error.message||'Network error while updating the order.','error');
   }
+=======
+function approveOrder(id){
+  const i=DB.pendingApprovals.findIndex(x=>x.id===id);
+  if(i<0)return;
+  const o=DB.pendingApprovals.splice(i,1)[0];
+  o.approvedAt=new Date().toISOString();
+  o.status='Approved';
+  DB.approvalHistory.push(o);
+  updateApprovalsBadge();
+  renderApprovals();
+  showToast(`Order from ${o.storeName} approved!`,'success');
+}
+
+function rejectOrder(id){
+  const i=DB.pendingApprovals.findIndex(x=>x.id===id);
+  if(i<0)return;
+  const o=DB.pendingApprovals[i];
+  DB.pendingApprovals.splice(i,1);
+  updateApprovalsBadge();
+  renderApprovals();
+  showToast(`Order from ${o.storeName} rejected.`,'info');
+>>>>>>> origin/main
 }
 
 function renderOrderForm(){
@@ -512,6 +593,38 @@ function showToast(msg,type='info'){
   setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(12px)';t.style.transition='all .25s';setTimeout(()=>t.remove(),250);},3000);
 }
 
+<<<<<<< HEAD
+=======
+// Simulate receiving approval requests from stores
+function addPendingApproval(storeId, productId, suggested, finalOrder){
+  const store=STORES.find(s=>s.id===storeId);
+  const product=PRODUCTS.find(p=>p.id===productId);
+  if(!store||!product)return;
+  
+  const minS=Math.max(0,Math.floor(suggested*0.8));
+  const maxS=Math.ceil(suggested*1.2);
+  const id='APR-'+Math.random().toString(36).substr(2,9).toUpperCase();
+  
+  DB.pendingApprovals.push({
+    id,
+    orderDate:fmt(new Date()),
+    storeId,
+    storeName:store.name,
+    productId,
+    productName:product.name,
+    suggested,
+    minSug:minS,
+    maxSug:maxS,
+    finalOrder,
+    totalCost:finalOrder*product.plantPrice,
+    unitCost:product.plantPrice,
+    manager:store.manager,
+    timestamp:new Date().toISOString()
+  });
+  updateApprovalsBadge();
+}
+
+>>>>>>> origin/main
 function updateDate() {
   const dateInput = document.getElementById('dateInput').value;
   if (dateInput) {

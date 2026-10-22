@@ -357,6 +357,10 @@ function renderTableHead(data) {
   thead.dataset.spacerColspan = totalVisible + (showAdjustCols ? 4 : 0);
 }
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/main
 async function renderTableBody(data) {
   let categoryGroups = data.category_groups;
   let config = data.global_config_data;
@@ -1909,10 +1913,26 @@ function rowNeedsBeginningBeforeInput(row, sourceInput) {
 
   let beginningInput = row.querySelector('.beginning-input');
   if (!beginningInput) return false;
+<<<<<<< HEAD
 
   return String(beginningInput.value || '').trim() === '';
 }
 
+=======
+	
+  if(beginningInput.readOnly){
+	  return false;  
+  }else{
+	if(beginningInput.value.length <= 0){
+		beginningInput.value = 0;
+		return false;
+	}
+  }
+}
+
+
+
+>>>>>>> origin/main
 function rowHasBlankBeginningWithOtherValues(row) {
   if (!row) return false;
 
@@ -2270,6 +2290,11 @@ if (!isInvenSyncGuideMode && localStorage.getItem(beginningGuideCompletionKey) =
   document.getElementById('first-time-modal')?.remove();
 }
 
+<<<<<<< HEAD
+=======
+
+
+>>>>>>> origin/main
 function showMissingBeginningPopup(row, options = {}) {
   if (missingBeginningNoticeOpen) return;
 
@@ -3869,6 +3894,10 @@ function applyViewOnlyLockdown() {
 
   document.querySelectorAll('#main-content tbody tr[data-product-id] [onchange]').forEach(function(el) {
     if (el.classList.contains('inv-adjust-only')) return;
+<<<<<<< HEAD
+=======
+    if (el.getAttribute('noremove') == "true") return;
+>>>>>>> origin/main
     el.removeAttribute('onchange');
   });
 }
@@ -4022,7 +4051,10 @@ function initInventoryPageAfterRender() {
 
   setTimeout(refreshBeginningSaveMode, 100);
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main
   applyViewOnlyLockdown();
 }
 
