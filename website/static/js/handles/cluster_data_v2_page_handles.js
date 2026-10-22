@@ -633,14 +633,28 @@ function renderFullscreen() {
 
 function toggleFullscreen() {
   let modal = byId('fullscreen-modal');
-  if (isFullscreenOpen()) {
-    modal.classList.add('hidden');
-    document.body.classList.remove('overflow-hidden');
-    return;
-  }
+	if (isFullscreenOpen()) {
+		modal.classList.add('hidden');
+
+		try{
+			postMessageToParent("function:overRideFullscreen");
+		}catch(e){
+			// --
+		}
+
+		document.body.classList.remove('overflow-hidden');
+		return;
+	}
+	try{
+		postMessageToParent("function:overRideFullscreen:true");
+	}catch(e){
+		// --
+	}
+	
   renderFullscreen();
   modal.classList.remove('hidden');
   document.body.classList.add('overflow-hidden');
+  
 }
 
 function navigateTab(direction) {
@@ -837,6 +851,8 @@ byId('clusterFilterForm').addEventListener('submit', handleFilterSubmit);
 document.querySelectorAll('.tab-button').forEach(function (button) {
   button.addEventListener('click', handleTabClick);
 });
+
+
 byId('edit-mode-toggle').addEventListener('click', toggleEditMode);
 byId('fullscreen-open-btn').addEventListener('click', toggleFullscreen);
 byId('fullscreen-exit').addEventListener('click', toggleFullscreen);
