@@ -6,7 +6,8 @@ from difflib import SequenceMatcher
 
 from flask import Blueprint, render_template, request, flash, jsonify, Flask, url_for, session, current_app, send_from_directory, Response
 from flask_login import login_required, current_user
-from sqlalchemy import asc, desc, distinct, table, func, or_, case, cast, Integer, String
+from sqlalchemy import asc, desc, distinct, table, func, or_, case, cast, Integer, String, extract
+
 from sqlalchemy.orm import aliased, selectinload
 from werkzeug.security import generate_password_hash, check_password_hash
 from collections import OrderedDict
