@@ -43,6 +43,7 @@ import io
 from difflib import SequenceMatcher
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 
 admin = Blueprint('admin', __name__)
@@ -6205,6 +6206,230 @@ def export_invensync_store_excel(store_id):
         current_app.logger.error(f"Error in export_invensync_store_excel: {e}\n{traceback.format_exc()}")
         flash(f'Error exporting data: {str(e)}', category='error')
         return redirect(url_for('admin.invensync'))
+
+
+#Optimized version which improves the old one by 10x :-P
+@admin.route('/admin/invensync/export_excel_v2/store/<int:store_id>')
+@login_required
+def export_invensync_store_excel_v2(store_id):
+    from flask import current_app
+    try:
+        if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+            return {'type': 'error', 'message': 'Access denied.'}
+
+        from sqlalchemy import func
+        from openpyxl.cell import WriteOnlyCell
+        from .views import _get_area_manager_cluster_ids
+
+        store = Store.query.get_or_404(store_id)
+
+        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+        if allowed_cluster_ids is not None:
+            if int(store.cluster_id or 0) not in allowed_cluster_ids:
+                return {'type': 'error', 'message': 'Access denied. You are not assigned to this store\'s cluster.'}
+
+        export_type = request.args.get('export_type', 'single')
+        if export_type not in ('single', 'range', 'all'):
+            export_type = 'single'
+
+        def _parse_iso_date(value):
+            if not value:
+                return None
+            try:
+                return datetime.strptime(value, '%Y-%m-%d').date()
+            except (TypeError, ValueError):
+                return None
+
+        today = date.today()
+        start_date = _parse_iso_date(request.args.get('start_date', ''))
+        end_date = _parse_iso_date(request.args.get('end_date', ''))
+        single_date = _parse_iso_date(request.args.get('date', ''))
+
+        if export_type == 'single':
+            if not single_date:
+                single_date = today
+            start_date = end_date = single_date
+        elif export_type == 'range':
+            if not start_date:
+                start_date = today.replace(day=1)
+            if not end_date:
+                end_date = today
+            if start_date > end_date:
+                start_date, end_date = end_date, start_date
+        else:
+            earliest, latest = db.session.query(
+                func.min(DailyEndingInventory.inventory_date),
+                func.max(DailyEndingInventory.inventory_date)
+            ).filter(DailyEndingInventory.store_id == store.id).one()
+            if earliest and latest:
+                start_date, end_date = earliest, latest
+            else:
+                start_date = end_date = today
+
+        rows = db.session.query(
+            DailyEndingInventory.inventory_date,
+            DailyEndingInventoryItem.product_code,
+            ProductMaster.code,
+            DailyEndingInventoryItem.product_description,
+            ProductMaster.category,
+            DailyEndingInventoryItem.beginning_qty,
+            DailyEndingInventoryItem.delivery_qty,
+            DailyEndingInventoryItem.trans_in_qty,
+            DailyEndingInventoryItem.bo_qty,
+            DailyEndingInventoryItem.adv_del_qty,
+            DailyEndingInventoryItem.trans_out_qty,
+            DailyEndingInventoryItem.wastage_qty,
+            DailyEndingInventoryItem.wastage_amount,
+            DailyEndingInventoryItem.csi_qty,
+            DailyEndingInventoryItem.quantity_sold,
+            DailyEndingInventoryItem.ending_d5_qty,
+            DailyEndingInventoryItem.ending_d4_qty,
+            DailyEndingInventoryItem.ending_d3_qty,
+            DailyEndingInventoryItem.total_ending_qty,
+            DailyEndingInventoryItem.total_peso_srp,
+            DailyEndingInventoryItem.theo_ending_qty,
+            DailyEndingInventoryItem.variance_qty,
+            DailyEndingInventoryItem.variance_peso,
+            DailyEndingInventoryItem.remarks,
+        ).select_from(DailyEndingInventoryItem).join(
+            DailyEndingInventory,
+            DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id
+        ).outerjoin(
+            ProductMaster,
+            DailyEndingInventoryItem.product_master_id == ProductMaster.id
+        ).filter(
+            DailyEndingInventory.store_id == store.id,
+            DailyEndingInventory.inventory_date >= start_date,
+            DailyEndingInventory.inventory_date <= end_date
+        ).order_by(
+            DailyEndingInventory.inventory_date.asc(),
+            DailyEndingInventoryItem.product_description.asc()
+        ).all()
+
+        if not rows:
+            return {'type': 'error', 'message': f'No InvenSync data found for {store.name} in the selected range'}
+
+        has_date_col = export_type in ('range', 'all')
+        cluster_name = store.cluster.name if store.cluster else 'Unassigned'
+
+        if export_type == 'single':
+            title_text = f"INVEN SYNC EXPORT - {store.name}"
+            meta_text = f"Date: {start_date.strftime('%B %d, %Y')} | Store: {store.name} (ID: {store.id}) | Cluster: {cluster_name}"
+        elif export_type == 'range':
+            title_text = f"INVEN SYNC EXPORT - {store.name}"
+            meta_text = f"Date Range: {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')} | Store: {store.name} (ID: {store.id}) | Cluster: {cluster_name}"
+        else:
+            title_text = f"INVEN SYNC EXPORT - {store.name} (ALL DATES)"
+            meta_text = f"All Available Dates | Store: {store.name} (ID: {store.id}) | Cluster: {cluster_name}"
+
+        headers = [
+            'Product Code', 'Product', 'Category',
+            'Beginning', 'Delivery', 'Trans-In', 'BO', 'Adv Del',
+            'Trans-Out', 'Waste Qty', 'Waste Amt', 'CSI', 'Sold',
+            'Ending D+5', 'Ending D+4', 'Ending D+3',
+            'Total Ending', 'Total Peso SRP', 'Theo Ending',
+            'Variance Qty', 'Variance Peso', 'Remarks'
+        ]
+        if has_date_col:
+            headers = ['Date'] + headers
+
+        date_offset = 1 if has_date_col else 0
+        money_start = 15 + date_offset
+        variance_idx = 19 + date_offset
+
+        table = []
+        for r in rows:
+            values = []
+            if has_date_col:
+                values.append(r[0].strftime('%Y-%m-%d'))
+            values.extend([
+                r[1] or r[2] or '',
+                r[3],
+                r[4] or '',
+                *r[5:23],
+                r[23] or '',
+            ])
+            table.append(values)
+
+        widths = [len(h) for h in headers]
+        widths[0] = max(widths[0], len(title_text), len(meta_text))
+        for values in table:
+            for i, v in enumerate(values):
+                if v is None:
+                    continue
+                l = len(str(v))
+                if l > widths[i]:
+                    widths[i] = l
+
+        wb = Workbook(write_only=True)
+        ws = wb.create_sheet(title=f"InvenSync {store.name}"[:31])
+
+        for i, w in enumerate(widths):
+            ws.column_dimensions[get_column_letter(i + 1)].width = min(w + 2, 40)
+
+        title_font = Font(name="Calibri", size=14, bold=True, color="1E293B")
+        sub_font = Font(name="Calibri", size=10, italic=True, color="64748B")
+        header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="047857", end_color="047857", fill_type="solid")
+        data_font = Font(name="Calibri", size=10, color="0F172A")
+        green_font = Font(name="Calibri", size=10, color="059669", bold=True)
+        red_font = Font(name="Calibri", size=10, color="DC2626", bold=True)
+
+        c = WriteOnlyCell(ws, value=title_text)
+        c.font = title_font
+        ws.append([c])
+
+        c = WriteOnlyCell(ws, value=meta_text)
+        c.font = sub_font
+        ws.append([c])
+        ws.append([])
+
+        header_cells = []
+        for h in headers:
+            c = WriteOnlyCell(ws, value=h)
+            c.font = header_font
+            c.fill = header_fill
+            header_cells.append(c)
+        ws.append(header_cells)
+
+        for values in table:
+            row_cells = list(values)
+            for i in range(money_start, len(values) - 1):
+                c = WriteOnlyCell(ws, value=values[i])
+                c.font = data_font
+                c.number_format = '#,##0.00'
+                row_cells[i] = c
+            v = values[variance_idx]
+            if v is not None and v != 0:
+                c = WriteOnlyCell(ws, value=v)
+                c.font = red_font if v < 0 else green_font
+                c.number_format = '#,##0.00'
+                row_cells[variance_idx] = c
+            ws.append(row_cells)
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        if export_type == 'single':
+            filename = f'InvenSync_{store.name}_{start_date.strftime("%Y-%m-%d")}.xlsx'
+        elif export_type == 'range':
+            filename = f'InvenSync_{store.name}_{start_date.strftime("%Y-%m-%d")}_to_{end_date.strftime("%Y-%m-%d")}.xlsx'
+        else:
+            filename = f'InvenSync_{store.name}_All_Dates.xlsx'
+
+        response = send_file(
+            output,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response.headers['Content-Length'] = output.getbuffer().nbytes
+        return response
+    except Exception as e:
+        import traceback
+        current_app.logger.error(f"Error in export_invensync_store_excel_v2: {e}\n{traceback.format_exc()}")
+        return {'type': 'error', 'message': f'Error exporting data: {str(e)}'}
 
 
 @admin.route('/admin/oracle')
