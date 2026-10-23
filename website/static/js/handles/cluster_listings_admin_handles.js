@@ -52,23 +52,13 @@ let tmpl = document.getElementById('tmpl-cluster-card');
 let card = tmpl.content.cloneNode(true);
 
 card.querySelector('[data-cell="store-count"]').textContent       = cluster.store_count + ' stores';
-<<<<<<< HEAD
 card.querySelector('[data-cell="view-data-link"]').href           = '/cluster-manager/cluster-data?cluster_id=' + cluster.id;
-=======
-
-card.querySelector('[data-cell="view-data-link"]').href           = '/cluster-manager/cluster_data_v2?cluster_id=' + cluster.id;
-
->>>>>>> origin/main
 card.querySelector('[data-cell="name"]').textContent              = cluster.name;
 card.querySelector('[data-cell="description"]').textContent       = cluster.description || 'No description';
 card.querySelector('[data-cell="manager-avatar"]').textContent    = cluster.manager_initial;
 card.querySelector('[data-cell="manager-name"]').textContent      = cluster.manager_name;
 card.querySelector('[data-cell="date-added"]').textContent        = cluster.date_added ? 'Added ' + cluster.date_added : '';
-<<<<<<< HEAD
 card.querySelector('[data-cell="manage-link"]').href              = '/admin/clusters/' + cluster.id + '/manage';
-=======
-card.querySelector('[data-cell="manage-link"]').href              = '/admin/cluster_manage_v2?cluster_id=' + cluster.id;
->>>>>>> origin/main
 card.querySelector('[data-cell="manage-link"]').textContent       = canManage ? 'Manage Stores' : 'View Stores';
 
 
