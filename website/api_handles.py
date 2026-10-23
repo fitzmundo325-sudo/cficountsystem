@@ -6,8 +6,12 @@ from difflib import SequenceMatcher
 
 from flask import Blueprint, render_template, request, flash, jsonify, Flask, url_for, session, current_app, send_from_directory, Response
 from flask_login import login_required, current_user
+<<<<<<< HEAD
+from sqlalchemy import asc, desc, distinct, table, func, or_, case, cast, Integer, String
+=======
 from sqlalchemy import asc, desc, distinct, table, func, or_, case, cast, Integer, String, extract
 
+>>>>>>> origin/main
 from sqlalchemy.orm import aliased, selectinload
 from werkzeug.security import generate_password_hash, check_password_hash
 from collections import OrderedDict
@@ -15,7 +19,10 @@ from collections import OrderedDict
 import random, string, requests
 import pytz
 from werkzeug.utils import secure_filename
+<<<<<<< HEAD
+=======
 from decimal import Decimal
+>>>>>>> origin/main
 
 manila_tz = pytz.timezone("Asia/Manila")
 from dotenv import load_dotenv
@@ -24,9 +31,12 @@ from . import db, cache
 from datetime import datetime, date, timedelta
 from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem, AuditLog
 
+<<<<<<< HEAD
+=======
 from calendar import monthrange
 
 from collections import defaultdict
+>>>>>>> origin/main
 
 from .admin import log_audit_event
 from .audit import log_audit_event, verify_audit_chain
@@ -1010,11 +1020,14 @@ def get_price_history_by_product_id():
 # ================================
 # Clusters Section Start
 # ================================
+<<<<<<< HEAD
+=======
 
 
 CLUSTER_VIEW_ROLES = ('Superadmin', 'Admin', 'General Manager')
 CLUSTER_MANAGE_ROLES = ('Superadmin', 'Admin')
 
+>>>>>>> origin/main
 @api_handles.route('/clusters_list_admin', methods=['POST','GET'])
 @login_required
 def list_clusters_admin():
@@ -1281,6 +1294,8 @@ def clusters_managers_admin():
     except Exception as e:
         return jsonify({ 'type': 'error', 'message': f'Error loading managers: {str(e)}.' })
 
+<<<<<<< HEAD
+=======
 
 
 # api for listing stores for a specified cluster
@@ -1847,6 +1862,7 @@ def cluster_data_pos_sold():
     
     
 
+>>>>>>> origin/main
 # ================================
 # Clusters Masterlist Section End
 # ================================
@@ -3348,6 +3364,8 @@ def _build_admin_invensync_update_status(store_id, month_start, cutoff_date):
     }
 
 
+<<<<<<< HEAD
+=======
 
 
 def _build_admin_invensync_update_status_v2(store_id, month_start, cutoff_date):
@@ -3439,6 +3457,7 @@ def _build_admin_invensync_update_status_v2(store_id, month_start, cutoff_date):
     
     
 
+>>>>>>> origin/main
 def _build_single_update_status(dates_set, today, month_start, cutoff_date, label):
     missing_date_values = []
     missing_dates = []
@@ -3538,6 +3557,13 @@ def _get_global_invensync_config():
 
     return config, config_data
 
+<<<<<<< HEAD
+
+@api_handles.route('/get_invensync_data', methods=['GET'])
+@login_required
+def get_invensync_data():
+    """Fetch all data needed to render the Invensync admin page (v2)."""
+=======
 def _build_admin_invensync_update_status_bulk(store_ids, month_start, cutoff_date):
     """Processes multiple stores in exactly 3 database queries total."""
     if not store_ids or not month_start or not cutoff_date or cutoff_date < month_start:
@@ -3615,13 +3641,18 @@ def _build_admin_invensync_update_status_bulk(store_ids, month_start, cutoff_dat
 @login_required
 def get_invensync_data():
 
+>>>>>>> origin/main
     if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
         return {'type': 'error', 'message': 'Access denied.'}
 
     from .views import (
         _apply_store_scope_filter,
         _get_invensync_data_state,
+<<<<<<< HEAD
+        _get_latest_meaningful_invensync_by_store,
+=======
         _get_latest_meaningful_invensync_by_store_v2,
+>>>>>>> origin/main
         _get_user_presence_states,
     )
 
@@ -3633,6 +3664,12 @@ def get_invensync_data():
         stores = Store.query.order_by(Store.name.asc()).all()
         stores = _apply_store_scope_filter(stores, request)
 
+<<<<<<< HEAD
+        inventory_by_store = _get_latest_meaningful_invensync_by_store(
+            [store.id for store in stores]
+        )
+        manager_presence = _get_user_presence_states(store.manager_id for store in stores)
+=======
         inventory_by_store = _get_latest_meaningful_invensync_by_store_v2(
             [store.id for store in stores]
         )
@@ -3645,14 +3682,19 @@ def get_invensync_data():
             month_start, 
             update_cutoff_date
         )
+>>>>>>> origin/main
 
         store_summaries = []
         for store in stores:
             inventory = inventory_by_store.get(store.id)
             data_state = _get_invensync_data_state(inventory)
+<<<<<<< HEAD
+            update_status = _build_admin_invensync_update_status(store.id, month_start, update_cutoff_date)
+=======
             
             # 3. Retrieve from the pre-calculated dictionary (O(1) memory lookup, 0 DB queries)
             update_status = bulk_update_statuses.get(store.id, {})
+>>>>>>> origin/main
 
             store_summaries.append({
                 'store': {
@@ -5069,6 +5111,17 @@ def get_oracle_data():
         _build_oracle_pos_sales_data,
         _build_oracle_bulk_order_weeks,
         _build_oracle_bulk_order_product_data,
+<<<<<<< HEAD
+        _resolve_oracle_store_for_manager,
+    )
+
+    role = (current_user.role or '').strip()
+    if role == 'Store Manager':
+        store = _resolve_oracle_store_for_manager(current_user)
+        if not store:
+            return {'type': 'error', 'message': 'A single store is not assigned to your account.'}, 404
+    elif role in ('Cluster Manager', 'Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+=======
     )
 
     if current_user.role == 'Store Manager':
@@ -5076,6 +5129,7 @@ def get_oracle_data():
         if not store:
             return {'type': 'error', 'message': 'Store not found or not assigned.'}
     elif current_user.role in ('Superadmin', 'Admin'):
+>>>>>>> origin/main
         try:
             store_id = int(request.form.get('store_id') or request.args.get('store_id') or 0)
         except (ValueError, TypeError):
@@ -5083,6 +5137,22 @@ def get_oracle_data():
         store = Store.query.filter_by(id=store_id).first() if store_id else None
         if not store:
             return {'type': 'error', 'message': 'Store not found.'}
+<<<<<<< HEAD
+
+        from .models import Cluster
+        from .views import _apply_store_scope_filter, _get_area_manager_cluster_ids
+        if not _apply_store_scope_filter([store], request):
+            return {'type': 'error', 'message': 'Access denied.'}, 403
+        if role == 'Cluster Manager':
+            cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+            if not cluster or store.cluster_id != cluster.id:
+                return {'type': 'error', 'message': 'Access denied.'}, 403
+        elif role == 'Area Manager':
+            allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
+            if store.cluster_id not in allowed_cluster_ids:
+                return {'type': 'error', 'message': 'Access denied.'}, 403
+=======
+>>>>>>> origin/main
     else:
         return {'type': 'error', 'message': 'Access denied.'}
 

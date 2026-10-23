@@ -3346,6 +3346,9 @@ def users():
     if not _can_manage_users():
         flash('Access denied. Only Admin or Superadmin can access this page.', category='error')
         return redirect(url_for('views.home'))
+<<<<<<< HEAD
+
+=======
     
     #redirect Admin Accounts to the new v2 of the inv_sync
     q = (request.args.get('q') or '').strip()
@@ -3355,6 +3358,7 @@ def users():
     return redirect(url_for('views.v2_main', **params))
     
     
+>>>>>>> origin/main
     from .views import _apply_store_scope_filter
 
     q = (request.args.get('q') or '').strip()
@@ -4072,9 +4076,12 @@ def manage_cluster(cluster_id):
         User.role == 'Cluster Manager',
         ~User.id.in_(assigned_manager_ids)
     ).all()
+<<<<<<< HEAD
+=======
     
     
     
+>>>>>>> origin/main
     return render_template(
         'admin/cluster_manage.html',
         user=current_user,
