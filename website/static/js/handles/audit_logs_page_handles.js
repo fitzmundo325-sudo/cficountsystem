@@ -21,6 +21,14 @@ let auditSort = initialSort || '';
 let auditOrder = initialOrder || 'asc';
 let auditSearchTimer = null;
 
+let purgeAuditBtn = document.getElementById('purgeAuditBtn');
+let purgeDialog = document.getElementById('purgeDialog');
+let purgeWeeksInput = document.getElementById('purgeWeeksInput');
+let purgeWeeksHint = document.getElementById('purgeWeeksHint');
+let purgeCancelBtn = document.getElementById('purgeCancelBtn');
+let purgeContinueBtn = document.getElementById('purgeContinueBtn');
+let pendingPurgeWeeks = null;
+
 let auditActionLabels = {
     'auth.login.success': 'Successful sign-in',
     'auth.login.failed': 'Failed sign-in attempt',
@@ -314,3 +322,148 @@ auditSearchInput.value = initialSearch || '';
 setAuditSortIcons();
 setActiveAuditFilterButton();
 loadAuditLogs();
+
+
+
+
+//Purging Logic:
+function getPurgeWeeks() {
+    let weeks = parseInt(purgeWeeksInput.value, 10);
+    if (isNaN(weeks) || weeks < 1 || weeks > 5200) {
+        return null;
+    }
+    return weeks;
+}
+
+function getPurgeCutoffText(weeks) {
+    let cutoff = new Date(Date.now() - (weeks * 7 * 24 * 60 * 60 * 1000));
+    return cutoff.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+}
+
+function updatePurgeHint() {
+	purgeWeeksHint = _("purgeWeeksHint");
+    let weeks = getPurgeWeeks();
+    if (weeks === null) {
+        purgeWeeksHint.textContent = 'Enter a whole number from 1 to 5200.';
+        return;
+    }
+    purgeWeeksHint.textContent = 'Records before ' + getPurgeCutoffText(weeks) + ' will be deleted.';
+}
+
+
+function focusPurgeWeeksInput() {
+    purgeWeeksInput.focus();
+    purgeWeeksInput.select();
+}
+
+function openPurgeDialog() {
+    purgeWeeksInput.value = 26;
+    updatePurgeHint();
+    purgeDialog.setAttribute('aria-hidden', 'false');
+    purgeDialog.classList.add('is-open');
+    requestAnimationFrame(focusPurgeWeeksInput);
+}
+
+
+function closePurgeDialog() {
+    purgeDialog.classList.remove('is-open');
+    purgeDialog.setAttribute('aria-hidden', 'true');
+}
+
+
+function handlePurgeKeydown(event) {
+    if (event.key === 'Escape') {
+        closePurgeDialog();
+    } else if (event.key === 'Enter' && event.target === purgeWeeksInput) {
+        handlePurgeContinue();
+    }
+}
+
+
+function handlePurgeContinue() {
+    let weeks = getPurgeWeeks();
+    if (weeks === null) {
+        toast.warn('Enter a whole number of weeks from 1 to 5200.');
+        return;
+    }
+    closePurgeDialog();
+    confirmAuditPurge(weeks);
+}
+
+
+function confirmAuditPurge(weeks) {
+    pendingPurgeWeeks = weeks;
+    let message = 'This will permanently delete all audit logs older than ' + weeks + ' week(s) (before ' + getPurgeCutoffText(weeks) + '). This cannot be undone.';
+
+    if (typeof showConfirmationModal === 'function') {
+        showConfirmationModal({
+            title: 'Purge audit logs?',
+            message: message,
+            confirmText: 'Yes, purge',
+            cancelText: 'Cancel',
+            onConfirm: runPendingAuditPurge
+        });
+    } else if (confirm(message)) {
+        runPendingAuditPurge();
+    }
+}
+
+function runPendingAuditPurge() {
+    performAuditPurge(pendingPurgeWeeks);
+}
+
+function performAuditPurge(weeks) {
+    let formData = new FormData();
+    formData.append('weeks', weeks);
+    purgeAuditBtn.disabled = true;
+
+    fetch('/apis/admin/audit-logs/purge', {method: 'POST', body: formData})
+        .then(parsePurgeResponse)
+        .then(handlePurgeResult)
+        .catch(handlePurgeFailure)
+        .finally(enablePurgeButton);
+}
+
+function parsePurgeResponse(res) {
+    return res.json();
+}
+
+function handlePurgeResult(data) {
+    if (data.type === 'success') {
+        toast.success(data.message);
+        auditCurrentPage = 1;
+        loadAuditLogs();
+    } else {
+        toast.error(data.message || 'Purge failed.');
+    }
+}
+
+function handlePurgeFailure() {
+    toast.error('Unable to reach the server.');
+}
+
+function enablePurgeButton() {
+    purgeAuditBtn.disabled = false;
+}
+
+function handlePurgeKeydown(event) {
+    if (event.key === 'Escape') {
+        closePurgeDialog();
+    } else if (event.key === 'Enter' && event.target === purgeWeeksInput) {
+        handlePurgeContinue();
+    }
+}
+
+function handlePurgeBackdropClick(event) {
+    if (event.target === purgeDialog) {
+        closePurgeDialog();
+    }
+}
+
+purgeAuditBtn.addEventListener('click', openPurgeDialog);
+purgeCancelBtn.addEventListener('click', closePurgeDialog);
+purgeContinueBtn.addEventListener('click', handlePurgeContinue);
+purgeWeeksInput.addEventListener('change', updatePurgeHint);
+purgeDialog.addEventListener('keydown', handlePurgeKeydown);
+purgeDialog.addEventListener('click', handlePurgeBackdropClick);
+

@@ -21,7 +21,7 @@ manila_tz = pytz.timezone("Asia/Manila")
 from dotenv import load_dotenv
 
 from . import db, cache
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem, AuditLog
 
 from calendar import monthrange
@@ -5302,6 +5302,56 @@ def get_audit_logs():
         'total_results': total_results,
     }
  
+
+
+ 
+@api_handles.route('/admin/audit-logs/purge', methods=['POST','GET'])
+@login_required
+def purge_audit_logs():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied. Only Admin or Superadmin can purge audit logs.'}
+
+    raw_weeks = request.form.get('weeks') or request.args.get('weeks')
+
+    try:
+        weeks = int(raw_weeks) if raw_weeks else 26
+    except (ValueError, TypeError):
+        return {'type': 'error', 'message': 'Weeks must be a whole number.'}
+
+    if weeks < 1 or weeks > 5200:
+        return {'type': 'error', 'message': 'Weeks must be between 1 and 5200.'}
+
+    cutoff = datetime.now(timezone.utc) - timedelta(weeks=weeks)
+
+    try:
+        deleted = AuditLog.query.filter(AuditLog.event_time < cutoff).delete(synchronize_session=False)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return {'type': 'error', 'message': 'Failed to purge audit logs.'}
+
+    try:
+        log_audit_event(
+            action='admin.audit_logs.purge',
+            entity_type='AuditLog',
+            reason='Audit logs older than %d week(s) purged by administrator.' % weeks,
+            details={
+                'weeks': weeks,
+                'cutoff': cutoff.isoformat(),
+                'deleted_count': deleted,
+            },
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    return {
+        'type': 'success',
+        'message': 'Purged %d audit log(s) older than %d week(s).' % (deleted, weeks),
+        'deleted': deleted,
+    }
+
+    
 # ================================
 # Audit Log Section End
 # ================================
