@@ -13877,7 +13877,18 @@ def system_analyzer_v2():
     page = 'system_analyzer'
     return render_template("admin/system_analyzer_v2.html", user=current_user, page=page)
     
+
       
+@views.route('/admin/audit_logs_v2', methods=['GET'])
+@login_required
+def audit_logs_v2():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        flash('Access denied. Only Admin or Superadmin can access audit logs.', category='error')
+        return redirect(url_for('views.home'))
+
+    page = 'audit_logs'
+    return render_template("admin/audit_logs_v2.html", user=current_user, page=page)   
+   
    
 #v2 of the Inv Sync 
 @views.route('/admin/invensync_v2', methods=['GET'])

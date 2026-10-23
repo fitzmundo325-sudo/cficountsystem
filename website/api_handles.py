@@ -5193,7 +5193,7 @@ def _audit_category(action):
     return 'other'
 
 
-@api_handles.route('/audit-logs', methods=['GET', 'POST'])
+@api_handles.route('/admin/audit-logs', methods=['GET', 'POST'])
 @login_required
 def get_audit_logs():
     if current_user.role not in ('Superadmin', 'Admin'):
