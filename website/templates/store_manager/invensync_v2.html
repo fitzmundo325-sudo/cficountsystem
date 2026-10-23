@@ -275,7 +275,11 @@ window.INVENSYNC_URLS = {
 <div id="invensync-page-shell" class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-[2400px] w-full mx-auto space-y-6">
 
   <!-- Page Header -->
+<<<<<<< HEAD
   <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+=======
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 bluring_element hide_element">
+>>>>>>> d426a7275bcf7a093c1b67ca3b10f50b6746299a
     <div>
       <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Ending Inventory - <span id="pageStoreName"></span></h1>
       <p class="mt-1 text-slate-600">Daily stock counts, deliveries, transfers, wastage, and variance tracking.</p>
@@ -348,7 +352,11 @@ window.INVENSYNC_URLS = {
     </div>
   </div>
 
+<<<<<<< HEAD
   <div class="space-y-3">
+=======
+  <div class="space-y-3 bluring_element hide_element">
+>>>>>>> d426a7275bcf7a093c1b67ca3b10f50b6746299a
     <div id="inventory-search-guide-target" class="relative max-w-md">
       <input id="product-search-input" type="search" autocomplete="off" placeholder="Search product, code, or price" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pl-9 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100">
       <svg xmlns="http://www.w3.org/2000/svg" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
@@ -589,7 +597,11 @@ window.INVENSYNC_URLS = {
       <div class="text-xs text-slate-500 truncate max-w-[260px]" data-cell="code-price"></div>
     </td>
     <td class="px-2 py-2 text-center border-l-2 border-emerald-400" data-field="beginning_qty">
+<<<<<<< HEAD
       <input type="number" placeholder="0" class="beginning-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="beginning_qty">
+=======
+      <input type="number" placeholder="0" class="beginning-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="beginning_qty" value=0>
+>>>>>>> d426a7275bcf7a093c1b67ca3b10f50b6746299a
       <span class="beginning-qty hidden" data-cell="beginning_qty_span"></span>
     </td>
     <td class="px-2 py-2" data-field="delivery_qty"><input type="number" class="delivery-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none trans-trace-hover" data-cell="delivery_qty" data-trace="delivery"></td>
@@ -601,9 +613,24 @@ window.INVENSYNC_URLS = {
     <td class="px-2 py-2 text-center text-slate-600 wastage-amount" data-field="wastage_amount" data-cell="wastage_amount"></td>
     <td class="px-2 py-2" data-field="csi_qty"><input type="number" class="csi-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="csi_qty"></td>
     <td class="px-2 py-2" data-field="quantity_sold"><input type="number" class="sold-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none trans-trace-hover" data-cell="quantity_sold" data-trace="sold"></td>
+<<<<<<< HEAD
     <td class="px-2 py-2" data-field="ending_d5_qty"><input type="number" class="ending-d5-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="ending_d5_qty"></td>
     <td class="px-2 py-2" data-field="ending_d4_qty"><input type="number" class="ending-d4-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="ending_d4_qty"></td>
     <td class="px-2 py-2" data-field="ending_d3_qty"><input type="number" class="ending-d3-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="ending_d3_qty"></td>
+=======
+	
+	
+	
+    <td class="px-2 py-2" data-field="ending_d5_qty"><input type="number" class="ending-d5-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="ending_d5_qty" onchange="updateInventoryRow(this)" noremove="true" tag="ending_inv"></td>
+	
+	
+    <td class="px-2 py-2" data-field="ending_d4_qty"><input type="number" class="ending-d4-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="ending_d4_qty" onchange="updateInventoryRow(this)" noremove="true" tag="ending_inv" ></td>
+	
+	
+    <td class="px-2 py-2" data-field="ending_d3_qty"><input type="number" class="ending-d3-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none" data-cell="ending_d3_qty" onchange="updateInventoryRow(this)" noremove="true" tag="ending_inv" ></td>
+	
+	
+>>>>>>> d426a7275bcf7a093c1b67ca3b10f50b6746299a
     <td class="px-2 py-2 text-center font-semibold text-slate-900 total-ending" data-field="total_ending_qty" data-cell="total_ending_qty"></td>
     <td class="px-2 py-2 text-center text-slate-600 total-peso" data-field="total_peso_srp" data-cell="total_peso_srp"></td>
     <td class="px-2 py-2 text-center bg-green-100 text-green-800 theo-ending" data-field="theo_ending_qty" data-cell="theo_ending_qty"></td>
