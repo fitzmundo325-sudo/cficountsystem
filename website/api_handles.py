@@ -22,12 +22,14 @@ from dotenv import load_dotenv
 
 from . import db, cache
 from datetime import datetime, date, timedelta
-from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem
+from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem, AuditLog
+
 from calendar import monthrange
 
 from collections import defaultdict
 
 from .admin import log_audit_event
+from .audit import log_audit_event, verify_audit_chain
 
 plt = ""  # empty this var when on live website
 post_per_page = 100
@@ -5171,6 +5173,120 @@ def get_oracle_data():
  
 # ================================
 # Oracle Section End
+# ================================ 
+
+
+
+ 
+# ================================
+# Audit Log Section Start
+# ================================ 
+
+
+def _audit_category(action):
+    if action.startswith('auth.'):
+        return 'auth'
+    if action.startswith('admin.'):
+        return 'admin'
+    if action.startswith('report.'):
+        return 'report'
+    return 'other'
+
+
+@api_handles.route('/audit-logs', methods=['GET', 'POST'])
+@login_required
+def get_audit_logs():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied. Only Admin or Superadmin can access audit logs.'}
+
+    try:
+        page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        page = 1
+
+    search = (request.form.get('search') or request.args.get('search') or '').strip()
+    active_filter = request.form.get('filter') or request.args.get('filter') or 'all'
+    per_page = 50
+
+    tampered_ids = list(set(verify_audit_chain()))
+    category_patterns = {'auth': 'auth.%', 'admin': 'admin.%', 'report': 'report.%'}
+
+    query = AuditLog.query
+
+    if search:
+        like = '%' + search + '%'
+        query = query.filter(or_(
+            AuditLog.actor_username.ilike(like),
+            AuditLog.action.ilike(like),
+            AuditLog.reason.ilike(like),
+            AuditLog.endpoint.ilike(like),
+            AuditLog.entity_type.ilike(like),
+            AuditLog.entity_id.ilike(like),
+        ))
+
+    if active_filter == 'verified':
+        query = query.filter(~AuditLog.id.in_(tampered_ids))
+    elif active_filter == 'tampered':
+        query = query.filter(AuditLog.id.in_(tampered_ids))
+    elif active_filter == 'issues':
+        query = query.filter(or_(AuditLog.id.in_(tampered_ids), AuditLog.action.ilike('%failed%')))
+    elif active_filter in category_patterns:
+        query = query.filter(AuditLog.action.like(category_patterns[active_filter]))
+
+    total_results = query.count()
+    total_pages = max(1, (total_results + per_page - 1) // per_page)
+    page = max(1, min(page, total_pages))
+    offset = (page - 1) * per_page
+
+    logs = query.order_by(AuditLog.id.desc()).offset(offset).limit(per_page).all()
+
+    total_count = AuditLog.query.count()
+    tampered_count = AuditLog.query.filter(AuditLog.id.in_(tampered_ids)).count() if tampered_ids else 0
+    stats = {
+        'total': total_count,
+        'tampered': tampered_count,
+        'verified': total_count - tampered_count,
+        'auth_events': AuditLog.query.filter(AuditLog.action.like('auth.%')).count(),
+        'admin_events': AuditLog.query.filter(AuditLog.action.like('admin.%')).count(),
+        'data_events': AuditLog.query.filter(AuditLog.action.like('report.%')).count(),
+    }
+
+    tampered_lookup = set(tampered_ids)
+    results = []
+    for log in logs:
+        action = log.action or ''
+        tampered = log.id in tampered_lookup
+        results.append({
+            'id': log.id,
+            'event_date': log.event_time.strftime('%Y-%m-%d') if log.event_time else None,
+            'event_clock': log.event_time.strftime('%H:%M:%S') if log.event_time else None,
+            'actor_username': log.actor_username,
+            'actor_user_id': log.actor_user_id,
+            'ip_address': log.ip_address,
+            'action': action,
+            'category': _audit_category(action),
+            'entity_type': log.entity_type,
+            'entity_id': log.entity_id,
+            'http_method': log.http_method,
+            'endpoint': log.endpoint,
+            'reason': log.reason,
+            'details': log.details or '{}',
+            'hash_short': log.current_hash[:18],
+            'tampered': tampered,
+            'is_issue': tampered or 'failed' in action.lower(),
+        })
+
+    return {
+        'type': 'success',
+        'results': results,
+        'stats': stats,
+        'current_page': page,
+        'total_pages': total_pages,
+        'total_results': total_results,
+    }
+ 
+# ================================
+# Audit Log Section End
 # ================================
  
  
