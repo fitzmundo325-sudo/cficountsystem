@@ -5238,7 +5238,24 @@ def get_audit_logs():
     page = max(1, min(page, total_pages))
     offset = (page - 1) * per_page
 
-    logs = query.order_by(AuditLog.id.desc()).offset(offset).limit(per_page).all()
+    sortby = request.form.get('sort') or request.args.get('sort')
+    order = (request.form.get('order_by') or request.args.get('order_by') or 'asc').lower()
+
+    sortable_columns = {
+        'event_time': AuditLog.event_time,
+        'actor_username': AuditLog.actor_username,
+        'action': AuditLog.action,
+        'endpoint': AuditLog.endpoint,
+        'tampered': case((AuditLog.id.in_(tampered_ids), 1), else_=0),
+    }
+
+    if sortby in sortable_columns:
+        sort_col = sortable_columns[sortby]
+        query = query.order_by(desc(sort_col) if order == 'desc' else asc(sort_col), AuditLog.id.desc())
+    else:
+        query = query.order_by(AuditLog.id.desc())
+
+    logs = query.offset(offset).limit(per_page).all()
 
     total_count = AuditLog.query.count()
     tampered_count = AuditLog.query.filter(AuditLog.id.in_(tampered_ids)).count() if tampered_ids else 0

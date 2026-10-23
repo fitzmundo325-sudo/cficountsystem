@@ -6,6 +6,7 @@ let auditScrollTarget = document.getElementById('auditScroll');
 let auditSearchInput = document.getElementById('auditSearch');
 let auditVisibleCount = document.getElementById('auditVisibleCount');
 let auditFilterButtons = document.querySelectorAll('.audit-filter');
+let auditSortButtons = document.querySelectorAll('.audit-sort');
 let auditPagination = document.getElementById('auditPagination');
 let auditPaginationInfo = document.getElementById('auditPaginationInfo');
 let auditPaginationControls = document.getElementById('auditPaginationControls');
@@ -16,6 +17,8 @@ let refreshAuditBtn = document.getElementById('refreshAuditBtn');
 let auditPerPage = 50;
 let auditCurrentPage = parseInt(initialPage) || 1;
 let auditActiveFilter = initialFilter || 'all';
+let auditSort = initialSort || '';
+let auditOrder = initialOrder || 'asc';
 let auditSearchTimer = null;
 
 let auditActionLabels = {
@@ -60,18 +63,22 @@ function setAuditCell(root, name, value) {
 function loadAuditLogs() {
     qBuilder.page = auditCurrentPage;
     qBuilder.search = auditSearchInput.value.trim();
+    qBuilder.sort = auditSort;
+    qBuilder.order_by = auditOrder;
     qBuilder.server_address = '/apis/admin/audit-logs';
     qBuilder.sendQuery(
         handleAuditSuccess,
-		undefined,
+        undefined,
         [{name: 'filter', value: auditActiveFilter}],
         handleAuditError
     );
 }
 
-function handleAuditSuccess(res) {
-	let data = JSON.parse(res.responseText);
-	
+
+
+function handleAuditSuccess(response) {
+    let data = JSON.parse(response.responseText);
+
     if (data.type !== 'success') {
         toast.error(data.message || 'Failed to load audit logs.');
         return;
@@ -83,10 +90,7 @@ function handleAuditSuccess(res) {
     auditVisibleCount.textContent = 'Showing ' + data.results.length + ' of ' + data.total_results + ' records.';
 }
 
-function handleAuditError(data) {
-	
-
-	
+function handleAuditError() {
     toast.error('Unable to reach the server.');
 }
 
@@ -205,6 +209,32 @@ function setActiveAuditFilterButton() {
     }
 }
 
+function setAuditSortIcons() {
+    for (let i = 0; i < auditSortButtons.length; i++) {
+        let btn = auditSortButtons[i];
+        let icon = btn.querySelector('.audit-sort-icon');
+        if (btn.dataset.sort === auditSort) {
+            icon.textContent = auditOrder === 'desc' ? '\u25bc' : '\u25b2';
+        } else {
+            icon.textContent = '\u2195';
+        }
+    }
+}
+
+function handleAuditSortClick() {
+    let column = this.dataset.sort;
+    if (auditSort === column) {
+        auditOrder = auditOrder === 'asc' ? 'desc' : 'asc';
+    } else {
+        auditSort = column;
+        auditOrder = 'asc';
+    }
+    auditCurrentPage = 1;
+    setAuditSortIcons();
+    loadAuditLogs();
+    syncAuditUrl();
+}
+
 function syncAuditUrl() {
     let params = new URLSearchParams(window.location.search);
     let query = auditSearchInput.value.trim();
@@ -218,6 +248,13 @@ function syncAuditUrl() {
         params.set('filter', auditActiveFilter);
     } else {
         params.delete('filter');
+    }
+    if (auditSort) {
+        params.set('sort', auditSort);
+        params.set('order_by', auditOrder);
+    } else {
+        params.delete('sort');
+        params.delete('order_by');
     }
     history.pushState({}, '', '?' + params.toString());
 }
@@ -256,6 +293,9 @@ function handleAuditPopState() {
     auditCurrentPage = parseInt(params.get('page')) || 1;
     auditSearchInput.value = params.get('search') || '';
     auditActiveFilter = params.get('filter') || 'all';
+    auditSort = params.get('sort') || '';
+    auditOrder = params.get('order_by') || 'asc';
+    setAuditSortIcons();
     setActiveAuditFilterButton();
     loadAuditLogs();
 }
@@ -263,10 +303,14 @@ function handleAuditPopState() {
 for (let i = 0; i < auditFilterButtons.length; i++) {
     auditFilterButtons[i].addEventListener('click', handleAuditFilterClick);
 }
+for (let i = 0; i < auditSortButtons.length; i++) {
+    auditSortButtons[i].addEventListener('click', handleAuditSortClick);
+}
 auditSearchInput.addEventListener('input', handleAuditSearchInput);
 refreshAuditBtn.addEventListener('click', handleAuditRefresh);
 window.addEventListener('popstate', handleAuditPopState);
 
 auditSearchInput.value = initialSearch || '';
+setAuditSortIcons();
 setActiveAuditFilterButton();
 loadAuditLogs();

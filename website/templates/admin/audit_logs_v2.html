@@ -9,6 +9,8 @@ let currentUserRole = {{ user.role|tojson }};
 let initialPage = {{ request.args.get('page', 1)|tojson }};
 let initialSearch = {{ request.args.get('search', '')|tojson }};
 let initialFilter = {{ request.args.get('filter', 'all')|tojson }};
+let initialSort = {{ request.args.get('sort', '')|tojson }};
+let initialOrder = {{ request.args.get('order_by', 'asc')|tojson }};
 </script>
 
 <header class="sticky top-0 bg-white/85 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between" style="z-index:99;">
@@ -82,11 +84,11 @@ let initialFilter = {{ request.args.get('filter', 'all')|tojson }};
       <table class="min-w-full divide-y divide-slate-200">
         <thead class="bg-slate-50 sticky top-0 z-10">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">When</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Who</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">What Happened</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Details</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Safety Check</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider"><button type="button" class="audit-sort inline-flex items-center gap-1 font-semibold uppercase tracking-wider hover:text-slate-900" data-sort="event_time">When <span class="audit-sort-icon"></span></button></th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider"><button type="button" class="audit-sort inline-flex items-center gap-1 font-semibold uppercase tracking-wider hover:text-slate-900" data-sort="actor_username">Who <span class="audit-sort-icon"></span></button></th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider"><button type="button" class="audit-sort inline-flex items-center gap-1 font-semibold uppercase tracking-wider hover:text-slate-900" data-sort="action">What Happened <span class="audit-sort-icon"></span></button></th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider"><button type="button" class="audit-sort inline-flex items-center gap-1 font-semibold uppercase tracking-wider hover:text-slate-900" data-sort="endpoint">Details <span class="audit-sort-icon"></span></button></th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider"><button type="button" class="audit-sort inline-flex items-center gap-1 font-semibold uppercase tracking-wider hover:text-slate-900" data-sort="tampered">Safety Check <span class="audit-sort-icon"></span></button></th>
           </tr>
         </thead>
         <tbody id="auditRows" class="divide-y divide-slate-100">
@@ -144,6 +146,6 @@ let initialFilter = {{ request.args.get('filter', 'all')|tojson }};
   <span class="px-2 text-slate-400">&hellip;</span>
 </template>
 
-<script defer src="{{ url_for('static', filename='js/handles/audit_logs_page_handles.js') }}?v=audit-v2-20261023-2"></script>
+<script defer src="{{ url_for('static', filename='js/handles/audit_logs_page_handles.js') }}?v=audit-v2-20261023-3"></script>
 
 {% endblock %}
