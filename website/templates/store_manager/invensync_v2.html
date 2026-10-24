@@ -149,7 +149,7 @@ window.INVENSYNC_URLS = {
   saveAdjustments: {{ url_for('views.save_invensync_adjustments')|tojson }},
   transferTrace: {{ url_for('api_handles.invensync_transfer_trace')|tojson }},
   dataExportBase: {{ url_for('views.store_manager_data_export')|tojson }},
-  storeExcelExportBase: {{ url_for('admin.export_invensync_store_excel', store_id=0)|tojson }}
+  storeExcelExportBase: {{ url_for('admin.export_invensync_store_excel_v2', store_id=0)|tojson }}
 };
 </script>
 <!-- Top Header -->
