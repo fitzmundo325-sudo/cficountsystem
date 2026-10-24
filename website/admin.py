@@ -6442,7 +6442,6 @@ def export_invensync_store_excel(store_id):
         flash(f'Error exporting data: {str(e)}', category='error')
         return redirect(url_for('admin.invensync'))
 
-
 @admin.route('/admin/oracle')
 @login_required
 def admin_oracle():
@@ -6450,74 +6449,58 @@ def admin_oracle():
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
+    from datetime import date
     from .views import _apply_store_scope_filter
 
-    clusters = (
+    all_clusters = (
         Cluster.query
-        .options(
-            selectinload(Cluster.manager),
-            selectinload(Cluster.stores).selectinload(Store.manager),
-        )
+        .options(selectinload(Cluster.stores).selectinload(Store.manager))
         .order_by(Cluster.name.asc())
         .all()
     )
 
-    for cluster in clusters:
-        cluster.stores = _apply_store_scope_filter(cluster.stores, request)
+    scoped = []
+    for item in all_clusters:
+        item_stores = _apply_store_scope_filter(list(item.stores), request)
+        if item_stores:
+            scoped.append((item, item_stores))
 
-    clusters = [c for c in clusters if c.stores]
+    if not scoped:
+        flash('No clusters with accessible stores were found.', category='error')
+        return redirect(url_for('views.home'))
 
-    unassigned_stores = _apply_store_scope_filter(
-        Store.query
-        .options(selectinload(Store.manager))
-        .filter(Store.cluster_id.is_(None))
-        .order_by(Store.name.asc())
-        .all(),
-        request,
+    requested_id = request.args.get('cluster_id', type=int)
+    cluster, cluster_stores = next(
+        ((c, s) for c, s in scoped if c.id == requested_id),
+        scoped[0],
     )
+    stores = sorted(cluster_stores, key=lambda s: (s.name or '').lower())
+    store_ids = [int(s.id) for s in stores]
 
-    clustered_store_ids = [
-        int(store.id)
-        for cluster in clusters
-        for store in cluster.stores
-    ]
-    assigned_store_count = len(clustered_store_ids)
-    configured_store_ids = {
-        int(store_id)
-        for store_id, in (
-            db.session.query(StoreProductBuffer.store_id)
-            .filter(StoreProductBuffer.store_id.in_(clustered_store_ids))
-            .distinct()
-            .all()
-        )
-    } if clustered_store_ids else set()
-    product_count = ProductMaster.query.count()
+    products = ProductMaster.query.order_by(ProductMaster.description.asc()).all()
 
-    cluster_cards = []
-    for cluster in clusters:
-        stores = sorted(cluster.stores, key=lambda store: (store.name or '').lower())
-        configured_count = sum(1 for store in stores if int(store.id) in configured_store_ids)
-        cluster_cards.append({
-            'cluster': cluster,
-            'stores': stores,
-            'store_count': len(stores),
-            'configured_count': configured_count,
-            'manager_name': (cluster.manager.full_name or cluster.manager.username) if cluster.manager else 'Unassigned',
-        })
+    buffers_map = {}
+    buffer_fields = ('buffer_pct', 'buffer_percent', 'buffer', 'percentage', 'pct')
+    for row in StoreProductBuffer.query.filter(StoreProductBuffer.store_id.in_(store_ids)).all():
+        field = next((f for f in buffer_fields if hasattr(row, f)), None)
+        value = getattr(row, field) if field else None
+        if value is not None:
+            buffers_map.setdefault(int(row.store_id), {})[int(row.product_id)] = float(value)
 
     return render_template(
         'admin/oracle.html',
         user=current_user,
-        cluster_cards=cluster_cards,
-        unassigned_stores=unassigned_stores,
-        summary={
-            'cluster_count': len(clusters),
-            'assigned_store_count': assigned_store_count,
-            'configured_store_count': len(configured_store_ids),
-            'product_count': product_count,
-        },
+        admin_shell=True,
+        cluster=cluster,
+        stores=stores,
+        products=products,
+        buffers_map=buffers_map,
+        can_approve_oracle_orders=current_user.role in ('Superadmin', 'Admin', 'General Manager', 'Area Manager'),
+        oracle_pending_approvals=[],
+        oracle_approval_history=[],
+        selected_date=request.args.get('date') or date.today().isoformat(),
+        cluster_sidebar_cluster_id=cluster.id,
     )
-
 
 @admin.route('/admin/invensync/config', methods=['POST'])
 @login_required
