@@ -114,6 +114,30 @@
     overflow-x: hidden;
   }
 
+  @media (min-width: 900px) {
+    #oracle-page-header {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    #oracle-page-header > div:last-child {
+      flex-wrap: nowrap;
+    }
+
+    #oracle-date-fields {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    #oracle-date-fields > div {
+      min-width: 0;
+    }
+
+    #oracle-mode-wrap {
+      align-items: flex-end;
+    }
+  }
+
   .oracle-scroll {
     max-width: 100%;
     overflow-x: auto;
@@ -296,7 +320,7 @@
 
 <!-- Header -->
 <header
-  class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-4 md:px-6 py-3 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+  id="oracle-page-header" class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-4 md:px-6 py-3 flex flex-col gap-3">
   <div class="flex min-w-0 items-center gap-3">
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
       <i class="bi bi-list text-xl"></i>
@@ -369,7 +393,7 @@
 
     <!-- Date/Manager row -->
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-4">
-      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+      <div id="oracle-date-fields" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
         <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Order Date</label><input
             type="date" id="order-date"
             class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none"></div>
@@ -429,7 +453,7 @@
           class="w-full px-3 py-1.5 bg-slate-600 border border-slate-500 text-white placeholder-slate-400 rounded text-sm outline-none focus:ring-1 focus:ring-sky-400">
         <p class="text-[10px] text-slate-400 mt-1">Rev-share method. Optional.</p>
       </div>
-      <div class="flex min-w-[180px] flex-1 flex-col gap-2 items-start xl:items-end justify-center">
+      <div id="oracle-mode-wrap" class="flex min-w-[180px] flex-1 flex-col gap-2 items-start justify-center">
         <div id="order-mode-indicator"
           class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-900/50 border border-emerald-700 text-emerald-300 rounded-full text-xs font-semibold whitespace-nowrap">
           <i class="bi bi-bar-chart-fill"></i> Avg Consumption</div>
