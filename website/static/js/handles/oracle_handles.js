@@ -482,6 +482,7 @@ function getWeeklySuggestions(product, dates, mult) {
 // ---------------------------------------------------------------- Navigation and filters
 function navigate(id) {
   if (CLUSTER_VIEW && id !== 'order-form') id = 'order-form';
+  if (fullscreenView && id !== fullscreenView.id.replace('view-', '')) restoreFullscreenView();
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.o-tab').forEach(t => t.classList.remove('active'));
   let view = document.getElementById('view-' + id);
@@ -854,21 +855,43 @@ async function saveBuffersToCluster() {
 }
 
 function getActiveFullscreenPanel() {
-  return document.querySelector('#oracle-order-view.oracle-fs');
+  return document.querySelector('#oracle-order-view.oracle-fs, .view.oracle-tab-fs');
 }
 
 function syncFullscreenButton(viewId) {
   let btn = document.getElementById('btn-fullscreen');
   if (!btn) return;
   let allowed = btn.dataset.showIn.split(' ').includes(ORACLE_VIEW);
-  btn.classList.toggle('hidden', !(allowed && viewId === 'order-form'));
+  btn.classList.toggle('hidden', !(allowed && !!document.getElementById('view-' + viewId)));
 }
 
 let fullscreenPlaceholder = null;
+let fullscreenView = null;
+let fullscreenExitBar = null;
+
+function restoreFullscreenView() {
+  if (!fullscreenView) return;
+  postMessageToParent("function:overRideFullscreen");
+  fullscreenView.classList.remove('oracle-tab-fs');
+  fullscreenView.style.cssText = fullscreenView.dataset.fullscreenOriginalStyle || '';
+  delete fullscreenView.dataset.fullscreenOriginalStyle;
+  if (fullscreenPlaceholder && fullscreenPlaceholder.parentNode) {
+    fullscreenPlaceholder.parentNode.replaceChild(fullscreenView, fullscreenPlaceholder);
+  }
+  if (fullscreenExitBar) fullscreenExitBar.remove();
+  fullscreenPlaceholder = null;
+  fullscreenExitBar = null;
+  fullscreenView = null;
+  document.body.style.overflow = '';
+}
 
 function toggleOrderFullscreen() {
   let view = document.getElementById('oracle-order-view');
   let weeklyPanel = document.getElementById('weekly-order-panel');
+  if (fullscreenView) {
+    restoreFullscreenView();
+    return;
+  }
   if (!view) return;
   if (view.classList.contains('oracle-fs')) {
 	  
@@ -888,7 +911,25 @@ function toggleOrderFullscreen() {
 	
   }
   let orderView = document.getElementById('view-order-form');
-  if (!orderView || !orderView.classList.contains('active')) return;
+  if (!orderView || !orderView.classList.contains('active')) {
+    const activeView = document.querySelector('.view.active');
+    if (!activeView) return;
+    fullscreenView = activeView;
+    fullscreenView.dataset.fullscreenOriginalStyle = fullscreenView.getAttribute('style') || '';
+    fullscreenPlaceholder = document.createComment('oracle-fullscreen-view');
+    fullscreenView.parentNode.replaceChild(fullscreenPlaceholder, fullscreenView);
+    document.body.appendChild(fullscreenView);
+    fullscreenView.classList.add('oracle-tab-fs');
+    fullscreenView.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;overflow:auto;background:#fff;padding:16px;';
+    fullscreenExitBar = document.createElement('div');
+    fullscreenExitBar.className = 'flex-none flex items-center justify-between bg-white border-b border-slate-200 px-4 py-3 mb-4';
+    fullscreenExitBar.innerHTML = '<span class="text-sm font-semibold text-slate-700">Order workspace</span><button type="button" class="flex items-center gap-1.5 px-3 py-1.5 bg-slate-600 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition-colors"><i class="bi bi-fullscreen-exit"></i> Exit Fullscreen</button>';
+    fullscreenExitBar.querySelector('button').addEventListener('click', restoreFullscreenView);
+    fullscreenView.prepend(fullscreenExitBar);
+    postMessageToParent("function:overRideFullscreen:true");
+    document.body.style.overflow = 'hidden';
+    return;
+  }
   postMessageToParent("function:overRideFullscreen:true")
   
   renderOrderTable();
@@ -904,7 +945,8 @@ function toggleOrderFullscreen() {
 
 function onDocumentKeyDown(event) {
   if (event.key !== 'Escape') return;
-  if (getActiveFullscreenPanel()) toggleOrderFullscreen();
+  if (fullscreenView) restoreFullscreenView();
+  else if (getActiveFullscreenPanel()) toggleOrderFullscreen();
 }
 
 // ---------------------------------------------------------------- Weekly order planner

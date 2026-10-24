@@ -795,6 +795,7 @@
 
   function navigate(id) {
     if (CLUSTER_VIEW && id !== 'order-form') id = 'order-form';
+    if (legacyFullscreenView && id !== legacyFullscreenView.id.replace('view-', '')) restoreLegacyFullscreenView();
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.querySelectorAll('.o-tab').forEach(t => t.classList.remove('active'));
     const view = document.getElementById('view-' + id); if (!view) return;
@@ -1493,9 +1494,48 @@
     setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateX(12px)'; t.style.transition = 'all .25s'; setTimeout(() => t.remove(), 250); }, 3000);
   }
 
+  let legacyFullscreenView = null;
+  let legacyFullscreenPlaceholder = null;
+  let legacyFullscreenExitBar = null;
+
+  function restoreLegacyFullscreenView() {
+    if (!legacyFullscreenView) return;
+    legacyFullscreenView.classList.remove('oracle-tab-fs');
+    legacyFullscreenView.style.cssText = legacyFullscreenView.dataset.fullscreenOriginalStyle || '';
+    delete legacyFullscreenView.dataset.fullscreenOriginalStyle;
+    if (legacyFullscreenPlaceholder && legacyFullscreenPlaceholder.parentNode) {
+      legacyFullscreenPlaceholder.parentNode.replaceChild(legacyFullscreenView, legacyFullscreenPlaceholder);
+    }
+    if (legacyFullscreenExitBar) legacyFullscreenExitBar.remove();
+    legacyFullscreenView = null;
+    legacyFullscreenPlaceholder = null;
+    legacyFullscreenExitBar = null;
+    document.body.style.overflow = '';
+  }
+
   function toggleOrderFullscreen() {
+    if (legacyFullscreenView) { restoreLegacyFullscreenView(); return; }
     const view = document.getElementById('oracle-order-view');
     if (!view) return;
+    const orderTab = document.getElementById('view-order-form');
+    if (!orderTab || !orderTab.classList.contains('active')) {
+      const activeView = document.querySelector('.view.active');
+      if (!activeView) return;
+      legacyFullscreenView = activeView;
+      legacyFullscreenView.dataset.fullscreenOriginalStyle = legacyFullscreenView.getAttribute('style') || '';
+      legacyFullscreenPlaceholder = document.createComment('oracle-fullscreen-view');
+      legacyFullscreenView.parentNode.replaceChild(legacyFullscreenPlaceholder, legacyFullscreenView);
+      document.body.appendChild(legacyFullscreenView);
+      legacyFullscreenView.classList.add('oracle-tab-fs');
+      legacyFullscreenView.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;overflow:auto;background:#fff;padding:16px;';
+      legacyFullscreenExitBar = document.createElement('div');
+      legacyFullscreenExitBar.className = 'flex-none flex items-center justify-between bg-white border-b border-slate-200 px-4 py-3 mb-4';
+      legacyFullscreenExitBar.innerHTML = '<span class="text-sm font-semibold text-slate-700">Order workspace</span><button type="button" class="flex items-center gap-1.5 px-3 py-1.5 bg-slate-600 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition-colors"><i class="bi bi-fullscreen-exit"></i> Exit Fullscreen</button>';
+      legacyFullscreenExitBar.querySelector('button').addEventListener('click', restoreLegacyFullscreenView);
+      legacyFullscreenView.prepend(legacyFullscreenExitBar);
+      document.body.style.overflow = 'hidden';
+      return;
+    }
     const isFs = view.classList.contains('oracle-fs');
     if (isFs) {
       view.classList.remove('oracle-fs');
@@ -1508,6 +1548,7 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
+      if (legacyFullscreenView) { restoreLegacyFullscreenView(); return; }
       const view = document.getElementById('oracle-order-view');
       if (view && view.classList.contains('oracle-fs')) {
         toggleOrderFullscreen();
