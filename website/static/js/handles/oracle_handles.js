@@ -228,8 +228,8 @@ function applyOracleData(data) {
     let iv = INVENSYNC_DATA[String(p.id)];
     return { productId: p.id, productName: p.name, category: p.category, unit: p.unit, currentStock: iv ? iv.ending_stock : 0, reorderPoint: 0, lastUpdated: fmt(new Date()) };
   });
-  DB.orderHistory = ORACLE_ORDER_HISTORY.filter(order => order.status === 'approved');
-  DB.pendingApprovals = ORACLE_ORDER_HISTORY.filter(order => order.status === 'pending');
+  DB.orderHistory = ORACLE_ORDER_HISTORY.filter(order => ['approved', 'pending', 'rejected'].includes(String(order.status || 'approved').toLowerCase()));
+  DB.pendingApprovals = DB.orderHistory.filter(order => String(order.status || '').toLowerCase() === 'pending');
   productBuffers = {};
   PRODUCTS.forEach(p => {
     productBuffers[p.id] = (STORE_SAVED_BUFFERS && STORE_SAVED_BUFFERS[p.id] !== undefined) ? STORE_SAVED_BUFFERS[p.id] : p.buffer;
@@ -1204,10 +1204,11 @@ async function submitOrder() {
       totalCost: obj.quantity * p.plantPrice,
       multiplier: mult,
       manager,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      status: String(saved?.status || 'approved').toLowerCase()
     };
-    if (saved?.status === 'pending') DB.pendingApprovals.push(historyObj);
-    else DB.orderHistory.push(historyObj);
+    DB.orderHistory.push(historyObj);
+    if (historyObj.status === 'pending') DB.pendingApprovals.push(historyObj);
   });
   orderFinalQtys = {};
   showToast(pendC > 0 ? `${autoC} auto-approved. ${pendC} require Manager Approval.` : 'Order submitted!', pendC > 0 ? 'info' : 'success');
@@ -1219,8 +1220,11 @@ function groupOrderHistoryByDate() {
   let groups = {};
   DB.orderHistory.filter(order => Number(order.finalOrder || 0) >= 0).forEach(order => {
     let key = order.orderDateActual || 'No Date';
-    if (!groups[key]) groups[key] = { date: key, items: [], deliveryDates: new Set(), managers: new Set(), suggestedTotal: 0, finalTotal: 0, totalCost: 0, latestTimestamp: '' };
+    if (!groups[key]) groups[key] = { date: key, items: [], deliveryDates: new Set(), managers: new Set(), suggestedTotal: 0, finalTotal: 0, totalCost: 0, latestTimestamp: '', pendingCount: 0, rejectedCount: 0 };
     groups[key].items.push(order);
+    const status = String(order.status || 'approved').toLowerCase();
+    if (status === 'pending') groups[key].pendingCount += 1;
+    if (status === 'rejected') groups[key].rejectedCount += 1;
     if (order.delivDate) groups[key].deliveryDates.add(order.delivDate);
     if (order.manager) groups[key].managers.add(order.manager);
     groups[key].suggestedTotal += Number(order.suggested || 0);
@@ -1243,14 +1247,19 @@ function buildHistoryWeek(g) {
   let byProductDate = {};
   g.items.forEach(item => {
     let key = `${item.productId}|${item.delivDate}`;
-    if (!byProductDate[key]) byProductDate[key] = { final: 0, suggested: 0, min: 0, max: 0, orderId: item.id };
+    if (!byProductDate[key]) byProductDate[key] = { final: 0, suggested: 0, min: 0, max: 0, orderId: item.id, status: String(item.status || 'approved').toLowerCase() };
+    const itemStatus = String(item.status || 'approved').toLowerCase();
+    if (itemStatus === 'pending' || (itemStatus === 'rejected' && byProductDate[key].status === 'approved')) {
+      byProductDate[key].status = itemStatus;
+    }
     byProductDate[key].final += Number(item.finalOrder || 0);
     byProductDate[key].suggested += Number(item.suggested || 0);
     byProductDate[key].min += Number(item.minSug || 0);
     byProductDate[key].max += Number(item.maxSug || 0);
   });
   setCell(week, 'title', 'Order week · ' + g.date);
-  setCell(week, 'subtitle', `${dates.length} delivery days · ${products.length} products · ${[...g.managers].join(', ') || '—'}`);
+  const approvalSummary = g.pendingCount ? ` · ${g.pendingCount} waiting for approval` : (g.rejectedCount ? ` · ${g.rejectedCount} rejected` : '');
+  setCell(week, 'subtitle', `${dates.length} delivery days · ${products.length} products · ${[...g.managers].join(', ') || '—'}${approvalSummary}`);
   setCell(week, 'final_total', g.finalTotal.toLocaleString());
   setCell(week, 'total_cost', '₱' + g.totalCost.toLocaleString());
   let deleteBtn = getCell(week, 'delete_btn');
@@ -1283,7 +1292,20 @@ function buildHistoryWeek(g) {
       let finalEl = setCell(td, 'final', item.final);
       finalEl.dataset.quantity = item.final;
       finalEl.dataset.orderId = item.orderId;
-      finalEl.addEventListener('dblclick', onHistoryFinalDblClick);
+      const approvalStatus = getCell(td, 'approval_status');
+      if (item.status === 'pending') {
+        approvalStatus.textContent = 'Waiting for approval';
+        approvalStatus.classList.remove('hidden');
+        finalEl.classList.add('cursor-not-allowed', 'text-amber-700', 'bg-amber-50');
+        finalEl.title = 'Waiting for Cluster Manager approval';
+      } else if (item.status === 'rejected') {
+        approvalStatus.textContent = 'Rejected';
+        approvalStatus.classList.remove('hidden');
+        finalEl.classList.add('text-rose-700', 'bg-rose-50');
+        finalEl.title = 'This order was rejected';
+      } else {
+        finalEl.addEventListener('dblclick', onHistoryFinalDblClick);
+      }
       insertBeforeCell(row, td, 'week_total');
     });
     setCell(row, 'week_total', rowTotal);
@@ -1318,7 +1340,8 @@ function renderHistory() {
   HISTORY_GROUPS.forEach((g, index) => {
     let card = cloneTemplate('tmpl-history-card');
     setCell(card, 'title', 'Order week · ' + g.date);
-    setCell(card, 'subtitle', `${expandDateRange([...g.deliveryDates]).length} delivery days · ${new Set(g.items.map(item => item.productId)).size} products · ${[...g.managers].join(', ') || '—'}`);
+    const approvalSummary = g.pendingCount ? ` · ${g.pendingCount} waiting for approval` : (g.rejectedCount ? ` · ${g.rejectedCount} rejected` : '');
+    setCell(card, 'subtitle', `${expandDateRange([...g.deliveryDates]).length} delivery days · ${new Set(g.items.map(item => item.productId)).size} products · ${[...g.managers].join(', ') || '—'}${approvalSummary}`);
     setCell(card, 'final_total', g.finalTotal.toLocaleString());
     setCell(card, 'total_cost', '₱' + g.totalCost.toLocaleString());
     setCell(card, 'suggested_total', g.suggestedTotal.toLocaleString());
@@ -1432,6 +1455,7 @@ async function confirmDeleteOracleOrderDate(orderDate) {
     if (!response.ok || !result.ok) throw new Error(result.error || 'Unable to delete order');
     let deleted = result.deleted || [];
     DB.orderHistory = DB.orderHistory.filter(order => String(order.orderDateActual) !== String(orderDate));
+    DB.pendingApprovals = DB.pendingApprovals.filter(order => String(order.orderDateActual) !== String(orderDate));
     deleted.forEach(order => {
       let byDate = ORACLE_INCOMING_ORDERS[String(order.productId)];
       if (byDate && order.deliveryDate) byDate[order.deliveryDate] = Math.max(0, (byDate[order.deliveryDate] || 0) - Number(order.quantity || 0));
@@ -1617,6 +1641,28 @@ postMessageToParent("function:hideSpaLoading");
 }
 
 // ---------------------------------------------------------------- Listeners
+async function refreshOrderHistory() {
+  const button = document.getElementById('btn-history-refresh');
+  const originalHtml = button?.innerHTML;
+  if (button) { button.disabled = true; button.innerHTML = '<i class="bi bi-arrow-repeat animate-spin"></i> Refreshing...'; }
+  try {
+    const params = new URLSearchParams();
+    if (ORACLE_STORE_ID) params.set('store_id', ORACLE_STORE_ID);
+    if (ORACLE_DATE) params.set('date', ORACLE_DATE);
+    const response = await fetch(`/apis/get_oracle_data?${params.toString()}`, { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || data.type !== 'success') throw new Error(data.message || 'Unable to refresh order history.');
+    DB.orderHistory = (data.oracle_order_history || []).filter(order => ['approved', 'pending', 'rejected'].includes(String(order.status || 'approved').toLowerCase()));
+    DB.pendingApprovals = DB.orderHistory.filter(order => String(order.status || '').toLowerCase() === 'pending');
+    renderHistory();
+    showToast('Order history refreshed.', 'success');
+  } catch (error) {
+    showToast(error.message || 'Unable to refresh order history.', 'error');
+  } finally {
+    if (button) { button.disabled = false; button.innerHTML = originalHtml; }
+  }
+}
+
 function bindEvent(id, eventName, handler) {
   let el = document.getElementById(id);
   if (el) el.addEventListener(eventName, handler);
@@ -1637,7 +1683,7 @@ function bindOracleListeners() {
   bindEvent('btn-exit-fullscreen', 'click', toggleOrderFullscreen);  bindEvent('cluster-save-buffers', 'click', saveBuffersToCluster);
   bindEvent('btn-refresh-suggested', 'click', refreshSuggested);
   bindEvent('btn-clear-overrides', 'click', clearFinalOrders);
-  bindEvent('btn-history-refresh', 'click', renderHistory);
+  bindEvent('btn-history-refresh', 'click', refreshOrderHistory);
   document.querySelectorAll('[data-nav]').forEach(el => el.addEventListener('click', onNavClick));
   let allBtn = document.querySelector('[data-category-filter="all"]');
   if (allBtn) allBtn.addEventListener('click', onCategoryFilterClick);
