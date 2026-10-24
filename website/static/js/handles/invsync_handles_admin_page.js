@@ -1,37 +1,104 @@
 let invenSyncData = null;
 let currentTab = 'summary';
+let previusData = "";
+let INV_CACHE_KEY = "INV_DASHPREV";
+let INV_CACHE_TTL_MS = 3 * 60 * 60 * 1000;
+
+
+
+function readInvenSyncCache(storeScope) {
+    try {
+        let raw = localStorage.getItem(INV_CACHE_KEY);
+        if (!raw) return null;
+        let cached = JSON.parse(raw);
+        if (!cached || !cached.data || !cached.timestamp) return null;
+        if (cached.storeScope !== storeScope) return null;
+        if (Date.now() - cached.timestamp > INV_CACHE_TTL_MS) {
+            localStorage.removeItem(INV_CACHE_KEY);
+            return null;
+        }
+        return cached;
+    } catch (e) {
+        return null;
+    }
+}
+
+function writeInvenSyncCache(storeScope, data) {
+    try {
+        localStorage.setItem(INV_CACHE_KEY, JSON.stringify({
+            timestamp: Date.now(),
+            storeScope: storeScope,
+            data: data
+        }));
+    } catch (e) {
+        console.warn('[InvenSync] cache write failed:', e);
+    }
+}
+
+function hideInvenSyncLoading() {
+    document.getElementById('invensyncStoreLoading').style.display = 'none';
+    try {
+        postMessageToParent("function:hideSpaLoading");
+    } catch (e) {
+    }
+}
+
+function renderInvenSyncData(data) {
+    invenSyncData = data;
+    renderStoreCards(data.store_summaries);
+    populateForceBeginningSelect(data.stores);
+    populateStoreConfigSelect(data.stores);
+    renderGlobalConfigFields(data.config_fields, data.global_invensync_config);
+    renderStoreConfigFields(data.config_fields);
+    renderForceBeginningWaiting(data.stores, data.global_invensync_config);
+    filterInvensyncStores();
+    hideInvenSyncLoading();
+}
 
 function loadInvenSyncData() {
     let storeScope = localStorage.getItem('storeScope') || 'official';
-    const url = `/apis/get_invensync_data?store_scope=${encodeURIComponent(storeScope)}`;
+    let url = `/apis/get_invensync_data?store_scope=${encodeURIComponent(storeScope)}`;
+
+    let cached = readInvenSyncCache(storeScope);
+    let renderedFromCache = false;
+
+    if (cached) {
+        previusData = JSON.stringify(cached.data);
+        renderInvenSyncData(cached.data);
+        renderedFromCache = true;
+		console.log("Rendering from CACHE");
+    }
 
     fetch(url, { credentials: 'same-origin' })
         .then(response => response.json())
         .then(data => {
+            if ((localStorage.getItem('storeScope') || 'official') !== storeScope) return;
+
             if (data.type !== 'success') {
-                toast.error(data.message || 'Unable to load Invensync data.');
+                if (!renderedFromCache) {
+                    toast.error(data.message || 'Unable to load Invensync data.');
+                    hideInvenSyncLoading();
+                } else {
+                    console.error('[InvenSync] background refresh failed:', data.message);
+                }
                 return;
             }
-            invenSyncData = data;
-            renderStoreCards(data.store_summaries);
-            populateForceBeginningSelect(data.stores);
-            populateStoreConfigSelect(data.stores);
-            renderGlobalConfigFields(data.config_fields, data.global_invensync_config);
-            renderStoreConfigFields(data.config_fields);
-            renderForceBeginningWaiting(data.stores, data.global_invensync_config);
-            filterInvensyncStores();
-            document.getElementById('invensyncStoreLoading').style.display = 'none';
-			
-			try{
-				postMessageToParent("function:hideSpaLoading");
-			}catch(e){
-			 // ---	
-			}
-			
+
+            let freshData = JSON.stringify(data);
+            writeInvenSyncCache(storeScope, data);
+
+            if (renderedFromCache && freshData === previusData) return;
+
+            previusData = freshData;
+            renderInvenSyncData(data);
         })
         .catch(error => {
-            toast.error(error.message || 'Failed to load Invensync data.');
-			postMessageToParent("function:hideSpaLoading");
+            if (!renderedFromCache) {
+                toast.error(error.message || 'Failed to load Invensync data.');
+                hideInvenSyncLoading();
+            } else {
+                console.error('[InvenSync] background refresh failed:', error);
+            }
         });
 }
 
