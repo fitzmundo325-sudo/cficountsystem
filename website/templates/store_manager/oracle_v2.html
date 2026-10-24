@@ -10,13 +10,8 @@
   let ORACLE_STORE_ID = "{{ store_id|default('') }}";
   let ORACLE_CLUSTER_ID = "{{ cluster_id|default('') }}";
   let ORACLE_DATE = "{{ oracle_date|default('') }}";
-<<<<<<< HEAD
-  let ORACLE_VIEW = "{{ 'cluster' if cluster_view|default(false) else ('admin' if admin_shell|default(false) else 'store') }}";
-  let ORACLE_BACK_URL = "{{ url_for('views.cluster_manager_oracle', cluster_id=cluster_id|default(''), date=oracle_date|default('')) if cluster_view|default(false) else (url_for('admin.admin_oracle') if admin_shell|default(false) else '') }}";
-=======
   let ORACLE_VIEW = "{{ 'admin' if admin_shell|default(false) else ('cluster' if cluster_view|default(false) else 'store') }}";
   let ORACLE_BACK_URL = "{{ url_for('admin.admin_oracle') if admin_shell|default(false) else (url_for('views.cluster_manager_oracle', cluster_id=cluster_id|default(''), date=oracle_date|default('')) if cluster_view|default(false) else '') }}";
->>>>>>> d426a7275bcf7a093c1b67ca3b10f50b6746299a
 </script>
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
