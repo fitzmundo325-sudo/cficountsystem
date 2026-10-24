@@ -21,11 +21,6 @@ function loadInvenSyncData() {
             renderForceBeginningWaiting(data.stores, data.global_invensync_config);
             filterInvensyncStores();
             document.getElementById('invensyncStoreLoading').style.display = 'none';
-<<<<<<< HEAD
-        })
-        .catch(error => {
-            toast.error(error.message || 'Failed to load Invensync data.');
-=======
 			
 			try{
 				postMessageToParent("function:hideSpaLoading");
@@ -37,7 +32,6 @@ function loadInvenSyncData() {
         .catch(error => {
             toast.error(error.message || 'Failed to load Invensync data.');
 			postMessageToParent("function:hideSpaLoading");
->>>>>>> origin/main
         });
 }
 
@@ -663,14 +657,9 @@ function handleStoreScopeChanges(){
 	
 	let storeScope = localStorage.getItem('storeScope') || 'official';
 	
-<<<<<<< HEAD
-	loadInvenSyncData();
-
-=======
 	postMessageToParent("function:showSpaLoading");
 	loadInvenSyncData();
 	
->>>>>>> origin/main
 	if(hasFirstOpen){
 		return hasFirstOpen = false;
 	}
