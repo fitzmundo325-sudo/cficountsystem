@@ -392,6 +392,66 @@ def _get_latest_meaningful_invensync_by_store(store_ids=None):
     return inventory_by_store
 
 
+
+def _get_latest_meaningful_invensync_by_store_v2(store_ids=None):
+    """Return each store's latest finalized or non-empty InvenSync record using window functions."""
+    
+
+    item_has_value = or_(
+        *(
+            func.coalesce(getattr(DailyEndingInventoryItem, field_name), 0) != 0
+            for field_name in _INVENSYNC_MEANINGFUL_ITEM_FIELDS
+        ),
+        func.length(func.trim(func.coalesce(DailyEndingInventoryItem.remarks, ''))) > 0,
+    )
+
+    meaningful_item_exists = (
+        db.session.query(DailyEndingInventoryItem.id)
+        .filter(
+            DailyEndingInventoryItem.inventory_id == DailyEndingInventory.id,
+            item_has_value,
+        )
+        .exists()
+    )
+
+    meaningful_inventory_filter = or_(
+        DailyEndingInventory.is_finalized.is_(True),
+        meaningful_item_exists,
+    )
+
+
+    rn_subquery = db.session.query(
+        DailyEndingInventory.id,
+        func.row_number().over(
+            partition_by=DailyEndingInventory.store_id,
+            order_by=[
+                DailyEndingInventory.inventory_date.desc(),
+                DailyEndingInventory.id.desc()
+            ]
+        ).label('rn')
+    ).filter(meaningful_inventory_filter)
+
+
+    if store_ids is not None:
+        normalized_store_ids = [int(store_id) for store_id in store_ids]
+        if not normalized_store_ids:
+            return {}
+        rn_subquery = rn_subquery.filter(DailyEndingInventory.store_id.in_(normalized_store_ids))
+
+    rn_subquery = rn_subquery.subquery()
+
+
+    inventory_records = (
+        DailyEndingInventory.query
+        .options(selectinload(DailyEndingInventory.items))
+        .join(rn_subquery, DailyEndingInventory.id == rn_subquery.c.id)
+        .filter(rn_subquery.c.rn == 1)
+        .all()
+    )
+
+    return {int(inv.store_id): inv for inv in inventory_records}
+
+
 def _get_invensync_data_state(inventory):
     if not inventory:
         return 'empty'
@@ -4132,13 +4192,6 @@ def cluster_dashboard():
         if not cluster:
             flash('You are not assigned to any cluster yet.', category='error')
             return redirect(url_for('views.home'))
-    elif role == 'Area Manager':
-        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
-        cluster_id = request.args.get('cluster_id', type=int)
-        if not cluster_id or cluster_id not in allowed_cluster_ids:
-            flash('Access denied. You are not assigned to this cluster.', category='error')
-            return redirect(url_for('views.home'))
-        cluster = Cluster.query.get_or_404(cluster_id)
     else:
         cluster_id = request.args.get('cluster_id', type=int)
         if not cluster_id:
@@ -10467,13 +10520,6 @@ def cluster_manager_oracle():
         if not cluster:
             flash('You are not assigned to any cluster yet.', category='error')
             return redirect(url_for('views.home'))
-    elif role == 'Area Manager':
-        allowed_cluster_ids = _get_area_manager_cluster_ids(current_user)
-        cluster_id = request.args.get('cluster_id', type=int)
-        if not cluster_id or cluster_id not in allowed_cluster_ids:
-            flash('Access denied. You are not assigned to this cluster.', category='error')
-            return redirect(url_for('views.home'))
-        cluster = Cluster.query.get_or_404(cluster_id)
     else:
         cluster_id = request.args.get('cluster_id', type=int)
         if not cluster_id:
@@ -10503,51 +10549,7 @@ def cluster_manager_oracle():
     for b in saved_buffers:
         buffers_map.setdefault(b.store_id, {})[b.product_id] = b.buffer_pct
 
-    oracle_orders = (
-        OracleOrder.query
-        .options(
-            selectinload(OracleOrder.store),
-            selectinload(OracleOrder.product),
-            selectinload(OracleOrder.creator),
-        )
-        .filter(OracleOrder.store_id.in_(store_ids))
-        .order_by(OracleOrder.created_at.desc())
-        .all()
-    ) if store_ids else []
-
-    def serialize_oracle_order(order):
-        unit_cost = float(order.product.tp or 0) if order.product else 0
-        return {
-            'id': order.id,
-            'orderDate': order.order_date.isoformat(),
-            'storeName': order.store.name if order.store else f'Store {order.store_id}',
-            'storeId': order.store_id,
-            'productName': order.product.description if order.product else str(order.product_id),
-            'productId': order.product_id,
-            'suggested': order.suggested_qty,
-            'minSug': order.min_suggested_qty,
-            'maxSug': order.max_suggested_qty,
-            'finalOrder': order.quantity,
-            'unitCost': unit_cost,
-            'totalCost': round(order.quantity * unit_cost, 2),
-            'manager': order.creator.username if order.creator else '',
-            'timestamp': order.created_at.isoformat() if order.created_at else '',
-            'status': order.status,
-        }
-
-    oracle_pending_approvals = [
-        serialize_oracle_order(order)
-        for order in oracle_orders
-        if (order.status or '').lower() == 'pending'
-    ]
-    oracle_approval_history = [
-        serialize_oracle_order(order)
-        for order in oracle_orders
-        if (order.status or '').lower() == 'approved'
-    ][:100]
-
     admin_shell = (role in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'))
-    can_approve_oracle_orders = role in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager')
     return render_template('cluster_manager/oracle.html',
                            user=current_user,
                            cluster=cluster,
@@ -10560,125 +10562,7 @@ def cluster_manager_oracle():
                            cluster_sidebar_stores=cluster_sidebar_stores,
                            force_cluster_sidebar=admin_shell,
                            cluster_sidebar_cluster_id=cluster.id if admin_shell else '',
-                           oracle_pending_approvals=oracle_pending_approvals,
-                           oracle_approval_history=oracle_approval_history,
-                           can_approve_oracle_orders=can_approve_oracle_orders,
                            admin_shell=admin_shell)
-
-
-@views.route('/cluster-manager/oracle/order/<int:order_id>/decision', methods=['POST'])
-@login_required
-def cluster_manager_decide_oracle_order(order_id):
-    role = (current_user.role or '').strip()
-    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager'):
-        return jsonify({'ok': False, 'error': 'Access denied.'}), 403
-
-    order = OracleOrder.query.get(order_id)
-    if not order:
-        return jsonify({'ok': False, 'error': 'Oracle order not found.'}), 404
-
-    store = Store.query.get(order.store_id)
-    if not store:
-        return jsonify({'ok': False, 'error': 'Order store not found.'}), 404
-    if not _apply_store_scope_filter([store], request):
-        return jsonify({'ok': False, 'error': 'Access denied for this store scope.'}), 403
-
-    if role == 'Cluster Manager':
-        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
-        if not cluster or store.cluster_id != cluster.id:
-            return jsonify({'ok': False, 'error': 'You can only decide orders for your assigned cluster.'}), 403
-
-    if (order.status or '').lower() != 'pending':
-        return jsonify({'ok': False, 'error': 'This order is no longer pending.'}), 409
-
-    data = request.get_json(silent=True) or {}
-    requested_store_id = data.get('storeId')
-    if requested_store_id is not None:
-        try:
-            requested_store_id = int(requested_store_id)
-        except (TypeError, ValueError):
-            return jsonify({'ok': False, 'error': 'Invalid store selection.'}), 400
-        if requested_store_id != order.store_id:
-            return jsonify({'ok': False, 'error': 'This order belongs to a different store.'}), 403
-    decision = str(data.get('decision') or '').strip().lower()
-    if decision not in ('approve', 'reject'):
-        return jsonify({'ok': False, 'error': 'Choose approve or reject.'}), 400
-
-    if decision == 'approve':
-        order.status = 'approved'
-        order.approved_at = datetime.utcnow()
-    else:
-        order.status = 'rejected'
-        order.approved_at = None
-
-    db.session.commit()
-    return jsonify({'ok': True, 'id': order.id, 'status': order.status})
-
-
-@views.route('/cluster-manager/oracle/approvals-data')
-@login_required
-def cluster_manager_oracle_approvals_data():
-    role = (current_user.role or '').strip()
-    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
-        return jsonify({'ok': False, 'error': 'Access denied.'}), 403
-
-    if role == 'Cluster Manager':
-        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
-        if not cluster:
-            return jsonify({'ok': False, 'error': 'No cluster is assigned to your account.'}), 403
-    else:
-        cluster_id = request.args.get('cluster_id', type=int)
-        if not cluster_id:
-            return jsonify({'ok': False, 'error': 'Choose a cluster.'}), 400
-        if role == 'Area Manager' and cluster_id not in _get_area_manager_cluster_ids(current_user):
-            return jsonify({'ok': False, 'error': 'You are not assigned to this cluster.'}), 403
-        cluster = Cluster.query.get(cluster_id)
-        if not cluster:
-            return jsonify({'ok': False, 'error': 'Cluster not found.'}), 404
-
-    stores = _apply_store_scope_filter(Store.query.filter_by(cluster_id=cluster.id).all(), request)
-    store_ids = [store.id for store in stores]
-    requested_store_id = request.args.get('store_id', type=int)
-    if requested_store_id is not None:
-        if requested_store_id not in store_ids:
-            return jsonify({'ok': False, 'error': 'This store is outside your assigned cluster or store scope.'}), 403
-        store_ids = [requested_store_id]
-    if not store_ids:
-        return jsonify({'ok': True, 'orders': []})
-
-    orders = (
-        OracleOrder.query
-        .options(
-            selectinload(OracleOrder.store),
-            selectinload(OracleOrder.product),
-            selectinload(OracleOrder.creator),
-        )
-        .filter(OracleOrder.store_id.in_(store_ids), func.lower(func.trim(OracleOrder.status)) == 'pending')
-        .order_by(OracleOrder.created_at.desc())
-        .all()
-    )
-
-    serialized = []
-    for order in orders:
-        unit_cost = float(order.product.tp or 0) if order.product else 0
-        serialized.append({
-            'id': order.id,
-            'orderDate': order.order_date.isoformat(),
-            'storeName': order.store.name if order.store else f'Store {order.store_id}',
-            'storeId': order.store_id,
-            'productName': order.product.description if order.product else str(order.product_id),
-            'productId': order.product_id,
-            'suggested': order.suggested_qty,
-            'minSug': order.min_suggested_qty,
-            'maxSug': order.max_suggested_qty,
-            'finalOrder': order.quantity,
-            'unitCost': unit_cost,
-            'totalCost': round(order.quantity * unit_cost, 2),
-            'manager': order.creator.username if order.creator else '',
-            'timestamp': order.created_at.isoformat() if order.created_at else '',
-            'status': order.status,
-        })
-    return jsonify({'ok': True, 'orders': serialized})
 
 
 @views.route('/cluster-manager/invensync')
@@ -10891,9 +10775,9 @@ def store_manager_submit_oracle_order():
     if current_user.role != 'Store Manager':
         return {'ok': False, 'error': 'Access denied'}, 403
 
-    store = _resolve_oracle_store_for_manager(current_user)
+    store = Store.query.filter_by(manager_id=current_user.id).first()
     if not store:
-        return {'ok': False, 'error': 'A single store is not assigned to your account.'}, 404
+        return {'ok': False, 'error': 'Store not found or not assigned'}, 404
 
     data = request.get_json(silent=True) or {}
     orders = data.get('orders') or []
@@ -10952,7 +10836,7 @@ def store_manager_delete_oracle_order(order_id):
     if current_user.role != 'Store Manager':
         return {'ok': False, 'error': 'Access denied'}, 403
 
-    store = _resolve_oracle_store_for_manager(current_user)
+    store = Store.query.filter_by(manager_id=current_user.id).first()
     order = OracleOrder.query.filter_by(id=order_id, store_id=store.id if store else None).first()
     if not order:
         return {'ok': False, 'error': 'Order not found'}, 404
@@ -10985,7 +10869,7 @@ def store_manager_delete_oracle_order(order_id):
 def store_manager_delete_oracle_order_date(order_date):
     if current_user.role != 'Store Manager':
         return {'ok': False, 'error': 'Access denied'}, 403
-    store = _resolve_oracle_store_for_manager(current_user)
+    store = Store.query.filter_by(manager_id=current_user.id).first()
     try:
         selected_date = datetime.strptime(order_date, '%Y-%m-%d').date()
     except ValueError:
@@ -11008,7 +10892,7 @@ def store_manager_delete_oracle_order_date(order_date):
 def store_manager_export_oracle_order(order_date):
     if current_user.role != 'Store Manager':
         return {'ok': False, 'error': 'Access denied'}, 403
-    store = _resolve_oracle_store_for_manager(current_user)
+    store = Store.query.filter_by(manager_id=current_user.id).first()
     try:
         selected_date = datetime.strptime(order_date, '%Y-%m-%d').date()
     except ValueError:
@@ -13162,21 +13046,6 @@ def _build_oracle_bulk_order_product_data(store, products, anchor_date=None):
     return bulk_data
 
 
-def _resolve_oracle_store_for_manager(user):
-    """Resolve a Store Manager to one store without relying on query order."""
-    assigned_store_id = getattr(user, 'assigned_store_id', None)
-    if assigned_store_id:
-        assigned_store = Store.query.filter_by(
-            id=assigned_store_id,
-            manager_id=user.id,
-        ).first()
-        if assigned_store:
-            return assigned_store
-
-    managed_stores = Store.query.filter_by(manager_id=user.id).order_by(Store.id.asc()).all()
-    return managed_stores[0] if len(managed_stores) == 1 else None
-
-
 @views.route('/store-manager/oracle')
 @login_required
 def oracle():
@@ -13185,9 +13054,9 @@ def oracle():
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
-    store = _resolve_oracle_store_for_manager(current_user)
+    store = Store.query.filter_by(manager_id=current_user.id).first()
     if not store:
-        flash('A single store is not assigned to your account. Please contact an administrator.', category='error')
+        flash('Store not found or not assigned.', category='error')
         return redirect(url_for('views.home'))
 
     from .models import ProductMaster, StoreProductBuffer
@@ -13274,7 +13143,7 @@ def cluster_store_order_form(store_id):
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
-    from .models import Store, Cluster
+    from .models import Store, ProductMaster, Cluster
     store = Store.query.get_or_404(store_id)
 
     # Restrict Cluster Manager to stores within their cluster
@@ -13284,14 +13153,9 @@ def cluster_store_order_form(store_id):
             flash('Access denied.', category='error')
             return redirect(url_for('views.home'))
 
-    if not _apply_store_scope_filter([store], request):
-        flash('Access denied for this store scope.', category='error')
-        return redirect(url_for('views.home'))
-    if role == 'Area Manager' and store.cluster_id not in _get_area_manager_cluster_ids(current_user):
-        flash('Access denied. You are not assigned to this cluster.', category='error')
-        return redirect(url_for('views.home'))
-
+    from .models import ProductMaster, StoreProductBuffer
     from datetime import date as _date
+    products = ProductMaster.query.all()
 
     # Parse optional oracle date from query string
     oracle_date = None
@@ -13304,14 +13168,32 @@ def cluster_store_order_form(store_id):
     if oracle_date is None:
         oracle_date = _date.today()
 
+    # Provide existing saved buffers for this store so the embedded/order view
+    # reflects the latest values edited by cluster managers.
+    saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
+    store_buffers = {b.product_id: b.buffer_pct for b in saved}
+
+    # Fetch invensync data (ending inventory from prev day, delivery/trans from oracle date)
+    invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
+    pos_sales_data = _build_oracle_pos_sales_data(store, products, oracle_date)
+    bulk_order_weeks = _build_oracle_bulk_order_weeks(store, oracle_date)
+    bulk_order_product_data = _build_oracle_bulk_order_product_data(store, products, oracle_date)
+
     return render_template(
-        'store_manager/oracle_v2.html',
+        'store_manager/oracle.html',
         user=current_user,
-        store_id=store.id,
+        store=store,
+        products=products,
         cluster_view=True,
         admin_shell=(role in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager')),
         cluster_id=store.cluster_id,
+        store_buffers=store_buffers,
+        invensync_data=invensync_data,
+        prev_inventory_date=prev_inventory_date,
         oracle_date=oracle_date.isoformat(),
+        pos_sales_data=pos_sales_data,
+        bulk_order_weeks=bulk_order_weeks,
+        bulk_order_product_data=bulk_order_product_data,
     )
 
 
@@ -13996,7 +13878,7 @@ def system_analyzer_v2():
     return render_template("admin/system_analyzer_v2.html", user=current_user, page=page)
     
 
-#v2 of the Audit Logs      
+      
 @views.route('/admin/audit_logs_v2', methods=['GET'])
 @login_required
 def audit_logs_v2():
@@ -14017,6 +13899,7 @@ def invensync_v2():
     page = 'invensync'
     return render_template("admin/invensync_v2.html", user=current_user, page=page)
     
+  
 
 
 #v2 of the Inv Sync Details
@@ -14040,9 +13923,9 @@ def oracle_v2():
         flash('Access denied.', category='error')
         return redirect(url_for('views.home'))
 
-    store = _resolve_oracle_store_for_manager(current_user)
+    store = Store.query.filter_by(manager_id=current_user.id).first()
     if not store:
-        flash('A single store is not assigned to your account. Please contact an administrator.', category='error')
+        flash('Store not found or not assigned.', category='error')
         return redirect(url_for('views.home'))
 
     oracle_date = ''
@@ -14079,11 +13962,38 @@ def help_v2():
     
     
 # ================================================
+# Cluster Manager Section
+# ================================================
+   
+#v2 of Cluster manager - Store Manager page
+@views.route('/admin/cluster_manage_v2', methods=['GET'])
+@login_required
+def cluster_manage_v2():
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager'):
+        abort(403)
+
+    cluster_id = request.args.get('cluster_id', type=int)
+    if not cluster_id:
+        return redirect(url_for('views.v2_main', m='clusters'))
+
+    page = 'clusters'
+    return render_template("cluster_manager/cluster_manage_v2.html", user=current_user, page=page)
+
+
+       
+#v2 of Cluster manager - Cluster Data page
+@views.route('/cluster-manager/cluster_data_v2', methods=['GET'])
+@login_required
+def cluster_data_v2_page():
+    return render_template("cluster_manager/cluster_data_v2.html", user=current_user, page='clusters')
+    
+    
+    
+    
+# ================================================
 # Supply Requests (store side)
 # ================================================
     
-
-
 
 
 @views.route('/store-manager/supply-request')
