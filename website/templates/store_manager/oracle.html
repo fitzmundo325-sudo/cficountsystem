@@ -562,7 +562,7 @@
         <h1 class="text-2xl font-bold text-slate-900">Order History</h1>
         <p class="mt-1 text-sm text-slate-500">Past submitted orders and suggested vs final quantities.</p>
       </div>
-      <button onclick="renderHistory()"
+      <button id="btn-history-refresh" onclick="refreshOrderHistory()"
         class="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"><i
           class="bi bi-arrow-clockwise"></i> Refresh</button>
     </div>
@@ -663,8 +663,8 @@
 
   const DB = {
     inventory: PRODUCTS.map(p => { const iv = INVENSYNC_DATA[String(p.id)]; return { productId: p.id, productName: p.name, category: p.category, unit: p.unit, currentStock: iv ? iv.ending_stock : 0, reorderPoint: 0, lastUpdated: fmt(new Date()) }; }),
-    orderHistory: ORACLE_ORDER_HISTORY.filter(order => order.status === 'approved'),
-    pendingApprovals: ORACLE_ORDER_HISTORY.filter(order => order.status === 'pending'), transfers: [],
+    orderHistory: ORACLE_ORDER_HISTORY.filter(order => ['approved', 'pending', 'rejected'].includes(String(order.status || 'approved').toLowerCase())),
+    pendingApprovals: ORACLE_ORDER_HISTORY.filter(order => String(order.status || '').toLowerCase() === 'pending'), transfers: [],
     settings: { store: '{{ store.name }}', branch: '{{ store.name }}', manager: '{{ user.username }}', contact: '', leadTime: 1, buffer: 20, alertDays: 3 }
   };
   let productBuffers = {};
@@ -1104,8 +1104,9 @@
       const saved = savedOrders.find(order => order.productId === p.id);
       const sug = obj.suggested, minS = obj.minSuggested, maxS = obj.maxSuggested, fo = obj.quantity;
       const product = p;
-      const historyObj = { id: saved ? `ORD-${saved.id}` : 'ORD-' + Math.random().toString(36).substr(2, 6).toUpperCase(), orderDateActual: obj.orderDate, delivDate: obj.deliveryDate, dayName, event, mode: useTarget ? 'Target Sales' : 'Avg Consumption', productId: p.id, productName: p.name, suggested: sug, minSug: minS, maxSug: maxS, finalOrder: fo, unitCost: product.plantPrice, totalCost: fo * product.plantPrice, multiplier: mult, manager, timestamp: new Date().toISOString() };
-      if (saved?.status === 'pending') DB.pendingApprovals.push(historyObj); else DB.orderHistory.push(historyObj);
+      const historyObj = { id: saved ? `ORD-${saved.id}` : 'ORD-' + Math.random().toString(36).substr(2, 6).toUpperCase(), orderDateActual: obj.orderDate, delivDate: obj.deliveryDate, dayName, event, mode: useTarget ? 'Target Sales' : 'Avg Consumption', productId: p.id, productName: p.name, suggested: sug, minSug: minS, maxSug: maxS, finalOrder: fo, unitCost: product.plantPrice, totalCost: fo * product.plantPrice, multiplier: mult, manager, timestamp: new Date().toISOString(), status: String(saved?.status || 'approved').toLowerCase() };
+      DB.orderHistory.push(historyObj);
+      if (historyObj.status === 'pending') DB.pendingApprovals.push(historyObj);
     });
     orderFinalQtys = {}; updateApprovalsBadge();
     showToast(pendC > 0 ? `${autoC} auto-approved. ${pendC} require Manager Approval.` : 'Order submitted!', pendC > 0 ? 'info' : 'success');
@@ -1124,8 +1125,8 @@
       return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${a.orderDateActual}</div><div class="text-[10px] text-slate-400">${t}</div></td><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${a.productName}</div><div class="text-[10px] text-slate-400">${a.productId}</div></td><td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"><span class="text-[10px] text-slate-500">${a.minSug}</span><span class="font-bold text-emerald-600">${a.suggested}</span><span class="text-[10px] text-slate-500">${a.maxSug}</span></div></td><td class="px-3 py-2.5 text-center font-bold text-rose-500 text-sm">${a.finalOrder}</td><td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${a.totalCost.toLocaleString()}</td><td class="px-3 py-2.5 text-slate-500 text-xs">${a.manager}</td><td class="px-3 py-2.5 text-center"><div class="flex gap-2 justify-center"><button onclick="approveOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors"><i class="bi bi-check-lg"></i> Approve</button><button onclick="rejectOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 text-rose-500 rounded-lg text-xs font-semibold hover:bg-rose-50 transition-colors"><i class="bi bi-x-lg"></i> Reject</button></div></td></tr>`;
     }).join('');
   }
-  function approveOrder(id) { const i = DB.pendingApprovals.findIndex(x => x.id === id); if (i < 0) return; const o = DB.pendingApprovals.splice(i, 1)[0]; o.timestamp = new Date().toISOString(); if (Number(o.finalOrder || 0) > 0) DB.orderHistory.push(o); updateApprovalsBadge(); renderApprovals(); showToast('Order approved!', 'success'); }
-  function rejectOrder(id) { const i = DB.pendingApprovals.findIndex(x => x.id === id); if (i < 0) return; DB.pendingApprovals.splice(i, 1); updateApprovalsBadge(); renderApprovals(); showToast('Order rejected.', 'info'); }
+  function approveOrder(id) { const i = DB.pendingApprovals.findIndex(x => x.id === id); if (i < 0) return; const o = DB.pendingApprovals.splice(i, 1)[0]; o.timestamp = new Date().toISOString(); o.status = 'approved'; if (!DB.orderHistory.some(item => String(item.id) === String(o.id))) DB.orderHistory.push(o); updateApprovalsBadge(); renderApprovals(); renderHistory(); showToast('Order approved!', 'success'); }
+  function rejectOrder(id) { const i = DB.pendingApprovals.findIndex(x => x.id === id); if (i < 0) return; const o = DB.pendingApprovals.splice(i, 1)[0]; o.status = 'rejected'; updateApprovalsBadge(); renderApprovals(); renderHistory(); showToast('Order rejected.', 'info'); }
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -1137,8 +1138,11 @@
     const groups = {};
     DB.orderHistory.filter(order => Number(order.finalOrder || 0) >= 0).forEach((order) => {
       const key = order.orderDateActual || 'No Date';
-      if (!groups[key]) groups[key] = { date: key, items: [], deliveryDates: new Set(), managers: new Set(), suggestedTotal: 0, finalTotal: 0, totalCost: 0, latestTimestamp: '' };
+      if (!groups[key]) groups[key] = { date: key, items: [], deliveryDates: new Set(), managers: new Set(), suggestedTotal: 0, finalTotal: 0, totalCost: 0, latestTimestamp: '', pendingCount: 0, rejectedCount: 0 };
       groups[key].items.push(order);
+      const status = String(order.status || 'approved').toLowerCase();
+      if (status === 'pending') groups[key].pendingCount += 1;
+      if (status === 'rejected') groups[key].rejectedCount += 1;
       if (order.delivDate) groups[key].deliveryDates.add(order.delivDate);
       if (order.manager) groups[key].managers.add(order.manager);
       groups[key].suggestedTotal += Number(order.suggested || 0);
@@ -1158,14 +1162,46 @@
     container.innerHTML = groups.map(g => {
       const dates = expandDateRange([...g.deliveryDates]), products = [...new Map(g.items.map(item => [String(item.productId), item])).values()].sort((a, b) => String(a.productName).localeCompare(String(b.productName)));
       const byProductDate = {};
-      g.items.forEach(item => { const key = `${item.productId}|${item.delivDate}`; if (!byProductDate[key]) byProductDate[key] = { final: 0, suggested: 0, min: 0, max: 0, orderId: item.id }; byProductDate[key].final += Number(item.finalOrder || 0); byProductDate[key].suggested += Number(item.suggested || 0); byProductDate[key].min += Number(item.minSug || 0); byProductDate[key].max += Number(item.maxSug || 0); });
-      const rows = products.map(product => `<tr class="hover:bg-slate-50"><td class="sticky left-0 z-[1] bg-white px-3 py-2.5"><div class="font-semibold text-slate-800">${escapeHtml(product.productName)}</div><div class="text-[10px] text-slate-400">${escapeHtml(product.productId)}</div></td>${dates.map(date => { const item = byProductDate[`${product.productId}|${date}`]; return `<td class="border-l border-slate-200 px-3 py-2 text-center">${item ? `<div class="history-range weekly-range rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold"><span class="text-slate-400">${item.min}</span><strong class="text-emerald-600">${item.suggested}</strong><span class="text-slate-400">${item.max}</span></div><div class="history-final input-final weekly-final-input" data-quantity="${item.final}" ondblclick="editHistoryQty(this, '${escapeHtml(item.orderId)}')" title="Double-click to edit">${item.final}</div>` : '<span class="text-slate-300">—</span>'}</td>`; }).join('')}<td class="border-l border-slate-200 px-3 py-2 text-center font-bold text-sky-600">${dates.reduce((sum, date) => sum + Number(byProductDate[`${product.productId}|${date}`]?.final || 0), 0)}</td></tr>`).join('');
+      g.items.forEach(item => {
+        const key = `${item.productId}|${item.delivDate}`;
+        const status = String(item.status || 'approved').toLowerCase();
+        if (!byProductDate[key]) byProductDate[key] = { final: 0, suggested: 0, min: 0, max: 0, orderId: item.id, status };
+        if (status === 'pending' || (status === 'rejected' && byProductDate[key].status === 'approved')) byProductDate[key].status = status;
+        byProductDate[key].final += Number(item.finalOrder || 0);
+        byProductDate[key].suggested += Number(item.suggested || 0);
+        byProductDate[key].min += Number(item.minSug || 0);
+        byProductDate[key].max += Number(item.maxSug || 0);
+      });
+      const rows = products.map(product => `<tr class="hover:bg-slate-50"><td class="sticky left-0 z-[1] bg-white px-3 py-2.5"><div class="font-semibold text-slate-800">${escapeHtml(product.productName)}</div><div class="text-[10px] text-slate-400">${escapeHtml(product.productId)}</div></td>${dates.map(date => { const item = byProductDate[`${product.productId}|${date}`]; if (!item) return '<td class="border-l border-slate-200 px-3 py-2 text-center"><span class="text-slate-300">—</span></td>'; const pending = item.status === 'pending'; const rejected = item.status === 'rejected'; const stateLabel = pending ? '<div class="mt-1 text-[9px] font-bold text-amber-700">Waiting for approval</div>' : (rejected ? '<div class="mt-1 text-[9px] font-bold text-rose-700">Rejected</div>' : ''); const editAttrs = pending ? 'title="Waiting for Cluster Manager approval"' : `ondblclick="editHistoryQty(this, '${escapeHtml(item.orderId)}')" title="Double-click to edit"`; const valueClass = pending ? 'text-amber-800 bg-amber-50' : (rejected ? 'text-rose-700 bg-rose-50' : 'text-sky-600'); return `<td class="border-l border-slate-200 px-3 py-2 text-center"><div class="history-range weekly-range rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold"><span class="text-slate-400">${item.min}</span><strong class="text-emerald-600">${item.suggested}</strong><span class="text-slate-400">${item.max}</span></div><div class="history-final input-final weekly-final-input ${valueClass}" data-quantity="${item.final}" ${editAttrs}>${item.final}</div>${stateLabel}</td>`; }).join('')}<td class="border-l border-slate-200 px-3 py-2 text-center font-bold text-sky-600">${dates.reduce((sum, date) => sum + Number(byProductDate[`${product.productId}|${date}`]?.final || 0), 0)}</td></tr>`).join('');
       const dailyTotals = dates.map(date => g.items.filter(item => item.delivDate === date).reduce((sum, item) => sum + Number(item.finalOrder || 0), 0));
-      return `<section class="overflow-hidden rounded-xl border border-slate-800 bg-white shadow-sm"><div class="flex flex-wrap items-center justify-between gap-3 bg-slate-800 px-5 py-3 text-white"><div><h2 class="text-sm font-bold">Order week · ${escapeHtml(g.date)}</h2><p class="mt-0.5 text-xs text-slate-300">${dates.length} delivery days · ${products.length} products · ${[...g.managers].map(escapeHtml).join(', ') || '—'}</p></div><div class="flex items-center gap-2"><span class="text-xs text-slate-300">Final: <strong class="text-white">${g.finalTotal.toLocaleString()}</strong> · ₱${g.totalCost.toLocaleString()}</span><button type="button" onclick="deleteOracleOrderDate('${escapeHtml(g.date)}')" class="rounded-lg border border-white/30 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-white/10"><i class="bi bi-trash3"></i> Delete</button></div></div><div class="oracle-scroll"><table class="w-full text-xs" style="min-width:${Math.max(760, 180 + dates.length * 145 + 100)}px"><thead class="bg-slate-100 text-slate-600"><tr><th class="sticky left-0 z-[2] bg-slate-100 px-3 py-2.5 text-left font-semibold">Product</th>${dates.map(date => `<th class="border-l border-slate-200 px-3 py-2.5 text-center font-semibold"><div>${formatPlanDate(date)}</div><span class="text-[10px] font-normal text-slate-400">Min · Center · Max</span></th>`).join('')}<th class="border-l border-slate-200 px-3 py-2.5 text-center font-semibold">Week Total</th></tr></thead><tbody class="divide-y divide-slate-100">${rows}</tbody><tfoot><tr class="bg-slate-800 font-semibold text-white"><td class="px-3 py-2.5">TOTALS</td>${dailyTotals.map(total => `<td class="border-l border-white/20 px-3 py-2.5 text-center">${total}</td>`).join('')}<td class="border-l border-white/20 px-3 py-2.5 text-center">${g.finalTotal}</td></tr></tfoot></table></div></section>`;
+      const approvalSummary = g.pendingCount ? ` · ${g.pendingCount} waiting for approval` : (g.rejectedCount ? ` · ${g.rejectedCount} rejected` : '');
+      return `<section class="overflow-hidden rounded-xl border border-slate-800 bg-white shadow-sm"><div class="flex flex-wrap items-center justify-between gap-3 bg-slate-800 px-5 py-3 text-white"><div><h2 class="text-sm font-bold">Order week · ${escapeHtml(g.date)}</h2><p class="mt-0.5 text-xs text-slate-300">${dates.length} delivery days · ${products.length} products · ${[...g.managers].map(escapeHtml).join(', ') || '—'}${approvalSummary}</p></div><div class="flex items-center gap-2"><span class="text-xs text-slate-300">Final: <strong class="text-white">${g.finalTotal.toLocaleString()}</strong> · ₱${g.totalCost.toLocaleString()}</span><button type="button" onclick="deleteOracleOrderDate('${escapeHtml(g.date)}')" class="rounded-lg border border-white/30 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-white/10"><i class="bi bi-trash3"></i> Delete</button></div></div><div class="oracle-scroll"><table class="w-full text-xs" style="min-width:${Math.max(760, 180 + dates.length * 145 + 100)}px"><thead class="bg-slate-100 text-slate-600"><tr><th class="sticky left-0 z-[2] bg-slate-100 px-3 py-2.5 text-left font-semibold">Product</th>${dates.map(date => `<th class="border-l border-slate-200 px-3 py-2.5 text-center font-semibold"><div>${formatPlanDate(date)}</div><span class="text-[10px] font-normal text-slate-400">Min · Center · Max</span></th>`).join('')}<th class="border-l border-slate-200 px-3 py-2.5 text-center font-semibold">Week Total</th></tr></thead><tbody class="divide-y divide-slate-100">${rows}</tbody><tfoot><tr class="bg-slate-800 font-semibold text-white"><td class="px-3 py-2.5">TOTALS</td>${dailyTotals.map(total => `<td class="border-l border-white/20 px-3 py-2.5 text-center">${total}</td>`).join('')}<td class="border-l border-white/20 px-3 py-2.5 text-center">${g.finalTotal}</td></tr></tfoot></table></div></section>`;
     }).join('');
     const weeklySections = Array.from(container.querySelectorAll('section'));
     container._weeklyHistorySections = weeklySections;
-    container.innerHTML = groups.map((g, index) => `<article class="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm transition hover:border-slate-500 hover:shadow-md"><div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-slate-800 px-5 py-4 text-white"><div><h2 class="text-sm font-bold">Order week · ${escapeHtml(g.date)}</h2><p class="mt-1 text-xs text-slate-300">${expandDateRange([...g.deliveryDates]).length} delivery days · ${new Set(g.items.map(item => item.productId)).size} products · ${[...g.managers].map(escapeHtml).join(', ') || '—'}</p></div><div class="flex items-center gap-5"><div class="text-right"><div class="text-[10px] uppercase tracking-wide text-slate-400">Final quantity</div><strong class="text-lg text-white">${g.finalTotal.toLocaleString()}</strong><div class="text-xs text-slate-300">₱${g.totalCost.toLocaleString()}</div></div><div class="flex items-center gap-2"><button type="button" onclick="showHistoryWeek(${index})" class="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100"><i class="bi bi-eye"></i> View</button><button type="button" onclick="deleteOracleOrderDate('${escapeHtml(g.date)}')" class="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-700"><i class="bi bi-trash3"></i> Delete</button></div></div></div><div class="flex items-center justify-between px-5 py-3 text-xs text-slate-500"><span>Suggested total: <strong class="text-emerald-600">${g.suggestedTotal.toLocaleString()}</strong></span><span>Open the weekly breakdown to review each delivery day <i class="bi bi-arrow-right ml-1"></i></span></div></article>`).join('');
+    container.innerHTML = groups.map((g, index) => { const approvalSummary = g.pendingCount ? ` · ${g.pendingCount} waiting for approval` : (g.rejectedCount ? ` · ${g.rejectedCount} rejected` : ''); return `<article class="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm transition hover:border-slate-500 hover:shadow-md"><div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-slate-800 px-5 py-4 text-white"><div><h2 class="text-sm font-bold">Order week · ${escapeHtml(g.date)}</h2><p class="mt-1 text-xs text-slate-300">${expandDateRange([...g.deliveryDates]).length} delivery days · ${new Set(g.items.map(item => item.productId)).size} products · ${[...g.managers].map(escapeHtml).join(', ') || '—'}${approvalSummary}</p></div><div class="flex items-center gap-5"><div class="text-right"><div class="text-[10px] uppercase tracking-wide text-slate-400">Final quantity</div><strong class="text-lg text-white">${g.finalTotal.toLocaleString()}</strong><div class="text-xs text-slate-300">₱${g.totalCost.toLocaleString()}</div></div><div class="flex items-center gap-2"><button type="button" onclick="showHistoryWeek(${index})" class="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100"><i class="bi bi-eye"></i> View</button><button type="button" onclick="deleteOracleOrderDate('${escapeHtml(g.date)}')" class="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-700"><i class="bi bi-trash3"></i> Delete</button></div></div></div><div class="flex items-center justify-between px-5 py-3 text-xs text-slate-500"><span>Suggested total: <strong class="text-emerald-600">${g.suggestedTotal.toLocaleString()}</strong></span><span>Open the weekly breakdown to review each delivery day <i class="bi bi-arrow-right ml-1"></i></span></div></article>`; }).join('');
+  }
+
+  async function refreshOrderHistory() {
+    const button = document.getElementById('btn-history-refresh');
+    const originalHtml = button?.innerHTML;
+    if (button) { button.disabled = true; button.innerHTML = '<i class="bi bi-arrow-repeat animate-spin"></i> Refreshing...'; }
+    try {
+      const params = new URLSearchParams();
+      if (ORACLE_DATE) params.set('date', ORACLE_DATE);
+      const response = await fetch(`/apis/get_oracle_data?${params.toString()}`, { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok || data.type !== 'success') throw new Error(data.message || 'Unable to refresh order history.');
+      DB.orderHistory = (data.oracle_order_history || []).filter(order => ['approved', 'pending', 'rejected'].includes(String(order.status || 'approved').toLowerCase()));
+      DB.pendingApprovals = DB.orderHistory.filter(order => String(order.status || '').toLowerCase() === 'pending');
+      renderHistory();
+      updateApprovalsBadge();
+      showToast('Order history refreshed.', 'success');
+    } catch (error) {
+      showToast(error.message || 'Unable to refresh order history.', 'error');
+    } finally {
+      if (button) { button.disabled = false; button.innerHTML = originalHtml; }
+    }
   }
 
   function showHistoryWeek(index) {
@@ -1276,6 +1312,7 @@
       if (!response.ok || !result.ok) throw new Error(result.error || 'Unable to delete order');
       const deleted = result.deleted || {};
       DB.orderHistory = DB.orderHistory.filter(order => String(order.id) !== `ORD-${orderId}`);
+      DB.pendingApprovals = DB.pendingApprovals.filter(order => String(order.id) !== `ORD-${orderId}`);
       const byDate = ORACLE_INCOMING_ORDERS[String(deleted.productId)];
       if (byDate && deleted.deliveryDate) {
         byDate[deleted.deliveryDate] = Math.max(0, (byDate[deleted.deliveryDate] || 0) - Number(deleted.quantity || 0));
@@ -1293,6 +1330,7 @@
       if (!response.ok || !result.ok) throw new Error(result.error || 'Unable to delete order');
       const deleted = result.deleted || [];
       DB.orderHistory = DB.orderHistory.filter(order => String(order.orderDateActual) !== String(orderDate));
+      DB.pendingApprovals = DB.pendingApprovals.filter(order => String(order.orderDateActual) !== String(orderDate));
       deleted.forEach(order => {
         const byDate = ORACLE_INCOMING_ORDERS[String(order.productId)];
         if (byDate && order.deliveryDate) byDate[order.deliveryDate] = Math.max(0, (byDate[order.deliveryDate] || 0) - Number(order.quantity || 0));
