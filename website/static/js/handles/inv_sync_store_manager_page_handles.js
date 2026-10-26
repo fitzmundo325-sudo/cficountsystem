@@ -1,6 +1,8 @@
 
 // ==== v2 render/orchestration layer (new — bridges fetched JSON to the DOM v1 built via Jinja) ====
 
+
+
 function computePageState(data) {
   let hiddenColumns = data.global_config_data.hidden_columns || [];
   let editableColumns = data.global_config_data.editable_columns || [];
@@ -92,6 +94,10 @@ document.getElementById('exportInvenSyncForm').action = window.INVENSYNC_URLS.st
   document.getElementById('invExportCurrentDateLink').href = `${window.INVENSYNC_URLS.dataExportBase}?${currentDateParams.toString()}`;
   let monthParams = new URLSearchParams({ type: 'invensync', store_id: data.store.id, date: data.selected_date, scope: 'month' });
   document.getElementById('invExportMonthLink').href = `${window.INVENSYNC_URLS.dataExportBase}?${monthParams.toString()}`;
+  
+  
+  hidePageSkeleton();
+  
 }
 
 // --- Category filter buttons (rendered from fetched categories; filterInventoryCategory/
@@ -578,8 +584,6 @@ function loadInvenSyncDetailData() {
 
 
 //Data Loading
-
-
 
 loadInvenSyncDetailData();
 

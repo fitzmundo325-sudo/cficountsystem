@@ -140,6 +140,8 @@
   
 </style>
 
+<link rel="stylesheet" href="{{ url_for('static', filename='css/skeleton_style.css') }}">
+
 <script>
 let currentUserRole = {{ user.role|tojson }};
 let initialStoreId = {{ request.args.get('store_id', '')|tojson }};
@@ -641,10 +643,14 @@ window.INVENSYNC_URLS = {
 </template>
 
 
+<script src="{{ url_for('static', filename='js/skeleton.js') }}"></script>
+
+<script>
+	showPageSkeleton(); 
+</script>
 
 <script defer src="{{ url_for('static', filename='js/handles/inv_sync_store_manager_page_handles.js') }}?v=invensync-scrollbar-20261010-7"></script>
 
 <script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
-
 
 {% endblock %}
