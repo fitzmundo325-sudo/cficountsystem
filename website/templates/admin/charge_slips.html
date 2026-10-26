@@ -54,7 +54,7 @@
 
       <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Net Charges</p>
-        <p class="mt-2 text-2xl font-bold text-cyan-700">₱{{ '%.2f'|format(total_net_amount) }}</p>
+        <p class="mt-2 text-2xl font-bold text-cyan-700">₱{{ '{:,.2f}'.format(total_net_amount or 0) }}</p>
       </div>
 
       <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -98,7 +98,7 @@
 
   <!-- Charge Slips Table -->
   <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-    <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between">
+    <div class="px-6 py-4 border-b border-slate-200 bg-slate-100 flex items-center justify-between">
       <div>
         <h3 class="text-lg font-bold text-slate-900">Charge Slip Records</h3>
         <p class="text-sm text-slate-500 mt-0.5">All Charge and Spoilage slips submitted across all store locations</p>
@@ -142,7 +142,7 @@
             <td class="px-4 py-3 text-sm text-slate-900 text-right font-semibold whitespace-nowrap">{{ item_count_by_transfer.get(slip.id, 0) }}</td>
             <td class="px-4 py-3 text-sm text-right text-slate-700 whitespace-nowrap">₱{{ '%.2f'|format(slip.grand_total or 0) }}</td>
             <td class="px-4 py-3 text-sm text-right text-slate-600 whitespace-nowrap">{{ '%.1f'|format(slip.discount_percent or 0) }}%</td>
-            <td class="px-4 py-3 text-sm text-right font-extrabold text-cyan-700 whitespace-nowrap">₱{{ '%.2f'|format(slip.net_total or 0) }}</td>
+            <td class="px-4 py-3 text-sm text-right font-extrabold text-cyan-700 whitespace-nowrap">₱{{ '{:,.2f}'.format(slip.net_total or 0) }}</td>
             <td class="px-4 py-3 text-center whitespace-nowrap">
               <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold {% if status_label == 'Pending' %}bg-amber-100 text-amber-800 border border-amber-200{% else %}bg-emerald-100 text-emerald-800 border border-emerald-200{% endif %}">
                 {{ status_label }}
