@@ -77,6 +77,23 @@
 	z-index:999;
   }
 
+  html.admin-dark #main-content #missing-dates-modal .missing-dates-list {
+    background-color: #1e293b !important;
+    border-color: #7f1d1d !important;
+  }
+
+  html.admin-dark #main-content #missing-dates-modal .missing-date-row + .missing-date-row {
+    border-top: 1px solid #7f1d1d !important;
+  }
+
+  html.admin-dark #main-content #missing-dates-modal .missing-date-label {
+    color: #fda4af !important;
+  }
+
+  html.admin-dark #main-content #missing-dates-modal .missing-date-iso {
+    color: #fb7185 !important;
+  }
+
   /* External, always-visible horizontal control for the wide inventory table. */
   .invensync-horizontal-scrollbar {
     position: fixed;
@@ -385,7 +402,7 @@ window.INVENSYNC_URLS = {
       </div>
       <div class="px-5 py-4">
         <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to open the oldest missing date and finalize InvenSync.</p>
-        <div class="max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100" id="missingDatesList"></div>
+        <div class="missing-dates-list max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100" id="missingDatesList"></div>
       </div>
       <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
         <button id="missing-dates-go" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-slate-700 hover:bg-slate-800 rounded-lg transition-colors shadow-sm">Go</button>
@@ -394,9 +411,9 @@ window.INVENSYNC_URLS = {
   </div>
 </div>
 <template id="missingDateRowTemplate">
-  <div class="px-3 py-2 flex items-center justify-between" data-cell="row">
-    <span class="text-sm font-semibold text-red-700" data-cell="label"></span>
-    <span class="text-xs text-red-500" data-cell="iso"></span>
+  <div class="missing-date-row px-3 py-2 flex items-center justify-between" data-cell="row">
+    <span class="missing-date-label text-sm font-semibold text-red-700" data-cell="label"></span>
+    <span class="missing-date-iso text-xs text-red-500" data-cell="iso"></span>
   </div>
 </template>
 
