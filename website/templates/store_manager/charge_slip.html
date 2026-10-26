@@ -293,7 +293,7 @@
       grand_total: "₱{{ '%.2f'|format(slip.grand_total or 0) }}",
       discount_raw: {{ slip.discount_percent or 0 }},
       discount: "{{ '%.1f'|format(slip.discount_percent or 0) }}%",
-      net_total: "₱{{ '%.2f'|format(slip.net_total or 0) }}",
+      net_total: "₱{{ '{:,.2f}'.format(slip.net_total or 0) }}",
       remarks: {{ (slip.remarks or '') | tojson }},
       prepared_by: {{ (slip.prepared_by_name or '') | tojson }},
       approved_by: {{ (slip.approved_by_name or '') | tojson }},

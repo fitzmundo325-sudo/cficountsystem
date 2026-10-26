@@ -119,7 +119,7 @@
                 <td class="px-4 py-3 text-sm text-slate-900 text-right font-semibold whitespace-nowrap">{{ item_count_by_transfer.get(slip.id, 0) }}</td>
                 <td class="px-4 py-3 text-sm text-right text-slate-700 whitespace-nowrap">₱{{ '%.2f'|format(slip.grand_total or 0) }}</td>
                 <td class="px-4 py-3 text-sm text-right text-slate-600 whitespace-nowrap">{{ '%.1f'|format(slip.discount_percent or 0) }}%</td>
-                <td class="px-4 py-3 text-sm text-right font-extrabold text-slate-900 whitespace-nowrap">₱{{ '%.2f'|format(slip.net_total or 0) }}</td>
+                <td class="px-4 py-3 text-sm text-right font-extrabold text-slate-900 whitespace-nowrap">₱{{ '{:,.2f}'.format(slip.net_total or 0) }}</td>
                 <td class="px-4 py-3 text-center whitespace-nowrap">
                   <span class="status-badge-slip-{{ slip.id }} inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold {% if slip.status == 'Pending' or not slip.status %}bg-amber-100 text-amber-800 border border-amber-200{% else %}bg-emerald-100 text-emerald-800 border border-emerald-200{% endif %}">
                     {{ slip.status or 'Pending' }}

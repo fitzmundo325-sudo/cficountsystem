@@ -865,6 +865,7 @@
 
     <!-- User Section -->
     <div class="mt-auto border-t border-slate-800 p-4 shrink-0">
+      {% if not user or user.role != 'Store Manager' %}
       <button id="admin-theme-toggle" type="button"
         class="mb-3 flex w-full items-center gap-3 rounded-xl border border-slate-700 bg-slate-800/70 p-2 text-left text-slate-200 transition-colors hover:bg-slate-800"
         aria-label="Toggle theme">
@@ -879,6 +880,7 @@
         </span>
         <span class="nav-label text-sm font-semibold" data-admin-theme-label>Dark Theme</span>
       </button>
+      {% endif %}
 
       <button type="button" class="pwa-install-btn mb-3 w-full flex items-center gap-3 rounded-xl border border-indigo-400/20 bg-indigo-500/10 p-2 text-left text-indigo-100 transition-colors hover:bg-indigo-500/20" data-tooltip="Install App">
         <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
