@@ -550,6 +550,8 @@ class OracleOrder(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=func.now(), nullable=False)
     approved_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    reviewed_by = db.Column(db.Integer, nullable=True)
+    reviewed_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     store = db.relationship('Store', backref='oracle_orders')
     product = db.relationship('ProductMaster')

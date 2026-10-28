@@ -10549,6 +10549,38 @@ def cluster_manager_oracle():
     for b in saved_buffers:
         buffers_map.setdefault(b.store_id, {})[b.product_id] = b.buffer_pct
 
+    oracle_orders = (
+        OracleOrder.query
+        .filter(OracleOrder.store_id.in_(store_ids) if store_ids else db.false())
+        .order_by(OracleOrder.created_at.desc())
+        .all()
+    )
+    def serialize_cluster_oracle_order(order):
+        order_store = next((item for item in stores if item.id == order.store_id), None)
+        creator = User.query.get(order.created_by)
+        reviewer = User.query.get(order.reviewed_by) if order.reviewed_by else None
+        return {
+            'id': order.id,
+            'orderDate': order.order_date.isoformat(),
+            'deliveryDate': order.delivery_date.isoformat(),
+            'storeId': order.store_id,
+            'storeName': order_store.name if order_store else '',
+            'productId': order.product_id,
+            'productName': order.product.description if order.product else str(order.product_id),
+            'suggested': order.suggested_qty,
+            'minSug': order.min_suggested_qty,
+            'maxSug': order.max_suggested_qty,
+            'finalOrder': order.quantity,
+            'totalCost': order.quantity * float(order.product.tp or 0) if order.product else 0,
+            'unitCost': float(order.product.tp or 0) if order.product else 0,
+            'manager': creator.full_name or creator.username if creator else '',
+            'timestamp': order.created_at.isoformat() if order.created_at else '',
+            'status': (order.status or 'pending').lower(),
+            'reviewer': (reviewer.full_name or reviewer.username) if reviewer else '',
+            'reviewedAt': order.reviewed_at.isoformat() if order.reviewed_at else '',
+        }
+    serialized_oracle_orders = [serialize_cluster_oracle_order(order) for order in oracle_orders]
+
     admin_shell = (role in ('Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'))
     return render_template('cluster_manager/oracle.html',
                            user=current_user,
@@ -10562,6 +10594,9 @@ def cluster_manager_oracle():
                            cluster_sidebar_stores=cluster_sidebar_stores,
                            force_cluster_sidebar=admin_shell,
                            cluster_sidebar_cluster_id=cluster.id if admin_shell else '',
+                           oracle_pending_approvals=[item for item in serialized_oracle_orders if item['status'] == 'pending'],
+                           oracle_approval_history=[item for item in serialized_oracle_orders if item['status'] in ('approved', 'rejected') and item['reviewedAt']],
+                           can_approve_oracle_orders=role in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'),
                            admin_shell=admin_shell)
 
 
@@ -10864,6 +10899,58 @@ def store_manager_delete_oracle_order(order_id):
     return {'ok': True, 'deleted': deleted}
 
 
+@views.route('/cluster-manager/oracle/order/<int:order_id>/decision', methods=['POST'])
+@login_required
+def cluster_manager_decide_oracle_order(order_id):
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Area Manager'):
+        return jsonify({'ok': False, 'error': 'Access denied'}), 403
+    order = OracleOrder.query.get_or_404(order_id)
+    store = Store.query.get(order.store_id)
+    if not store:
+        return jsonify({'ok': False, 'error': 'Store not found'}), 404
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster or store.cluster_id != cluster.id:
+            return jsonify({'ok': False, 'error': 'This store is outside your cluster'}), 403
+    elif not _apply_store_scope_filter([store], request):
+        return jsonify({'ok': False, 'error': 'Access denied for this store'}), 403
+    if (order.status or '').lower() != 'pending':
+        return jsonify({'ok': False, 'error': f'This order is already {order.status.lower()}'}), 409
+    data = request.get_json(silent=True) or {}
+    decision = str(data.get('decision') or '').strip().lower()
+    if decision not in ('approve', 'reject'):
+        return jsonify({'ok': False, 'error': 'Choose approve or reject'}), 400
+    now = datetime.utcnow()
+    order.status = 'approved' if decision == 'approve' else 'rejected'
+    order.reviewed_by = current_user.id
+    order.reviewed_at = now
+    order.approved_at = now if decision == 'approve' else None
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception('Unable to save Oracle approval decision')
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+    log_audit_event(
+        action='UPDATE',
+        entity_type='Oracle Order',
+        entity_id=order.id,
+        details={
+            'decision': order.status,
+            'store_id': store.id,
+            'product_id': order.product_id,
+            'quantity': order.quantity,
+        },
+    )
+    return jsonify({
+        'ok': True,
+        'status': order.status,
+        'reviewer': current_user.full_name or current_user.username,
+        'reviewedAt': now.isoformat(),
+    })
+
+
 @views.route('/store-manager/oracle/order-date/<order_date>', methods=['DELETE'])
 @login_required
 def store_manager_delete_oracle_order_date(order_date):
@@ -10991,6 +11078,128 @@ def store_manager_export_oracle_order(order_date):
         output,
         as_attachment=True,
         download_name=f'oracle-history-{selected_date.isoformat()}.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
+@views.route('/store-manager/oracle/daily-averages/export.xlsx', methods=['POST'])
+@login_required
+def store_manager_export_oracle_daily_averages():
+    if current_user.role != 'Store Manager':
+        return {'ok': False, 'error': 'Access denied'}, 403
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        return {'ok': False, 'error': 'Store not found or not assigned'}, 403
+
+    payload = request.get_json(silent=True) or {}
+    headers = payload.get('headers')
+    records = payload.get('records')
+    if not isinstance(headers, list) or not headers or len(headers) > 40:
+        return {'ok': False, 'error': 'Invalid Excel column data'}, 400
+    if not isinstance(records, list) or len(records) > 5000:
+        return {'ok': False, 'error': 'Invalid Excel product data'}, 400
+    if any(not isinstance(header, str) for header in headers):
+        return {'ok': False, 'error': 'Invalid Excel column names'}, 400
+    if any(not isinstance(row, list) or len(row) != len(headers) for row in records):
+        return {'ok': False, 'error': 'Invalid Excel row data'}, 400
+
+    try:
+        selected_date = datetime.strptime(str(payload.get('date') or ''), '%Y-%m-%d').date()
+    except ValueError:
+        selected_date = date.today()
+
+    period = str(payload.get('period') or '')[:100]
+    try:
+        reports_recorded = max(0, min(28, int(payload.get('reports_recorded') or 0)))
+        reports_total = max(0, min(28, int(payload.get('reports_total') or 0)))
+    except (TypeError, ValueError):
+        reports_recorded = reports_total = 0
+    missing_dates = payload.get('missing_dates')
+    if not isinstance(missing_dates, list):
+        missing_dates = []
+    missing_dates_text = ', '.join(str(value)[:40] for value in missing_dates[:28]) or 'None'
+    weekday_coverage = str(payload.get('weekday_coverage') or '')[:200]
+    previous_period = str(payload.get('previous_period') or '')[:100]
+    previous_missing_dates = payload.get('previous_missing_dates')
+    if not isinstance(previous_missing_dates, list):
+        previous_missing_dates = []
+    previous_missing_dates_text = ', '.join(str(value)[:40] for value in previous_missing_dates[:28]) or 'None'
+    previous_weekday_coverage = str(payload.get('previous_weekday_coverage') or '')[:200]
+    try:
+        previous_reports_recorded = max(0, min(28, int(payload.get('previous_reports_recorded') or 0)))
+        previous_reports_total = max(0, min(28, int(payload.get('previous_reports_total') or 0)))
+    except (TypeError, ValueError):
+        previous_reports_recorded = previous_reports_total = 0
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = 'Daily Averages'
+    sheet.append(['Daily Average Consumption'])
+    sheet.append(['Store', store.name or ''])
+    sheet.append(['As of', selected_date.isoformat()])
+    sheet.append(['Reporting period', period])
+    sheet.append(['Reports recorded', f'{reports_recorded}/{reports_total} days'])
+    sheet.append(['Missing report dates', missing_dates_text])
+    sheet.append(['Weekday report coverage', weekday_coverage])
+    sheet.append(['Prior period', previous_period])
+    sheet.append(['Prior reports recorded', f'{previous_reports_recorded}/{previous_reports_total} days'])
+    sheet.append(['Prior missing report dates', previous_missing_dates_text])
+    sheet.append(['Prior weekday coverage', previous_weekday_coverage])
+    sheet.append([])
+    header_row = 13
+    sheet.append(headers)
+
+    for row in records:
+        safe_row = []
+        for value in row:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                safe_row.append(float(value) if math.isfinite(float(value)) else 0)
+            elif value is None:
+                safe_row.append('')
+            else:
+                text_value = str(value)
+                if text_value.startswith(('=', '+', '-', '@')):
+                    text_value = "'" + text_value
+                safe_row.append(text_value[:500])
+        sheet.append(safe_row)
+
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    sheet.cell(row=1, column=1).font = Font(bold=True, size=16, color='FFFFFF')
+    sheet.cell(row=1, column=1).fill = PatternFill('solid', fgColor='1E293B')
+    sheet.cell(row=1, column=1).alignment = Alignment(vertical='center')
+    sheet.row_dimensions[1].height = 28
+    for row_index in range(2, 12):
+        sheet.cell(row=row_index, column=1).font = Font(bold=True, color='334155')
+    for cell in sheet[header_row]:
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = PatternFill('solid', fgColor='334155')
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    sheet.freeze_panes = f'A{header_row + 1}'
+    sheet.auto_filter.ref = f'A{header_row}:{sheet.cell(row=header_row, column=len(headers)).coordinate}'
+    sheet.column_dimensions['A'].width = 34
+    sheet.column_dimensions['B'].width = 22
+    for column_index in range(3, len(headers) + 1):
+        sheet.column_dimensions[sheet.cell(row=header_row, column=column_index).column_letter].width = 18
+        header = str(headers[column_index - 1]).lower()
+        if 'share %' in header or 'trend vs prior' in header:
+            for row_index in range(header_row + 1, sheet.max_row + 1):
+                sheet.cell(row=row_index, column=column_index).number_format = '0.0%'
+        elif 'revenue' in header:
+            for row_index in range(header_row + 1, sheet.max_row + 1):
+                sheet.cell(row=row_index, column=column_index).number_format = '₱#,##0.00'
+        else:
+            for row_index in range(header_row + 1, sheet.max_row + 1):
+                sheet.cell(row=row_index, column=column_index).number_format = '#,##0.0'
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    store_slug = re.sub(r'[^a-z0-9]+', '-', (store.name or 'store').strip().lower()).strip('-') or 'store'
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f'oracle-daily-averages-{store_slug}-{selected_date.isoformat()}.xlsx',
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
@@ -12847,21 +13056,22 @@ def _fetch_oracle_invensync_data_for_order_form(store, products, selected_date=N
     return invensync_data, source_date
 
 
-def _build_oracle_pos_sales_data(store, products, anchor_date=None):
+def _build_oracle_pos_sales_data(store, products, anchor_date=None, weeks=4):
     if not store or not products:
         return {}
 
     anchor_date = anchor_date or date.today()
-    start_date = anchor_date - timedelta(days=27)
+    weeks = max(1, min(8, int(weeks or 4)))
+    start_date = anchor_date - timedelta(days=(weeks * 7) - 1)
     week_ranges = []
-    for week_index in range(4):
+    for week_index in range(weeks):
         week_start = start_date + timedelta(days=(week_index * 7))
         week_ranges.append((week_start, week_start + timedelta(days=6)))
 
     end_date = week_ranges[-1][1]
     product_ids = {int(product.id) for product in products}
     sales_data = {
-        str(product.id): [[0 for _ in range(7)] for _ in range(4)]
+        str(product.id): [[0 for _ in range(7)] for _ in range(weeks)]
         for product in products
     }
 
@@ -12989,10 +13199,14 @@ def _build_oracle_bulk_order_product_data(store, products, anchor_date=None):
         for product in products
     }
 
+    upload_search_start = datetime.combine(start_date - timedelta(days=1), datetime.min.time())
+    upload_search_end = datetime.combine(end_date + timedelta(days=2), datetime.min.time())
     bulk_rows = (
         RsoDelivery.query
         .filter(RsoDelivery.store_id == store.id)
         .filter(RsoDelivery.upload_source == 'bulk')
+        .filter(RsoDelivery.uploaded_at >= upload_search_start)
+        .filter(RsoDelivery.uploaded_at < upload_search_end)
         .all()
     )
     if not bulk_rows:
@@ -13108,6 +13322,16 @@ def oracle():
     # Fetch invensync data (ending inventory from prev day, delivery/trans from oracle date)
     invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
     pos_sales_data = _build_oracle_pos_sales_data(store, products, oracle_date)
+    coverage_start = oracle_date - timedelta(days=27)
+    sales_report_dates = [
+        report_date.isoformat()
+        for (report_date,) in db.session.query(DailyReport.report_date)
+        .filter(DailyReport.store_id == store.id)
+        .filter(DailyReport.report_date >= coverage_start)
+        .filter(DailyReport.report_date <= oracle_date)
+        .distinct()
+        .all()
+    ]
     bulk_order_weeks = _build_oracle_bulk_order_weeks(store, oracle_date)
     bulk_order_product_data = _build_oracle_bulk_order_product_data(store, products, oracle_date)
 
@@ -13123,6 +13347,7 @@ def oracle():
         prev_inventory_date=prev_inventory_date,
         oracle_date=oracle_date.isoformat(),
         pos_sales_data=pos_sales_data,
+        sales_report_dates=sales_report_dates,
         bulk_order_weeks=bulk_order_weeks,
         bulk_order_product_data=bulk_order_product_data,
     )

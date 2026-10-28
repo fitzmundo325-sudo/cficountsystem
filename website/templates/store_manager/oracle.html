@@ -577,13 +577,21 @@
       <h1 class="text-2xl font-bold text-slate-900">Daily Average Consumption</h1>
       <p class="mt-1 text-sm text-slate-500">Based on POS Sold for the latest 4 weeks. You can adjust values before
         ordering.</p>
+      <div class="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs">
+        <p id="daily-average-coverage" class="font-semibold text-slate-500">Loading reporting period…</p>
+        <p id="daily-average-missing-dates" class="mt-1 text-slate-500" aria-live="polite"></p>
+      </div>
     </div>
     <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3">
-      <i class="bi bi-calendar3 text-sky-500"></i> Weekly Sales — Units Sold Per Product Per Day
-    </div>
-    <div id="weekly-sales-tables-container" class="space-y-4"></div>
-    <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3 mt-8">
       <i class="bi bi-graph-up text-sky-500"></i> Average Daily Sold &amp; Product Share (4-Week Summary)
+    </div>
+    <p class="mb-3 text-xs text-slate-500">Each weekday average is that weekday’s POS quantity across the four weeks divided by 4. Dates without a Daily Report count as zero.</p>
+    <div class="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3">
+      <label class="min-w-[220px] flex-1"><span class="sr-only">Search daily averages</span><input id="daily-average-search" type="search" placeholder="Search product or category…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"></label>
+      <label><span class="sr-only">Filter by category</span><select id="daily-average-category" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"><option value="all">All categories</option></select></label>
+      <label><span class="sr-only">Sort daily averages</span><select id="daily-average-sort" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"><option value="name">Product name A–Z</option><option value="units">Average units: high to low</option><option value="revenue">Average revenue: high to low</option></select></label>
+      <span id="daily-average-result-count" class="text-xs text-slate-500"></span>
+      <button id="daily-average-export" type="button" title="Export the currently visible products to CSV" class="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700"><i class="bi bi-download"></i> Export CSV</button>
     </div>
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
       <div class="oracle-scroll">
@@ -606,6 +614,10 @@
         </table>
       </div>
     </div>
+    <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3 mt-8">
+      <i class="bi bi-calendar3 text-sky-500"></i> Weekly Sales — Units Sold Per Product Per Day
+    </div>
+    <div id="weekly-sales-tables-container" class="space-y-4"></div>
   </div>
 
 
@@ -635,6 +647,7 @@
   const ORACLE_INCOMING_ORDERS = {{ oracle_incoming_orders| tojson if oracle_incoming_orders is defined else '{}' }};
   const ORACLE_ORDER_HISTORY = {{ oracle_order_history| tojson if oracle_order_history is defined else '[]' }};
   const POS_SALES_DATA = {{ pos_sales_data| tojson if pos_sales_data is defined else '{}' }};
+  const SALES_REPORT_DATES = {{ sales_report_dates|tojson if sales_report_dates is defined else '[]' }};
   const BULK_ORDER_WEEKS = {{ bulk_order_weeks| tojson if bulk_order_weeks is defined else '[]' }};
   const BULK_ORDER_PRODUCT_DATA = {{ bulk_order_product_data| tojson if bulk_order_product_data is defined else '{}' }};
   const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -1417,7 +1430,38 @@
     if (typeof raw === 'number') return { qty: Number(raw) || 0, date: '' };
     return { qty: Number(raw.qty || 0) || 0, date: raw.date || raw.upload_date || '' };
   }
-  function renderDailyAverages() { renderWeeklyTables(); renderAvgSummary(); }
+  function getDailyAverageRanges() {
+    const anchor = ORACLE_DATE ? new Date(`${ORACLE_DATE}T00:00:00`) : new Date();
+    const start = new Date(anchor);
+    start.setDate(start.getDate() - 27);
+    return Array.from({ length: 28 }, (_, index) => {
+      const date = new Date(start);
+      date.setDate(start.getDate() + index);
+      return date;
+    });
+  }
+  function formatDailyAverageDate(date) { return date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }); }
+  function renderDailyAverageCoverage() {
+    const dates = getDailyAverageRanges();
+    const missing = dates.filter(date => !(SALES_REPORT_DATES || []).includes(fmt(date)));
+    const count = dates.length - missing.length;
+    const summary = document.getElementById('daily-average-coverage');
+    const missingEl = document.getElementById('daily-average-missing-dates');
+    if (!summary || !missingEl) return;
+    summary.textContent = `Reporting period: ${formatDailyAverageDate(dates[0])}–${formatDailyAverageDate(dates[27])} · Reports recorded: ${count}/28 days`;
+    summary.className = `font-semibold ${missing.length ? 'text-amber-700' : 'text-slate-500'}`;
+    missingEl.textContent = missing.length ? `Missing report dates: ${missing.map(formatDailyAverageDate).join(', ')}` : 'All dates in this period have a sales report.';
+    missingEl.className = `mt-1 ${missing.length ? 'text-amber-700' : 'text-slate-500'}`;
+  }
+  function populateDailyAverageCategories() {
+    const select = document.getElementById('daily-average-category');
+    if (!select || select.dataset.populated) return;
+    [...new Set(PRODUCTS.map(product => String(product.category || '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b))
+      .forEach(category => { const option = document.createElement('option'); option.value = category; option.textContent = category; select.appendChild(option); });
+    select.dataset.populated = 'true';
+  }
+  function renderDailyAverages() { renderDailyAverageCoverage(); populateDailyAverageCategories(); renderWeeklyTables(); renderAvgSummary(); }
   function renderWeeklyTables() {
     const con = document.getElementById('weekly-sales-tables-container'); let html = '';
     for (let w = 0; w < 4; w++) {
@@ -1466,19 +1510,57 @@
     PRODUCTS.forEach(p => { const rt = DISP_TO_JS.reduce((s, di) => s + (salesData[p.id][w][di] || 0), 0); const el = document.getElementById(`wrt-${w}-${p.id}`); const er = document.getElementById(`wrr-${w}-${p.id}`); if (el) el.textContent = rt; if (er) er.textContent = '₱' + (rt * p.sellingPrice).toLocaleString(); });
     dTots.forEach((t, ci) => { const el = document.getElementById(`wdt-${w}-${ci}`); if (el) el.textContent = t; });
   }
+  function getDailyAverageSummaryData() {
+    const rows = PRODUCTS.map(product => {
+      const averages = DISP_TO_JS.map(day => salesData[product.id].reduce((sum, week, weekIndex) => sum + getOrganicSales(product.id, weekIndex, day), 0) / 4);
+      const revenue = averages.map(value => value * product.sellingPrice);
+      return { product, averages, revenue, totalAverage: averages.reduce((sum, value) => sum + value, 0), totalRevenue: revenue.reduce((sum, value) => sum + value, 0) };
+    });
+    const dayRevenue = DISP_TO_JS.map((_, day) => rows.reduce((sum, row) => sum + row.revenue[day], 0));
+    return { rows, dayRevenue, totalRevenue: rows.reduce((sum, row) => sum + row.totalRevenue, 0) };
+  }
+  function getFilteredDailyAverageRows(data) {
+    const query = (document.getElementById('daily-average-search')?.value || '').trim().toLocaleLowerCase();
+    const category = document.getElementById('daily-average-category')?.value || 'all';
+    const sort = document.getElementById('daily-average-sort')?.value || 'name';
+    return data.rows.filter(row => {
+      const p = row.product;
+      return (category === 'all' || String(p.category || '') === category) && `${p.name || ''} ${p.code || ''} ${p.category || ''}`.toLocaleLowerCase().includes(query);
+    }).sort((a, b) => {
+      if (sort === 'units' && b.totalAverage !== a.totalAverage) return b.totalAverage - a.totalAverage;
+      if (sort === 'revenue' && b.totalRevenue !== a.totalRevenue) return b.totalRevenue - a.totalRevenue;
+      return String(a.product.name || '').localeCompare(String(b.product.name || ''), undefined, { numeric: true, sensitivity: 'base' });
+    });
+  }
   function renderAvgSummary() {
-    const aS = {}, aR = {};
-    PRODUCTS.forEach(p => { aS[p.id] = DISP_TO_JS.map(di => salesData[p.id].reduce((s, wk, weekIndex) => s + getOrganicSales(p.id, weekIndex, di), 0) / 4); aR[p.id] = aS[p.id].map(a => a * p.sellingPrice); });
-    const cU = DISP_TO_JS.map((_, ci) => PRODUCTS.reduce((s, p) => s + aS[p.id][ci], 0));
-    const cR = DISP_TO_JS.map((_, ci) => PRODUCTS.reduce((s, p) => s + aR[p.id][ci], 0));
-    const pU = PRODUCTS.map(p => aS[p.id].reduce((s, v) => s + v, 0)), pR = PRODUCTS.map(p => aR[p.id].reduce((s, v) => s + v, 0));
-    const gU = pU.reduce((s, v) => s + v, 0), gR = pR.reduce((s, v) => s + v, 0);
-    document.getElementById('avg-summary-body').innerHTML = PRODUCTS.map((p, pi) => {
-      const cells = aS[p.id].map((avg, ci) => { const rev = aR[p.id][ci], pct = cR[ci] > 0 ? (rev / cR[ci] * 100).toFixed(1) : '0.0'; return `<td class="px-3 py-2.5 text-center"><div class="font-bold text-slate-800">${avg.toFixed(1)}</div><div class="text-[9px] text-purple-500 font-semibold">${pct}%</div><div class="text-[9px] text-emerald-600 font-medium">₱${rev.toFixed(0)}</div></td>`; }).join('');
-      const pct4 = gR > 0 ? (pR[pi] / gR * 100).toFixed(1) : '0.0';
-      return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${p.name}</div><div class="text-[10px] text-slate-400">${p.category}</div></td>${cells}<td class="px-3 py-2.5 text-center"><div class="font-bold text-sky-600">${pU[pi].toFixed(1)}</div><div class="text-[9px] text-slate-500">${pct4}%</div><div class="text-[9px] text-emerald-600">₱${pR[pi].toFixed(0)}</div></td></tr>`;
-    }).join('');
-    document.getElementById('avg-summary-foot').innerHTML = `<tr class="bg-slate-800"><td class="px-3 py-2.5 font-bold text-xs text-white">Day Avg</td>${DISP_TO_JS.map((_, ci) => `<td class="px-3 py-2.5 text-center"><div class="font-bold text-xs text-white">${cU[ci].toFixed(1)}</div><div class="text-[9px] text-slate-400">100%</div><div class="text-[9px] text-sky-300">₱${cR[ci].toFixed(0)}</div></td>`).join('')}<td class="px-3 py-2.5 text-center"><div class="font-bold text-xs text-sky-300">${gU.toFixed(1)}</div><div class="text-[9px] text-slate-400">100%</div><div class="text-[9px] text-sky-300">₱${gR.toFixed(0)}</div></td></tr>`;
+    const data = getDailyAverageSummaryData();
+    const visible = getFilteredDailyAverageRows(data);
+    const count = document.getElementById('daily-average-result-count');
+    if (count) count.textContent = `Showing ${visible.length} of ${data.rows.length} products`;
+    const dayUnits = DISP_TO_JS.map((_, day) => visible.reduce((sum, row) => sum + row.averages[day], 0));
+    const dayRevenue = DISP_TO_JS.map((_, day) => visible.reduce((sum, row) => sum + row.revenue[day], 0));
+    const totalUnits = visible.reduce((sum, row) => sum + row.totalAverage, 0);
+    const totalRevenue = visible.reduce((sum, row) => sum + row.totalRevenue, 0);
+    document.getElementById('avg-summary-body').innerHTML = visible.length ? visible.map(row => {
+      const p = row.product;
+      const cells = row.averages.map((avg, day) => {
+        const share = data.dayRevenue[day] > 0 ? (row.revenue[day] / data.dayRevenue[day] * 100).toFixed(1) : '0.0';
+        return `<td class="px-3 py-2.5 text-center"><div class="font-bold text-slate-800">${avg.toFixed(1)}</div><div class="text-[9px] text-purple-500 font-semibold">${share}%</div><div class="text-[9px] text-emerald-600 font-medium">₱${row.revenue[day].toFixed(0)}</div></td>`;
+      }).join('');
+      const share = data.totalRevenue > 0 ? (row.totalRevenue / data.totalRevenue * 100).toFixed(1) : '0.0';
+      return `<tr class="hover:bg-slate-50"><td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${p.name}</div><div class="text-[10px] text-slate-400">${p.category}</div></td>${cells}<td class="px-3 py-2.5 text-center"><div class="font-bold text-sky-600">${row.totalAverage.toFixed(1)}</div><div class="text-[9px] text-slate-500">${share}%</div><div class="text-[9px] text-emerald-600">₱${row.totalRevenue.toFixed(0)}</div></td></tr>`;
+    }).join('') : '<tr><td colspan="9" class="px-4 py-12 text-center text-slate-400">No products match these filters.</td></tr>';
+    const totalShare = data.totalRevenue > 0 ? (totalRevenue / data.totalRevenue * 100).toFixed(1) : '0.0';
+    document.getElementById('avg-summary-foot').innerHTML = `<tr class="bg-slate-800"><td class="px-3 py-2.5 font-bold text-xs text-white">${visible.length === data.rows.length ? 'Day Avg' : 'Filtered Avg'}</td>${DISP_TO_JS.map((_, day) => `<td class="px-3 py-2.5 text-center"><div class="font-bold text-xs text-white">${dayUnits[day].toFixed(1)}</div><div class="text-[9px] text-slate-400">${data.dayRevenue[day] > 0 ? (dayRevenue[day] / data.dayRevenue[day] * 100).toFixed(1) : '0.0'}%</div><div class="text-[9px] text-sky-300">₱${dayRevenue[day].toFixed(0)}</div></td>`).join('')}<td class="px-3 py-2.5 text-center"><div class="font-bold text-xs text-sky-300">${totalUnits.toFixed(1)}</div><div class="text-[9px] text-slate-400">${totalShare}%</div><div class="text-[9px] text-sky-300">₱${totalRevenue.toFixed(0)}</div></td></tr>`;
+  }
+  function exportDailyAverageCsv() {
+    const data = getDailyAverageSummaryData(), visible = getFilteredDailyAverageRows(data), dates = getDailyAverageRanges();
+    const missing = dates.filter(date => !(SALES_REPORT_DATES || []).includes(fmt(date))).map(formatDailyAverageDate);
+    const cell = value => { let text = String(value ?? ''); if (/^[=+@-]/.test(text)) text = `'${text}`; return `"${text.replace(/"/g, '""')}"`; };
+    const rows = [['Store', '{{ store.name }}'], ['Reporting period', `${formatDailyAverageDate(dates[0])}–${formatDailyAverageDate(dates[27])}`], ['Reports recorded', `${dates.length - missing.length}/${dates.length}`], ['Missing report dates', missing.join(', ') || 'None'], [], ['Product', 'Category', ...DAYS_DISPLAY.map(day => `${day} average qty`), ...DAYS_DISPLAY.map(day => `${day} share %`), ...DAYS_DISPLAY.map(day => `${day} average revenue`), '4-week average qty total', '4-week revenue share %', '4-week average revenue']];
+    visible.forEach(row => rows.push([row.product.name, row.product.category || '', ...row.averages.map(value => value.toFixed(1)), ...row.revenue.map((value, day) => data.dayRevenue[day] ? (value / data.dayRevenue[day] * 100).toFixed(1) : '0.0'), ...row.revenue.map(value => value.toFixed(0)), row.totalAverage.toFixed(1), data.totalRevenue ? (row.totalRevenue / data.totalRevenue * 100).toFixed(1) : '0.0', row.totalRevenue.toFixed(0)]));
+    const url = URL.createObjectURL(new Blob(['\uFEFF' + rows.map(row => row.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a'); link.href = url; link.download = `oracle-daily-averages-${ORACLE_DATE || fmt(new Date())}.csv`; document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function renderSettings() { document.getElementById('cfg-store').value = DB.settings.store; document.getElementById('cfg-branch').value = DB.settings.branch; document.getElementById('cfg-manager').value = DB.settings.manager; document.getElementById('cfg-lead').value = DB.settings.leadTime; document.getElementById('cfg-buffer').value = DB.settings.buffer; document.getElementById('cfg-alert').value = DB.settings.alertDays; }
@@ -1558,6 +1640,10 @@
 
   (function () {
     document.getElementById('topbar-date').textContent = (ORACLE_DATE ? new Date(ORACLE_DATE + 'T00:00:00') : new Date()).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    document.getElementById('daily-average-search')?.addEventListener('input', renderAvgSummary);
+    document.getElementById('daily-average-category')?.addEventListener('change', renderAvgSummary);
+    document.getElementById('daily-average-sort')?.addEventListener('change', renderAvgSummary);
+    document.getElementById('daily-average-export')?.addEventListener('click', exportDailyAverageCsv);
     updateApprovalsBadge();
     renderOrderForm();
   })();

@@ -162,10 +162,31 @@ function showInvSyncPageAdmin(elm){
 // ====================================
 
 
+function removeRetiredBakeryPet(){
+	const retiredPet = document.getElementById('system-bakery-pet');
+	if (retiredPet) retiredPet.remove();
+}
+
+removeRetiredBakeryPet();
+document.addEventListener('DOMContentLoaded', removeRetiredBakeryPet, { once: true });
+
 //Store Manager ===============
 
 function showInvSyncStoreUser(elm){
 	activate(elm);
+	removeRetiredBakeryPet();
+	try {
+		localStorage.setItem('adminTheme', 'light');
+		localStorage.setItem('theme_mode', 'normal');
+		if (typeof setAdminTheme === 'function') setAdminTheme(false);
+		const themeStylesheet = document.getElementById('theme');
+		if (themeStylesheet) themeStylesheet.href = '/static/css/coloring.css';
+		const themeForm = new FormData();
+		themeForm.append('theme', 'normal');
+		fetch('/set_theme', { method: 'POST', body: themeForm, credentials: 'same-origin' }).catch(() => {});
+	} catch (error) {}
+	const themeToggle = document.getElementById('admin-theme-toggle');
+	if (themeToggle) themeToggle.remove();
 
 	let page = open_modal("/store-manager/invensync_details_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
 	closeAllPages(page,false);

@@ -10,7 +10,7 @@ from flask import Flask, redirect, render_template, request, session, url_for, f
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, current_user, logout_user
 from flask_caching import Cache
-from sqlalchemy import text, func
+from sqlalchemy import text, func, inspect
 from werkzeug.exceptions import HTTPException
 
 db = SQLAlchemy()
@@ -308,6 +308,15 @@ def _ensure_taf_transfer_item_columns():
         conn.commit()
 
 
+def _ensure_oracle_order_review_columns():
+    columns = {column['name'] for column in inspect(db.engine).get_columns('oracle_order')}
+    with db.engine.begin() as conn:
+        if 'reviewed_by' not in columns:
+            conn.execute(text('ALTER TABLE oracle_order ADD COLUMN reviewed_by INTEGER'))
+        if 'reviewed_at' not in columns:
+            conn.execute(text('ALTER TABLE oracle_order ADD COLUMN reviewed_at DATETIME'))
+
+
 def _ensure_daily_ending_inventory_item_columns():
     with db.engine.connect() as conn:
         existing_columns = {
@@ -485,6 +494,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _ensure_oracle_order_review_columns()
         if not configured_secret_key:
             stored_secret = SystemSecret.query.order_by(SystemSecret.id.asc()).first()
             if not stored_secret:

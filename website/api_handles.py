@@ -5058,12 +5058,80 @@ def _build_pos_sold_master_lookups():
 # ================================
 # Oracle Section Start
 # ================================
+@api_handles.route('/cluster_oracle_daily_averages', methods=['GET'])
+@login_required
+def cluster_oracle_daily_averages():
+    from datetime import datetime, date as _date, timedelta
+    from .models import Cluster, ProductMaster, Store
+    from .views import (
+        _apply_store_scope_filter,
+        _build_oracle_pos_sales_data,
+        _build_oracle_bulk_order_weeks,
+        _build_oracle_bulk_order_product_data,
+    )
+
+    role = (current_user.role or '').strip()
+    if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
+        return jsonify({'type': 'error', 'message': 'Access denied.'}), 403
+
+    store_id = request.args.get('store_id', type=int)
+    store = Store.query.filter_by(id=store_id).first() if store_id else None
+    if not store:
+        return jsonify({'type': 'error', 'message': 'Store not found.'}), 404
+
+    if role == 'Cluster Manager':
+        cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
+        if not cluster:
+            return jsonify({'type': 'error', 'message': 'No cluster is assigned to this account.'}), 403
+    else:
+        cluster_id = request.args.get('cluster_id', type=int)
+        cluster = Cluster.query.filter_by(id=cluster_id).first() if cluster_id else None
+        if not cluster:
+            return jsonify({'type': 'error', 'message': 'Cluster not found.'}), 404
+
+    if store.cluster_id != cluster.id:
+        return jsonify({'type': 'error', 'message': 'This store is outside the selected cluster.'}), 403
+
+    scoped_stores = _apply_store_scope_filter(Store.query.filter_by(cluster_id=cluster.id).all(), request)
+    if store.id not in {scoped_store.id for scoped_store in scoped_stores}:
+        return jsonify({'type': 'error', 'message': 'This store is outside the active store scope.'}), 403
+
+    anchor_date = _date.today()
+    date_value = request.args.get('date', '')
+    if date_value:
+        try:
+            anchor_date = datetime.strptime(date_value, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'type': 'error', 'message': 'Invalid date.'}), 400
+
+    products = ProductMaster.query.order_by(ProductMaster.category, ProductMaster.description).all()
+    is_premium = store.store_group == 'premium'
+    product_rows = [{
+        'id': product.id,
+        'name': product.description,
+        'category': product.category or '',
+        'selling_price': float((product.sp_p if is_premium else product.sp_np) or 0),
+    } for product in products]
+
+    return jsonify({
+        'type': 'success',
+        'store': {'id': store.id, 'name': store.name},
+        'cluster': {'id': cluster.id, 'name': cluster.name},
+        'anchor_date': anchor_date.isoformat(),
+        'period_start': (anchor_date - timedelta(days=27)).isoformat(),
+        'products': product_rows,
+        'pos_sales_data': _build_oracle_pos_sales_data(store, products, anchor_date),
+        'bulk_order_weeks': _build_oracle_bulk_order_weeks(store, anchor_date),
+        'bulk_order_product_data': _build_oracle_bulk_order_product_data(store, products, anchor_date),
+    })
+
+
 @api_handles.route('/get_oracle_data', methods=['GET', 'POST'])
 @login_required
 def get_oracle_data():
     from datetime import datetime, date as _date
     from sqlalchemy.orm import joinedload
-    from .models import OracleOrder, ProductMaster, Store, StoreProductBuffer
+    from .models import DailyReport, OracleOrder, ProductMaster, Store, StoreProductBuffer
     from .views import (
         _fetch_oracle_invensync_data,
         _build_oracle_pos_sales_data,
@@ -5151,6 +5219,16 @@ def get_oracle_data():
 
     invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)
     pos_sales_data = _build_oracle_pos_sales_data(store, products, oracle_date)
+    coverage_start = oracle_date - timedelta(days=27)
+    sales_report_dates = [
+        report_date.isoformat()
+        for (report_date,) in db.session.query(DailyReport.report_date)
+        .filter(DailyReport.store_id == store.id)
+        .filter(DailyReport.report_date >= coverage_start)
+        .filter(DailyReport.report_date <= oracle_date)
+        .distinct()
+        .all()
+    ]
     bulk_order_weeks = _build_oracle_bulk_order_weeks(store, oracle_date)
     bulk_order_product_data = _build_oracle_bulk_order_product_data(store, products, oracle_date)
 
@@ -5165,8 +5243,159 @@ def get_oracle_data():
         'invensync_data': invensync_data,
         'prev_inventory_date': prev_inventory_date,
         'pos_sales_data': pos_sales_data,
+        'sales_report_dates': sales_report_dates,
         'bulk_order_weeks': bulk_order_weeks,
         'bulk_order_product_data': bulk_order_product_data,
+    }
+
+
+@api_handles.route('/oracle_daily_averages', methods=['GET'])
+@login_required
+def oracle_daily_averages_data():
+    from datetime import datetime, date as _date, timedelta as _timedelta
+    from .models import DailyReport, ProductMaster, Store
+    from .views import (
+        _build_oracle_pos_sales_data,
+        _build_oracle_bulk_order_weeks,
+        _build_oracle_bulk_order_product_data,
+    )
+
+    if current_user.role != 'Store Manager':
+        return {'type': 'error', 'message': 'Access denied.'}, 403
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        return {'type': 'error', 'message': 'Store not found or not assigned.'}, 403
+
+    try:
+        anchor_date = datetime.strptime(request.args.get('date', ''), '%Y-%m-%d').date()
+    except ValueError:
+        anchor_date = _date.today()
+
+    products = ProductMaster.query.order_by(ProductMaster.description.asc()).all()
+    week_value = request.args.get('week')
+    if week_value is not None:
+        try:
+            week_index = int(week_value)
+        except (TypeError, ValueError):
+            return {'type': 'error', 'message': 'Invalid week.'}, 400
+        if week_index < 0 or week_index > 3:
+            return {'type': 'error', 'message': 'Invalid week.'}, 400
+
+        week_start = anchor_date - _timedelta(days=27 - (week_index * 7))
+        week_end = week_start + _timedelta(days=6)
+        daily_sales = _build_oracle_pos_sales_data(store, products, week_end, weeks=1)
+        bulk_weeks = _build_oracle_bulk_order_weeks(store, week_end)
+        bulk_products = _build_oracle_bulk_order_product_data(store, products, week_end)
+        report_dates = [
+            report_date.isoformat()
+            for (report_date,) in db.session.query(DailyReport.report_date)
+            .filter(DailyReport.store_id == store.id)
+            .filter(DailyReport.report_date >= week_start)
+            .filter(DailyReport.report_date <= week_end)
+            .distinct()
+            .all()
+        ]
+        return {
+            'type': 'success',
+            'store_id': store.id,
+            'week_index': week_index,
+            'week_start': week_start.isoformat(),
+            'week_end': week_end.isoformat(),
+            'report_dates': report_dates,
+            'sales_data': {product_id: values[0] for product_id, values in daily_sales.items()},
+            'bulk_order_week': bulk_weeks[-1] if bulk_weeks else {},
+            'bulk_order_product_data': {
+                product_id: values[-1]
+                for product_id, values in bulk_products.items()
+                if values
+            },
+        }
+
+    period_start = anchor_date - _timedelta(days=27)
+    previous_start = anchor_date - _timedelta(days=55)
+    previous_end = period_start - _timedelta(days=1)
+    all_sales = _build_oracle_pos_sales_data(store, products, anchor_date, weeks=8)
+    all_report_dates = [
+        report_date.isoformat()
+        for (report_date,) in db.session.query(DailyReport.report_date)
+        .filter(DailyReport.store_id == store.id)
+        .filter(DailyReport.report_date >= previous_start)
+        .filter(DailyReport.report_date <= anchor_date)
+        .distinct()
+        .all()
+    ]
+    report_date_set = set(all_report_dates)
+    current_dates = [period_start + _timedelta(days=index) for index in range(28)]
+    previous_dates = [previous_start + _timedelta(days=index) for index in range(28)]
+
+    def period_report_counts(period_dates):
+        counts = [0] * 7
+        for report_date in period_dates:
+            if report_date.isoformat() in report_date_set:
+                counts[(report_date.weekday() + 1) % 7] += 1
+        return counts
+
+    current_counts = period_report_counts(current_dates)
+    previous_counts = period_report_counts(previous_dates)
+    current_week_coverage = [
+        sum(1 for report_date in current_dates[index * 7:(index + 1) * 7] if report_date.isoformat() in report_date_set)
+        for index in range(4)
+    ]
+    previous_week_coverage = [
+        sum(1 for report_date in previous_dates[index * 7:(index + 1) * 7] if report_date.isoformat() in report_date_set)
+        for index in range(4)
+    ]
+    is_premium = store.store_group == 'premium'
+    current_week_totals = []
+    for week_index in range(4, 8):
+        units = sum(
+            all_sales.get(str(product.id), [[0] * 7 for _ in range(8)])[week_index][day_index]
+            for product in products for day_index in range(7)
+        )
+        revenue = sum(
+            sum(all_sales.get(str(product.id), [[0] * 7 for _ in range(8)])[week_index])
+            * float((product.sp_p if is_premium else product.sp_np) or 0)
+            for product in products
+        )
+        current_week_totals.append({'units': units, 'revenue': revenue})
+
+    product_summaries = {}
+    for product in products:
+        weekly_sales = all_sales.get(str(product.id), [[0] * 7 for _ in range(8)])
+        current_averages = []
+        previous_averages = []
+        for day_index in range(7):
+            current_total = sum(weekly_sales[week_index][day_index] for week_index in range(4, 8))
+            previous_total = sum(weekly_sales[week_index][day_index] for week_index in range(0, 4))
+            current_averages.append(current_total / current_counts[day_index] if current_counts[day_index] else None)
+            previous_averages.append(previous_total / previous_counts[day_index] if previous_counts[day_index] else None)
+        current_total_average = sum(value or 0 for value in current_averages) if sum(current_counts) else None
+        previous_total_average = sum(value or 0 for value in previous_averages) if sum(previous_counts) else None
+        trend_percent = (
+            ((current_total_average - previous_total_average) / previous_total_average) * 100
+            if current_total_average is not None and previous_total_average
+            else None
+        )
+        product_summaries[str(product.id)] = {
+            'current_weekday_averages': current_averages,
+            'previous_weekday_averages': previous_averages,
+            'current_total_average': current_total_average,
+            'previous_total_average': previous_total_average,
+            'trend_percent': trend_percent,
+        }
+
+    return {
+        'type': 'success',
+        'store_id': store.id,
+        'anchor_date': anchor_date.isoformat(),
+        'current_period': {'start': period_start.isoformat(), 'end': anchor_date.isoformat(), 'report_dates': [day for day in all_report_dates if period_start.isoformat() <= day <= anchor_date.isoformat()]},
+        'previous_period': {'start': previous_start.isoformat(), 'end': previous_end.isoformat(), 'report_dates': [day for day in all_report_dates if previous_start.isoformat() <= day <= previous_end.isoformat()]},
+        'current_week_coverage': current_week_coverage,
+        'previous_week_coverage': previous_week_coverage,
+        'current_week_totals': current_week_totals,
+        'current_weekday_report_counts': current_counts,
+        'previous_weekday_report_counts': previous_counts,
+        'products': product_summaries,
     }
  
  

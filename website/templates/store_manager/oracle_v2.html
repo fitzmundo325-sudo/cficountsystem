@@ -305,6 +305,29 @@
   
   
   
+  .week-accordion-panel {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition: grid-template-rows 280ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 180ms ease;
+  }
+
+  .week-accordion-panel.is-open {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+
+  .week-accordion-inner {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .week-accordion-panel {
+      transition: none;
+    }
+  }
+
   .unrender > *:not(:first-child) {
   display: none;
 }
@@ -350,6 +373,7 @@
       class="hidden flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors whitespace-nowrap">
       <i class="bi bi-check-lg"></i> Submit Order
     </button>
+    <span id="oracle-draft-saved" class="hidden text-[11px] font-medium text-slate-500 whitespace-nowrap" data-show-in="store admin" aria-live="polite"></span>
     <button id="btn-fullscreen" data-show-in="store admin"
       class="hidden flex items-center gap-1.5 bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors whitespace-nowrap"
       title="Expand the order table to fullscreen">
@@ -521,7 +545,7 @@
           <table id="order-table" class="w-full text-xs" style="min-width:1100px">
             <thead class="bg-slate-100 text-slate-600 sticky top-0">
               <tr>
-                <th class="px-3 py-3 text-left font-semibold">Product</th>
+                <th class="sticky left-0 z-20 bg-slate-100 px-3 py-3 text-left font-semibold">Product</th>
                 <th class="px-3 py-3 text-center font-semibold">Total Ending Inventory<br><span
                     class="text-[9px] text-slate-400 font-normal">from InvenSync</span></th>
                 <th class="px-3 py-3 text-center font-semibold text-sky-600">Incoming Delivery Stock<br><span
@@ -591,15 +615,58 @@
   <div class="view" id="view-daily-averages">
     <div class="mb-5">
       <h1 class="text-2xl font-bold text-slate-900">Daily Average Consumption</h1>
-      <p class="mt-1 text-sm text-slate-500">Based on POS Sold for the latest 4 weeks. You can adjust values before
-        ordering.</p>
+      <p class="mt-1 text-sm text-slate-500">Review reported sales, compare demand trends, and see the current Oracle order suggestion.</p>
+      <div class="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-3">
+        <label class="text-xs font-semibold text-slate-600">Analysis end date
+          <input id="daily-average-end-date" type="date" class="mt-1 block rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal text-slate-800">
+        </label>
+        <button id="daily-average-apply-date" type="button" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700">Apply date range</button>
+        <p class="w-full text-xs text-slate-500">The selected date ends the four-week analysis window; trends compare it with the four weeks before that.</p>
+      </div>
+      <div class="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs">
+        <p id="daily-average-coverage" class="font-semibold text-slate-500">Loading reporting period…</p>
+        <p id="daily-average-previous-period" class="mt-1 text-slate-500"></p>
+        <p id="daily-average-weekday-coverage" class="mt-1 text-slate-500" aria-live="polite"></p>
+        <p id="daily-average-missing-dates" class="mt-1 text-slate-500" aria-live="polite"></p>
+        <p id="daily-average-low-coverage" class="mt-2 hidden rounded-md bg-amber-50 px-2.5 py-2 font-semibold text-amber-800" role="status"></p>
+      </div>
     </div>
-    <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3">
+    <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3 mt-8">
       <i class="bi bi-calendar3 text-sky-500"></i> Weekly Sales — Units Sold Per Product Per Day
     </div>
+    <p class="mb-2 text-xs text-slate-500">Click a week to reveal its daily product quantities.</p>
     <div id="weekly-sales-tables-container" class="space-y-4"></div>
+    <p class="mb-3 mt-2 text-xs text-slate-500">Weekly table key: <strong>—</strong> means no Daily Report was submitted; <strong>0</strong> means a report was submitted and recorded zero sales.</p>
     <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3 mt-8">
       <i class="bi bi-graph-up text-sky-500"></i> Average Daily Sold &amp; Product Share (4-Week Summary)
+    </div>
+    <p class="mb-3 text-xs text-slate-500">Each weekday average uses only dates with a submitted Daily Report. A reported 0 counts as zero sales; a missing report is excluded. Trends compare this period with the prior four weeks. Weeks with missing reports are flagged. Current Plan Suggestion uses the active Oracle order dates and sales average; the selected analysis period does not change the live order plan.</p>
+    <div class="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3">
+      <label class="min-w-[220px] flex-1">
+        <span class="sr-only">Search daily averages</span>
+        <input id="daily-average-search" type="search" placeholder="Search product or category…"
+          class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100">
+      </label>
+      <label>
+        <span class="sr-only">Filter by category</span>
+        <select id="daily-average-category" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
+          <option value="all">All categories</option>
+        </select>
+      </label>
+      <label>
+        <span class="sr-only">Sort daily averages</span>
+        <select id="daily-average-sort" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
+          <option value="name">Product name A–Z</option>
+          <option value="units">Average units: high to low</option>
+          <option value="revenue">Average revenue: high to low</option>
+        </select>
+      </label>
+      <span id="daily-average-result-count" class="text-xs text-slate-500"></span>
+      <button id="daily-average-export" type="button"
+        title="Export the currently visible products to Excel"
+        class="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700">
+        <i class="bi bi-file-earmark-excel"></i> Export Excel
+      </button>
     </div>
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
       <div class="oracle-scroll">
@@ -614,7 +681,9 @@
               <th class="px-3 py-3 text-center font-semibold">Fri</th>
               <th class="px-3 py-3 text-center font-semibold">Sat</th>
               <th class="px-3 py-3 text-center font-semibold">Sun</th>
-              <th class="px-3 py-3 text-center font-semibold">4-Wk Total</th>
+              <th class="px-3 py-3 text-center font-semibold">Avg/Week</th>
+              <th class="px-3 py-3 text-center font-semibold">Trend vs Prior 4 Weeks</th>
+              <th class="px-3 py-3 text-center font-semibold">Current Plan Suggestion</th>
             </tr>
           </thead>
           <tbody id="avg-summary-body" class="divide-y divide-slate-100"></tbody>
@@ -653,7 +722,7 @@
 <!-- Templates - single-day order table -->
 <template id="tmpl-order-row">
   <tr class="hover:bg-slate-50">
-    <td class="px-3 py-2.5">
+    <td class="sticky left-0 z-[1] bg-white px-3 py-2.5 shadow-[2px_0_3px_-2px_rgba(15,23,42,0.25)]">
       <div class="font-semibold text-slate-800" data-cell="name"></div>
       <div class="text-[10px] text-slate-400" data-cell="code"></div>
     </td>
@@ -673,6 +742,7 @@
         <span class="font-bold text-emerald-600 text-sm" data-cell="suggested"></span>
         <span class="text-[10px] text-slate-500 font-semibold" data-cell="max"></span>
       </div>
+      <div class="mt-1 hidden text-[9px] font-semibold" data-cell="approval_status"></div>
     </td>
     <td class="px-3 py-2.5 text-center">
       <input type="number" min="0" class="input-final" data-cell="final_input">
@@ -743,9 +813,27 @@
       <strong class="text-emerald-600" data-cell="suggested"></strong>
       <span class="text-slate-400" data-cell="max"></span>
     </div>
+    <div class="mt-1 hidden text-[9px] font-semibold" data-cell="approval_status"></div>
     <input type="number" min="0" class="input-final weekly-final-input" data-cell="final_input">
   </td>
 </template>
+
+<div id="oracle-submit-review" class="hidden fixed inset-0 z-[100] overflow-y-auto bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="oracle-review-title">
+  <div class="mx-auto my-8 w-full max-w-4xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+    <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+      <div><h2 id="oracle-review-title" class="text-lg font-bold text-slate-900">Review Oracle Order</h2><p id="oracle-review-summary" class="mt-1 text-sm text-slate-500"></p></div>
+      <button type="button" id="oracle-review-close" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">Close</button>
+    </div>
+    <div id="oracle-review-warnings" class="hidden border-b border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900"></div>
+    <div class="max-h-[55vh] overflow-auto">
+      <table class="w-full text-xs"><thead class="sticky top-0 bg-slate-100 text-slate-600"><tr><th class="px-4 py-2 text-left">Product</th><th class="px-3 py-2 text-left">Delivery</th><th class="px-3 py-2 text-center">Suggested</th><th class="px-3 py-2 text-center">Requested</th><th class="px-3 py-2 text-center">Review</th><th class="px-3 py-2 text-right">Est. Cost</th></tr></thead><tbody id="oracle-review-lines" class="divide-y divide-slate-100"></tbody></table>
+    </div>
+    <div class="flex flex-wrap justify-end gap-2 border-t border-slate-200 px-5 py-4">
+      <button type="button" id="oracle-review-cancel" class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Continue editing</button>
+      <button type="button" id="oracle-review-confirm" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">Confirm and Submit</button>
+    </div>
+  </div>
+</div>
 
 <template id="tmpl-weekly-foot-row">
   <tr class="bg-slate-800 font-semibold text-xs">
@@ -876,13 +964,17 @@
 <!-- Templates - daily averages -->
 <template id="tmpl-week-card">
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-    <div class="px-5 py-3 flex flex-wrap gap-2 items-center justify-between" data-cell="header">
-      <div class="flex flex-wrap items-center gap-2" data-cell="badges">
+    <button type="button" class="w-full px-5 py-3 flex flex-wrap gap-2 items-center justify-between text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-300" data-cell="header" aria-expanded="false">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5" data-cell="badges">
         <span class="text-sm font-bold text-white" data-cell="label"></span>
+        <span class="text-xs text-white/75" data-cell="range"></span>
       </div>
-      <span class="text-xs text-white/70">Units: <strong class="text-white" data-cell="units"></strong> | Rev: <strong class="text-white" data-cell="revenue"></strong><span class="hidden" data-cell="bulk_detail"> | Bulk: <strong class="text-white" data-cell="bulk_sales"></strong> / TC <strong class="text-white" data-cell="bulk_tc"></strong></span></span>
-    </div>
-    <div class="oracle-scroll daily-average-scroll weekly-average-scroll">
+      <span class="flex items-center gap-3 text-xs text-white/70"><span>Units: <strong class="text-white" data-cell="units"></strong> | Rev: <strong class="text-white" data-cell="revenue"></strong><span class="hidden" data-cell="bulk_detail"> | Bulk: <strong class="text-white" data-cell="bulk_sales"></strong> / TC <strong class="text-white" data-cell="bulk_tc"></strong></span></span><i class="bi bi-chevron-down text-white" data-cell="toggle_icon" aria-hidden="true"></i></span>
+    </button>
+    <div class="week-accordion-panel" data-cell="week_content" aria-hidden="true" inert>
+      <div class="week-accordion-inner">
+        <p class="hidden px-4 py-3 text-sm text-slate-500" data-cell="week_loading" aria-live="polite">Loading week data…</p>
+        <div class="hidden oracle-scroll daily-average-scroll weekly-average-scroll" data-cell="week_table">
       <table class="w-full table-fixed border-collapse text-xs" style="min-width:1230px">
         <thead class="bg-slate-100 text-slate-600">
           <tr data-cell="head_row">
@@ -899,7 +991,9 @@
             <td class="w-[110px] border-l border-white/25 px-3 py-2 text-center font-bold text-xs text-white" data-cell="week_revenue"></td>
           </tr>
         </tfoot>
-      </table>
+        </table>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -951,6 +1045,8 @@
       <div class="text-[9px] text-slate-500" data-cell="total_pct"></div>
       <div class="text-[9px] text-emerald-600" data-cell="total_rev"></div>
     </td>
+    <td class="px-3 py-2.5 text-center" data-cell="trend_cell"><span class="font-bold text-xs" data-cell="trend"></span><div class="text-[9px] text-slate-500" data-cell="trend_detail"></div></td>
+    <td class="px-3 py-2.5 text-center" data-cell="suggestion_cell"><span class="font-bold text-xs text-slate-800" data-cell="suggestion"></span><div class="text-[9px] text-slate-500" data-cell="suggestion_date"></div></td>
   </tr>
 </template>
 
@@ -964,19 +1060,21 @@
 
 <template id="tmpl-avg-foot-row">
   <tr class="bg-slate-800">
-    <td class="px-3 py-2.5 font-bold text-xs text-white">Day Avg</td>
+    <td class="px-3 py-2.5 font-bold text-xs text-white" data-cell="label">Day Avg</td>
     <td class="px-3 py-2.5 text-center" data-cell="total_cell">
       <div class="font-bold text-xs text-sky-300" data-cell="total_avg"></div>
-      <div class="text-[9px] text-slate-400">100%</div>
+      <div class="text-[9px] text-slate-400" data-cell="total_pct"></div>
       <div class="text-[9px] text-sky-300" data-cell="total_rev"></div>
     </td>
+    <td class="px-3 py-2.5 text-center text-xs text-slate-400" data-cell="trend_cell">—</td>
+    <td class="px-3 py-2.5 text-center text-xs text-slate-400" data-cell="suggestion_cell">—</td>
   </tr>
 </template>
 
 <template id="tmpl-avg-foot-cell">
   <td class="px-3 py-2.5 text-center">
     <div class="font-bold text-xs text-white" data-cell="avg"></div>
-    <div class="text-[9px] text-slate-400">100%</div>
+    <div class="text-[9px] text-slate-400" data-cell="pct"></div>
     <div class="text-[9px] text-sky-300" data-cell="rev"></div>
   </td>
 </template>
@@ -988,6 +1086,6 @@
 {% endblock %}
 
 {% block extra_js %}
-	<script defer src="{{ url_for('static', filename='js/handles/oracle_handles.js', v='oracle-history-pending-20261024') }}"></script>
+	<script defer src="{{ url_for('static', filename='js/handles/oracle_handles.js', v='oracle-four-week-insights-20261028a') }}"></script>
 {% endblock %}
 	
