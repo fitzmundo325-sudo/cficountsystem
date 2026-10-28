@@ -105,6 +105,11 @@
               <i class="bi bi-graph-up"></i>
               Performance
             </button>
+            <button type="button" data-store-daily-averages-trigger data-store-id="{{ s.id }}" data-store-name="{{ s.name }}"
+                    class="inline-flex items-center justify-center gap-1 px-2.5 py-2 text-[11px] font-semibold rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition">
+              <i class="bi bi-bar-chart-line"></i>
+              Daily Averages
+            </button>
           </div>
         </div>
       </div>
@@ -186,6 +191,56 @@
 
 </div><!-- /content -->
 
+<div id="store-daily-averages-modal" class="hidden fixed inset-0 z-[90] overflow-y-auto bg-slate-950/60 p-3 sm:p-6" aria-hidden="true">
+  <div class="min-h-full flex items-center justify-center">
+    <section role="dialog" aria-modal="true" aria-labelledby="store-daily-averages-title" class="w-full max-w-7xl max-h-[92vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <header class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
+        <div>
+          <h2 id="store-daily-averages-title" class="text-xl font-bold text-slate-900">Store Daily Averages</h2>
+          <p id="store-daily-averages-period" class="mt-1 text-sm text-slate-500">Average POS units by weekday for the latest 4 weeks.</p>
+        </div>
+        <button type="button" onclick="closeStoreDailyAverages()" class="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100" aria-label="Close daily averages">Close</button>
+      </header>
+      <div class="border-b border-slate-200 bg-sky-50 px-5 py-3 text-xs text-sky-900 sm:px-6">
+        Read-only view. Averages use the same POS sales calculation as the Store Manager Oracle page; bulk-order quantities are excluded.
+      </div>
+      <div class="min-h-0 flex-1 overflow-auto">
+        <div class="px-4 pt-5 sm:px-6">
+          <h3 class="mb-1 border-b-2 border-sky-500 pb-2 text-base font-bold text-slate-800">Weekly Sales — Units Sold Per Product Per Day</h3>
+          <p class="mb-4 text-xs text-slate-500">Week 1 is the oldest week; Week 4 is the latest week in the selected period.</p>
+          <div id="store-daily-averages-weekly-container" class="space-y-4"></div>
+          <h3 class="mb-3 mt-8 border-b-2 border-sky-500 pb-2 text-base font-bold text-slate-800">Average Daily Sold &amp; Product Share (4-Week Summary)</h3>
+        </div>
+        <div class="overflow-x-auto px-4 pb-5 sm:px-6">
+        <table class="min-w-[1120px] w-full text-xs">
+          <thead class="sticky top-0 bg-slate-100 text-slate-600">
+            <tr>
+              <th class="px-4 py-3 text-left font-semibold">Product</th>
+              <th class="px-3 py-3 text-center font-semibold">Mon</th>
+              <th class="px-3 py-3 text-center font-semibold">Tue</th>
+              <th class="px-3 py-3 text-center font-semibold">Wed</th>
+              <th class="px-3 py-3 text-center font-semibold">Thu</th>
+              <th class="px-3 py-3 text-center font-semibold">Fri</th>
+              <th class="px-3 py-3 text-center font-semibold">Sat</th>
+              <th class="px-3 py-3 text-center font-semibold">Sun</th>
+              <th class="px-3 py-3 text-center font-semibold">4-Wk Total</th>
+            </tr>
+          </thead>
+          <tbody id="store-daily-averages-body" class="divide-y divide-slate-100">
+            <tr><td colspan="9" class="px-4 py-12 text-center text-slate-500">Choose a store to load its averages.</td></tr>
+          </tbody>
+          <tfoot id="store-daily-averages-foot" class="border-t-2 border-slate-200 bg-slate-50 font-bold text-slate-800"></tfoot>
+        </table>
+        </div>
+      </div>
+      <footer class="flex justify-between gap-4 border-t border-slate-200 px-5 py-3 text-xs text-slate-500 sm:px-6">
+        <span id="store-daily-averages-count">—</span>
+        <span>Average weekday units, product share, and revenue.</span>
+      </footer>
+    </section>
+  </div>
+</div>
+
 <!-- Toast container -->
 <div id="o-toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
@@ -203,10 +258,336 @@ const STORES = [
 const SAVED_BUFFERS = {{ buffers_map | tojson }};  // {[store_id, product_id]: pct}
 const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const fmt=d=>d.toISOString().split('T')[0];
+const CLUSTER_ID={{ cluster.id }};
+
+function closeStoreDailyAverages(){
+  const modal=document.getElementById('store-daily-averages-modal');
+  if(!modal)return;
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden','true');
+  document.documentElement.classList.remove('overflow-hidden');
+}
+
+function averageNumber(value){
+  return Number(value||0).toLocaleString('en-PH',{minimumFractionDigits:1,maximumFractionDigits:1});
+}
+
+function averageMoney(value){
+  return `₱${Number(value||0).toLocaleString('en-PH',{maximumFractionDigits:0})}`;
+}
+
+function averageDateLabel(value,includeYear=false){
+  return new Date(`${value}T00:00:00`).toLocaleDateString('en-PH',{month:'short',day:'numeric',...(includeYear?{year:'numeric'}:{})});
+}
+
+function averageDateKey(value){
+  return `${value.getFullYear()}-${String(value.getMonth()+1).padStart(2,'0')}-${String(value.getDate()).padStart(2,'0')}`;
+}
+
+function renderStoreWeeklyAverages(data){
+  const container=document.getElementById('store-daily-averages-weekly-container');
+  const products=data.products||[];
+  const sales=data.pos_sales_data||{};
+  const bulkProducts=data.bulk_order_product_data||{};
+  const bulkWeeks=data.bulk_order_weeks||[];
+  const displayedDays=[1,2,3,4,5,6,0];
+  const weekdayNames=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const weekColors=[
+    {header:'bg-amber-800',cell:'bg-amber-50 text-amber-900'},
+    {header:'bg-sky-800',cell:'bg-sky-50 text-sky-900'},
+    {header:'bg-emerald-800',cell:'bg-emerald-50 text-emerald-900'},
+    {header:'bg-rose-800',cell:'bg-rose-50 text-rose-900'}
+  ];
+  const start=new Date(`${data.period_start}T00:00:00`);
+  container.replaceChildren();
+
+  for(let weekIndex=0;weekIndex<4;weekIndex++){
+    const weekStart=new Date(start);
+    weekStart.setDate(weekStart.getDate()+weekIndex*7);
+    const weekEnd=new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate()+6);
+    const weekSales=sales;
+    const dailyTotals=displayedDays.map(()=>0);
+    let weekUnits=0;
+    let weekRevenue=0;
+    const card=document.createElement('section');
+    card.className='overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm';
+    const header=document.createElement('div');
+    header.className=`flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-white ${weekColors[weekIndex].header}`;
+    const heading=document.createElement('div');
+    heading.className='text-sm font-bold';
+    heading.textContent=`Week ${weekIndex+1} (${averageDateLabel(averageDateKey(weekStart))} – ${averageDateLabel(averageDateKey(weekEnd))})`;
+    const weekMeta=bulkWeeks[weekIndex]||{};
+    const headerTotals=document.createElement('div');
+    headerTotals.className='text-xs text-white/90';
+    headerTotals.textContent=`Units: 0 | Rev: ${averageMoney(0)}${weekMeta.has_bulk_order?` | Bulk: ${averageMoney(weekMeta.sales||0)} / TC ${Number(weekMeta.tc||0).toLocaleString('en-PH')}`:''}`;
+    const weekBadge=document.createElement('span');
+    weekBadge.className=weekMeta.has_bulk_order?'rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800':'rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/80';
+    weekBadge.textContent=weekMeta.has_bulk_order?'Bulk Order':'No Bulk Order';
+    const headingGroup=document.createElement('div');
+    headingGroup.className='flex flex-wrap items-center gap-2';
+    headingGroup.append(heading,weekBadge);
+    header.append(headingGroup,headerTotals);
+    card.appendChild(header);
+
+    const scroll=document.createElement('div');
+    scroll.className='overflow-x-auto';
+    const table=document.createElement('table');
+    table.className='w-full min-w-[1100px] table-fixed border-collapse text-xs';
+    const thead=document.createElement('thead');
+    thead.className='bg-slate-100 text-slate-600';
+    const headerRow=document.createElement('tr');
+    const headers=['Product',...weekdayNames,'Total','Revenue'];
+    headers.forEach((label,index)=>{
+      const th=document.createElement('th');
+      th.className=`border-l border-slate-200 px-3 py-2 ${index===0?'w-[190px] text-left':'text-center'}`;
+      th.textContent=label;
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    const tbody=document.createElement('tbody');
+    tbody.className='divide-y divide-slate-100';
+
+    products.forEach(product=>{
+      const row=document.createElement('tr');
+      row.className='hover:bg-slate-50';
+      const nameCell=document.createElement('td');
+      nameCell.className='px-3 py-2 font-semibold text-slate-800';
+      const name=document.createElement('div');
+      name.textContent=product.name||'Unnamed product';
+      const category=document.createElement('div');
+      category.className='text-[10px] font-normal text-slate-400';
+      category.textContent=product.category||'';
+      nameCell.append(name,category);
+      row.appendChild(nameCell);
+      let productUnits=0;
+      displayedDays.forEach((dayIndex,columnIndex)=>{
+        const qty=Number(weekSales[String(product.id)]?.[weekIndex]?.[dayIndex])||0;
+        const bulkRaw=bulkProducts[String(product.id)]?.[weekIndex]?.[dayIndex];
+        const bulkQty=Number(typeof bulkRaw==='object'?bulkRaw?.qty:bulkRaw)||0;
+        productUnits+=qty;
+        dailyTotals[columnIndex]+=qty;
+        const cell=document.createElement('td');
+        cell.className='border-l border-slate-200 px-2 py-2 text-center';
+        const value=document.createElement('span');
+        value.className=`inline-flex min-w-10 items-center justify-center rounded-md px-2 py-1 font-semibold ${weekColors[weekIndex].cell}`;
+        value.textContent=Number(qty).toLocaleString('en-PH');
+        cell.appendChild(value);
+        if(bulkQty>0){
+          const tags=document.createElement('div');
+          tags.className='mt-1 flex flex-wrap justify-center gap-1 text-[9px]';
+          const posTag=document.createElement('span');
+          posTag.className='rounded-full bg-sky-100 px-1.5 py-0.5 font-bold text-sky-800';
+          posTag.textContent=`POS ${Math.max(qty-bulkQty,0)}`;
+          const bulkTag=document.createElement('span');
+          bulkTag.className='rounded-full bg-amber-100 px-1.5 py-0.5 font-bold text-amber-800';
+          bulkTag.textContent=`BO ${bulkQty}`;
+          tags.append(posTag,bulkTag);
+          cell.appendChild(tags);
+        }
+        row.appendChild(cell);
+      });
+      const totalCell=document.createElement('td');
+      totalCell.className='border-l border-slate-200 px-3 py-2 text-center font-bold text-slate-700';
+      totalCell.textContent=Number(productUnits).toLocaleString('en-PH');
+      row.appendChild(totalCell);
+      const revenue=productUnits*Number(product.selling_price||0);
+      weekUnits+=productUnits;
+      weekRevenue+=revenue;
+      const revenueCell=document.createElement('td');
+      revenueCell.className='border-l border-slate-200 px-3 py-2 text-center font-semibold text-amber-700';
+      revenueCell.textContent=averageMoney(revenue);
+      row.appendChild(revenueCell);
+      tbody.appendChild(row);
+    });
+
+    const tfoot=document.createElement('tfoot');
+    const footRow=document.createElement('tr');
+    footRow.className=`font-bold text-white ${weekColors[weekIndex].header}`;
+    const footLabel=document.createElement('td');
+    footLabel.className='px-3 py-2';
+    footLabel.textContent='Day Total';
+    footRow.appendChild(footLabel);
+    displayedDays.forEach((dayIndex,columnIndex)=>{
+      const cell=document.createElement('td');
+      cell.className='border-l border-white/20 px-2 py-2 text-center';
+      cell.textContent=Number(dailyTotals[columnIndex]).toLocaleString('en-PH');
+      footRow.appendChild(cell);
+    });
+    const unitsCell=document.createElement('td');
+    unitsCell.className='border-l border-white/20 px-3 py-2 text-center';
+    unitsCell.textContent=Number(weekUnits).toLocaleString('en-PH');
+    footRow.appendChild(unitsCell);
+    const revenueCell=document.createElement('td');
+    revenueCell.className='border-l border-white/20 px-3 py-2 text-center';
+    revenueCell.textContent=averageMoney(weekRevenue);
+    footRow.appendChild(revenueCell);
+    tfoot.appendChild(footRow);
+    table.append(thead,tbody,tfoot);
+    scroll.appendChild(table);
+    card.appendChild(scroll);
+    headerTotals.textContent=`Units: ${Number(weekUnits).toLocaleString('en-PH')} | Rev: ${averageMoney(weekRevenue)}${weekMeta.has_bulk_order?` | Bulk: ${averageMoney(weekMeta.sales||0)} / TC ${Number(weekMeta.tc||0).toLocaleString('en-PH')}`:''}`;
+    container.appendChild(card);
+  }
+}
+
+function renderStoreAverageSummary(data){
+  const body=document.getElementById('store-daily-averages-body');
+  const foot=document.getElementById('store-daily-averages-foot');
+  const sales=data.pos_sales_data||{};
+  const products=data.products||[];
+  const weekdays=[1,2,3,4,5,6,0];
+  const dayUnits=weekdays.map(()=>0);
+  const dayRevenue=weekdays.map(()=>0);
+  const averagesByProduct=products.map(product=>{
+    const weeks=sales[String(product.id)]||[];
+    const averages=weekdays.map(dayIndex=>weeks.reduce((sum,week)=>sum+(Number(week?.[dayIndex])||0),0)/4);
+    const revenues=averages.map(value=>value*Number(product.selling_price||0));
+    averages.forEach((value,index)=>{dayUnits[index]+=value;dayRevenue[index]+=revenues[index];});
+    return {product,averages,revenues,totalAverage:averages.reduce((sum,value)=>sum+value,0),totalRevenue:revenues.reduce((sum,value)=>sum+value,0)};
+  });
+  const totalRevenue=dayRevenue.reduce((sum,value)=>sum+value,0);
+  body.replaceChildren();
+  averagesByProduct.forEach(({product,averages,revenues,totalAverage,totalRevenue:productRevenue})=>{
+    const row=document.createElement('tr');
+    row.className='hover:bg-slate-50';
+    const nameCell=document.createElement('td');
+    nameCell.className='px-3 py-2.5';
+    const name=document.createElement('div');
+    name.className='font-semibold text-slate-800';
+    name.textContent=product.name||'Unnamed product';
+    const category=document.createElement('div');
+    category.className='text-[10px] text-slate-400';
+    category.textContent=product.category||'';
+    nameCell.append(name,category);
+    row.appendChild(nameCell);
+    averages.forEach((average,index)=>{
+      const cell=document.createElement('td');
+      cell.className='px-3 py-2.5 text-center';
+      const avg=document.createElement('div');
+      avg.className='font-bold text-slate-800';
+      avg.textContent=averageNumber(average);
+      const share=document.createElement('div');
+      share.className='text-[9px] font-semibold text-purple-500';
+      share.textContent=`${dayRevenue[index]>0?(revenues[index]/dayRevenue[index]*100).toFixed(1):'0.0'}%`;
+      const revenue=document.createElement('div');
+      revenue.className='text-[9px] font-medium text-emerald-600';
+      revenue.textContent=averageMoney(revenues[index]);
+      cell.append(avg,share,revenue);
+      row.appendChild(cell);
+    });
+    const totalCell=document.createElement('td');
+    totalCell.className='px-3 py-2.5 text-center';
+    const total=document.createElement('div');
+    total.className='font-bold text-sky-600';
+    total.textContent=averageNumber(totalAverage);
+    const totalShare=document.createElement('div');
+    totalShare.className='text-[9px] text-slate-500';
+    totalShare.textContent=`${totalRevenue>0?(productRevenue/totalRevenue*100).toFixed(1):'0.0'}%`;
+    const totalRevenueLabel=document.createElement('div');
+    totalRevenueLabel.className='text-[9px] text-emerald-600';
+    totalRevenueLabel.textContent=averageMoney(productRevenue);
+    totalCell.append(total,totalShare,totalRevenueLabel);
+    row.appendChild(totalCell);
+    body.appendChild(row);
+  });
+
+  const footerRow=document.createElement('tr');
+  const label=document.createElement('td');
+  label.className='px-3 py-2.5 font-bold text-slate-800';
+  label.textContent='All Products';
+  footerRow.appendChild(label);
+  dayUnits.forEach((average,index)=>{
+    const cell=document.createElement('td');
+    cell.className='px-3 py-2.5 text-center';
+    const avg=document.createElement('div');
+    avg.className='font-bold text-slate-800';
+    avg.textContent=averageNumber(average);
+    const revenue=document.createElement('div');
+    revenue.className='text-[9px] text-emerald-600';
+    revenue.textContent=averageMoney(dayRevenue[index]);
+    cell.append(avg,revenue);
+    footerRow.appendChild(cell);
+  });
+  const totalCell=document.createElement('td');
+  totalCell.className='px-3 py-2.5 text-center';
+  const totalAverage=document.createElement('div');
+  totalAverage.className='font-bold text-sky-700';
+  totalAverage.textContent=averageNumber(dayUnits.reduce((sum,value)=>sum+value,0));
+  const totalRevenueLabel=document.createElement('div');
+  totalRevenueLabel.className='text-[9px] text-emerald-600';
+  totalRevenueLabel.textContent=averageMoney(totalRevenue);
+  totalCell.append(totalAverage,totalRevenueLabel);
+  footerRow.appendChild(totalCell);
+  foot.replaceChildren(footerRow);
+}
+
+async function openStoreDailyAverages(storeId,storeName){
+  const modal=document.getElementById('store-daily-averages-modal');
+  const title=document.getElementById('store-daily-averages-title');
+  const period=document.getElementById('store-daily-averages-period');
+  const body=document.getElementById('store-daily-averages-body');
+  const foot=document.getElementById('store-daily-averages-foot');
+  const weekly=document.getElementById('store-daily-averages-weekly-container');
+  const count=document.getElementById('store-daily-averages-count');
+  if(!modal||!body||!foot||!weekly)return;
+
+  title.textContent=`${storeName} Daily Averages`;
+  period.textContent='Loading the latest four weeks of POS sales…';
+  body.innerHTML='<tr><td colspan="9" class="px-4 py-12 text-center text-slate-500">Loading averages…</td></tr>';
+  foot.replaceChildren();
+  weekly.replaceChildren();
+  count.textContent='';
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden','false');
+  document.documentElement.classList.add('overflow-hidden');
+  modal.querySelector('[aria-label="Close daily averages"]')?.focus();
+
+  try{
+    const params=new URLSearchParams({store_id:String(storeId),cluster_id:String(CLUSTER_ID)});
+    const selectedDate=document.getElementById('dateInput')?.value;
+    if(selectedDate)params.set('date',selectedDate);
+    const response=await fetch(`/apis/cluster_oracle_daily_averages?${params.toString()}`,{cache:'no-store'});
+    const data=await response.json();
+    if(!response.ok||data.type!=='success')throw new Error(data.message||'Could not load store averages.');
+
+    const dateLabel=value=>averageDateLabel(value,true);
+    period.textContent=`Average POS units by weekday · ${dateLabel(data.period_start)} – ${dateLabel(data.anchor_date)}`;
+    renderStoreWeeklyAverages(data);
+    renderStoreAverageSummary(data);
+    count.textContent=`${(data.products||[]).length} products · Weeks 1–4`;
+    if(!(data.products||[]).length){
+      body.innerHTML='<tr><td colspan="9" class="px-4 py-12 text-center text-slate-500">No products are available for this store.</td></tr>';
+      foot.replaceChildren();
+      weekly.innerHTML='<div class="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-slate-500">No product data is available.</div>';
+    }
+  }catch(error){
+    body.replaceChildren();
+    const errorRow=document.createElement('tr');
+    const errorCell=document.createElement('td');
+    errorCell.colSpan=9;
+    errorCell.className='px-4 py-12 text-center text-rose-600';
+    errorCell.textContent=error.message||'Could not load store averages.';
+    errorRow.appendChild(errorCell);
+    body.appendChild(errorRow);
+    period.textContent='Unable to retrieve this store’s averages.';
+  }
+}
+
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape')closeStoreDailyAverages();
+});
+document.getElementById('store-daily-averages-modal')?.addEventListener('click',event=>{
+  if(event.target===event.currentTarget)closeStoreDailyAverages();
+});
+document.querySelectorAll('[data-store-daily-averages-trigger]').forEach(button=>{
+  button.addEventListener('click',()=>openStoreDailyAverages(button.dataset.storeId,button.dataset.storeName));
+});
 
 const DB={
-  pendingApprovals:[],
-  approvalHistory:[],
+  pendingApprovals:{{ oracle_pending_approvals|tojson }},
+  approvalHistory:{{ oracle_approval_history|tojson }},
+  canApprove:{{ can_approve_oracle_orders|tojson }},
   storeBuffers:{},
   settings:{clusterName:'{{ cluster.name }}',defaultBuffer:20,leadTime:1}
 };
@@ -260,44 +641,39 @@ function renderApprovals(){
     const t=new Date(a.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
     const variance=a.suggested>0?Math.round((a.finalOrder-a.suggested)/a.suggested*100):0;
     const varianceColor=variance>20?'text-rose-600':variance<-20?'text-amber-600':'text-slate-600';
+    const reason=variance>0?`${variance}% above suggested`:`${Math.abs(variance)}% below suggested`;
+    const actions=DB.canApprove?`<button onclick="approveOrder(${Number(a.id)})" class="flex items-center gap-1 px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors"><i class="bi bi-check-lg"></i> Approve</button><button onclick="rejectOrder(${Number(a.id)})" class="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 text-rose-500 rounded-lg text-xs font-semibold hover:bg-rose-50 transition-colors"><i class="bi bi-x-lg"></i> Reject</button>`:'Read only';
     return `<tr class="hover:bg-slate-50">
-      <td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${a.orderDate}</div><div class="text-[10px] text-slate-400">${t}</div></td>
-      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${a.storeName}</div><div class="text-[10px] text-slate-400">Store ${a.storeId}</div></td>
-      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${a.productName}</div><div class="text-[10px] text-slate-400">${a.productId}</div></td>
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-700">${escapeOracleHtml(a.orderDate)}</div><div class="text-[10px] text-slate-400">${escapeOracleHtml(t)}</div><div class="text-[10px] text-slate-500">Delivery: ${escapeOracleHtml(a.deliveryDate||'')}</div></td>
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${escapeOracleHtml(a.storeName)}</div><div class="text-[10px] text-slate-400">Store ${escapeOracleHtml(a.storeId)}</div></td>
+      <td class="px-3 py-2.5"><div class="font-semibold text-slate-800">${escapeOracleHtml(a.productName)}</div><div class="text-[10px] text-slate-400">${escapeOracleHtml(a.productId)}</div><div class="mt-1 text-[10px] font-semibold text-amber-700">Reason: ${a.finalOrder} requested vs ${a.suggested} suggested (${reason}; range ${a.minSug}–${a.maxSug})</div></td>
       <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full"><span class="text-[10px] text-slate-500">${a.minSug}</span><span class="font-bold text-emerald-600">${a.suggested}</span><span class="text-[10px] text-slate-500">${a.maxSug}</span></div></td>
       <td class="px-3 py-2.5 text-center font-bold text-rose-500 text-sm">${a.finalOrder}</td>
       <td class="px-3 py-2.5 text-center font-semibold text-slate-800">₱${a.totalCost.toLocaleString()}</td>
       <td class="px-3 py-2.5 text-slate-500 text-xs">${a.manager}</td>
       <td class="px-3 py-2.5 text-center"><span class="px-2 py-1 rounded-full text-[10px] font-semibold ${varianceColor} ${variance>0?'bg-rose-50':'bg-amber-50'}">${variance>0?'+':''}${variance}%</span></td>
-      <td class="px-3 py-2.5 text-center"><div class="flex gap-2 justify-center">
-        <button onclick="approveOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700 transition-colors" title="Approve this order"><i class="bi bi-check-lg"></i> Approve</button>
-        <button onclick="rejectOrder('${a.id}')" class="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 text-rose-500 rounded-lg text-xs font-semibold hover:bg-rose-50 transition-colors" title="Reject this order"><i class="bi bi-x-lg"></i> Reject</button>
-      </div></td>
+      <td class="px-3 py-2.5 text-center"><div class="flex gap-2 justify-center">${actions}</div></td>
     </tr>`;
   }).join('');
 }
 
-function approveOrder(id){
-  const i=DB.pendingApprovals.findIndex(x=>x.id===id);
-  if(i<0)return;
-  const o=DB.pendingApprovals.splice(i,1)[0];
-  o.approvedAt=new Date().toISOString();
-  o.status='Approved';
-  DB.approvalHistory.push(o);
-  updateApprovalsBadge();
-  renderApprovals();
-  showToast(`Order from ${o.storeName} approved!`,'success');
+async function decideOracleOrder(id, decision){
+  if(!DB.canApprove)return;
+  const order=DB.pendingApprovals.find(item=>Number(item.id)===Number(id));
+  if(!order)return;
+  try{
+    const response=await fetch(`/cluster-manager/oracle/order/${encodeURIComponent(id)}/decision`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})});
+    const result=await response.json();
+    if(!response.ok||!result.ok)throw new Error(result.error||'Could not update this order.');
+    DB.pendingApprovals=DB.pendingApprovals.filter(item=>Number(item.id)!==Number(id));
+    order.status=result.status;order.reviewer=result.reviewer;order.reviewedAt=result.reviewedAt;
+    DB.approvalHistory.unshift(order);
+    updateApprovalsBadge();renderApprovals();renderClusterDashboard();renderStorePerformance();
+    showToast(`Order from ${order.storeName} ${decision==='approve'?'approved':'rejected'} by ${result.reviewer}.`,'success');
+  }catch(error){showToast(error.message||'Unable to save approval decision.','error');}
 }
-
-function rejectOrder(id){
-  const i=DB.pendingApprovals.findIndex(x=>x.id===id);
-  if(i<0)return;
-  const o=DB.pendingApprovals[i];
-  DB.pendingApprovals.splice(i,1);
-  updateApprovalsBadge();
-  renderApprovals();
-  showToast(`Order from ${o.storeName} rejected.`,'info');
-}
+function approveOrder(id){return decideOracleOrder(id,'approve');}
+function rejectOrder(id){return decideOracleOrder(id,'reject');}
 
 function renderOrderForm(){
   const grid=document.getElementById('of-store-grid');

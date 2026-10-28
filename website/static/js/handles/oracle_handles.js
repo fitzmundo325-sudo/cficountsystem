@@ -26,12 +26,23 @@ let ORACLE_MEMORY_KEY = 'oracle-weekly-memory-';
 let ORACLE_INCOMING_ORDERS = {};
 let ORACLE_ORDER_HISTORY = [];
 let POS_SALES_DATA = {};
+let SALES_REPORT_DATES = [];
 let BULK_ORDER_WEEKS = [];
 let BULK_ORDER_PRODUCT_DATA = {};
+let ORACLE_DATA_READY = false;
+let ORACLE_DATA_LOAD_PROMISE = null;
+let DAILY_AVERAGES_RENDERED = false;
+let DAILY_AVERAGES_RENDER_PROMISE = null;
+let DAILY_AVERAGE_REPORT_COUNTS = null;
+let DAILY_AVERAGE_END_DATE = '';
+let DAILY_AVERAGE_ANALYSIS = null;
+let DAILY_AVERAGE_WEEK_CACHE = new Map();
+let DAILY_AVERAGE_WEEK_REQUESTS = new Map();
 let salesData = {};
 let DB = { inventory: [], orderHistory: [], pendingApprovals: [], settings: { leadTime: 1, buffer: 20 } };
 let productBuffers = {};
 let orderFinalQtys = {};
+let PENDING_ORDER_REVIEW = null;
 let weeklyFinalQtys = {};
 let weeklyProductRows = [''];
 let orderMode = CLUSTER_VIEW ? 'single' : 'weekly';
@@ -171,6 +182,7 @@ function buildSales() {
 
 function applySalesData() {
   salesData = buildSales();
+  DAILY_AVERAGE_REPORT_COUNTS = null;
   Object.entries(POS_SALES_DATA || {}).forEach(([pid, weeks]) => {
     if (!salesData[pid] || !Array.isArray(weeks)) return;
     for (let w = 0; w < Math.min(4, weeks.length); w++) {
@@ -220,10 +232,12 @@ function applyOracleData(data) {
   ORACLE_INCOMING_ORDERS = data.oracle_incoming_orders || {};
   ORACLE_ORDER_HISTORY = data.oracle_order_history || [];
   POS_SALES_DATA = data.pos_sales_data || {};
+  SALES_REPORT_DATES = data.sales_report_dates || [];
   BULK_ORDER_WEEKS = data.bulk_order_weeks || [];
   BULK_ORDER_PRODUCT_DATA = data.bulk_order_product_data || {};
   ORACLE_MEMORY_KEY = 'oracle-weekly-memory-' + STORE.id;
   applySalesData();
+  ORACLE_DATA_READY = true;
   DB.inventory = PRODUCTS.map(p => {
     let iv = INVENSYNC_DATA[String(p.id)];
     return { productId: p.id, productName: p.name, category: p.category, unit: p.unit, currentStock: iv ? iv.ending_stock : 0, reorderPoint: 0, lastUpdated: fmt(new Date()) };
@@ -272,6 +286,17 @@ async function loadOracleData() {
   }
 }
 
+async function ensureOracleDataLoaded() {
+  if (ORACLE_DATA_READY) return true;
+  if (!ORACLE_DATA_LOAD_PROMISE) {
+    ORACLE_DATA_LOAD_PROMISE = loadOracleData().finally(() => {
+      ORACLE_DATA_LOAD_PROMISE = null;
+    });
+  }
+  await ORACLE_DATA_LOAD_PROMISE;
+  return ORACLE_DATA_READY;
+}
+
 // ---------------------------------------------------------------- Weekly memory
 function saveWeeklyMemory() {
   try {
@@ -282,12 +307,23 @@ function saveWeeklyMemory() {
       manager: document.getElementById('order-manager')?.value || '',
       forecast: document.getElementById('forecast-event')?.value || '1.00',
       targetSales: document.getElementById('target-sales-input')?.value || '',
+      orderMode,
       productRows: weeklyProductRows,
-      finalQtys: weeklyFinalQtys
+      finalQtys: weeklyFinalQtys,
+      singleFinalQtys: orderFinalQtys,
+      savedAt: new Date().toISOString()
     }));
+    updateDraftSavedLabel(new Date());
+    return true;
   } catch (error) {
     return false;
   }
+}
+
+function updateDraftSavedLabel(savedAt) {
+  const label = document.getElementById('oracle-draft-saved');
+  if (!label) return;
+  label.textContent = savedAt ? `Draft saved ${savedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'No saved draft';
 }
 
 function restoreWeeklyMemory() {
@@ -300,8 +336,11 @@ function restoreWeeklyMemory() {
     if (memory.manager) document.getElementById('order-manager').value = memory.manager;
     if (memory.forecast) document.getElementById('forecast-event').value = memory.forecast;
     if (memory.targetSales !== undefined) document.getElementById('target-sales-input').value = memory.targetSales;
+    if (memory.orderMode === 'single' || memory.orderMode === 'weekly') orderMode = memory.orderMode;
     if (Array.isArray(memory.productRows) && memory.productRows.length) weeklyProductRows = memory.productRows.map(String);
     if (memory.finalQtys && typeof memory.finalQtys === 'object') weeklyFinalQtys = memory.finalQtys;
+    if (memory.singleFinalQtys && typeof memory.singleFinalQtys === 'object') orderFinalQtys = memory.singleFinalQtys;
+    updateDraftSavedLabel(memory.savedAt ? new Date(memory.savedAt) : null);
     return true;
   } catch (error) {
     return false;
@@ -321,22 +360,22 @@ function getAvgDay(pid, dayName) {
   let di = DAYS.indexOf(dayName);
   if (di < 0) return 0;
   let w = salesData[pid];
-  return w ? w.reduce((s, wk, weekIndex) => s + getOrganicSales(pid, weekIndex, di), 0) / 4 : 0;
+  const reportCount = getDailyAverageReportCounts()[di] || 0;
+  return w && reportCount ? w.reduce((s, wk, weekIndex) => s + getOrganicSales(pid, weekIndex, di), 0) / reportCount : 0;
 }
 
 function getAvgDayIdx(pid, di) {
   let w = salesData[pid];
-  return w ? w.reduce((s, wk, weekIndex) => s + getOrganicSales(pid, weekIndex, di), 0) / 4 : 0;
+  const reportCount = getDailyAverageReportCounts()[di] || 0;
+  return w && reportCount ? w.reduce((s, wk, weekIndex) => s + getOrganicSales(pid, weekIndex, di), 0) / reportCount : 0;
 }
 
 function getAvgDaily(pid) {
   let w = salesData[pid];
   if (!w) return 0;
-  let t = 0, c = 0;
-  w.forEach((wk, weekIndex) => wk.forEach((v, dayIndex) => {
-    t += getOrganicSales(pid, weekIndex, dayIndex);
-    c++;
-  }));
+  const t = w.reduce((sum, week, weekIndex) =>
+    sum + week.reduce((weekSum, _, dayIndex) => weekSum + getOrganicSales(pid, weekIndex, dayIndex), 0), 0);
+  const c = getDailyAverageReportCounts().reduce((sum, count) => sum + count, 0);
   return c ? t / c : 0;
 }
 
@@ -512,6 +551,7 @@ function onNewOrderClick() {
 
 function setOrderMode(mode) {
   orderMode = mode === 'single' ? 'single' : 'weekly';
+  saveWeeklyMemory();
   applyOrderModePanels();
   renderOrderTable();
   renderWeeklyOrderTable();
@@ -651,7 +691,7 @@ function renderOrderForm() {
   }
   updateDelivDay();
   updateMultiplier();
-  setOrderMode(CLUSTER_VIEW ? 'single' : 'weekly');
+  setOrderMode(CLUSTER_VIEW ? 'single' : (restored ? orderMode : 'weekly'));
 }
 
 // ---------------------------------------------------------------- Single-day order table
@@ -776,6 +816,7 @@ function renderOrderTable() {
 
 function onFinalChange(pid, val) {
   orderFinalQtys[pid] = val === '' ? undefined : val;
+  saveWeeklyMemory();
   renderOrderTable();
 }
 
@@ -1518,32 +1559,192 @@ function onExportHistoryClick(event) {
 }
 
 // ---------------------------------------------------------------- Daily averages
-function getBulkOrderCell(productId, w, di) {
+function getBulkOrderCell(productId, w, di, weekBulkProductData = null) {
+  if (weekBulkProductData) {
+    const ranged = weekBulkProductData[String(productId)]?.[di] || null;
+    if (!ranged) return { qty: 0, date: '' };
+    if (typeof ranged === 'number') return { qty: Number(ranged) || 0, date: '' };
+    return { qty: Number(ranged.qty || 0) || 0, date: ranged.date || ranged.upload_date || '' };
+  }
   let raw = (BULK_ORDER_PRODUCT_DATA[productId] && BULK_ORDER_PRODUCT_DATA[productId][w] && BULK_ORDER_PRODUCT_DATA[productId][w][di]) || null;
   if (!raw) return { qty: 0, date: '' };
   if (typeof raw === 'number') return { qty: Number(raw) || 0, date: '' };
   return { qty: Number(raw.qty || 0) || 0, date: raw.date || raw.upload_date || '' };
 }
 
-async function renderDailyAverages() {
-	
-	postMessageToParent("function:showSpaLoading");
-	
-	await renderWeeklyTables();
-	await renderAvgSummary();
-   
+function getDailyAverageDateRanges(anchorDate = ORACLE_DATE) {
+  const anchor = anchorDate ? new Date(`${anchorDate}T00:00:00`) : new Date();
+  const start = new Date(anchor);
+  start.setDate(start.getDate() - 27);
+  const dates = Array.from({ length: 28 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
+  return Array.from({ length: 4 }, (_, weekIndex) => dates.slice(weekIndex * 7, weekIndex * 7 + 7));
 }
 
-function buildWeekDayCell(p, w, di, m) {
-  let bulkCell = getBulkOrderCell(p.id, w, di);
+function getDailyAverageReportCounts() {
+  if (DAILY_AVERAGE_REPORT_COUNTS) return DAILY_AVERAGE_REPORT_COUNTS;
+  const knownReports = new Set(SALES_REPORT_DATES || []);
+  const counts = Array(7).fill(0);
+  getDailyAverageDateRanges().flat().forEach(date => {
+    if (knownReports.has(fmt(date))) counts[date.getDay()] += 1;
+  });
+  DAILY_AVERAGE_REPORT_COUNTS = counts;
+  return counts;
+}
+
+function formatDailyAverageDate(date) {
+  return date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function renderDailyAverageCoverage() {
+  const summary = document.getElementById('daily-average-coverage');
+  const missing = document.getElementById('daily-average-missing-dates');
+  if (!summary || !missing) return;
+  if (!DAILY_AVERAGE_ANALYSIS) return;
+  const currentPeriod = DAILY_AVERAGE_ANALYSIS.current_period;
+  const previousPeriod = DAILY_AVERAGE_ANALYSIS.previous_period;
+  const currentReports = currentPeriod.report_dates || [];
+  const previousReports = previousPeriod.report_dates || [];
+  const currentStart = new Date(`${currentPeriod.start}T00:00:00`);
+  const currentEnd = new Date(`${currentPeriod.end}T00:00:00`);
+  const previousStart = new Date(`${previousPeriod.start}T00:00:00`);
+  const previousEnd = new Date(`${previousPeriod.end}T00:00:00`);
+  const currentDays = Array.from({ length: 28 }, (_, index) => { const d = new Date(currentStart); d.setDate(d.getDate() + index); return d; });
+  const currentMissing = currentDays.filter(day => !currentReports.includes(fmt(day)));
+  const currentCount = currentReports.length;
+  const previousCount = previousReports.length;
+  const weekdayReportCounts = DAILY_AVERAGE_ANALYSIS.current_weekday_report_counts || [];
+  const currentPeriodStart = formatDailyAverageDate(currentStart);
+  const currentPeriodEnd = formatDailyAverageDate(currentEnd);
+  const previousPeriodStart = formatDailyAverageDate(previousStart);
+  const previousPeriodEnd = formatDailyAverageDate(previousEnd);
+
+  summary.textContent = `Selected period: ${currentPeriodStart}–${currentPeriodEnd} · Reports recorded: ${currentCount}/28 days`;
+  const weekdayCoverage = document.getElementById('daily-average-weekday-coverage');
+  if (weekdayCoverage) {
+    weekdayCoverage.textContent = `Average coverage by weekday: ${DISP_TO_JS.map(dayIndex => `${DAYS[dayIndex].slice(0, 3)} ${weekdayReportCounts[dayIndex] || 0}/4`).join(' · ')}`;
+  }
+  summary.classList.toggle('text-amber-700', currentMissing.length > 0);
+  summary.classList.toggle('text-slate-500', currentMissing.length === 0);
+  const previousSummary = document.getElementById('daily-average-previous-period');
+  if (previousSummary) previousSummary.textContent = `Prior period: ${previousPeriodStart}–${previousPeriodEnd} · Reports recorded: ${previousCount}/28 days`;
+  missing.textContent = currentMissing.length
+    ? `Missing selected-period reports: ${currentMissing.map(formatDailyAverageDate).join(', ')}`
+    : 'All dates in the selected period have a sales report.';
+  missing.classList.toggle('text-amber-700', currentMissing.length > 0);
+  missing.classList.toggle('text-slate-500', currentMissing.length === 0);
+  const lowCoverage = document.getElementById('daily-average-low-coverage');
+  const incompleteWeeks = (DAILY_AVERAGE_ANALYSIS.current_week_coverage || []).map((days, index) => ({ days, index: index + 1 })).filter(week => week.days < 7);
+  const previousIncomplete = (DAILY_AVERAGE_ANALYSIS.previous_week_coverage || []).some(days => days < 7);
+  if (lowCoverage) {
+    lowCoverage.classList.toggle('hidden', incompleteWeeks.length === 0 && !previousIncomplete);
+    lowCoverage.textContent = incompleteWeeks.length
+      ? `Low coverage warning: selected Week ${incompleteWeeks.map(week => `${week.index} (${week.days}/7 days)`).join(', ')} incomplete; their averages may be less reliable.${previousIncomplete ? ' The prior period also has incomplete weeks, so the trend comparison is less reliable.' : ''}`
+      : (previousIncomplete ? 'The prior period has incomplete weeks, so the trend comparison is less reliable.' : '');
+  }
+}
+
+async function loadDailyAverageAnalysis(anchorDate = DAILY_AVERAGE_END_DATE) {
+  const date = anchorDate || ORACLE_DATE || fmt(new Date());
+  const response = await fetch(`/apis/oracle_daily_averages?date=${encodeURIComponent(date)}`, { cache: 'no-store' });
+  const data = await response.json();
+  if (!response.ok || data.type !== 'success') throw new Error(data.message || 'Unable to load Daily Averages for that date.');
+  DAILY_AVERAGE_END_DATE = data.anchor_date;
+  DAILY_AVERAGE_ANALYSIS = data;
+  DAILY_AVERAGE_WEEK_CACHE = new Map();
+  DAILY_AVERAGE_WEEK_REQUESTS = new Map();
+  const dateInput = document.getElementById('daily-average-end-date');
+  if (dateInput) dateInput.value = DAILY_AVERAGE_END_DATE;
+  renderDailyAverageCoverage();
+  await renderWeeklyTables();
+  renderAvgSummary();
+}
+
+async function applyDailyAverageDateRange(event) {
+  const button = event?.currentTarget || document.getElementById('daily-average-apply-date');
+  const dateInput = document.getElementById('daily-average-end-date');
+  const selectedDate = dateInput?.value || '';
+  if (!selectedDate) {
+    showToast('Choose an analysis end date first.', 'error');
+    return;
+  }
+  const originalText = button?.textContent;
+  if (button) { button.disabled = true; button.textContent = 'Loading…'; }
+  postMessageToParent('function:showSpaLoading');
+  try {
+    await loadDailyAverageAnalysis(selectedDate);
+    DAILY_AVERAGES_RENDERED = true;
+  } catch (error) {
+    showToast(error.message || 'Unable to update the analysis period.', 'error');
+  } finally {
+    postMessageToParent('function:hideSpaLoading');
+    if (button) { button.disabled = false; button.textContent = originalText || 'Apply date range'; }
+  }
+}
+
+async function renderDailyAverages() {
+	if (DAILY_AVERAGES_RENDERED) { renderAvgSummary(); return; }
+	if (DAILY_AVERAGES_RENDER_PROMISE) return DAILY_AVERAGES_RENDER_PROMISE;
+
+	DAILY_AVERAGES_RENDER_PROMISE = (async () => {
+		postMessageToParent("function:showSpaLoading");
+		try {
+			if (!(await ensureOracleDataLoaded())) throw new Error('Oracle sales data is not available.');
+			DAILY_AVERAGE_END_DATE = ORACLE_DATE || fmt(new Date());
+			const dateInput = document.getElementById('daily-average-end-date');
+			if (dateInput) { dateInput.value = DAILY_AVERAGE_END_DATE; dateInput.max = DAILY_AVERAGE_END_DATE; }
+			populateDailyAverageCategories();
+			await loadDailyAverageAnalysis(DAILY_AVERAGE_END_DATE);
+			DAILY_AVERAGES_RENDERED = true;
+		} catch (error) {
+			showToast(error.message || 'Unable to render Daily Averages.', 'error');
+		} finally {
+			postMessageToParent("function:hideSpaLoading");
+			DAILY_AVERAGES_RENDER_PROMISE = null;
+		}
+	})();
+	return DAILY_AVERAGES_RENDER_PROMISE;
+}
+
+function toggleWeekCard(event) {
+  const header = event.currentTarget;
+  const card = header.parentElement;
+  const content = card?.querySelector('[data-cell="week_content"]');
+  const icon = getCell(header, 'toggle_icon');
+  if (!content || !icon) return;
+  const isExpanded = header.getAttribute('aria-expanded') === 'true';
+  const shouldExpand = !isExpanded;
+  header.setAttribute('aria-expanded', String(shouldExpand));
+  content.setAttribute('aria-hidden', String(!shouldExpand));
+  content.inert = !shouldExpand;
+  content.classList.toggle('is-open', shouldExpand);
+  icon.classList.toggle('bi-chevron-down', isExpanded);
+  icon.classList.toggle('bi-chevron-up', shouldExpand);
+  if (shouldExpand && card.dataset.loaded !== 'true') loadWeekCardDetails(card);
+}
+
+function buildWeekDayCell(p, w, di, m, reportDate, knownReports, weekSales, weekBulkProductData) {
+  let bulkCell = getBulkOrderCell(p.id, w, di, weekBulkProductData);
   let bulkQty = bulkCell.qty || 0;
-  let totalQty = salesData[p.id][w][di] || 0;
-  let posQty = Math.max(totalQty - bulkQty, 0);
+  let totalQty = Number(weekSales[String(p.id)]?.[di] || 0);
+  let posQty = totalQty;
   let td = cloneTemplate('tmpl-week-day-cell');
   let qtyEl = setCell(td, 'qty', totalQty);
-  qtyEl.style.background = m.iBg;
-  qtyEl.style.border = '1px solid ' + m.iBd;
-  qtyEl.style.color = m.iClr;
+  const hasReport = reportDate ? knownReports.has(fmt(reportDate)) : true;
+  if (hasReport) {
+    qtyEl.style.background = m.iBg;
+    qtyEl.style.border = '1px solid ' + m.iBd;
+    qtyEl.style.color = m.iClr;
+  } else {
+    qtyEl.textContent = '—';
+    qtyEl.title = `No Daily Report submitted for ${formatDailyAverageDate(reportDate)}`;
+    qtyEl.style.background = '#E2E8F0';
+    qtyEl.style.border = '1px dashed #94A3B8';
+    qtyEl.style.color = '#475569';
+  }
   if (bulkQty > 0) {
     getCell(td, 'tags').classList.remove('hidden');
     let posEl = setCell(td, 'pos', 'POS ' + posQty);
@@ -1556,36 +1757,50 @@ function buildWeekDayCell(p, w, di, m) {
 
 
 
-function buildWeekCard(w) {
+function renderWeekCardDetails(card, w, data) {
   let m = WEEK_META[w];
-  let card = cloneTemplate('tmpl-week-card');
-  let dTots = DISP_TO_JS.map(di => PRODUCTS.reduce((s, p) => s + (salesData[p.id][w][di] || 0), 0));
+  const weekDates = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(`${data.week_start}T00:00:00`);
+    day.setDate(day.getDate() + index);
+    return day;
+  });
+  const knownReports = new Set(data.report_dates || []);
+  const weekSales = data.sales_data || {};
+  const weekBulkProductData = data.bulk_order_product_data || {};
+  let dTots = DISP_TO_JS.map(di => PRODUCTS.reduce((s, p) => s + Number(weekSales[String(p.id)]?.[di] || 0), 0));
   let wTot = dTots.reduce((s, v) => s + v, 0);
-  let totRev = PRODUCTS.reduce((s, p) => s + DISP_TO_JS.reduce((ss, di) => ss + (salesData[p.id][w][di] || 0), 0) * p.sellingPrice, 0);
-  let bulkInfo = BULK_ORDER_WEEKS[w] || {};
-  addClasses(getCell(card, 'header'), m.hCls);
-  addClasses(getCell(card, 'foot_row'), m.hCls);
-  setCell(card, 'label', m.label);
-  getCell(card, 'badges').appendChild(cloneTemplate(bulkInfo.has_bulk_order ? 'tmpl-week-bulk-yes' : 'tmpl-week-bulk-no'));
-  setCell(card, 'units', wTot);
-  setCell(card, 'revenue', '₱' + totRev.toLocaleString());
+  let totRev = PRODUCTS.reduce((s, p) => s + DISP_TO_JS.reduce((ss, di) => ss + Number(weekSales[String(p.id)]?.[di] || 0), 0) * p.sellingPrice, 0);
+  const bulkInfo = data.bulk_order_week || {};
+  const badges = getCell(card, 'badges');
+  if (badges && !badges.querySelector('[data-week-bulk-badge]')) {
+    const badge = cloneTemplate(bulkInfo.has_bulk_order ? 'tmpl-week-bulk-yes' : 'tmpl-week-bulk-no');
+    badge.dataset.weekBulkBadge = 'true';
+    badges.appendChild(badge);
+  }
   if (bulkInfo.has_bulk_order) {
     getCell(card, 'bulk_detail').classList.remove('hidden');
     setCell(card, 'bulk_sales', '₱' + Number(bulkInfo.sales || 0).toLocaleString());
     setCell(card, 'bulk_tc', Number(bulkInfo.tc || 0).toLocaleString());
   }
   let headRow = getCell(card, 'head_row');
-  DAYS_DISPLAY.forEach(d => {
-    let th = cloneTemplate('tmpl-week-day-head');
-    setCell(th, 'day', d.slice(0, 3));
-    insertBeforeCell(headRow, th, 'week_total_head');
-  });
+  if (headRow.dataset.daysBuilt !== 'true') {
+    DAYS_DISPLAY.forEach(d => {
+      let th = cloneTemplate('tmpl-week-day-head');
+      setCell(th, 'day', d.slice(0, 3));
+      insertBeforeCell(headRow, th, 'week_total_head');
+    });
+    headRow.dataset.daysBuilt = 'true';
+  }
   let body = getCell(card, 'body');
+  body.replaceChildren();
   PRODUCTS.forEach(p => {
     let row = cloneTemplate('tmpl-week-product-row');
     setCell(row, 'name', p.name);
-    DISP_TO_JS.forEach(di => insertBeforeCell(row, buildWeekDayCell(p, w, di, m), 'total'));
-    let rTot = DISP_TO_JS.reduce((s, di) => s + (salesData[p.id][w][di] || 0), 0);
+    DISP_TO_JS.forEach(di => {
+      const reportDate = weekDates.find(date => date.getDay() === di);
+      insertBeforeCell(row, buildWeekDayCell(p, w, di, m, reportDate, knownReports, weekSales, weekBulkProductData), 'total');
+    });
+    let rTot = DISP_TO_JS.reduce((s, di) => s + Number(weekSales[String(p.id)]?.[di] || 0), 0);
     setCell(row, 'total', rTot);
     setCell(row, 'revenue', '₱' + (rTot * p.sellingPrice).toLocaleString());
     body.appendChild(row);
@@ -1598,88 +1813,323 @@ function buildWeekCard(w) {
   });
   setCell(card, 'week_total', wTot);
   setCell(card, 'week_revenue', '₱' + totRev.toLocaleString());
-  return card;
+  const loading = getCell(card, 'week_loading');
+  const table = getCell(card, 'week_table');
+  loading?.classList.add('hidden');
+  table?.classList.remove('hidden');
+  const observer = getRowObserver();
+  if (observer) body.querySelectorAll('tr').forEach(row => observer.observe(row));
+  card.dataset.loaded = 'true';
 }
 
+async function loadWeekCardDetails(card) {
+  const weekIndex = Number(card.dataset.weekIndex);
+  const loading = getCell(card, 'week_loading');
+  const table = getCell(card, 'week_table');
+  loading?.classList.remove('hidden');
+  loading.textContent = 'Loading week data…';
+  table?.classList.add('hidden');
+  const cacheKey = `${DAILY_AVERAGE_END_DATE}|${weekIndex}`;
+  try {
+    let data = DAILY_AVERAGE_WEEK_CACHE.get(cacheKey);
+    if (!data) {
+      if (!DAILY_AVERAGE_WEEK_REQUESTS.has(cacheKey)) {
+        const params = new URLSearchParams({ date: DAILY_AVERAGE_END_DATE, week: String(weekIndex) });
+        DAILY_AVERAGE_WEEK_REQUESTS.set(cacheKey, fetch(`/apis/oracle_daily_averages?${params}`, { cache: 'no-store' }).then(async response => {
+          const result = await response.json();
+          if (!response.ok || result.type !== 'success') throw new Error(result.message || 'Unable to load week data.');
+          return result;
+        }));
+      }
+      data = await DAILY_AVERAGE_WEEK_REQUESTS.get(cacheKey);
+      DAILY_AVERAGE_WEEK_CACHE.set(cacheKey, data);
+    }
+    renderWeekCardDetails(card, weekIndex, data);
+  } catch (error) {
+    if (loading) loading.textContent = `${error.message || 'Unable to load this week.'} Click the week header to retry.`;
+    if (table) table.classList.add('hidden');
+    card.dataset.loaded = 'false';
+  } finally {
+    DAILY_AVERAGE_WEEK_REQUESTS.delete(cacheKey);
+  }
+}
 
 async function renderWeeklyTables() {
   let con = document.getElementById('weekly-sales-tables-container');
-  con.innerHTML = '';
-  for (let w = 0; w < 4; w++){ 
-	await sleep(300);
-	con.appendChild(buildWeekCard(w))
-  
-  };
+  unobserveRows(con);
+  con.replaceChildren();
+  const weekCards = document.createDocumentFragment();
+  for (let w = 0; w < 4; w++) {
+    const card = cloneTemplate('tmpl-week-card');
+    const header = getCell(card, 'header');
+    const weekDates = getDailyAverageDateRanges(DAILY_AVERAGE_END_DATE)[w] || [];
+    const reportDates = new Set(DAILY_AVERAGE_ANALYSIS?.current_period?.report_dates || []);
+    const reportedDays = weekDates.filter(date => reportDates.has(fmt(date))).length;
+    const totals = DAILY_AVERAGE_ANALYSIS?.current_week_totals?.[w] || {};
+    card.dataset.weekIndex = String(w);
+    header.addEventListener('click', toggleWeekCard);
+    addClasses(header, WEEK_META[w].hCls);
+    addClasses(getCell(card, 'foot_row'), WEEK_META[w].hCls);
+    setCell(card, 'label', WEEK_META[w].label);
+    const rangeEl = setCell(card, 'range', `${formatDailyAverageDate(weekDates[0])}–${formatDailyAverageDate(weekDates[6])} · Reports ${reportedDays}/7`);
+    if (reportedDays < 7) rangeEl.classList.add('text-amber-200');
+    setCell(card, 'units', Number(totals.units || 0).toLocaleString());
+    setCell(card, 'revenue', '₱' + Number(totals.revenue || 0).toLocaleString());
+    weekCards.appendChild(card);
+  }
+  con.appendChild(weekCards);
 }
 
 
 
-async function renderAvgSummary() {
-  let aS = {}, aR = {};
-	
-	
-
-  PRODUCTS.forEach(p => {
-    aS[p.id] = DISP_TO_JS.map(di => salesData[p.id].reduce((s, wk, weekIndex) => s + getOrganicSales(p.id, weekIndex, di), 0) / 4);
-    aR[p.id] = aS[p.id].map(a => a * p.sellingPrice);
+function getDailyAverageSummaryData() {
+  const analysis = DAILY_AVERAGE_ANALYSIS;
+  if (!analysis) return { records: [], weekdayRevenueTotals: Array(7).fill(0), totalRevenue: 0, weekdayReportCounts: [] };
+  const weekdayReportCounts = analysis.current_weekday_report_counts || [];
+  const records = PRODUCTS.map(product => {
+    const source = analysis.products?.[String(product.id)] || {};
+    const rawWeekdayAverages = source.current_weekday_averages || Array(7).fill(null);
+    const rawPreviousWeekdayAverages = source.previous_weekday_averages || Array(7).fill(null);
+    const weekdayAverages = DISP_TO_JS.map(dayIndex => rawWeekdayAverages[dayIndex] ?? null);
+    const previousWeekdayAverages = DISP_TO_JS.map(dayIndex => rawPreviousWeekdayAverages[dayIndex] ?? null);
+    const weekdayRevenue = weekdayAverages.map(average => average === null ? 0 : average * product.sellingPrice);
+    return {
+      product,
+      weekdayAverages,
+      previousWeekdayAverages,
+      weekdayRevenue,
+      totalAverage: source.current_total_average,
+      previousTotalAverage: source.previous_total_average,
+      trendPercent: source.trend_percent,
+      totalRevenue: weekdayRevenue.reduce((sum, value) => sum + value, 0),
+    };
   });
-  let cU = DISP_TO_JS.map((_, ci) => PRODUCTS.reduce((s, p) => s + aS[p.id][ci], 0));
-  let cR = DISP_TO_JS.map((_, ci) => PRODUCTS.reduce((s, p) => s + aR[p.id][ci], 0));
-  let pU = PRODUCTS.map(p => aS[p.id].reduce((s, v) => s + v, 0));
-  let pR = PRODUCTS.map(p => aR[p.id].reduce((s, v) => s + v, 0));
-  let gU = pU.reduce((s, v) => s + v, 0);
-  let gR = pR.reduce((s, v) => s + v, 0);
+  const weekdayRevenueTotals = DISP_TO_JS.map((_, dayIndex) => records.reduce((sum, record) => sum + record.weekdayRevenue[dayIndex], 0));
+  const totalRevenue = records.reduce((sum, record) => sum + record.totalRevenue, 0);
+  return { records, weekdayRevenueTotals, totalRevenue, weekdayReportCounts };
+}
+
+function getCurrentOraclePlanSuggestions() {
+  const dates = getPlanDates();
+  if (!dates.length) return new Map();
+  return new Map(PRODUCTS.map(product => [product.id, getWeeklySuggestions(product, dates, getEffMult())[0]]));
+}
+
+function populateDailyAverageCategories() {
+  const select = document.getElementById('daily-average-category');
+  if (!select || select.dataset.populated === 'true') return;
+  const categories = [...new Set(PRODUCTS.map(product => String(product.category || '').trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+  categories.forEach(category => {
+    const option = document.createElement('option');
+    option.value = category;
+    option.textContent = category;
+    select.appendChild(option);
+  });
+  select.dataset.populated = 'true';
+}
+
+function getVisibleDailyAverageRecords(summaryData) {
+  const query = (document.getElementById('daily-average-search')?.value || '').trim().toLocaleLowerCase();
+  const category = document.getElementById('daily-average-category')?.value || 'all';
+  const sort = document.getElementById('daily-average-sort')?.value || 'name';
+  const records = summaryData.records.filter(record => {
+    const product = record.product;
+    const matchesCategory = category === 'all' || String(product.category || '') === category;
+    const searchable = `${product.name || ''} ${product.code || ''} ${product.category || ''}`.toLocaleLowerCase();
+    return matchesCategory && (!query || searchable.includes(query));
+  });
+  records.sort((left, right) => {
+    if (sort === 'units' && right.totalAverage !== left.totalAverage) return right.totalAverage - left.totalAverage;
+    if (sort === 'revenue' && right.totalRevenue !== left.totalRevenue) return right.totalRevenue - left.totalRevenue;
+    return String(left.product.name || '').localeCompare(String(right.product.name || ''), undefined, { numeric: true, sensitivity: 'base' });
+  });
+  return records;
+}
+
+function renderAvgSummary() {
+  const summaryData = getDailyAverageSummaryData();
+  const visibleRecords = getVisibleDailyAverageRecords(summaryData);
+  const visibleCount = document.getElementById('daily-average-result-count');
+  if (visibleCount) visibleCount.textContent = `Showing ${visibleRecords.length} of ${summaryData.records.length} products`;
+  const filtered = visibleRecords.length !== summaryData.records.length;
+  const visibleWeekdayRevenue = DISP_TO_JS.map((_, dayIndex) =>
+    visibleRecords.reduce((sum, record) => sum + record.weekdayRevenue[dayIndex], 0)
+  );
+  const visibleWeekdayAverages = DISP_TO_JS.map((_, dayIndex) =>
+    visibleRecords.reduce((sum, record) => sum + record.weekdayAverages[dayIndex], 0)
+  );
+  const visibleAverage = visibleRecords.reduce((sum, record) => sum + (record.totalAverage || 0), 0);
+  const visibleRevenue = visibleRecords.reduce((sum, record) => sum + record.totalRevenue, 0);
+  const planSuggestions = getCurrentOraclePlanSuggestions();
   let body = document.getElementById('avg-summary-body');
   let foot = document.getElementById('avg-summary-foot');
   unobserveRows(body);
   body.innerHTML = '';
   foot.innerHTML = '';
-  
-  for (let pi = 0; pi < PRODUCTS.length; pi++) {
-	  
-	  
-	  
-    let p = PRODUCTS[pi];
+  const summaryRows = document.createDocumentFragment();
+
+  visibleRecords.forEach(record => {
+    const p = record.product;
     let row = cloneTemplate('tmpl-avg-row');
     setCell(row, 'name', p.name);
     setCell(row, 'category', p.category);
 
-    for (let ci = 0; ci < aS[p.id].length; ci++) {
-      let avg = aS[p.id][ci];
-      let rev = aR[p.id][ci];
-      let pct = cR[ci] > 0 ? (rev / cR[ci] * 100).toFixed(1) : '0.0';
+    for (let ci = 0; ci < record.weekdayAverages.length; ci++) {
+      const avg = record.weekdayAverages[ci];
+      const rev = record.weekdayRevenue[ci];
+      const overallDayRevenue = summaryData.weekdayRevenueTotals[ci];
+      let pct = overallDayRevenue > 0 ? (rev / overallDayRevenue * 100).toFixed(1) : '0.0';
       let td = cloneTemplate('tmpl-avg-cell');
-      setCell(td, 'avg', avg.toFixed(1));
+      setCell(td, 'avg', avg === null ? '—' : avg.toFixed(1));
       setCell(td, 'pct', pct + '%');
       setCell(td, 'rev', '₱' + rev.toFixed(0));
       insertBeforeCell(row, td, 'total_cell');
     }
 
-    let pct4 = gR > 0 ? (pR[pi] / gR * 100).toFixed(1) : '0.0';
-    setCell(row, 'total_avg', pU[pi].toFixed(1));
+    const pct4 = summaryData.totalRevenue > 0 ? (record.totalRevenue / summaryData.totalRevenue * 100).toFixed(1) : '0.0';
+    setCell(row, 'total_avg', record.totalAverage === null ? '—' : record.totalAverage.toFixed(1));
     setCell(row, 'total_pct', pct4 + '%');
-    setCell(row, 'total_rev', '₱' + pR[pi].toFixed(0));
-    appendObservedRow(body, row);
+    setCell(row, 'total_rev', '₱' + record.totalRevenue.toFixed(0));
+    const trend = getCell(row, 'trend');
+    const trendDetail = getCell(row, 'trend_detail');
+    if (record.trendPercent !== null && record.trendPercent !== undefined) {
+      const direction = record.trendPercent > 0 ? '↑' : (record.trendPercent < 0 ? '↓' : '→');
+      setCell(row, 'trend', `${direction} ${Math.abs(record.trendPercent).toFixed(1)}%`);
+      trend?.classList.add(record.trendPercent > 0 ? 'text-emerald-700' : (record.trendPercent < 0 ? 'text-rose-700' : 'text-slate-600'));
+      setCell(row, 'trend_detail', `${record.previousTotalAverage.toFixed(1)} → ${record.totalAverage.toFixed(1)} avg units/week`);
+    } else if (record.previousTotalAverage === 0 && record.totalAverage > 0) {
+      setCell(row, 'trend', 'New sales');
+      trend?.classList.add('text-sky-700');
+      setCell(row, 'trend_detail', '0 → ' + record.totalAverage.toFixed(1) + ' avg units/week');
+    } else {
+      setCell(row, 'trend', '—');
+      setCell(row, 'trend_detail', 'Not enough prior data');
+    }
+    const suggestion = planSuggestions.get(p.id);
+    setCell(row, 'suggestion', suggestion ? `${suggestion.suggested} units` : 'No plan');
+    if (suggestion) {
+      const suggestedDay = new Date(`${suggestion.date}T00:00:00`).getDay();
+      setCell(row, 'suggestion_date', `${getAvgDay(p.id, DAYS[suggestedDay]).toFixed(1)} avg/day · ${formatPlanDate(suggestion.date)}`);
+    } else {
+      setCell(row, 'suggestion_date', 'Set delivery dates');
+    }
+    summaryRows.appendChild(row);
 
-  }
-  
-  
+  });
+
+  if (!visibleRecords.length) summaryRows.appendChild(buildMessageRow('No products match these filters.', 11));
+
   let footRow = cloneTemplate('tmpl-avg-foot-row');
   for (let ci = 0; ci < DISP_TO_JS.length; ci++) {
     let td = cloneTemplate('tmpl-avg-foot-cell');
-    setCell(td, 'avg', cU[ci].toFixed(1));
-    setCell(td, 'rev', '₱' + cR[ci].toFixed(0));
+    const share = summaryData.weekdayRevenueTotals[ci] > 0
+      ? (visibleWeekdayRevenue[ci] / summaryData.weekdayRevenueTotals[ci] * 100).toFixed(1)
+      : '0.0';
+    setCell(td, 'avg', summaryData.weekdayReportCounts[DISP_TO_JS[ci]] ? visibleWeekdayAverages[ci].toFixed(1) : '—');
+    setCell(td, 'pct', share + '%');
+    setCell(td, 'rev', '₱' + visibleWeekdayRevenue[ci].toFixed(0));
     insertBeforeCell(footRow, td, 'total_cell');
 
-    await sleep(1);
   }
-  
-  setCell(footRow, 'total_avg', gU.toFixed(1));
-  setCell(footRow, 'total_rev', '₱' + gR.toFixed(0));
+
+  setCell(footRow, 'label', filtered ? 'Filtered Avg' : 'Day Avg');
+  setCell(footRow, 'total_avg', summaryData.weekdayReportCounts.some(count => count > 0) ? visibleAverage.toFixed(1) : '—');
+  setCell(footRow, 'total_pct', (summaryData.totalRevenue > 0 ? (visibleRevenue / summaryData.totalRevenue * 100).toFixed(1) : '0.0') + '%');
+  setCell(footRow, 'total_rev', '₱' + visibleRevenue.toFixed(0));
+  body.appendChild(summaryRows);
+  const observer = getRowObserver();
+  if (observer) body.querySelectorAll('tr').forEach(row => observer.observe(row));
   foot.appendChild(footRow);
-  
-postMessageToParent("function:hideSpaLoading");
-  
+}
+
+async function exportDailyAverageExcel(event) {
+  const summaryData = getDailyAverageSummaryData();
+  const visibleRecords = getVisibleDailyAverageRecords(summaryData);
+  const weekRanges = getDailyAverageDateRanges(DAILY_AVERAGE_END_DATE);
+  const allDates = weekRanges.flat();
+  const knownReports = new Set(DAILY_AVERAGE_ANALYSIS?.current_period?.report_dates || []);
+  const missingDates = allDates.filter(date => !knownReports.has(fmt(date))).map(formatDailyAverageDate);
+  const previousPeriod = DAILY_AVERAGE_ANALYSIS?.previous_period || {};
+  const previousStart = previousPeriod.start ? new Date(`${previousPeriod.start}T00:00:00`) : null;
+  const previousReports = new Set(previousPeriod.report_dates || []);
+  const previousDates = previousStart ? Array.from({ length: 28 }, (_, index) => { const day = new Date(previousStart); day.setDate(day.getDate() + index); return day; }) : [];
+  const previousMissingDates = previousDates.filter(date => !previousReports.has(fmt(date))).map(formatDailyAverageDate);
+  const weekdayReportCounts = summaryData.weekdayReportCounts;
+  const planSuggestions = getCurrentOraclePlanSuggestions();
+  const button = event?.currentTarget || document.getElementById('daily-average-export');
+  if (button) { button.disabled = true; button.classList.add('opacity-60', 'cursor-wait'); }
+  try {
+    const weekdayShares = record => record.weekdayRevenue.map((revenue, dayIndex) =>
+      summaryData.weekdayRevenueTotals[dayIndex] > 0 ? revenue / summaryData.weekdayRevenueTotals[dayIndex] : 0
+    );
+    const headers = [
+      'Product', 'Category',
+      ...DAYS_DISPLAY.map(day => `${day} average qty`),
+      ...DAYS_DISPLAY.map(day => `${day} share %`),
+      ...DAYS_DISPLAY.map(day => `${day} average revenue`),
+      'Average weekly qty', '4-week revenue share %', 'Average weekly revenue',
+      'Trend vs prior 4 weeks %', 'Current plan suggestion'
+    ];
+    const records = visibleRecords.map(record => ([
+      record.product.name,
+      record.product.category || '',
+      ...record.weekdayAverages,
+      ...weekdayShares(record),
+      ...record.weekdayRevenue,
+      record.totalAverage,
+      summaryData.totalRevenue > 0 ? record.totalRevenue / summaryData.totalRevenue : 0,
+      record.totalRevenue,
+      record.trendPercent === null || record.trendPercent === undefined ? null : record.trendPercent / 100,
+      (() => {
+        const plan = planSuggestions.get(record.product.id);
+        return plan ? `${plan.suggested} units on ${plan.date}` : 'No delivery plan set';
+      })()
+    ]));
+    const response = await fetch('/store-manager/oracle/daily-averages/export.xlsx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: DAILY_AVERAGE_END_DATE || ORACLE_DATE || fmt(new Date()),
+        period: `${formatDailyAverageDate(allDates[0])}–${formatDailyAverageDate(allDates[allDates.length - 1])}`,
+        reports_recorded: allDates.length - missingDates.length,
+        reports_total: allDates.length,
+        missing_dates: missingDates,
+        weekday_coverage: DISP_TO_JS.map(dayIndex => `${DAYS[dayIndex]} ${weekdayReportCounts[dayIndex]}/4`).join(', '),
+        previous_period: previousPeriod.start && previousPeriod.end ? `${formatDailyAverageDate(previousStart)}–${formatDailyAverageDate(new Date(`${previousPeriod.end}T00:00:00`))}` : '',
+        previous_reports_recorded: previousReports.size,
+        previous_reports_total: previousDates.length,
+        previous_missing_dates: previousMissingDates,
+        previous_weekday_coverage: DISP_TO_JS.map(dayIndex => `${DAYS[dayIndex]} ${(DAILY_AVERAGE_ANALYSIS?.previous_weekday_report_counts || [])[dayIndex] || 0}/4`).join(', '),
+        headers,
+        records
+      })
+    });
+    if (!response.ok || !(response.headers.get('Content-Type') || '').includes('spreadsheetml')) {
+      let error = {};
+      try { error = await response.json(); } catch (_) {}
+      throw new Error(error.error || 'Unable to export Daily Averages to Excel. Please sign in again and retry.');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const storeSlug = String(STORE.name || 'store').trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
+    link.href = url;
+    link.download = `oracle-daily-averages-${storeSlug}-${DAILY_AVERAGE_END_DATE || ORACLE_DATE || fmt(new Date())}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('Daily Averages Excel file downloaded.', 'success');
+  } catch (error) {
+    showToast(error.message || 'Unable to export Daily Averages to Excel.', 'error');
+  } finally {
+    if (button) { button.disabled = false; button.classList.remove('opacity-60', 'cursor-wait'); }
+  }
+}
+
+function onDailyAverageFilterChange() {
+  renderAvgSummary();
 }
 
 // ---------------------------------------------------------------- Listeners
@@ -1726,6 +2176,11 @@ function bindOracleListeners() {
   bindEvent('btn-refresh-suggested', 'click', refreshSuggested);
   bindEvent('btn-clear-overrides', 'click', clearFinalOrders);
   bindEvent('btn-history-refresh', 'click', refreshOrderHistory);
+  bindEvent('daily-average-search', 'input', onDailyAverageFilterChange);
+  bindEvent('daily-average-category', 'change', onDailyAverageFilterChange);
+  bindEvent('daily-average-sort', 'change', onDailyAverageFilterChange);
+  bindEvent('daily-average-apply-date', 'click', applyDailyAverageDateRange);
+  bindEvent('daily-average-export', 'click', exportDailyAverageExcel);
   document.querySelectorAll('[data-nav]').forEach(el => el.addEventListener('click', onNavClick));
   let allBtn = document.querySelector('[data-category-filter="all"]');
   if (allBtn) allBtn.addEventListener('click', onCategoryFilterClick);
@@ -1736,4 +2191,4 @@ bindOracleListeners();
 applyViewVisibility();
 syncFullscreenButton('order-form');
 applyOrderModePanels();
-loadOracleData();
+ensureOracleDataLoaded();
