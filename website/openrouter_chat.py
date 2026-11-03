@@ -8,6 +8,7 @@ chat_bp = Blueprint("openrouter_chat", __name__)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_MESSAGES = 40
+MODEL_BUCKET = ["nvidia/nemotron-3.5-super-vl:free"]
 
 
 def _cfg(key, default=None):
@@ -30,7 +31,7 @@ def _clean_messages(messages):
     return cleaned
 
 
-@chat_bp.route("/chat", methods=["POST"])
+@chat_bp.route("/chat", methods=["POST","GET"])
 def chat():
     api_key = _cfg("OPENROUTER_API_KEY")
     if not api_key:
@@ -44,8 +45,12 @@ def chat():
     system_prompt = data.get("system") if current_app.config.get("OPENROUTER_ALLOW_CLIENT_SYSTEM") else None
     system_prompt = system_prompt or _cfg("OPENROUTER_SYSTEM_PROMPT", "You are a helpful assistant.")
 
+    model = data.get("model") or MODEL_BUCKET[0]
+    if model not in MODEL_BUCKET:
+        return jsonify(error="model is not allowed", allowed=MODEL_BUCKET), 400
+
     body = {
-        "model": data.get("model") or _cfg("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
+        "model": model,
         "messages": [{"role": "system", "content": system_prompt}] + messages,
         "stream": True,
     }
