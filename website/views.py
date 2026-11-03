@@ -14213,7 +14213,18 @@ def cluster_data_v2_page():
     return render_template("cluster_manager/cluster_data_v2.html", user=current_user, page='clusters')
     
     
+
     
+# ================================================
+# Store Manager Section
+# ================================================
+       
+#v2 of Cluster manager - Cluster Data page
+@views.route('/store-manager/store_data_v2', methods=['GET'])
+@login_required
+def store_data_v2_page():
+    return render_template("store_manager/store_data_v2.html", user=current_user, page='clusters')
+
     
 # ================================================
 # Supply Requests (store side)

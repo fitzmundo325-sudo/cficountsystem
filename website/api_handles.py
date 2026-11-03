@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from . import db, cache
 from datetime import datetime, date, timedelta, timezone
-from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem, AuditLog
+from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem, AuditLog, StoreProductBuffer
 
 from calendar import monthrange
 
@@ -5926,6 +5926,665 @@ def api_delete_user(user_id):
 # Users Section End
 # ================================
 
+
+
+
+
+
+
+
+# ================================
+# Dashboard Section Section
+# ================================
+DASHBOARD_PALETTE = [
+    '#6366f1', '#10b981', '#f59e0b', '#e11d48', '#0ea5e9',
+    '#14b8a6', '#84cc16', '#f97316', '#8b5cf6', '#64748b',
+]
+
+DASHBOARD_SEVERITY_ORDER = {'ICU Critical': 0, 'Critical': 1, 'Recovery': 2, 'Good': 3, 'Excellent': 4}
+
+DASHBOARD_STATUS_META = {
+    'ICU Critical': {
+        'tone_card': 'bg-red-50 border-l-4 border-red-500',
+        'tone_badge': 'text-red-700 bg-red-100',
+        'tone_value': 'text-red-600',
+        'tone_bar_bg': 'bg-red-200',
+        'tone_bar_fill': 'bg-red-500',
+        'note': 'Significantly below target',
+    },
+    'Critical': {
+        'tone_card': 'bg-orange-50 border-l-4 border-orange-500',
+        'tone_badge': 'text-orange-700 bg-orange-100',
+        'tone_value': 'text-orange-600',
+        'tone_bar_bg': 'bg-orange-200',
+        'tone_bar_fill': 'bg-orange-500',
+        'note': 'Below target',
+    },
+    'Recovery': {
+        'tone_card': 'bg-amber-50 border-l-4 border-amber-500',
+        'tone_badge': 'text-amber-700 bg-amber-100',
+        'tone_value': 'text-amber-600',
+        'tone_bar_bg': 'bg-amber-200',
+        'tone_bar_fill': 'bg-amber-500',
+        'note': 'Near target, monitor closely',
+    },
+}
+
+
+_NON_ALNUM_RE = re.compile(r'[^a-z0-9]+')
+
+_POS_QTY_FIELDS = {
+    'gc': 'pos_qty_gc',
+    'rolls': 'pos_qty_rolls',
+    'premium': 'pos_qty_premium',
+    'slices': 'pos_qty_slices',
+    'mamon': 'pos_qty_mamon',
+}
+
+
+
+@api_handles.route('/admin_dashboard_data', methods=['POST','GET'])
+@login_required
+def api_admin_dashboard_data(scope_cluster_ids=None, cluster_name_label='All Clusters', team_name_label=None):
+    if current_user.role not in ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager'):
+        return jsonify({'error': 'Access denied'}), 403
+
+    from .views import (
+        _aggregate_targets_by_day,
+        _apply_store_scope_filter,
+        _build_cluster_manager_summary,
+        _build_discount_performance,
+        _build_wastage_performance,
+        _build_ytd_overview,
+        _classify_store_status,
+        _format_header_date,
+        _get_store_scope_from_request,
+        _parse_iso_date,
+        _apply_taf_wastage_amounts,
+        _build_top_products_from_reports,
+    )
+    from sqlalchemy import func
+
+    parsed_start_date = _parse_iso_date(request.args.get('start_date'))
+    parsed_end_date = _parse_iso_date(request.args.get('end_date'))
+    today = datetime.today().date()
+
+    if parsed_start_date or parsed_end_date:
+        start_date = parsed_start_date or parsed_end_date
+        end_date = parsed_end_date or parsed_start_date
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+    else:
+        start_date = today.replace(day=1)
+        end_date = today
+
+    current_month = f'{start_date.month:02d}'
+    current_year = str(start_date.year)
+
+    if scope_cluster_ids:
+        clusters = Cluster.query.filter(Cluster.id.in_(scope_cluster_ids)).order_by(Cluster.name.asc()).all()
+        all_stores = Store.query.filter(Store.cluster_id.in_(scope_cluster_ids)).all()
+    else:
+        clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+        all_stores = Store.query.all()
+    store_scope = _get_store_scope_from_request(request)
+    stores = _apply_store_scope_filter(all_stores, request)
+    dashboard_store_ids = [int(store.id) for store in stores]
+    sorted_stores = sorted(stores, key=lambda item: (item.name or '').lower())
+
+    stores_by_cluster = {}
+    for store in stores:
+        if store.cluster_id:
+            stores_by_cluster.setdefault(store.cluster_id, []).append(store)
+
+    reports = DailyReport.query.filter(
+        DailyReport.store_id.in_(dashboard_store_ids),
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date,
+        DailyReport.status == 'Approved',
+    ).all()
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_taf_wastage_amounts(reports)
+
+    def _format_tracker_date_range(range_start, range_end):
+        if range_start == range_end:
+            return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year}"
+        if range_start.year == range_end.year and range_start.month == range_end.month:
+            return f"{range_start.strftime('%b')} {range_start.day}-{range_end.day}, {range_start.year}"
+        if range_start.year == range_end.year:
+            return f"{range_start.strftime('%b')} {range_start.day} - {range_end.strftime('%b')} {range_end.day}, {range_start.year}"
+        return f"{range_start.strftime('%b')} {range_start.day}, {range_start.year} - {range_end.strftime('%b')} {range_end.day}, {range_end.year}"
+
+    def _summarize_missing_dates(missing_dates):
+        if not missing_dates:
+            return []
+        ranges = []
+        range_start = missing_dates[0]
+        previous = missing_dates[0]
+        for missing_date in missing_dates[1:]:
+            if missing_date == previous + timedelta(days=1):
+                previous = missing_date
+                continue
+            ranges.append(_format_tracker_date_range(range_start, previous))
+            range_start = missing_date
+            previous = missing_date
+        ranges.append(_format_tracker_date_range(range_start, previous))
+        return ranges
+
+    expected_dates = []
+    tracker_end_date = min(end_date, today - timedelta(days=1))
+    tracker_cursor = start_date
+    while tracker_cursor <= tracker_end_date:
+        expected_dates.append(tracker_cursor)
+        tracker_cursor += timedelta(days=1)
+
+    dashboard_store_count = len(dashboard_store_ids)
+    daily_report_dates_by_store = {}
+    invensync_dates_by_store = {}
+    oracle_store_count = 0
+
+    if dashboard_store_ids:
+        daily_report_date_rows = (
+            db.session.query(DailyReport.store_id, DailyReport.report_date)
+            .filter(
+                DailyReport.store_id.in_(dashboard_store_ids),
+                DailyReport.report_date >= start_date,
+                DailyReport.report_date <= end_date,
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, report_date in daily_report_date_rows:
+            if store_id and report_date:
+                daily_report_dates_by_store.setdefault(int(store_id), set()).add(report_date)
+
+        invensync_date_rows = (
+            db.session.query(DailyEndingInventory.store_id, DailyEndingInventory.inventory_date)
+            .filter(
+                DailyEndingInventory.store_id.in_(dashboard_store_ids),
+                DailyEndingInventory.inventory_date >= start_date,
+                DailyEndingInventory.inventory_date <= end_date,
+                DailyEndingInventory.is_finalized.is_(True),
+            )
+            .distinct()
+            .all()
+        )
+        for store_id, inventory_date in invensync_date_rows:
+            if store_id and inventory_date:
+                invensync_dates_by_store.setdefault(int(store_id), set()).add(inventory_date)
+
+        oracle_store_count = (
+            db.session.query(func.count(func.distinct(StoreProductBuffer.store_id)))
+            .filter(StoreProductBuffer.store_id.in_(dashboard_store_ids))
+            .scalar()
+        ) or 0
+
+    def _build_missing_tool_rows(date_map):
+        rows = []
+        for store in sorted_stores:
+            available_dates = date_map.get(int(store.id), set())
+            missing_dates = [d for d in expected_dates if d not in available_dates]
+            if not missing_dates:
+                continue
+            rows.append({
+                'store_name': store.name,
+                'missing_count': len(missing_dates),
+                'date_ranges': _summarize_missing_dates(missing_dates),
+            })
+        return rows
+
+    daily_report_missing_rows = _build_missing_tool_rows(daily_report_dates_by_store)
+    invensync_missing_rows = _build_missing_tool_rows(invensync_dates_by_store)
+    icount_tool_tracker = {
+        'total_stores': dashboard_store_count,
+        'daily_reports': {
+            'label': 'Daily Reports',
+            'count': dashboard_store_count - len(daily_report_missing_rows),
+            'subtitle': 'stores with complete uploads',
+            'missing_rows': daily_report_missing_rows,
+            'show_missing_details': True,
+        },
+        'invensync': {
+            'label': 'Invensync',
+            'count': dashboard_store_count - len(invensync_missing_rows),
+            'subtitle': 'stores with complete updates',
+            'missing_rows': invensync_missing_rows,
+            'show_missing_details': True,
+        },
+        'oracle': {
+            'label': 'Oracle',
+            'count': oracle_store_count,
+            'subtitle': 'stores with Oracle buffer setup',
+            'missing_rows': [],
+            'show_missing_details': False,
+        },
+    }
+
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id.in_(dashboard_store_ids),
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+
+    sbase_store_ids = {int(s.id) for s in stores if bool(getattr(s, 'is_one_year_already', False))}
+    daily_sales_map = {}
+    daily_sbase_sales_map = {}
+    store_sales_map = {}
+    for report in reports:
+        report_net_sales = float(report.pos_net_sales or 0) + float(report.ci_regular_net_sales or 0)
+        report_store_id = int(report.store_id)
+        date_key = report.report_date.isoformat()
+        store_sales_map[report_store_id] = store_sales_map.get(report_store_id, 0.0) + report_net_sales
+        daily_sales_map[date_key] = daily_sales_map.get(date_key, 0.0) + report_net_sales
+        if report_store_id in sbase_store_ids:
+            daily_sbase_sales_map[date_key] = daily_sbase_sales_map.get(date_key, 0.0) + report_net_sales
+
+    store_target_map = {}
+    store_ly_map = {}
+    for target in targets:
+        target_store_id = int(target.store_id)
+        store_target_map[target_store_id] = store_target_map.get(target_store_id, 0.0) + float(target.target_net or 0)
+        store_ly_map[target_store_id] = store_ly_map.get(target_store_id, 0.0) + float(target.last_year_net or 0)
+
+    daily_targets = _aggregate_targets_by_day(targets)
+
+    sales_data = []
+    sbase_sales_data = []
+    target_data = []
+    last_year_data = []
+    labels = []
+    mtd_metrics_by_day = {}
+    running_sales = 0.0
+    running_target = 0.0
+    running_ly = 0.0
+    cursor = start_date
+    while cursor <= end_date:
+        date_key = cursor.isoformat()
+        day_targets = daily_targets.get(date_key, {})
+        day_sales = float(daily_sales_map.get(date_key, 0.0) or 0.0)
+        day_sbase_sales = float(daily_sbase_sales_map.get(date_key, 0.0) or 0.0)
+        day_target = float(day_targets.get('target_net', 0.0) or 0.0)
+        day_ly = float(day_targets.get('last_year_net', 0.0) or 0.0)
+
+        running_sales += day_sales
+        running_target += day_target
+        running_ly += day_ly
+
+        sales_data.append(day_sales)
+        sbase_sales_data.append(day_sbase_sales)
+        target_data.append(day_target)
+        last_year_data.append(day_ly)
+        labels.append(cursor.strftime('%b %d'))
+
+        mtd_metrics_by_day[date_key] = {
+            'mtd_vs_tgt': (((running_sales / running_target) - 1.0) * 100) if running_target > 0 else None,
+            'mtd_vs_ly': (((running_sales / running_ly) - 1.0) * 100) if running_ly > 0 else None,
+        }
+        cursor += timedelta(days=1)
+
+    summary = _build_cluster_manager_summary(reports, targets)
+    wastage_performance = _build_wastage_performance(
+        reports, start_date, end_date,
+        store_lookup={int(store.id): store.name for store in stores},
+    )
+    discount_performance = _build_discount_performance(reports, start_date, end_date)
+    ytd_overview = _build_ytd_overview(end_date, store_ids=dashboard_store_ids)
+    summary.setdefault('overview', {}).update(ytd_overview)
+    top_products = _build_top_products_from_reports(reports)
+    top_products_total_units = sum(item['units'] for item in top_products)
+
+    cluster_products = {cluster.id: {} for cluster in clusters}
+    category_totals_by_cluster = {}
+    category_cache = {}
+    alias_lookup = _get_product_alias_lookup()
+    resolved_names = {}
+
+    if dashboard_store_ids and reports:
+        pos_rows = (
+            db.session.query(
+                Store.cluster_id,
+                PosSold.product_name,
+                func.sum(PosSold.quantity),
+                func.sum(PosSold.net_sales),
+            )
+            .select_from(PosSold)
+            .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+            .join(Store, Store.id == DailyReport.store_id)
+            .filter(
+                DailyReport.store_id.in_(dashboard_store_ids),
+                DailyReport.report_date >= start_date,
+                DailyReport.report_date <= end_date,
+                DailyReport.status == 'Approved',
+                Store.cluster_id.isnot(None),
+            )
+            .group_by(Store.cluster_id, PosSold.product_name)
+            .all()
+        )
+
+        for cluster_id, product_name, total_qty, total_net_sales in pos_rows:
+            product_bucket = cluster_products.get(cluster_id)
+            if product_bucket is None:
+                continue
+            qty = int(total_qty or 0)
+            if qty <= 0:
+                continue
+            clean_name = (product_name or '').strip() or 'Unnamed Product'
+
+            resolved = resolved_names.get(clean_name, False)
+            if resolved is False:
+                if _is_grand_total_product_name(clean_name):
+                    resolved = None
+                else:
+                    canonical_name = alias_lookup.get(_normalize_product_text(clean_name), clean_name)
+                    resolved_category = _resolve_category_fast(canonical_name, category_cache)
+                    product_key = f"{_normalize_product_text(canonical_name)}|{_normalize_product_text(resolved_category)}"
+                    resolved = (canonical_name, resolved_category, product_key)
+                resolved_names[clean_name] = resolved
+            if resolved is None:
+                continue
+            canonical_name, resolved_category, product_key = resolved
+
+            category_totals = category_totals_by_cluster.setdefault(cluster_id, {})
+            category_totals[resolved_category] = int(category_totals.get(resolved_category, 0) or 0) + qty
+
+            entry = product_bucket.get(product_key)
+            if entry is None:
+                entry = {'name': canonical_name, 'qty': 0, 'net_sales': 0.0, 'category': resolved_category}
+                product_bucket[product_key] = entry
+            entry['qty'] += qty
+            entry['net_sales'] += float(total_net_sales or 0.0)
+
+    cluster_product_mix = []
+    cluster_pos_sold_products = []
+    for cluster in sorted(clusters, key=lambda c: (c.name or '').lower()):
+        product_rows = sorted(
+            [
+                {
+                    'name': p.get('name') or 'Unnamed Product',
+                    'qty': int(p.get('qty', 0) or 0),
+                    'net_sales': float(p.get('net_sales', 0.0) or 0.0),
+                    'category': p.get('category') or 'Uncategorized',
+                }
+                for p in cluster_products[cluster.id].values()
+                if int(p.get('qty', 0) or 0) > 0
+            ],
+            key=lambda product: (-product['qty'], product['name'].lower())
+        )
+        total_units = sum(p['qty'] for p in product_rows)
+        sorted_categories = sorted(
+            category_totals_by_cluster.get(cluster.id, {}).items(),
+            key=lambda row: (-int(row[1] or 0), (row[0] or '').lower())
+        )
+        cluster_product_mix.append({
+            'store_id': cluster.id,
+            'store_name': cluster.name,
+            'segments': [
+                {'label': cn, 'value': int(cv or 0), 'color': DASHBOARD_PALETTE[idx % len(DASHBOARD_PALETTE)]}
+                for idx, (cn, cv) in enumerate(sorted_categories)
+            ],
+            'products': product_rows,
+            'total_units': total_units,
+        })
+        cluster_pos_sold_products.append({
+            'store_id': cluster.id,
+            'store_name': cluster.name,
+            'products': product_rows,
+            'total_units': total_units,
+        })
+
+    range_days = max((end_date - start_date).days + 1, 1)
+    cluster_performance_data = []
+    for cluster in clusters:
+        cluster_stores = stores_by_cluster.get(cluster.id)
+        if not cluster_stores:
+            continue
+        mtd_sales = 0.0
+        cluster_target_mtd = 0.0
+        cluster_ly_mtd = 0.0
+        for store in cluster_stores:
+            store_id = int(store.id)
+            mtd_sales += store_sales_map.get(store_id, 0.0)
+            cluster_target_mtd += store_target_map.get(store_id, 0.0)
+            cluster_ly_mtd += store_ly_map.get(store_id, 0.0)
+
+        ads = mtd_sales / range_days
+        ar_tgt_percent = (((mtd_sales / cluster_target_mtd) - 1.0) * 100) if cluster_target_mtd > 0 else 0.0
+        growth_percent = ((mtd_sales / cluster_ly_mtd) - 1.0) if cluster_ly_mtd > 0 else None
+        status = _classify_store_status(ar_tgt_percent, growth_percent)
+
+        cluster_performance_data.append({
+            'store_name': cluster.name,
+            'act': mtd_sales,
+            'target_mtd': cluster_target_mtd,
+            'ads': ads,
+            'ly': cluster_ly_mtd,
+            'ar_tgt_percent': ar_tgt_percent,
+            'growth_percent': growth_percent,
+            'status': status
+        })
+
+    cluster_performance_data.sort(key=lambda i: (i.get('store_name') or '').lower())
+
+    top_stores_ads = []
+    sorted_by_ads = sorted(cluster_performance_data, key=lambda i: float(i.get('ads', 0) or 0), reverse=True)[:3]
+    max_ads = float(sorted_by_ads[0].get('ads', 0) or 0) if sorted_by_ads else 0.0
+    for rank, item in enumerate(sorted_by_ads, start=1):
+        ads_value = float(item.get('ads', 0) or 0)
+        top_stores_ads.append({
+            'rank': rank,
+            'store_name': item.get('store_name', ''),
+            'ads': ads_value,
+            'ads_percent': ((ads_value / max_ads) * 100) if max_ads > 0 else 0.0,
+        })
+
+    top_attainment_ar = []
+    sorted_by_ar = sorted(cluster_performance_data, key=lambda i: float(i.get('ar_tgt_percent', 0) or 0), reverse=True)[:3]
+    for rank, item in enumerate(sorted_by_ar, start=1):
+        ar_value = float(item.get('ar_tgt_percent', 0) or 0)
+        top_attainment_ar.append({
+            'rank': rank,
+            'store_name': item.get('store_name', ''),
+            'ar_tgt_percent': ar_value,
+            'target_mtd': float(item.get('target_mtd', 0) or 0),
+            'act': float(item.get('act', 0) or 0),
+            'delta_percent': ar_value,
+            'progress_percent': min(max(ar_value + 100.0, 0.0), 100.0),
+        })
+
+    icu_candidates = sorted(
+        [item for item in cluster_performance_data if item.get('status') == 'ICU Critical'],
+        key=lambda item: (
+            DASHBOARD_SEVERITY_ORDER.get(item.get('status', 'Excellent'), 99),
+            float(item.get('ar_tgt_percent', 0) or 0),
+        )
+    )[:3]
+
+    icu_stores = []
+    for item in icu_candidates:
+        status = item.get('status', 'Recovery')
+        meta = DASHBOARD_STATUS_META.get(status, DASHBOARD_STATUS_META['Recovery'])
+        attainment_percent = max(0.0, float(item.get('ar_tgt_percent', 0) or 0) + 100.0)
+        icu_stores.append({
+            'store_name': item.get('store_name', ''),
+            'status': status,
+            'note': meta['note'],
+            'act': float(item.get('act', 0) or 0),
+            'target_mtd': float(item.get('target_mtd', 0) or 0),
+            'attainment_percent': attainment_percent,
+            'progress_percent': min(max(attainment_percent, 0.0), 100.0),
+            'tone_card': meta['tone_card'],
+            'tone_badge': meta['tone_badge'],
+            'tone_value': meta['tone_value'],
+            'tone_bar_bg': meta['tone_bar_bg'],
+            'tone_bar_fill': meta['tone_bar_fill'],
+        })
+
+    return jsonify({
+        'summary': summary,
+        'sales_data': sales_data,
+        'sbase_sales_data': sbase_sales_data,
+        'target_data': target_data,
+        'last_year_data': last_year_data,
+        'labels': labels,
+        'current_month': current_month,
+        'current_year': current_year,
+        'current_date': today.isoformat(),
+        'selected_start_date': start_date.strftime('%Y-%m-%d'),
+        'selected_end_date': end_date.strftime('%Y-%m-%d'),
+        'selected_start_date_display': _format_header_date(start_date),
+        'selected_end_date_display': _format_header_date(end_date),
+        'store_performance_data': cluster_performance_data,
+        'top_stores_ads': top_stores_ads,
+        'top_attainment_ar': top_attainment_ar,
+        'mtd_metrics_by_day': mtd_metrics_by_day,
+        'top_products': top_products,
+        'top_products_total_units': top_products_total_units,
+        'store_product_mix': cluster_product_mix,
+        'pos_sold_products_by_store': cluster_pos_sold_products,
+        'icu_stores': icu_stores,
+        'wastage_performance': wastage_performance,
+        'discount_performance': discount_performance,
+        'icount_tool_tracker': icount_tool_tracker,
+        'entity_label': 'Cluster',
+        'entity_label_plural': 'Clusters',
+        'cluster_name': cluster_name_label,
+        'team_name': team_name_label or f'CFI {store_scope.capitalize()} Dashboard',
+        'store_scope': store_scope,
+    })
+
+
+def _normalize_pos_text(value):
+    return _NON_ALNUM_RE.sub('', str(value or '').strip().lower())
+
+
+def _resolve_pos_qty_bucket(category_value, sub_category_value):
+    normalized_sub = _normalize_pos_text(sub_category_value)
+    if normalized_sub:
+        if normalized_sub == 'cakeslices' or ('cake' in normalized_sub and 'slice' in normalized_sub):
+            return 'slices'
+        if 'mamon' in normalized_sub:
+            return 'mamon'
+    normalized_category = _normalize_pos_text(category_value)
+    if not normalized_category:
+        return None
+    if 'greetingcake' in normalized_category or normalized_category == 'gc':
+        return 'gc'
+    if 'roll' in normalized_category:
+        return 'rolls'
+    if 'premium' in normalized_category:
+        return 'premium'
+    return None
+
+
+def _apply_pos_qty_from_pos_categories(reports):
+    if not reports:
+        return
+
+    report_map = {int(report.id): report for report in reports if getattr(report, 'id', None)}
+    if not report_map:
+        return
+
+    for report in report_map.values():
+        report.pos_qty_gc = 0
+        report.pos_qty_rolls = 0
+        report.pos_qty_premium = 0
+        report.pos_qty_cheesy_ensay = 0
+        report.pos_qty_slices = 0
+        report.pos_qty_mamon = 0
+
+    alias_to_master_key = {}
+    alias_rows = (
+        db.session.query(ProductAlias.normalized_alias, ProductMaster.description)
+        .join(ProductMaster, ProductMaster.id == ProductAlias.product_master_id)
+        .all()
+    )
+    for normalized_alias, description in alias_rows:
+        alias_key = str(normalized_alias or '').strip()
+        description_clean = (description or '').strip()
+        if alias_key and description_clean:
+            alias_to_master_key[alias_key] = _normalize_pos_text(description_clean)
+
+    bucket_by_master_key = {}
+    master_rows = (
+        ProductMaster.query
+        .with_entities(ProductMaster.description, ProductMaster.category, ProductMaster.sub_category)
+        .all()
+    )
+    for description, category, sub_category in master_rows:
+        master_key = _normalize_pos_text(description)
+        if master_key:
+            bucket_by_master_key[master_key] = _resolve_pos_qty_bucket(
+                (category or '').strip() or 'Uncategorized',
+                (sub_category or '').strip(),
+            )
+
+    bucket_by_name = {}
+    report_ids = list(report_map.keys())
+    chunk_size = 800
+
+    for chunk_start in range(0, len(report_ids), chunk_size):
+        id_chunk = report_ids[chunk_start:chunk_start + chunk_size]
+        pos_rows = (
+            db.session.query(
+                PosSold.daily_report_id,
+                PosSold.product_name,
+                func.sum(PosSold.quantity).label('total_qty'),
+            )
+            .filter(PosSold.daily_report_id.in_(id_chunk))
+            .group_by(PosSold.daily_report_id, PosSold.product_name)
+            .all()
+        )
+
+        for daily_report_id, product_name, total_qty in pos_rows:
+            qty = int(total_qty or 0)
+            if qty <= 0:
+                continue
+            report = report_map.get(int(daily_report_id))
+            if report is None:
+                continue
+
+            clean_name = (product_name or '').strip() or 'Unnamed Product'
+            if clean_name in bucket_by_name:
+                bucket = bucket_by_name[clean_name]
+            else:
+                if _is_grand_total_product_name(clean_name):
+                    bucket = None
+                else:
+                    normalized_clean = _normalize_pos_text(clean_name)
+                    master_key = alias_to_master_key.get(normalized_clean, normalized_clean)
+                    bucket = bucket_by_master_key.get(master_key)
+                bucket_by_name[clean_name] = bucket
+
+            if bucket is None:
+                continue
+            field_name = _POS_QTY_FIELDS[bucket]
+            setattr(report, field_name, int(getattr(report, field_name) or 0) + qty)
+
+
+def _resolve_category_fast(product_name, cache, similarity_threshold=0.90):
+    normalized_name = _normalize_product_text(product_name)
+    if not normalized_name:
+        return 'Uncategorized'
+    if normalized_name in cache:
+        return cache[normalized_name]
+
+    master_rows = _cached_product_masters()
+    best_score = 0.0
+    best_category = 'Uncategorized'
+    for normalized_master, _, master_category in master_rows:
+        if not normalized_master:
+            continue
+        if normalized_name == normalized_master:
+            cache[normalized_name] = master_category
+            return master_category
+        similarity = SequenceMatcher(None, normalized_name, normalized_master).ratio()
+        if similarity > best_score:
+            best_score = similarity
+            best_category = master_category
+
+    resolved_category = best_category if best_score >= similarity_threshold else 'Uncategorized'
+    cache[normalized_name] = resolved_category
+    return resolved_category
 
 
 
