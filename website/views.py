@@ -30,6 +30,8 @@ from . import db, cache
 from .audit import log_audit_event
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
+from .openrouter_chat import MODEL_BUCKET
+
 import math
 import re
 import base64
@@ -14314,8 +14316,44 @@ def cluster_data_v2_page():
     return render_template("cluster_manager/cluster_data_v2.html", user=current_user, page='clusters')
     
     
+
     
+# ================================================
+# Store Manager Section
+# ================================================
+       
+#v2 of Cluster manager - Cluster Data page
+@views.route('/store-manager/store_data_v2', methods=['GET'])
+@login_required
+def store_data_v2_page():
+    return render_template("store_manager/store_data_v2.html", user=current_user, page='clusters')
+
+
+
+
+
     
+# ================================================
+# Open Route Chatbot Operations
+# ================================================
+@views.route('/chatbot')
+@login_required
+def chatbot():
+    if (current_user.role or '').strip() not in ('Admin', 'Superadmin'):
+        flash('Access denied. You are not allowed to access the said page.', category='error')
+        return redirect(url_for('views.home'))
+    
+    return render_template('chatbot_v2.html', user=current_user, models=MODEL_BUCKET)      
+
+
+
+    
+# ================================================
+# Open Route Chatbot Operations End
+# ================================================
+
+
+
 # ================================================
 # Supply Requests (store side)
 # ================================================
