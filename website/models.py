@@ -182,6 +182,11 @@ class DailyReport(db.Model):
     submitter = db.relationship('User', foreign_keys=[submitted_by])
     pos_sold_items = db.relationship('PosSold', backref='daily_report', lazy=True, cascade='all, delete-orphan')
 
+    __table_args__ = (
+        db.Index('ix_daily_report_store_date', 'store_id', 'report_date'),
+        db.Index('ix_daily_report_store_status', 'store_id', 'status'),
+    )
+
 
 class PosSold(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -193,6 +198,10 @@ class PosSold(db.Model):
     net_sales = db.Column(db.Float, nullable=False, default=0.0)
     z_reading_image_path = db.Column(db.String(500), nullable=True)
     uploaded_at = db.Column(db.DateTime(timezone=True), default=func.now())
+
+    __table_args__ = (
+        db.Index('ix_pos_sold_report_product', 'daily_report_id', 'product_name'),
+    )
 
 
 class PosSoldStaging(db.Model):
@@ -245,6 +254,12 @@ class RsoDelivery(db.Model):
 
     store = db.relationship('Store', backref='rso_deliveries')
     uploader = db.relationship('User', foreign_keys=[uploaded_by])
+
+    __table_args__ = (
+        db.Index('ix_rso_delivery_store_date', 'store_id', 'report_date'),
+        db.Index('ix_rso_delivery_store_source', 'store_id', 'upload_source'),
+        db.Index('ix_rso_delivery_uploaded_at', 'uploaded_at'),
+    )
 
 
 class RsoDeliveryDraft(db.Model):
@@ -457,6 +472,10 @@ class DailyEndingInventory(db.Model):
     beginning_finalizer = db.relationship('User', foreign_keys=[beginning_finalized_by])
     items = db.relationship('DailyEndingInventoryItem', backref='inventory', lazy=True, cascade='all, delete-orphan')
 
+    __table_args__ = (
+        db.Index('ix_daily_ending_inv_store_date', 'store_id', 'inventory_date'),
+    )
+
 
 class MaintenanceMode(db.Model):
     __tablename__ = 'maintenance_mode'
@@ -556,6 +575,12 @@ class OracleOrder(db.Model):
     store = db.relationship('Store', backref='oracle_orders')
     product = db.relationship('ProductMaster')
     creator = db.relationship('User', foreign_keys=[created_by])
+
+    __table_args__ = (
+        db.Index('ix_oracle_order_store_delivery', 'store_id', 'delivery_date'),
+        db.Index('ix_oracle_order_store_status', 'store_id', 'status'),
+        db.Index('ix_oracle_order_store_order_date', 'store_id', 'order_date'),
+    )
     
     
 class ProductChangesEventsLog(db.Model):

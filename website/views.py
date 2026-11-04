@@ -26,7 +26,7 @@ from .models import (
     DeliveryReconciliation,
     OracleOrder,
 )
-from . import db
+from . import db, cache
 from .audit import log_audit_event
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
@@ -12912,19 +12912,21 @@ def _fetch_oracle_invensync_data(store, products, oracle_date=None):
     ref_date = oracle_date or _date.today()
     prev_day = ref_date - timedelta(days=1)
 
-    # Previous day's inventory record (exact previous day)
-    prev_inventory = (
+    # Fetch both previous day and today's inventory in a single query
+    inventories = (
         DailyEndingInventory.query
-        .filter_by(store_id=store.id, inventory_date=prev_day)
-        .first()
+        .filter(DailyEndingInventory.store_id == store.id)
+        .filter(DailyEndingInventory.inventory_date.in_([prev_day, ref_date]))
+        .all()
     )
 
-    # Oracle date's inventory record (delivery, trans-in, trans-out)
-    today_inventory = (
-        DailyEndingInventory.query
-        .filter_by(store_id=store.id, inventory_date=ref_date)
-        .first()
-    )
+    prev_inventory = None
+    today_inventory = None
+    for inv in inventories:
+        if inv.inventory_date == prev_day:
+            prev_inventory = inv
+        elif inv.inventory_date == ref_date:
+            today_inventory = inv
 
     # Build product lookup by description (lowercase) for fallback
     prod_by_desc = {}
@@ -13056,13 +13058,93 @@ def _fetch_oracle_invensync_data_for_order_form(store, products, selected_date=N
     return invensync_data, source_date
 
 
+@cache.memoize(timeout=300)
+def _cached_oracle_pos_sales_data(store_id, product_ids_tuple, anchor_date_str, weeks):
+    from .models import DailyReport, PosSold, RsoDelivery
+    from sqlalchemy import func
+    from datetime import date as _date, timedelta as _timedelta
+    
+    anchor_date = _date.fromisoformat(anchor_date_str)
+    weeks = max(1, min(8, int(weeks or 4)))
+    start_date = anchor_date - _timedelta(days=(weeks * 7) - 1)
+    week_ranges = []
+    for week_index in range(weeks):
+        week_start = start_date + _timedelta(days=(week_index * 7))
+        week_ranges.append((week_start, week_start + _timedelta(days=6)))
+
+    end_date = week_ranges[-1][1]
+    product_ids = set(product_ids_tuple)
+    sales_data = {
+        str(pid): [[0 for _ in range(7)] for _ in range(weeks)]
+        for pid in product_ids
+    }
+
+    pos_rows = (
+        db.session.query(
+            DailyReport.report_date,
+            PosSold.product_name,
+            func.sum(PosSold.quantity).label('total_qty'),
+        )
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .filter(DailyReport.store_id == store_id)
+        .filter(DailyReport.report_date >= start_date)
+        .filter(DailyReport.report_date <= end_date)
+        .group_by(DailyReport.report_date, PosSold.product_name)
+        .all()
+    )
+    if not pos_rows:
+        return sales_data
+
+    from .views import _build_pos_sold_master_lookups, _resolve_pos_sold_master_id, _resolve_bitbit_6s_pos_sold_rule
+    alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    bulk_totals = {}
+    bulk_rows = RsoDelivery.query.filter(
+        RsoDelivery.store_id == store_id,
+        RsoDelivery.report_date >= start_date,
+        RsoDelivery.report_date <= end_date,
+        RsoDelivery.upload_source == 'bulk',
+    ).all()
+    for bulk_row in bulk_rows:
+        bulk_product_id = _resolve_pos_sold_master_id(bulk_row.product_name, alias_lookup, master_lookup)
+        if bulk_product_id not in product_ids:
+            continue
+        bulk_quantity = int(bulk_row.received_quantity if bulk_row.received_quantity is not None else (bulk_row.quantity or 0))
+        if bulk_quantity > 0:
+            key = (bulk_row.report_date, bulk_product_id)
+            bulk_totals[key] = bulk_totals.get(key, 0) + bulk_quantity
+
+    for report_date, product_name, total_qty in pos_rows:
+        if _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
+            continue
+        master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+        if master_id not in product_ids:
+            continue
+
+        quantity = max(0, int(total_qty or 0) - bulk_totals.get((report_date, master_id), 0))
+        if quantity <= 0:
+            continue
+
+        week_index = None
+        for index, (week_start, week_end) in enumerate(week_ranges):
+            if week_start <= report_date <= week_end:
+                week_index = index
+                break
+        if week_index is None:
+            continue
+
+        js_day_index = (report_date.weekday() + 1) % 7
+        sales_data[str(master_id)][week_index][js_day_index] += quantity
+
+    return sales_data
+
+
 def _build_oracle_pos_sales_data(store, products, anchor_date=None, weeks=4):
     if not store or not products:
         return {}
-
     anchor_date = anchor_date or date.today()
-    weeks = max(1, min(8, int(weeks or 4)))
-    start_date = anchor_date - timedelta(days=(weeks * 7) - 1)
+    anchor_date_str = anchor_date.isoformat()
+    product_ids_tuple = tuple(sorted(int(p.id) for p in products))
+    return _cached_oracle_pos_sales_data(store.id, product_ids_tuple, anchor_date_str, weeks)
     week_ranges = []
     for week_index in range(weeks):
         week_start = start_date + timedelta(days=(week_index * 7))
@@ -13134,20 +13216,21 @@ def _build_oracle_pos_sales_data(store, products, anchor_date=None, weeks=4):
     return sales_data
 
 
-def _build_oracle_bulk_order_weeks(store, anchor_date=None):
-    if not store:
-        return []
-
-    anchor_date = anchor_date or date.today()
-    start_date = anchor_date - timedelta(days=27)
+@cache.memoize(timeout=300)
+def _cached_oracle_bulk_order_weeks(store_id, anchor_date_str):
+    from .models import DailyReport
+    from datetime import date as _date, timedelta as _timedelta
+    
+    anchor_date = _date.fromisoformat(anchor_date_str)
+    start_date = anchor_date - _timedelta(days=27)
     week_ranges = []
     for week_index in range(4):
-        week_start = start_date + timedelta(days=(week_index * 7))
-        week_ranges.append((week_start, week_start + timedelta(days=6)))
+        week_start = start_date + _timedelta(days=(week_index * 7))
+        week_ranges.append((week_start, week_start + _timedelta(days=6)))
 
     end_date = week_ranges[-1][1]
     reports = DailyReport.query.filter(
-        DailyReport.store_id == store.id,
+        DailyReport.store_id == store_id,
         DailyReport.report_date >= start_date,
         DailyReport.report_date <= end_date,
     ).all()
@@ -13181,29 +13264,41 @@ def _build_oracle_bulk_order_weeks(store, anchor_date=None):
     return bulk_weeks
 
 
-def _build_oracle_bulk_order_product_data(store, products, anchor_date=None):
-    if not store or not products:
-        return {}
-
+def _build_oracle_bulk_order_weeks(store, anchor_date=None):
+    if not store:
+        return []
     anchor_date = anchor_date or date.today()
-    start_date = anchor_date - timedelta(days=27)
+    anchor_date_str = anchor_date.isoformat()
+    return _cached_oracle_bulk_order_weeks(store.id, anchor_date_str)
+
+
+@cache.memoize(timeout=300)
+def _cached_oracle_bulk_order_product_data(store_id, product_ids_tuple, anchor_date_str):
+    from .models import RsoDelivery
+    from .views import _build_pos_sold_master_lookups, _resolve_pos_sold_master_id
+    from datetime import date as _date, timedelta as _timedelta, datetime
+    from zoneinfo import ZoneInfo
+    from sqlalchemy import func
+    
+    anchor_date = _date.fromisoformat(anchor_date_str)
+    start_date = anchor_date - _timedelta(days=27)
     week_ranges = []
     for week_index in range(4):
-        week_start = start_date + timedelta(days=(week_index * 7))
-        week_ranges.append((week_start, week_start + timedelta(days=6)))
+        week_start = start_date + _timedelta(days=(week_index * 7))
+        week_ranges.append((week_start, week_start + _timedelta(days=6)))
 
     end_date = week_ranges[-1][1]
-    product_ids = {int(product.id) for product in products}
+    product_ids = set(product_ids_tuple)
     bulk_data = {
-        str(product.id): [[{'qty': 0, 'date': ''} for _ in range(7)] for _ in range(4)]
-        for product in products
+        str(pid): [[{'qty': 0, 'date': ''} for _ in range(7)] for _ in range(4)]
+        for pid in product_ids
     }
 
-    upload_search_start = datetime.combine(start_date - timedelta(days=1), datetime.min.time())
-    upload_search_end = datetime.combine(end_date + timedelta(days=2), datetime.min.time())
+    upload_search_start = datetime.combine(start_date - _timedelta(days=1), datetime.min.time())
+    upload_search_end = datetime.combine(end_date + _timedelta(days=2), datetime.min.time())
     bulk_rows = (
         RsoDelivery.query
-        .filter(RsoDelivery.store_id == store.id)
+        .filter(RsoDelivery.store_id == store_id)
         .filter(RsoDelivery.upload_source == 'bulk')
         .filter(RsoDelivery.uploaded_at >= upload_search_start)
         .filter(RsoDelivery.uploaded_at < upload_search_end)
@@ -13223,9 +13318,6 @@ def _build_oracle_bulk_order_product_data(store, products, anchor_date=None):
                 upload_date = uploaded_at.astimezone(ZoneInfo('Asia/Singapore')).date()
         else:
             upload_date = None
-        # Daily Averages BO markers should follow the precise file upload day,
-        # not the RSO/report date, because one uploaded bulk file can contain
-        # rows for multiple business dates.
         indicator_date = upload_date
         if not indicator_date or indicator_date < start_date or indicator_date > end_date:
             continue
@@ -13258,6 +13350,15 @@ def _build_oracle_bulk_order_product_data(store, products, anchor_date=None):
         }
 
     return bulk_data
+
+
+def _build_oracle_bulk_order_product_data(store, products, anchor_date=None):
+    if not store or not products:
+        return {}
+    anchor_date = anchor_date or date.today()
+    anchor_date_str = anchor_date.isoformat()
+    product_ids_tuple = tuple(sorted(int(p.id) for p in products))
+    return _cached_oracle_bulk_order_product_data(store.id, product_ids_tuple, anchor_date_str)
 
 
 @views.route('/store-manager/oracle')
