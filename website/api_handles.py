@@ -5061,8 +5061,8 @@ def _build_pos_sold_master_lookups():
 @api_handles.route('/cluster_oracle_daily_averages', methods=['GET'])
 @login_required
 def cluster_oracle_daily_averages():
-    from datetime import datetime, date as _date, timedelta
-    from .models import Cluster, ProductMaster, Store
+    from datetime import datetime, date as _date, timedelta as _timedelta
+    from .models import Cluster, ProductMaster, Store, DailyReport
     from .views import (
         _apply_store_scope_filter,
         _build_oracle_pos_sales_data,
@@ -5113,16 +5113,111 @@ def cluster_oracle_daily_averages():
         'selling_price': float((product.sp_p if is_premium else product.sp_np) or 0),
     } for product in products]
 
+    # Build 8 weeks of data (current 4 + previous 4) to match store manager structure
+    period_start = anchor_date - _timedelta(days=27)
+    previous_start = anchor_date - _timedelta(days=55)
+    previous_end = period_start - _timedelta(days=1)
+    all_sales = _build_oracle_pos_sales_data(store, products, anchor_date, weeks=8)
+
+    all_report_dates = [
+        report_date.isoformat()
+        for (report_date,) in db.session.query(DailyReport.report_date)
+        .filter(DailyReport.store_id == store.id)
+        .filter(DailyReport.report_date >= previous_start)
+        .filter(DailyReport.report_date <= anchor_date)
+        .distinct()
+        .all()
+    ]
+    report_date_set = set(all_report_dates)
+    current_dates = [period_start + _timedelta(days=index) for index in range(28)]
+    previous_dates = [previous_start + _timedelta(days=index) for index in range(28)]
+
+    def period_report_counts(period_dates):
+        counts = [0] * 7
+        for report_date in period_dates:
+            if report_date.isoformat() in report_date_set:
+                counts[(report_date.weekday() + 1) % 7] += 1
+        return counts
+
+    current_counts = period_report_counts(current_dates)
+    previous_counts = period_report_counts(previous_dates)
+    current_week_coverage = [
+        sum(1 for report_date in current_dates[index * 7:(index + 1) * 7] if report_date.isoformat() in report_date_set)
+        for index in range(4)
+    ]
+    previous_week_coverage = [
+        sum(1 for report_date in previous_dates[index * 7:(index + 1) * 7] if report_date.isoformat() in report_date_set)
+        for index in range(4)
+    ]
+
+    current_week_totals = []
+    for week_index in range(4, 8):
+        units = sum(
+            all_sales.get(str(product.id), [[0] * 7 for _ in range(8)])[week_index][day_index]
+            for product in products for day_index in range(7)
+        )
+        revenue = sum(
+            sum(all_sales.get(str(product.id), [[0] * 7 for _ in range(8)])[week_index])
+            * float((product.sp_p if is_premium else product.sp_np) or 0)
+            for product in products
+        )
+        current_week_totals.append({'units': units, 'revenue': revenue})
+
+    product_summaries = {}
+    for product in products:
+        weekly_sales = all_sales.get(str(product.id), [[0] * 7 for _ in range(8)])
+        current_averages = []
+        previous_averages = []
+        for day_index in range(7):
+            current_total = sum(weekly_sales[week_index][day_index] for week_index in range(4, 8))
+            previous_total = sum(weekly_sales[week_index][day_index] for week_index in range(0, 4))
+            current_avg = current_total / 4.0
+            previous_avg = previous_total / 4.0
+            current_averages.append(current_avg)
+            previous_averages.append(previous_avg)
+
+        product_summaries[str(product.id)] = {
+            'current_averages': current_averages,
+            'previous_averages': previous_averages,
+            'total_current_average': sum(current_averages),
+            'total_previous_average': sum(previous_averages),
+        }
+
+    weekday_revenue_totals = [0.0] * 7
+    for product in products:
+        sp = float((product.sp_p if is_premium else product.sp_np) or 0)
+        weekly_sales = all_sales.get(str(product.id), [[0] * 7 for _ in range(8)])
+        for day_index in range(7):
+            current_avg = sum(weekly_sales[week_index][day_index] for week_index in range(4, 8)) / 4.0
+            weekday_revenue_totals[day_index] += current_avg * sp
+
+    total_revenue = sum(weekday_revenue_totals)
+
     return jsonify({
         'type': 'success',
         'store': {'id': store.id, 'name': store.name},
         'cluster': {'id': cluster.id, 'name': cluster.name},
         'anchor_date': anchor_date.isoformat(),
-        'period_start': (anchor_date - timedelta(days=27)).isoformat(),
+        'period_start': period_start.isoformat(),
         'products': product_rows,
         'pos_sales_data': _build_oracle_pos_sales_data(store, products, anchor_date),
         'bulk_order_weeks': _build_oracle_bulk_order_weeks(store, anchor_date),
         'bulk_order_product_data': _build_oracle_bulk_order_product_data(store, products, anchor_date),
+        # Add store-manager compatible fields
+        'current_period': {
+            'report_dates': [d.isoformat() for d in current_dates],
+            'report_counts': current_counts,
+            'week_coverage': current_week_coverage,
+            'week_totals': current_week_totals,
+        },
+        'previous_period': {
+            'report_dates': [d.isoformat() for d in previous_dates],
+            'report_counts': previous_counts,
+            'week_coverage': previous_week_coverage,
+        },
+        'product_summaries': product_summaries,
+        'weekday_revenue_totals': weekday_revenue_totals,
+        'total_revenue': total_revenue,
     })
 
 
