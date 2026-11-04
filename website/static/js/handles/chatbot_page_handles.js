@@ -259,7 +259,14 @@ function restoreCopyLabel(button) {
   button.textContent = 'Copy';
 }
 
+
 async function handleChatLogClick(event) {
+  let fsBtn = event.target.closest('.chat-chart-fs-btn');
+  if (fsBtn) {
+    toggleChartFullscreen(fsBtn.closest('.chat-chart-card'));
+    return;
+  }
+
   let button = event.target.closest('.chat-copy-btn');
   if (!button) {
     return;
@@ -273,6 +280,8 @@ async function handleChatLogClick(event) {
     notifyError('Could not copy the code.');
   }
 }
+
+
 
 function initMarkdown() {
   if (typeof DOMPurify !== 'undefined') {
@@ -592,6 +601,27 @@ if (typeof window.getCSSVar === 'undefined') {
 
 let chatChartSeq = 0;
 
+
+function toggleChartFullscreen(card, forceState) {
+  if (!card) {
+    return;
+  }
+  let expand = typeof forceState === 'boolean' ? forceState : !card.classList.contains('is-fullscreen');
+  card.classList.toggle('is-fullscreen', expand);
+
+  let btn = card.querySelector('.chat-chart-fs-btn');
+  if (btn) {
+    btn.textContent = expand ? 'Exit Fullscreen (Esc)' : 'Fullscreen';
+  }
+
+  let canvas = card.querySelector('canvas');
+  if (canvas && typeof chartInstances !== 'undefined' && chartInstances[canvas.id]) {
+    chartInstances[canvas.id].resize();
+  }
+}
+
+
+
 function renderChatChart(container, spec) {
   if (!container || !spec) {
     return;
@@ -600,17 +630,26 @@ function renderChatChart(container, spec) {
   let canvasId = 'chat-chart-' + Date.now() + '-' + chatChartSeq;
 
   let card = document.createElement('div');
-  card.className = 'w-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm';
+  card.className = 'chat-chart-card w-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm';
 
-  if (spec.title) {
-    let heading = document.createElement('div');
-    heading.className = 'mb-2 text-xs font-bold uppercase tracking-wide text-slate-600';
-    heading.textContent = spec.title;
-    card.appendChild(heading);
-  }
+  let header = document.createElement('div');
+  header.className = 'mb-2 flex items-center justify-between gap-2';
+
+  let heading = document.createElement('div');
+  heading.className = 'text-xs font-bold uppercase tracking-wide text-slate-600';
+  heading.textContent = spec.title || 'Chart';
+
+  let fsBtn = document.createElement('button');
+  fsBtn.type = 'button';
+  fsBtn.className = 'chat-chart-fs-btn rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-100';
+  fsBtn.textContent = 'Fullscreen';
+
+  header.appendChild(heading);
+  header.appendChild(fsBtn);
+  card.appendChild(header);
 
   let canvasWrap = document.createElement('div');
-  canvasWrap.className = 'relative w-full';
+  canvasWrap.className = 'chat-chart-canvas-wrap relative w-full';
   let canvas = document.createElement('canvas');
   canvas.id = canvasId;
   canvas.style.maxHeight = spec.chart_type === 'pie' ? '300px' : '340px';
@@ -661,7 +700,14 @@ function renderChatChart(container, spec) {
 }
 
 
-
+document.addEventListener('keydown', function (event) {
+  if (event.key === 'Escape') {
+    let activeCard = chatLog.querySelector('.chat-chart-card.is-fullscreen');
+    if (activeCard) {
+      toggleChartFullscreen(activeCard, false);
+    }
+  }
+});
 
 // - Init -
 
@@ -678,3 +724,5 @@ applyStoreName();
 chatInput.focus();
 
 applyNoHeaderMode();
+
+

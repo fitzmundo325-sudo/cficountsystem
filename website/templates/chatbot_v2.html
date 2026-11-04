@@ -49,7 +49,39 @@
   #chat-log .chat-copy-btn { border: 0; border-radius: 0.25rem; background: transparent; color: #cbd5e1; cursor: pointer; font-size: 0.7rem; font-weight: 600; padding: 0.1rem 0.4rem; }
   #chat-log .chat-copy-btn:hover { background-color: #334155; color: #ffffff; }
   #chat-log .chat-code pre { margin: 0; overflow-x: auto; padding: 0.75rem; background: transparent; }
-  #chat-log .chat-code pre code { background: transparent; color: #e2e8f0; font-size: 0.8rem; line-height: 1.5; padding: 0; white-space: pre; }
+  #chat-log .chat-code pre code { background: transparent; color: var(--primary_color); font-size: 0.8rem; line-height: 1.5; padding: 0; white-space: pre; }
+  
+  
+  
+  
+  #chat-log .chat-chart-card.is-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    margin: 0;
+    height: 100dvh;
+    width: 100vw;
+    max-width: none;
+    border-radius: 0;
+    border: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 1.25rem 1.5rem;
+    background-color: #ffffff;
+  }
+  #chat-log .chat-chart-card.is-fullscreen .chat-chart-canvas-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #chat-log .chat-chart-card.is-fullscreen canvas {
+    max-height: 100% !important;
+    max-width: 100% !important;
+  }
+  
+  
 </style>
 
 
