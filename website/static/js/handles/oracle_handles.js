@@ -255,6 +255,12 @@ function applyOracleData(data) {
   document.getElementById('topbar-date').textContent = (ORACLE_DATE ? new Date(ORACLE_DATE + 'T00:00:00') : new Date()).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   buildCategoryButtons();
   renderOrderForm();
+  hideSkeletonRows();
+}
+
+function hideSkeletonRows() {
+  document.querySelectorAll('.skeleton-row').forEach(row => row.remove());
+  document.querySelectorAll('.skeleton-row').forEach(row => row.style.display = 'none');
 }
 
 function showLoadError(message) {
