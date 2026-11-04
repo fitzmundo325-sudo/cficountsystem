@@ -8,6 +8,7 @@ let chatModelWrap = document.getElementById('chat-model-wrap');
 let chatModelSelect = document.getElementById('chat-model-select');
 let chatUserTemplate = document.getElementById('chatUserMessageTemplate');
 let chatBotTemplate = document.getElementById('chatBotMessageTemplate');
+let chatToolTemplate = document.getElementById('chatToolTemplate');
 
 let chatHistory = [];
 let chatController = null;
@@ -279,6 +280,31 @@ function initMarkdown() {
   }
 }
 
+// - Tools -
+
+function addToolChip(container, chips, info) {
+  let chip = chatToolTemplate.content.firstElementChild.cloneNode(true);
+  chip.querySelector('[data-cell="icon"]').textContent = '\u2026';
+  chip.querySelector('[data-cell="label"]').textContent = info.label || info.name;
+  chip.classList.add('chat-thinking-pulse');
+  container.classList.remove('hidden');
+  container.classList.add('flex');
+  container.appendChild(chip);
+  chips[info.id] = chip;
+}
+
+function finishToolChip(chips, info) {
+  let chip = chips[info.id];
+  if (!chip) {
+    return;
+  }
+  chip.classList.remove('chat-thinking-pulse');
+  chip.querySelector('[data-cell="icon"]').textContent = info.ok ? '\u2713' : '!';
+  if (!info.ok) {
+    chip.classList.add('chat-tool-failed');
+  }
+}
+
 // - Streaming -
 
 async function readErrorMessage(res) {
@@ -313,6 +339,8 @@ async function sendMessage(text) {
     label: row.querySelector('[data-cell="thinking-label"]'),
     text: row.querySelector('[data-cell="thinking-text"]')
   };
+  let toolBox = row.querySelector('[data-cell="tools"]');
+  let toolChips = {};
   bot.classList.add('chat-thinking');
 
   let reply = '';
@@ -363,6 +391,16 @@ async function sendMessage(text) {
         }
         if (payload.error) {
           throw new Error(payload.error);
+        }
+        if (payload.tool) {
+          let stickTool = isNearBottom();
+          addToolChip(toolBox, toolChips, payload.tool);
+          if (stickTool) {
+            scrollToBottom();
+          }
+        }
+        if (payload.tool_done) {
+          finishToolChip(toolChips, payload.tool_done);
         }
         if (payload.reasoning) {
           if (!thinkingShown) {
