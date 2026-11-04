@@ -42,7 +42,7 @@
   #chat-log .chat-md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0.5rem 0; font-size: 0.85rem; }
   #chat-log .chat-md th, #chat-log .chat-md td { border: 1px solid #cbd5e1; padding: 0.3rem 0.6rem; text-align: left; }
   #chat-log .chat-md th { background-color: #e2e8f0; font-weight: 600; }
-  #chat-log .chat-md code { background-color: #e2e8f0; border-radius: 0.25rem; padding: 0.1rem 0.3rem; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #chat-log .chat-md code { background-color: var(--primary_background) }; border-radius: 0.25rem; padding: 0.1rem 0.3rem; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   #chat-log .chat-code { margin: 0.6rem 0; overflow: hidden; border: 1px solid #1e293b; border-radius: 0.6rem; background-color: #0d1117; }
   #chat-log .chat-code-header { display: flex; align-items: center; justify-content: space-between; padding: 0.25rem 0.75rem; background-color: #1e293b; color: #cbd5e1; font-size: 0.7rem; }
   #chat-log .chat-code-lang { font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
@@ -51,6 +51,12 @@
   #chat-log .chat-code pre { margin: 0; overflow-x: auto; padding: 0.75rem; background: transparent; }
   #chat-log .chat-code pre code { background: transparent; color: #e2e8f0; font-size: 0.8rem; line-height: 1.5; padding: 0; white-space: pre; }
 </style>
+
+
+<script src="{{ url_for('static', filename='js/charts/chart.js') }}"></script>
+<script src="{{ url_for('static', filename='js/charts/chartjs-plugin-datalabels.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/chart_helper.js') }}"></script>
+
 
 <script>
 let currentUserRole = {{ user.role|tojson }};
@@ -61,7 +67,8 @@ let chatModelsEndpoint = {{ url_for('openrouter_chat.chat_models')|tojson }};
 </script>
 
 <!-- Top Header -->
-<header class="sticky top-0 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-2 min-h-14 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" style="z-index:99;">
+<header id="chat-top-header" class="sticky top-0 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-2 min-h-14 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" style="z-index:99;">
+
   <div class="flex items-center gap-3 sm:gap-4">
     <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -81,10 +88,12 @@ let chatModelsEndpoint = {{ url_for('openrouter_chat.chat_models')|tojson }};
 </header>
 
 <!-- Content -->
-<div id="chatbot-page-shell" class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-[2400px] w-full mx-auto space-y-6">
+<div id="chatbot-page-shell"  class="px-6 pt-4 pb-2 md:px-8 md:pt-6 md:pb-8 max-w-[4000px] w-full mx-auto space-y-6" style="padding-top:5px;">
 
   <!-- Page Header -->
-  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+
+  <section id="chat-page-header" class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4" >
+  
     <div>
       <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Chatbot<span id="pageStoreNameWrap" class="hidden"> - <span id="pageStoreName"></span></span></h1>
       <p class="mt-1 text-slate-600">Ask a question and the answer appears as it is being written.</p>
@@ -92,7 +101,7 @@ let chatModelsEndpoint = {{ url_for('openrouter_chat.chat_models')|tojson }};
   </section>
 
   <!-- Chat Card -->
-  <section id="chat-card" class="mx-auto flex w-full max-w-4xl flex-col rounded-xl border border-slate-200 bg-white shadow-sm" style="height: calc(100vh - 16rem); min-height: 26rem;">
+   <section id="chat-card" class="flex w-full flex-col rounded-xl border border-slate-200 bg-white shadow-sm" style="height: calc(100dvh - 11.5rem); min-height: 26rem;" >
 
     <div class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
       <div id="chat-model-wrap" class="flex items-center gap-2">
@@ -129,13 +138,14 @@ let chatModelsEndpoint = {{ url_for('openrouter_chat.chat_models')|tojson }};
 
 <template id="chatBotMessageTemplate">
   <div class="flex justify-start" data-cell="row">
-    <div class="flex max-w-[85%] flex-col items-start gap-2" data-cell="stack">
+    <div class="flex max-w-[85%] w-full flex-col items-start gap-2" data-cell="stack">
       <div class="hidden flex-col items-start gap-1.5" data-cell="tools"></div>
       <details class="hidden rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500" data-cell="thinking">
         <summary class="cursor-pointer select-none font-semibold text-slate-600" data-cell="thinking-label">Thinking...</summary>
         <div class="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words leading-relaxed" data-cell="thinking-text"></div>
       </details>
       <div class="max-w-full break-words rounded-2xl bg-slate-100 px-4 py-2.5 text-sm leading-relaxed text-slate-800" data-cell="bubble"></div>
+      <div class="hidden w-full max-w-2xl flex-col gap-3" data-cell="charts"></div>
     </div>
   </div>
 </template>
