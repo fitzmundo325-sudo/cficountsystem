@@ -78,8 +78,6 @@ function isDataDifferent(oldData, newData) {
   return false; // No differences found
 }
 
-
-
 function parseProgramName(name) {
     return name;
 }
@@ -556,7 +554,7 @@ function generateMultiLineChart(
 			}
           },
           datalabels: {
-            color: getCSSVar("--primary_color"),
+            color: getCSSVar("--primary_color_invert"),
             formatter: (value, ctx) => {
               if (asPercentage) {
                 let sum = ctx.dataset.data.reduce((a, b) => a + b, 0);
@@ -566,15 +564,9 @@ function generateMultiLineChart(
                 return abbreviateNumber(value).abbreviated;
               }
             },
-            anchor: "right",
-            align: "right",
-			padding: {
-				top: 4,
-				bottom: 4,
-				left: 8,
-				right: 8,
-			  },
-			},
+            anchor: "center",
+            align: "center",
+          },
         },
       },
     });
@@ -762,16 +754,9 @@ function applyChartTheme() {
 // let datas = [['Some Long', 3], ['data2', 1], ['data3', 3]];
 // generatePieChart(datas);
 
+
+
+
 // ====================
 // Pie Chart Generators End
 // ====================
-
-
-
-//helpers
-
-function getCSSVar(varName, element = document.documentElement) {
-  return getComputedStyle(element)
-    .getPropertyValue(varName)
-    .trim();
-}

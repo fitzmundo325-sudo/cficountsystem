@@ -340,6 +340,8 @@ async function sendMessage(text) {
     text: row.querySelector('[data-cell="thinking-text"]')
   };
   let toolBox = row.querySelector('[data-cell="tools"]');
+  let chartBox = row.querySelector('[data-cell="charts"]');
+  
   let toolChips = {};
   bot.classList.add('chat-thinking');
 
@@ -402,6 +404,15 @@ async function sendMessage(text) {
         if (payload.tool_done) {
           finishToolChip(toolChips, payload.tool_done);
         }
+		
+		if (payload.chart) {
+          let stickChart = isNearBottom();
+          renderChatChart(chartBox, payload.chart);
+          if (stickChart) {
+            scrollToBottom();
+          }
+        }
+		
         if (payload.reasoning) {
           if (!thinkingShown) {
             thinkingShown = true;
@@ -434,11 +445,12 @@ async function sendMessage(text) {
         }
       }
     }
-
-    if (!reply) {
-      revealBubble(bot);
-      bot.textContent = '(no response)';
-    }
+	if (!reply && (!chartBox || chartBox.children.length === 0)) {
+		  revealBubble(bot);
+		  bot.textContent = '(no response)';
+		} else if (!reply) {
+		  bot.classList.add('hidden');
+	}
   } catch (error) {
     revealBubble(bot);
     if (error.name === 'AbortError') {
@@ -539,6 +551,118 @@ function handleChatKeydown(event) {
   }
 }
 
+
+
+function applyNoHeaderMode() {
+  let params = new URLSearchParams(window.location.search);
+  let val = (params.get('no_header') || '').toLowerCase();
+  if (val !== 'true' && val !== '1') {
+    return;
+  }
+
+  let topHeader = document.getElementById('chat-top-header');
+  let pageHeader = document.getElementById('chat-page-header');
+  let shell = document.getElementById('chatbot-page-shell');
+  let card = document.getElementById('chat-card');
+
+  if (topHeader) {
+    topHeader.classList.add('hidden');
+  }
+  if (pageHeader) {
+    pageHeader.classList.add('hidden');
+  }
+  // Adjust shell/card height so the chat fills the space left by the hidden headers
+  if (shell) {
+    shell.classList.remove('h-[calc(100dvh-3.5rem)]');
+    shell.classList.add('h-dvh');
+  }
+  if (card && card.style.height) {
+    card.style.height = 'calc(100dvh - 3rem)';
+  }
+}
+
+
+//Chart Tools:// Fallback in case getCSSVar is not defined in base_headless.html
+if (typeof window.getCSSVar === 'undefined') {
+  window.getCSSVar = function (name) {
+    let val = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return val || '#334155';
+  };
+}
+
+let chatChartSeq = 0;
+
+function renderChatChart(container, spec) {
+  if (!container || !spec) {
+    return;
+  }
+  chatChartSeq += 1;
+  let canvasId = 'chat-chart-' + Date.now() + '-' + chatChartSeq;
+
+  let card = document.createElement('div');
+  card.className = 'w-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm';
+
+  if (spec.title) {
+    let heading = document.createElement('div');
+    heading.className = 'mb-2 text-xs font-bold uppercase tracking-wide text-slate-600';
+    heading.textContent = spec.title;
+    card.appendChild(heading);
+  }
+
+  let canvasWrap = document.createElement('div');
+  canvasWrap.className = 'relative w-full';
+  let canvas = document.createElement('canvas');
+  canvas.id = canvasId;
+  canvas.style.maxHeight = spec.chart_type === 'pie' ? '300px' : '340px';
+  canvasWrap.appendChild(canvas);
+  card.appendChild(canvasWrap);
+
+  container.classList.remove('hidden');
+  container.classList.add('flex');
+  container.appendChild(card);
+
+  let asPct = Boolean(spec.as_percentage);
+  let title = spec.title || 'Chart';
+
+  try {
+    switch (spec.chart_type) {
+      case 'pie':
+        generatePieChart(spec.data, canvasId, title, asPct);
+        break;
+      case 'horizontal_bar':
+        generateHorizontalBarChart(
+          spec.data,
+          canvasId,
+          title,
+          materialColors,
+          !asPct,
+          !asPct ? (v) => abbreviateNumber(v).abbreviated : undefined
+        );
+        break;
+      case 'vertical_bar':
+        generateVerticalBarChart(spec.data, canvasId, title, asPct);
+        break;
+      case 'line':
+        generateLineChart(spec.data, canvasId, title, asPct);
+        break;
+      case 'shaded_line':
+        generateShadedLineChart(spec.data, canvasId, title, asPct);
+        break;
+      case 'multi_line':
+        generateMultiLineChart(spec.datasets, canvasId, asPct);
+        break;
+      case 'multi_bar':
+        generateMultiBarChart(spec.datasets, canvasId, asPct);
+        break;
+    }
+  } catch (err) {
+    console.error('Chart render error:', err);
+  }
+}
+
+
+
+
 // - Init -
 
 chatForm.addEventListener('submit', handleChatSubmit);
@@ -552,3 +676,5 @@ initMarkdown();
 loadModels();
 applyStoreName();
 chatInput.focus();
+
+applyNoHeaderMode();
