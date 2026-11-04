@@ -30,6 +30,8 @@ from . import db
 from .audit import log_audit_event
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
+from .openrouter_chat import MODEL_BUCKET
+
 import math
 import re
 import base64
@@ -14225,7 +14227,28 @@ def cluster_data_v2_page():
 def store_data_v2_page():
     return render_template("store_manager/store_data_v2.html", user=current_user, page='clusters')
 
+
+
+
+
     
+# ================================================
+# Open Route Chatbot Operations
+# ================================================
+@views.route('/chatbot')
+@login_required
+def chatbot():
+    return render_template('chatbot_v2.html', user=current_user, models=MODEL_BUCKET)      
+
+
+
+    
+# ================================================
+# Open Route Chatbot Operations End
+# ================================================
+
+
+
 # ================================================
 # Supply Requests (store side)
 # ================================================
