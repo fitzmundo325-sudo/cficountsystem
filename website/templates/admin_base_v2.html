@@ -23,9 +23,21 @@
   <script src="{{ url_for('static', filename='js/utilities.js') }}"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+<!-- 
+/*
+═══════════════════════════════════════
 
+██╗   ██╗  ██████╗                 
+██║   ██║       ╚██╗   	  ██████╗  
+██║   ██║   █████╔╝    	 ██╔═══██╗ 
+╚██╗ ██╔╝  ██╔═══╝     	 ██║   ██║ 
+ ╚████╔╝   ███████╗  ██  ╚██████╔╝ 
+  ╚═══╝    ╚══════╝       ╚═════╝    
+ 
+═══════════════════════════════════════
 
-  
+*/
+-->
   
   <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
@@ -439,7 +451,7 @@
   =========================================================== -->
   <main id="general_container" class="flex flex-col min-h-screen">
 
-    <!-- ── Sticky top bar ──────────────────────────────────────── -->
+<!-- -- Sticky top bar ---------------------------------------- -->
     <header id="header_title" class="sticky top-0 z-20 flex items-center gap-3 px-4 py-3 bg-white/90 border-b border-slate-200 backdrop-blur-sm"
       style="min-height: 56px;">
       <!-- Mobile hamburger / Desktop collapse toggle -->
@@ -454,22 +466,66 @@
       </button>
 
       <!-- Page title / breadcrumb slot -->
-      <div class="flex-1 min-w-0">
-        {% block page_header %}
-        <h1 class="text-sm font-semibold text-slate-800 truncate">{% block page_title %}{% endblock %}</h1>
-        {% endblock %}
-      </div>
+      <nav class="hidden sm:flex text-sm font-medium text-slate-500 min-w-0">
+        <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+        <span class="mx-2">/</span>
+        <span class="text-slate-900">Dashboard</span>
+        <span id="dashboard-store-scope-badge" class="ml-2 rounded-md bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{{ (request.cookies.get('store_scope') or 'official')|capitalize }}</span>
+      </nav>
 
-      <!-- Right-side actions slot -->
-      <div class="flex items-center gap-2 shrink-0">
-        {% block header_actions %}{% endblock %}
+      <!-- Right-side actions slot (Added ml-auto here) -->
+      <div class="ml-auto flex items-center gap-2 shrink-0 header_to_right">
+        <form id="dashboard-filter-form" class="hidden lg:flex items-end gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+          <div class="flex flex-col">
+            <label for="start_date" class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">From</label>
+            <input id="start_date" name="start_date" type="date" class="mt-0.5 h-8 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700">
+          </div>
+          <div class="flex flex-col">
+            <label for="end_date" class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">To</label>
+            <input id="end_date" name="end_date" type="date" class="mt-0.5 h-8 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700">
+          </div>
+          <button type="submit" class="h-8 rounded-md bg-indigo-600 px-3 text-xs font-semibold text-white hover:bg-indigo-700">Apply</button>
+          <button type="button" id="dashboard-filter-reset" class="h-8 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 inline-flex items-center">Reset</button>
+        </form>
+
+        <button type="button" class="p-2 text-slate-400 hover:text-slate-600 relative rounded-full hover:bg-slate-100 transition-colors" aria-label="Notifications">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+            <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+          </svg>
+          <span class="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+        </button>
       </div>
     </header>
 
-    <!-- ── Page content ────────────────────────────────────────── -->
-    <div class="app-page-shell flex-1">
+    <!-- -- Page content ------------------------------------------ -->
+    <div class="app-page-shell flex-1" id="dash_contents"> 
       {% block content %}{% endblock %}
+	  <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 mb-6">
+		  <div class="flex flex-col md:flex-row md:items-center md:justify-between">
+			<div>
+			  <h1 id="dashboard-team-name" class="text-2xl font-bold text-slate-900"><span class="skeleton skeleton-text inline-block" style="width:12rem"></span></h1>
+			  <p id="dashboard-cluster-name" class="text-slate-600 mt-1"><span class="skeleton skeleton-text-sm inline-block" style="width:8rem"></span></p>
+			</div>
+			<div class="mt-4 md:mt-0">
+			  <div class="flex items-center gap-3">
+				<div class="flex flex-col text-right">
+				  <span class="text-sm text-slate-500">Selected Period</span>
+				  <span id="dashboard-selected-period" class="text-2xl font-bold text-slate-900"><span class="skeleton skeleton-text inline-block" style="width:14rem"></span></span>
+				  <span class="text-sm text-slate-500">Filter applied to all dashboard cards/charts</span>
+				</div>
+			  </div>
+			</div>
+		  </div>
+		</div>
+
+	  {% include 'fragments/dashboard_data.html' %}
+	  
     </div>
+	
+	
+	
+	
   </main>
 
   <!-- ===========================================================
