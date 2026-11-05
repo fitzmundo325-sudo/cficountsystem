@@ -536,12 +536,25 @@
 
 	  {% include 'fragments/dashboard_data.html' %}
 	  
-    </div>
-	
-	
+    </div>	
 	
 	
   </main>
+
+<div id="chartZoomModal" class="fixed inset-0 z-[70] hidden">
+  <button id="chartZoomBackdrop" type="button" class="absolute inset-0 bg-slate-900/55" aria-label="Close chart zoom"></button>
+  <div class="absolute inset-0 flex items-center justify-center p-4 lg:p-8">
+    <div class="relative flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div class="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
+        <h3 id="chartZoomTitle" class="text-sm font-bold text-slate-900">Chart</h3>
+        <button id="closeChartZoomBtn" type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-sm font-bold text-slate-700 hover:bg-slate-200" aria-label="Close chart zoom">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div id="chartZoomHost" class="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4"></div>
+    </div>
+  </div>
+</div>
 
   <!-- ===========================================================
        SCRIPTS
