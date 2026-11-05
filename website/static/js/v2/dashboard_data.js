@@ -8,6 +8,7 @@ let dashboardSectionIds = [
   'dsh-rankings',
   'dsh-bottom-sections'
 ];
+
 let dashboardSkeletons = {};
 let dashboardCharts = {};
 let dashboardData = null;
@@ -1281,6 +1282,30 @@ function closeProductMixLabelsModal() {
   }
 }
 
+function moveModalsToBody() {
+  ['chartZoomModal', 'productMixLabelsModal'].forEach(function (id) {
+    let found = Array.from(document.querySelectorAll('[id="' + id + '"]'));
+    let fresh = found.filter(function (el) { return el.parentElement !== document.body; });
+    if (!fresh.length) {
+      return;
+    }
+    found.forEach(function (el) {
+      if (el.parentElement === document.body) {
+        el.remove();
+      }
+    });
+    document.body.appendChild(fresh[0]);
+  });
+}
+
+function setZoomSizing(panel, zoomed) {
+  panel.querySelectorAll('[id$="ChartWrap"]').forEach(function (wrap) {
+    wrap.style.height = zoomed ? '65vh' : '';
+    wrap.style.maxWidth = zoomed ? 'none' : '';
+  });
+  window.dispatchEvent(new Event('resize'));
+}
+
 function openChartZoom(panelId, title) {
   let modal = document.getElementById('chartZoomModal');
   let host = document.getElementById('chartZoomHost');
@@ -1295,6 +1320,7 @@ function openChartZoom(panelId, title) {
   activeZoomState = {panel: panel, parent: panel.parentElement, next: panel.nextElementSibling};
   host.innerHTML = '';
   host.appendChild(panel);
+  setZoomSizing(panel, true);
   if (titleEl) {
     titleEl.textContent = title || 'Chart';
   }
@@ -1303,16 +1329,17 @@ function openChartZoom(panelId, title) {
 }
 
 function closeChartZoom() {
-  if (!activeZoomState) {
-    return;
-  }
-  let state = activeZoomState;
   let modal = document.getElementById('chartZoomModal');
   let host = document.getElementById('chartZoomHost');
-  if (state.next && state.next.parentElement === state.parent) {
-    state.parent.insertBefore(state.panel, state.next);
-  } else {
-    state.parent.appendChild(state.panel);
+  if (activeZoomState) {
+    let state = activeZoomState;
+    activeZoomState = null;
+    if (state.next && state.next.parentElement === state.parent) {
+      state.parent.insertBefore(state.panel, state.next);
+    } else {
+      state.parent.appendChild(state.panel);
+    }
+    setZoomSizing(state.panel, false);
   }
   if (host) {
     host.innerHTML = '';
@@ -1321,8 +1348,9 @@ function closeChartZoom() {
     modal.classList.add('hidden');
   }
   document.body.classList.remove('overflow-hidden');
-  activeZoomState = null;
 }
+
+
 
 function handleDashboardKeydown(event) {
   if (event.key === 'Escape') {
@@ -1394,9 +1422,18 @@ function bindDashboardClick(elementId, handler) {
 }
 
 function initDashboardData() {
+	moveModalsToBody();
   cacheDashboardSkeletons();
   loadDashboardData();
 }
+
+function handleZoomCloseClick(event) {
+  if (event.target.closest('#closeChartZoomBtn, #chartZoomBackdrop')) {
+    closeChartZoom();
+  }
+}
+
+document.addEventListener('click', handleZoomCloseClick);
 
 // - Bindings -
 window.loadDashboardData = loadDashboardData;
