@@ -6,7 +6,7 @@
   --primary_color: rgba(40,40,40,1);
   --primary_color_faded: rgba(40,40,40,0.6);
   --primary_color_invert: rgba(254,254,255,1);
-  --secondary_color: #ffdca8;
+  --secondary_color: #6366f1;
   --secondary_color_faded: #ff980088;
   --secondary_color_darker: #f5c800;
   --third_color_faded: rgba(24,24,24,0.30);
@@ -23,7 +23,9 @@
   /* BGs */
   
   --bg_src: url('../images/mosiac_light.webp');
-
+	
+  --emerald_color: #c3f9e0b3;
+  --rose_color: #fdc4c4b3;
 }
 
 
@@ -56,6 +58,11 @@
 
 .primary_color_invert{
 	color: var(--primary_color_invert);
+	
+}
+
+.primary_color_faded{
+	color: var(--primary_color_faded);
 	
 }
 
