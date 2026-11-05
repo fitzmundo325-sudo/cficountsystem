@@ -161,3 +161,10 @@ html.sidebar-collapsed [data-tooltip]:hover::after {
   pointer-events: none;
 }
 html.admin-dark.sidebar-collapsed [data-tooltip]:hover::after { background: #0f172a; border: 1px solid #334155; }
+
+
+/* Dashboard Header */
+
+.header_to_right{
+	float:right;
+}

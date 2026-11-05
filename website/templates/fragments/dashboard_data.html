@@ -1,0 +1,182 @@
+{% set dashboard_api_endpoint = dashboard_api_endpoint|default('/apis/admin_dashboard_data') %}
+{% set entity_label = entity_label|default('Store') %}
+{% set entity_label_plural = entity_label_plural|default('Stores') %}
+
+<style>
+  .icount-tracker-scroll {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .icount-tracker-scroll::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  .icount-scrollbar {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    top: 0;
+    width: 7px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.35);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 700ms ease;
+  }
+  .icount-scrollbar-thumb {
+    position: absolute;
+    left: 1px;
+    right: 1px;
+    top: 0;
+    min-height: 28px;
+    border-radius: 999px;
+    background: #64748b;
+  }
+  .icount-scrollbar.is-hidden { display: none; }
+  .icount-scroll-wrap.is-scrolling .icount-scrollbar { opacity: 1; }
+  html.admin-dark .icount-scrollbar { background: rgba(51, 65, 85, 0.95); }
+  html.admin-dark .icount-scrollbar-thumb { background: #cbd5e1; }
+  html.admin-dark .icount-tracker-missing-card { background: rgba(120, 53, 15, 0.28) !important; border-color: rgba(251, 191, 36, 0.4) !important; }
+  html.admin-dark .icount-tracker-missing-card .status-title { color: #fde68a !important; }
+  html.admin-dark .icount-tracker-missing-card .status-copy { color: #fcd34d !important; }
+  html.admin-dark .icount-tracker-missing-card .status-pill { background: rgba(15, 23, 42, 0.78) !important; color: #fde68a !important; box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.42) !important; }
+  html.admin-dark .icount-tracker-complete-card { background-color: #052e2b !important; border-color: #065f46 !important; }
+  .dsh-loading-error { text-align: center; padding: 2rem; }
+  .dsh-loading-error button { margin-top: 0.5rem; padding: 0.5rem 1.5rem; border-radius: 0.5rem; background: #6366f1; color: white; font-weight: 600; font-size: 0.875rem; cursor: pointer; }
+  .dsh-loading-error button:hover { background: #4f46e5; }
+</style>
+
+<!-- Skeleton: Gauges -->
+<div id="dsh-gauges" class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+  <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+    <div class="skeleton skeleton-text mb-2" style="width:25%"></div>
+    <div class="relative w-full max-w-[340px] h-[240px] mx-auto"><div class="skeleton skeleton-chart" style="width:100%;height:100%"></div></div>
+  </div>
+  <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+    <div class="skeleton skeleton-text mb-2" style="width:25%"></div>
+    <div class="relative w-full max-w-[340px] h-[240px] mx-auto"><div class="skeleton skeleton-chart" style="width:100%;height:100%"></div></div>
+  </div>
+</div>
+
+<!-- Skeleton: Summary Cards -->
+<div id="dsh-summary" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+  <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text mt-2" style="width:70%"></div><div class="skeleton skeleton-text-sm mt-1"></div></div>
+  <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text mt-2" style="width:60%"></div><div class="skeleton skeleton-text-sm mt-1"></div></div>
+  <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text mt-2" style="width:65%"></div><div class="skeleton skeleton-text-sm mt-1"></div></div>
+  <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text mt-2" style="width:55%"></div><div class="skeleton skeleton-text-sm mt-1"></div></div>
+  <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text mt-2" style="width:60%"></div><div class="skeleton skeleton-text-sm mt-1"></div></div>
+</div>
+
+<!-- Skeleton: Sales Chart -->
+<div id="dsh-sales-chart" class="grid grid-cols-1 gap-6 mb-6">
+  <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+    <div class="flex items-center justify-between mb-6">
+      <div><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text-sm" style="width:35%"></div></div>
+    </div>
+    <div class="skeleton skeleton-chart" style="height:320px"></div>
+  </div>
+</div>
+
+<!-- Skeleton: Performance Table -->
+<div id="dsh-performance" class="grid grid-cols-1 gap-6 mb-6">
+  <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+    <div class="mb-6"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text-sm" style="width:45%"></div></div>
+    <div class="space-y-3">
+      <div class="skeleton skeleton-table-row"></div><div class="skeleton skeleton-table-row"></div><div class="skeleton skeleton-table-row"></div><div class="skeleton skeleton-table-row"></div><div class="skeleton skeleton-table-row"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Skeleton: Product Mix -->
+<div id="dsh-product-mix" class="grid grid-cols-1 gap-6 mb-6">
+  <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+    <div class="mb-5"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text-sm" style="width:50%"></div></div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="skeleton skeleton-chart" style="height:260px"></div>
+      <div class="skeleton skeleton-chart" style="height:288px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Skeleton: POS Sold -->
+<div id="dsh-pos-sold" class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+  <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+    <div class="mb-5"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text-sm" style="width:40%"></div></div>
+    <div class="skeleton skeleton-chart" style="height:384px"></div>
+  </div>
+  <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+    <div class="mb-5"><div class="skeleton skeleton-heading"></div><div class="skeleton skeleton-text-sm" style="width:45%"></div></div>
+    <div class="skeleton skeleton-chart" style="height:320px"></div>
+  </div>
+</div>
+
+<!-- Skeleton: Rankings + Attainment + ICU -->
+<div id="dsh-rankings" class="grid grid-cols-1 gap-6 lg:grid-cols-3 mb-6">
+  <div class="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-5 shadow-sm">
+    <div class="mb-4"><div class="skeleton skeleton-heading"></div></div>
+    <div class="space-y-2.5"><div class="skeleton skeleton-card" style="height:80px"></div><div class="skeleton skeleton-card" style="height:80px"></div><div class="skeleton skeleton-card" style="height:80px"></div></div>
+  </div>
+  <div class="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/70 to-white p-5 shadow-sm">
+    <div class="mb-4"><div class="skeleton skeleton-heading"></div></div>
+    <div class="space-y-2.5"><div class="skeleton skeleton-card" style="height:80px"></div><div class="skeleton skeleton-card" style="height:80px"></div><div class="skeleton skeleton-card" style="height:80px"></div></div>
+  </div>
+  <div class="rounded-2xl border border-rose-200 bg-gradient-to-b from-rose-50/70 to-white p-5 shadow-sm">
+    <div class="mb-4"><div class="skeleton skeleton-heading"></div></div>
+    <div class="space-y-2.5"><div class="skeleton skeleton-card" style="height:80px"></div></div>
+  </div>
+</div>
+
+<!-- Skeleton: Wastage + Icount + Discount -->
+<div id="dsh-bottom-sections" class="mt-6 mb-6">
+  <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="mb-4"><div class="skeleton skeleton-heading"></div></div>
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div class="skeleton skeleton-card" style="height:200px"></div>
+      <div class="skeleton skeleton-card" style="height:200px"></div>
+    </div>
+    <div class="mt-4 skeleton skeleton-card" style="height:120px"></div>
+    <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div class="skeleton skeleton-card" style="height:180px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Product Mix Labels Right Modal -->
+<div id="productMixLabelsModal" class="fixed inset-0 z-50 hidden">
+  <button id="productMixLabelsBackdrop" type="button" class="absolute inset-0 bg-slate-900/30" aria-label="Close labels modal"></button>
+  <aside class="absolute inset-y-0 right-0 w-full max-w-md bg-white shadow-2xl border-l border-slate-200 p-4 overflow-y-auto">
+    <div class="mb-4 flex items-center justify-between">
+      <h3 class="text-base font-bold text-slate-900">Product Mix Labels</h3>
+      <button id="closeProductMixLabelsBtn" type="button" class="inline-flex items-center rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200">Close</button>
+    </div>
+    <div id="storePieLegendModal" class="space-y-2"></div>
+  </aside>
+</div>
+
+<div id="chartZoomModal" class="fixed inset-0 z-[70] hidden">
+  <button id="chartZoomBackdrop" type="button" class="absolute inset-0 bg-slate-900/55" aria-label="Close chart zoom"></button>
+  <div class="absolute inset-0 flex items-center justify-center p-4 lg:p-8">
+    <div class="relative w-full max-w-6xl rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+        <h3 id="chartZoomTitle" class="text-sm font-bold text-slate-900">Chart</h3>
+        <button id="closeChartZoomBtn" type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-sm font-bold text-slate-700 hover:bg-slate-200" aria-label="Close chart zoom">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div id="chartZoomHost" class="p-3 sm:p-4"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let dashboardApiEndpoint = {{ dashboard_api_endpoint|tojson }};
+  let dashboardForceCluster = {{ 'true' if force_cluster_sidebar|default(false) else 'false' }};
+  let dashboardClusterId = {{ (cluster.id if cluster is defined and cluster else '')|tojson }};
+  let dashboardEntityLabel = {{ entity_label|tojson }};
+  let dashboardEntityLabelPlural = {{ entity_label_plural|tojson }};
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.4/dist/Chart.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-gauge@0.3.0/dist/chartjs-gauge.min.js"></script>
+<script src="{{ url_for('static', filename='js/v2/dashboard_data.js') }}"></script>
