@@ -20,9 +20,9 @@ chat_bp = Blueprint("openrouter_chat", __name__)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DASHBOARD_PATH = "/apis/admin_dashboard_data"
 MAX_MESSAGES = 40
-MAX_TOOL_ROUNDS = 6
-MAX_TOOL_CALLS = 12
-MAX_TOOL_CHARS = 40000
+MAX_TOOL_ROUNDS = 12
+MAX_TOOL_CALLS = 15
+MAX_TOOL_CHARS = 50000
 MAX_RANGE_DAYS = 366
 
 MODEL_BUCKET = [
