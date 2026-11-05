@@ -103,11 +103,11 @@ function truncateChartLabel(value, compactMax, wideMax) {
 function updateToggleButtons(selector, attrName, activeValue) {
   document.querySelectorAll(selector).forEach(function (btn) {
     if (String(btn.getAttribute(attrName) || '') === String(activeValue)) {
-      btn.classList.remove('border-slate-200', 'bg-slate-100', 'text-slate-700');
+      btn.classList.remove('border-slate-200', 'primary_background_darker', 'primary_color');
       btn.classList.add('border-indigo-600', 'bg-indigo-600', 'text-white');
     } else {
       btn.classList.remove('border-indigo-600', 'bg-indigo-600', 'text-white');
-      btn.classList.add('border-slate-200', 'bg-slate-100', 'text-slate-700');
+      btn.classList.add('border-slate-200', 'primary_background_darker', 'primary_color');
     }
   });
 }
@@ -122,8 +122,11 @@ function getEntityLabelPlural(data) {
 
 function applyChartTheme() {
   dashboardDark = document.documentElement.classList.contains('admin-dark');
-  chartTextColor = dashboardDark ? '#dbeafe' : '#475569';
-  chartStrongColor = dashboardDark ? '#ffffff' : '#0f172a';
+  let rootStyle = getComputedStyle(document.documentElement);
+  let cssPrimaryColor = rootStyle.getPropertyValue('--primary_color').trim();
+  let cssPrimaryFaded = rootStyle.getPropertyValue('--primary_color_faded').trim();
+  chartTextColor = dashboardDark ? '#dbeafe' : (cssPrimaryFaded || '#475569');
+  chartStrongColor = dashboardDark ? '#ffffff' : (cssPrimaryColor || '#0f172a');
   if (window.Chart && Chart.defaults && Chart.defaults.global) {
     Chart.defaults.global.defaultFontColor = chartTextColor;
   }
@@ -186,7 +189,7 @@ function buildDashboardError(message) {
   let box = document.createElement('div');
   box.className = 'dsh-loading-error col-span-full';
   let text = document.createElement('p');
-  text.className = 'text-sm text-slate-600';
+  text.className = 'text-sm primary_color';
   text.textContent = message;
   let button = document.createElement('button');
   button.type = 'button';
@@ -318,14 +321,14 @@ function handleDashboardPopState() {
 
 // - Gauges -
 function buildGaugeCard(label, canvasId, rate) {
-  return '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
-    '<div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">' + label + '</div>' +
+  return '<div class="primary_background p-6 rounded-2xl shadow-sm">' +
+    '<div class="text-xs font-semibold uppercase tracking-wide primary_color mb-2">' + label + '</div>' +
     '<div class="relative w-full max-w-[340px] h-[240px] mx-auto">' +
       '<canvas id="' + canvasId + '"></canvas>' +
       '<div class="absolute inset-x-0 bottom-6 flex flex-col items-center justify-center pointer-events-none">' +
-        '<span class="text-3xl font-bold text-slate-500">' + pct(rate) + '</span>' +
+        '<span class="text-3xl font-bold primary_color guage_text">' + pct(rate) + '</span>' +
       '</div>' +
-      '<div class="absolute inset-x-4 -bottom-2 flex items-center justify-between text-[11px] font-semibold text-slate-500"><span>0%</span><span>80%</span><span>90%</span><span>100%+</span></div>' +
+      '<div class="absolute inset-x-4 -bottom-2 flex items-center justify-between text-[11px] font-semibold primary_color"><span>0%</span><span>80%</span><span>90%</span><span>100%+</span></div>' +
     '</div>' +
   '</div>';
 }
@@ -395,30 +398,30 @@ function renderSummaryCards(data) {
 
   let el = document.getElementById('dsh-summary');
   el.innerHTML =
-    '<div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-all">' +
+    '<div class="primary_background p-5 rounded-3xl shadow-sm hover:shadow-md transition-all">' +
       '<div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600"><span class="text-2xl font-bold leading-none">\u20B1</span></div>' +
       '<span class="text-xs font-medium px-2 py-0.5 rounded-md ' + summaryVarianceClass(variancePct) + '">' + (variancePct >= 0 ? '+' : '') + pct(variancePct) + '</span></div>' +
-      '<h3 class="text-xs font-medium text-slate-500 mb-1">MTD Sales</h3><p class="text-xl font-bold text-slate-900">' + peso(overview.mtd_sales) + '</p><p class="text-xs text-slate-400 mt-1">month-to-date net sales</p></div>' +
+      '<h3 class="text-xs font-medium primary_color mb-1">MTD Sales</h3><p class="text-xl font-bold primary_color">' + peso(overview.mtd_sales) + '</p><p class="text-xs primary_color mt-1">month-to-date net sales</p></div>' +
 
-    '<div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-all">' +
+    '<div class="primary_background p-5 rounded-3xl shadow-sm hover:shadow-md transition-all">' +
       '<div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg></div>' +
       '<span class="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">Monthly</span></div>' +
-      '<h3 class="text-xs font-medium text-slate-500 mb-1">Target</h3><p class="text-xl font-bold text-slate-900">' + peso(overview.total_target) + '</p><p class="text-xs text-slate-400 mt-1">month-to-date target</p></div>' +
+      '<h3 class="text-xs font-medium primary_color mb-1">Target</h3><p class="text-xl font-bold primary_color">' + peso(overview.total_target) + '</p><p class="text-xs primary_color mt-1">month-to-date target</p></div>' +
 
-    '<div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-all">' +
-      '<div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9"></path><polyline points="15 3 21 3 21 9"></polyline></svg></div>' +
+    '<div class="primary_background p-5 rounded-3xl shadow-sm hover:shadow-md transition-all">' +
+      '<div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl primary_background_darker primary_color flex items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9"></path><polyline points="15 3 21 3 21 9"></polyline></svg></div>' +
       '<span class="text-xs font-medium px-2 py-0.5 rounded-md ' + summaryVarianceClass(lyPct) + '">' + (lyPct >= 0 ? '+' : '') + pct(lyPct) + '</span></div>' +
-      '<h3 class="text-xs font-medium text-slate-500 mb-1">Last Year Net</h3><p class="text-xl font-bold text-slate-900">' + peso(sales.last_year_net) + '</p><p class="text-xs text-slate-400 mt-1">same selected period</p></div>' +
+      '<h3 class="text-xs font-medium primary_color mb-1">Last Year Net</h3><p class="text-xl font-bold primary_color">' + peso(sales.last_year_net) + '</p><p class="text-xs primary_color mt-1">same selected period</p></div>' +
 
-    '<div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-all">' +
+    '<div class="primary_background p-5 rounded-3xl shadow-sm hover:shadow-md transition-all">' +
       '<div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"></path><path d="M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></div>' +
       '<span class="text-xs font-medium px-2 py-0.5 rounded-md ' + summaryThresholdClass(wastagePct, [3, 1.5]) + '">' + pct(wastagePct, 2) + '</span></div>' +
-      '<h3 class="text-xs font-medium text-slate-500 mb-1">Wastage Amount</h3><p class="text-xl font-bold text-slate-900">' + peso(overview.wastage_amount) + '</p><p class="text-xs text-slate-400 mt-1">month-to-date wastage</p></div>' +
+      '<h3 class="text-xs font-medium primary_color mb-1">Wastage Amount</h3><p class="text-xl font-bold primary_color">' + peso(overview.wastage_amount) + '</p><p class="text-xs primary_color mt-1">month-to-date wastage</p></div>' +
 
-    '<div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-all">' +
+    '<div class="primary_background p-5 rounded-3xl shadow-sm hover:shadow-md transition-all">' +
       '<div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center"><span class="text-2xl font-bold leading-none">\u20B1</span></div>' +
       '<span class="text-xs font-medium px-2 py-0.5 rounded-md ' + summaryThresholdClass(discPct, [5, 2]) + '">' + pct(discPct, 2) + '</span></div>' +
-      '<h3 class="text-xs font-medium text-slate-500 mb-1">MTD Discount</h3><p class="text-xl font-bold text-slate-900">' + peso(overview.discount_amount) + '</p><p class="text-xs text-slate-400 mt-1">month-to-date discounts</p></div>';
+      '<h3 class="text-xs font-medium primary_color mb-1">MTD Discount</h3><p class="text-xl font-bold primary_color">' + peso(overview.discount_amount) + '</p><p class="text-xs primary_color mt-1">month-to-date discounts</p></div>';
 }
 
 // - Sales chart -
@@ -468,12 +471,12 @@ function groupSalesByMonth(series) {
 function renderSalesChart(data) {
   let el = document.getElementById('dsh-sales-chart');
   el.innerHTML =
-    '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
-      '<div class="flex items-center justify-between mb-6"><div><h2 class="text-lg font-bold text-slate-900">Sales Trend</h2><p class="text-sm text-slate-500 mt-1">Daily net sales</p></div>' +
+    '<div class="primary_background p-6 rounded-2xl shadow-sm">' +
+      '<div class="flex items-center justify-between mb-6"><div><h2 class="text-lg font-bold primary_color">Sales Trend</h2><p class="text-sm primary_color mt-1">Daily net sales</p></div>' +
       '<div id="sales-range-toggle" class="flex gap-2">' +
         '<button class="px-3 py-1.5 text-xs font-medium bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors">Day</button>' +
-        '<button class="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 rounded-lg transition-colors">Week</button>' +
-        '<button class="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 rounded-lg transition-colors">Month</button>' +
+        '<button class="px-3 py-1.5 text-xs font-medium primary_color hover:primary_background_darker rounded-lg transition-colors">Week</button>' +
+        '<button class="px-3 py-1.5 text-xs font-medium primary_color hover:primary_background_darker rounded-lg transition-colors">Month</button>' +
       '</div></div>' +
       '<div class="relative h-80"><canvas id="salesChart" width="800" height="320"></canvas></div>' +
     '</div>';
@@ -541,9 +544,9 @@ function handleSalesRangeClick(event) {
   }
   document.querySelectorAll('#sales-range-toggle button').forEach(function (b) {
     b.classList.remove('bg-indigo-50', 'text-indigo-600');
-    b.classList.add('text-slate-600');
+    b.classList.add('primary_color');
   });
-  btn.classList.remove('text-slate-600');
+  btn.classList.remove('primary_color');
   btn.classList.add('bg-indigo-50', 'text-indigo-600');
 
   let range = btn.textContent.trim();
@@ -565,32 +568,32 @@ function renderPerformance(data) {
   performance.forEach(function (s) {
     let growth = s.ly > 0 ? ((s.act / s.ly) - 1) * 100 : null;
     let statusClass = s.status === 'Excellent' ? 'bg-emerald-100 text-emerald-800' : s.status === 'Good' ? 'bg-green-100 text-green-800' : s.status === 'Recovery' ? 'bg-yellow-100 text-yellow-800' : s.status === 'Critical' ? 'bg-orange-100 text-orange-800' : 'bg-red-100 text-red-800';
-    rows += '<tr><td class="px-4 py-3 text-sm font-medium text-slate-900">' + esc(s.store_name) + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-700 text-right">' + peso(s.act) + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-700 text-right">' + peso(s.ads) + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-700 text-right">' + peso(s.ly) + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-700 text-right">' + pct(s.ar_tgt_percent) + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-700 text-right">' + (growth !== null ? pct(growth) : '-') + '</td>' +
+    rows += '<tr class="row_styles_tr" ><td class="px-4 py-3 text-sm font-medium primary_color">' + esc(s.store_name) + '</td>' +
+      '<td class="px-4 py-3 text-sm primary_color text-right">' + peso(s.act) + '</td>' +
+      '<td class="px-4 py-3 text-sm primary_color text-right">' + peso(s.ads) + '</td>' +
+      '<td class="px-4 py-3 text-sm primary_color text-right">' + peso(s.ly) + '</td>' +
+      '<td class="px-4 py-3 text-sm primary_color text-right">' + pct(s.ar_tgt_percent) + '</td>' +
+      '<td class="px-4 py-3 text-sm primary_color text-right">' + (growth !== null ? pct(growth) : '-') + '</td>' +
       '<td class="px-4 py-3 text-sm text-center"><span class="px-2 py-1 text-xs font-medium rounded-full ' + statusClass + '">' + esc(s.status) + '</span></td></tr>';
   });
 
   document.getElementById('dsh-performance').innerHTML =
-    '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
-      '<div class="mb-6"><h2 class="text-lg font-bold text-slate-900">Per ' + esc(EL) + ' Performance (Net Sales)</h2><p class="text-sm text-slate-500 mt-1">Monthly performance by ' + esc(EL.toLowerCase()) + '</p></div>' +
-      '<div class="overflow-x-auto"><table class="min-w-full divide-y divide-slate-200"><thead class="bg-slate-50"><tr>' +
-        '<th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">' + esc(EL) + ' Name</th>' +
-        '<th class="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Act</th>' +
-        '<th class="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">ADS</th>' +
-        '<th class="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Ly</th>' +
-        '<th class="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">AR % Tgt</th>' +
-        '<th class="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">% Gr</th>' +
-        '<th class="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>' +
-      '</tr></thead><tbody class="bg-white divide-y divide-slate-200">' + rows + '</tbody></table></div></div>';
+    '<div class="primary_background p-6 rounded-2xl shadow-sm">' +
+      '<div class="mb-6"><h2 class="text-lg font-bold primary_color">Per ' + esc(EL) + ' Performance (Net Sales)</h2><p class="text-sm primary_color mt-1">Monthly performance by ' + esc(EL.toLowerCase()) + '</p></div>' +
+      '<div class="overflow-x-auto"><table class="min-w-full divide-y divide-slate-200"><thead class="primary_background_darker"><tr>' +
+        '<th class="px-4 py-3 text-left text-xs font-medium primary_color uppercase tracking-wider">' + esc(EL) + ' Name</th>' +
+        '<th class="px-4 py-3 text-right text-xs font-medium primary_color uppercase tracking-wider">Act</th>' +
+        '<th class="px-4 py-3 text-right text-xs font-medium primary_color uppercase tracking-wider">ADS</th>' +
+        '<th class="px-4 py-3 text-right text-xs font-medium primary_color uppercase tracking-wider">Ly</th>' +
+        '<th class="px-4 py-3 text-right text-xs font-medium primary_color uppercase tracking-wider">AR % Tgt</th>' +
+        '<th class="px-4 py-3 text-right text-xs font-medium primary_color uppercase tracking-wider">% Gr</th>' +
+        '<th class="px-4 py-3 text-center text-xs font-medium primary_color uppercase tracking-wider">Status</th>' +
+      '</tr></thead><tbody class="primary_background divide-y divide-slate-200">' + rows + '</tbody></table></div></div>';
 }
 
 // - Product mix -
 function buildZoomTriggerButton(panelId, title) {
-  return '<button type="button" class="chart-zoom-trigger absolute right-2 top-2 z-10 inline-flex items-center rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-100" data-panel-id="' + panelId + '" data-panel-title="' + title + '"><svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 4.75A1.75 1.75 0 0 1 4.75 3h3.5a.75.75 0 0 1 0 1.5h-3A.25.25 0 0 0 5 4.75v3a.75.75 0 0 1-1.5 0v-3Zm10.25-1A1.75 1.75 0 0 1 15 4.75v3a.75.75 0 0 1-1.5 0v-3a.25.25 0 0 0-.25-.25h-3a.75.75 0 0 1 0-1.5h3.5ZM4.25 11.5a.75.75 0 0 1 .75.75v3a.25.25 0 0 0 .25.25h3a.75.75 0 0 1 0 1.5h-3.5A1.75 1.75 0 0 1 3 15.25v-3a.75.75 0 0 1 .75-.75Zm10.5 0a.75.75 0 0 1 .75.75v3a1.75 1.75 0 0 1-1.75 1.75h-3.5a.75.75 0 0 1 0-1.5h3a.25.25 0 0 0 .25-.25v-3a.75.75 0 0 1 .75-.75Z" clip-rule="evenodd" /></svg></button>';
+  return '<button type="button" class="chart-zoom-trigger absolute right-2 top-2 z-10 inline-flex items-center rounded-md primary_background px-2 py-1 text-[11px] font-semibold primary_color shadow-sm transition-colors hover:primary_background_darker" data-panel-id="' + panelId + '" data-panel-title="' + title + '"><svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 4.75A1.75 1.75 0 0 1 4.75 3h3.5a.75.75 0 0 1 0 1.5h-3A.25.25 0 0 0 5 4.75v3a.75.75 0 0 1-1.5 0v-3Zm10.25-1A1.75 1.75 0 0 1 15 4.75v3a.75.75 0 0 1-1.5 0v-3a.25.25 0 0 0-.25-.25h-3a.75.75 0 0 1 0-1.5h3.5ZM4.25 11.5a.75.75 0 0 1 .75.75v3a.25.25 0 0 0 .25.25h3a.75.75 0 0 1 0 1.5h-3.5A1.75 1.75 0 0 1 3 15.25v-3a.75.75 0 0 1 .75-.75Zm10.5 0a.75.75 0 0 1 .75.75v3a1.75 1.75 0 0 1-1.75 1.75h-3.5a.75.75 0 0 1 0-1.5h3a.25.25 0 0 0 .25-.25v-3a.75.75 0 0 1 .75-.75Z" clip-rule="evenodd" /></svg></button>';
 }
 
 function renderProductMix(data) {
@@ -601,22 +604,22 @@ function renderProductMix(data) {
 
   let toggleBtns = '<button type="button" class="store-pie-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-indigo-600 bg-indigo-600 text-white" data-store-index="all">All</button>';
   productMixStores.forEach(function (item, i) {
-    toggleBtns += '<button type="button" class="store-pie-toggle inline-flex max-w-[180px] items-center truncate rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200" data-store-index="' + i + '" title="' + esc(item.store_name) + '">' + esc(item.store_name) + '</button>';
+    toggleBtns += '<button type="button" class="store-pie-toggle inline-flex max-w-[180px] items-center truncate rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 primary_background_darker primary_color" data-store-index="' + i + '" title="' + esc(item.store_name) + '">' + esc(item.store_name) + '</button>';
   });
 
   document.getElementById('dsh-product-mix').innerHTML =
-    '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
-      '<div class="mb-5 flex items-start justify-between gap-4"><div><h2 class="text-lg font-bold text-slate-900">Product Mix</h2><p class="text-sm text-slate-500 mt-1">Peso mix (pie) and qty mix (bar) per ' + esc(EL.toLowerCase()) + '</p></div>' +
-      '<div class="text-right flex flex-col items-end gap-2"><button id="openProductMixLabelsBtn" type="button" class="inline-flex items-center rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200">Show Labels</button>' +
-      '<p class="text-[11px] uppercase tracking-wide text-slate-400">Total Peso Value</p><p id="storePieTotalUnits" class="text-xl font-bold text-slate-900">0</p></div></div>' +
+    '<div class="primary_background p-6 rounded-2xl shadow-sm">' +
+      '<div class="mb-5 flex items-start justify-between gap-4"><div><h2 class="text-lg font-bold primary_color">Product Mix</h2><p class="text-sm primary_color mt-1">Peso mix (pie) and qty mix (bar) per ' + esc(EL.toLowerCase()) + '</p></div>' +
+      '<div class="text-right flex flex-col items-end gap-2"><button id="openProductMixLabelsBtn" type="button" class="inline-flex items-center rounded-lg border border-slate-200 primary_background_darker px-3 py-1.5 text-xs font-semibold primary_color transition-colors">Show Labels</button>' +
+      '<p class="text-[11px] uppercase tracking-wide primary_color">Total Peso Value</p><p id="storePieTotalUnits" class="text-xl font-bold primary_color">0</p></div></div>' +
       '<div id="storePieToggleGroup" class="mb-4 flex flex-wrap gap-2">' + toggleBtns + '</div>' +
       '<div id="productMixCategoryFilter" class="mb-4 flex flex-wrap gap-2"></div>' +
       '<div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">' +
-        '<div id="storeProductsPieChartPanel" class="relative rounded-xl border border-slate-200 bg-slate-50/50 p-3">' +
+        '<div id="storeProductsPieChartPanel" class="relative rounded-xl primary_background_darker p-3">' +
           buildZoomTriggerButton('storeProductsPieChartPanel', 'Product Mix Peso (Pie)') +
           '<div id="storeProductsPieChartWrap" class="mx-auto h-60 w-full max-w-[260px]"><canvas id="storeProductsPieChart"></canvas></div>' +
         '</div>' +
-        '<div id="storeProductsQtyBarChartPanel" class="relative rounded-xl border border-slate-200 bg-slate-50/50 p-3">' +
+        '<div id="storeProductsQtyBarChartPanel" class="relative rounded-xl primary_background_darker p-3">' +
           buildZoomTriggerButton('storeProductsQtyBarChartPanel', 'Product Mix Qty (Bar)') +
           '<div id="storeProductsQtyBarChartWrap" class="h-72 w-full"><canvas id="storeProductsQtyBarChart"></canvas></div>' +
           '<div id="storePieLegend" class="hidden ml-auto space-y-2 max-w-[340px]"></div>' +
@@ -680,7 +683,7 @@ function renderProductMixCategoryButtons() {
     return;
   }
   let activeClass = 'border-indigo-600 bg-indigo-600 text-white';
-  let idleClass = 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200';
+  let idleClass = 'border-slate-200 primary_background_darker primary_color';
   let html = '<button type="button" class="product-mix-category-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ' + (productMixActiveCategory === 'all' ? activeClass : idleClass) + '" data-category="all">All</button>';
   productMixAllowedCategories.forEach(function (c) {
     html += '<button type="button" class="product-mix-category-toggle inline-flex max-w-[180px] items-center truncate rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ' + (productMixActiveCategory === c ? activeClass : idleClass) + '" data-category="' + encodeURIComponent(c) + '">' + esc(c) + '</button>';
@@ -711,8 +714,8 @@ function renderProductMixPie() {
   let legendHtml = filtered.map(function (p, i) {
     let share = totalPeso > 0 ? (Number(p.net_sales || 0) / totalPeso) * 100 : 0;
     let color = 'hsl(' + ((i * 41) % 360) + ', 72%, 52%)';
-    return '<div class="w-full max-w-[340px] flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"><div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background-color:' + color + '"></span><span class="max-w-[170px] truncate text-xs font-medium text-slate-700" title="' + esc(p.name) + '">' + esc(p.name) + '</span></div><div class="text-right"><div class="text-xs font-semibold text-slate-900">\u20B1' + Number(p.net_sales || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</div><div class="text-[11px] text-slate-500">' + fmt(p.qty) + ' pcs</div><div class="text-[11px] text-slate-500">' + share.toFixed(1) + '%</div></div></div>';
-  }).join('') || '<div class="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500">No products in this category.</div>';
+    return '<div class="w-full max-w-[340px] flex items-center justify-between rounded-lg primary_background_darker px-3 py-2"><div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background-color:' + color + '"></span><span class="max-w-[170px] truncate text-xs font-medium primary_color" title="' + esc(p.name) + '">' + esc(p.name) + '</span></div><div class="text-right"><div class="text-xs font-semibold primary_color">\u20B1' + Number(p.net_sales || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</div><div class="text-[11px] primary_color">' + fmt(p.qty) + ' pcs</div><div class="text-[11px] primary_color">' + share.toFixed(1) + '%</div></div></div>';
+  }).join('') || '<div class="rounded-lg primary_background_darker px-3 py-4 text-center text-xs primary_color">No products in this category.</div>';
   if (legendEl) {
     legendEl.innerHTML = legendHtml;
   }
@@ -809,26 +812,26 @@ function renderPosSold(data) {
 
   let storeBtns = '<button type="button" class="pos-sold-store-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-indigo-600 bg-indigo-600 text-white" data-entity-index="all">All</button>';
   posSoldStores.forEach(function (item, i) {
-    storeBtns += '<button type="button" class="pos-sold-store-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200" data-entity-index="' + i + '">' + esc(item.store_name) + '</button>';
+    storeBtns += '<button type="button" class="pos-sold-store-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 primary_background_darker primary_color" data-entity-index="' + i + '">' + esc(item.store_name) + '</button>';
   });
   let catStoreBtns = '<button type="button" class="pos-mix-cat-store-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-indigo-600 bg-indigo-600 text-white" data-entity-index="all">All</button>';
   posSoldStores.forEach(function (item, i) {
-    catStoreBtns += '<button type="button" class="pos-mix-cat-store-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200" data-entity-index="' + i + '">' + esc(item.store_name) + '</button>';
+    catStoreBtns += '<button type="button" class="pos-mix-cat-store-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 primary_background_darker primary_color" data-entity-index="' + i + '">' + esc(item.store_name) + '</button>';
   });
 
   let hasData = posSoldStores.length > 0;
   document.getElementById('dsh-pos-sold').innerHTML =
-    '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
-      '<div class="mb-5 space-y-2"><div class="flex flex-wrap items-center justify-between gap-2"><h2 class="text-lg font-bold text-slate-900">Products Sold (POS)</h2>' +
+    '<div class="primary_background p-6 rounded-2xl shadow-sm">' +
+      '<div class="mb-5 space-y-2"><div class="flex flex-wrap items-center justify-between gap-2"><h2 class="text-lg font-bold primary_color">Products Sold (POS)</h2>' +
       '<div class="flex items-center gap-2"><button type="button" class="pos-sold-metric-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-indigo-600 bg-indigo-600 text-white" data-metric="volume">Volume</button>' +
-      '<button type="button" class="pos-sold-metric-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200" data-metric="peso">Peso Value</button></div></div>' +
-      '<div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3"><p class="text-sm text-slate-500">Top 10 products sold per ' + esc(EL.toLowerCase()) + '</p><p id="posSoldTotalUnits" class="max-w-full break-words text-base font-bold text-slate-900 sm:text-xl sm:text-right">Total: _____</p></div></div>' +
-      (hasData ? '<div class="mb-4 flex flex-wrap gap-2">' + storeBtns + '</div><div class="relative h-96 overflow-hidden"><canvas id="posSoldProductsBarChart"></canvas></div>' : '<div class="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No POS sold data available for this period.</div>') +
+      '<button type="button" class="pos-sold-metric-toggle inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors border-slate-200 primary_background_darker primary_color" data-metric="peso">Peso Value</button></div></div>' +
+      '<div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3"><p class="text-sm primary_color">Top 10 products sold per ' + esc(EL.toLowerCase()) + '</p><p id="posSoldTotalUnits" class="max-w-full break-words text-base font-bold primary_color sm:text-xl sm:text-right">Total: _____</p></div></div>' +
+      (hasData ? '<div class="mb-4 flex flex-wrap gap-2">' + storeBtns + '</div><div class="relative h-96 overflow-hidden"><canvas id="posSoldProductsBarChart"></canvas></div>' : '<div class="rounded-xl primary_background_darker px-4 py-8 text-center text-sm primary_color">No POS sold data available for this period.</div>') +
     '</div>' +
-    '<div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">' +
-      '<div class="mb-5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><h2 class="text-lg font-bold text-slate-900">Product Mix Category</h2><p class="text-sm text-slate-500 mt-1">Products pie chart with all categories</p></div>' +
-      '<div class="text-right"><p class="text-[11px] uppercase tracking-wide text-slate-400">Total Pcs</p><p id="posMixCategoryTotalUnits" class="text-xl font-bold text-slate-900">0</p></div></div>' +
-      (hasData ? '<div class="mb-4 flex flex-wrap gap-2">' + catStoreBtns + '</div><div class="grid grid-cols-1 items-start gap-4 md:grid-cols-5"><div class="md:col-span-2"><div class="mx-auto h-72 w-full max-w-[320px]"><canvas id="posMixCategoryPieChart"></canvas></div></div><div class="md:col-span-3"><div id="posMixCategoryLegend" class="space-y-2 max-w-[190px] ml-auto"></div></div></div>' : '<div class="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No category data available for this period.</div>') +
+    '<div class="primary_background p-6 rounded-2xl shadow-sm">' +
+      '<div class="mb-5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><h2 class="text-lg font-bold primary_color">Product Mix Category</h2><p class="text-sm primary_color mt-1">Products pie chart with all categories</p></div>' +
+      '<div class="text-right"><p class="text-[11px] uppercase tracking-wide primary_color">Total Pcs</p><p id="posMixCategoryTotalUnits" class="text-xl font-bold primary_color">0</p></div></div>' +
+      (hasData ? '<div class="mb-4 flex flex-wrap gap-2">' + catStoreBtns + '</div><div class="grid grid-cols-1 items-start gap-4 md:grid-cols-5"><div class="md:col-span-2"><div class="mx-auto h-72 w-full max-w-[320px]"><canvas id="posMixCategoryPieChart"></canvas></div></div><div class="md:col-span-3"><div id="posMixCategoryLegend" class="space-y-2 max-w-[190px] ml-auto"></div></div></div>' : '<div class="rounded-xl primary_background_darker px-4 py-8 text-center text-sm primary_color">No category data available for this period.</div>') +
     '</div>';
 
   if (hasData) {
@@ -958,8 +961,8 @@ function renderPosMixCategoryPie() {
     legend.innerHTML = allRows.map(function (r) {
       let isExcluded = posSoldExcluded.has(r.name);
       let share = total > 0 ? (r.qty / total) * 100 : 0;
-      return '<button type="button" class="pos-mix-category-legend-item w-full max-w-[190px] flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 ' + (isExcluded ? 'opacity-45 border-dashed cursor-pointer' : 'cursor-pointer') + '" data-category="' + encodeURIComponent(r.name) + '"><div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background-color:' + colorMap[r.name] + '"></span><span class="text-xs font-medium text-slate-700">' + esc(r.name) + '</span></div><span class="text-[11px] text-slate-500">' + (isExcluded ? 'Excluded' : share.toFixed(1) + '%') + '</span></button>';
-    }).join('') || '<div class="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500">No category data available.</div>';
+      return '<button type="button" class="pos-mix-category-legend-item w-full max-w-[190px] flex items-center justify-between rounded-lg primary_background_darker px-3 py-2 ' + (isExcluded ? 'opacity-45 cursor-pointer' : 'cursor-pointer') + '" data-category="' + encodeURIComponent(r.name) + '"><div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background-color:' + colorMap[r.name] + '"></span><span class="text-xs font-medium primary_color">' + esc(r.name) + '</span></div><span class="text-[11px] primary_color">' + (isExcluded ? 'Excluded' : share.toFixed(1) + '%') + '</span></button>';
+    }).join('') || '<div class="rounded-lg primary_background_darker px-3 py-4 text-center text-xs primary_color">No category data available.</div>';
   }
 
   let chart = new Chart(canvas.getContext('2d'), {
@@ -1040,35 +1043,35 @@ function renderRankings(data) {
   let adsHtml = '';
   if (ads.length) {
     ads.forEach(function (s) {
-      let medal = s.rank === 1 ? 'bg-amber-100 text-amber-700' : s.rank === 2 ? 'bg-slate-200 text-slate-700' : 'bg-orange-100 text-orange-700';
-      adsHtml += '<div class="rounded-xl border border-slate-200 bg-white p-3"><div class="mb-2 flex items-center justify-between"><h3 class="truncate pr-3 text-sm font-bold text-slate-900">' + esc(s.store_name) + '</h3><span class="inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold ' + medal + '">' + s.rank + '</span></div><div class="flex items-end justify-between"><p class="text-xl font-extrabold leading-none text-slate-900">' + peso(s.ads) + '</p><p class="text-[11px] font-semibold uppercase tracking-wide text-slate-400">ADS</p></div></div>';
+      let medal = s.rank === 1 ? 'bg-amber-100 text-amber-700' : s.rank === 2 ? 'primary_background_darker primary_color' : 'bg-orange-100 text-orange-700';
+      adsHtml += '<div class="rounded-xl primary_background_darker p-3"><div class="mb-2 flex items-center justify-between"><h3 class="truncate pr-3 text-sm font-bold primary_color">' + esc(s.store_name) + '</h3><span class="inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold ' + medal + '">' + s.rank + '</span></div><div class="flex items-end justify-between"><p class="text-xl font-extrabold leading-none primary_color">' + peso(s.ads) + '</p><p class="text-[11px] font-semibold uppercase tracking-wide primary_color">ADS</p></div></div>';
     });
   } else {
-    adsHtml = '<div class="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">No ADS data available for the selected period.</div>';
+    adsHtml = '<div class="rounded-xl primary_background_darker px-4 py-6 text-center text-sm primary_color">No ADS data available for the selected period.</div>';
   }
 
   let arHtml = '';
   if (ar.length) {
     ar.forEach(function (s) {
-      arHtml += '<div class="rounded-xl border border-emerald-200/70 bg-white p-3"><div class="mb-2 flex items-start justify-between gap-2"><h3 class="truncate text-sm font-bold text-slate-900">' + esc(s.store_name) + '</h3><span class="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700">' + pct(s.ar_tgt_percent) + '</span></div><div class="mb-2 flex items-center justify-between text-xs"><span class="text-slate-500">Target: ' + peso(s.target_mtd) + '</span><span class="font-semibold text-slate-700">Actual: ' + peso(s.act) + '</span></div><div class="h-1.5 overflow-hidden rounded-full bg-emerald-100"><div class="h-full rounded-full bg-emerald-500" style="width:' + Math.min(Math.max(s.progress_percent || 0, 0), 100) + '%"></div></div></div>';
+      arHtml += '<div class="rounded-xl border border-emerald-200/70 primary_background p-3"><div class="mb-2 flex items-start justify-between gap-2"><h3 class="truncate text-sm font-bold primary_color">' + esc(s.store_name) + '</h3><span class="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700">' + pct(s.ar_tgt_percent) + '</span></div><div class="mb-2 flex items-center justify-between text-xs"><span class="primary_color">Target: ' + peso(s.target_mtd) + '</span><span class="font-semibold primary_color">Actual: ' + peso(s.act) + '</span></div><div class="h-1.5 overflow-hidden rounded-full bg-emerald-100"><div class="h-full rounded-full bg-emerald-500" style="width:' + Math.min(Math.max(s.progress_percent || 0, 0), 100) + '%"></div></div></div>';
     });
   } else {
-    arHtml = '<div class="rounded-xl border border-dashed border-emerald-300 bg-white px-4 py-6 text-center text-sm text-slate-500">No attainment data available for the selected period.</div>';
+    arHtml = '<div class="rounded-xl border border-dashed border-emerald-300 primary_background px-4 py-6 text-center text-sm primary_color">No attainment data available for the selected period.</div>';
   }
 
   let icuHtml = '';
   if (icu.length) {
     icu.forEach(function (s) {
-      icuHtml += '<div class="rounded-xl border border-rose-200/70 bg-white p-3"><div class="mb-2 flex items-start justify-between gap-2"><div><h3 class="text-sm font-bold text-slate-900">' + esc(s.store_name) + '</h3><p class="mt-0.5 text-xs text-slate-500">' + esc(s.note) + '</p></div><span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold ' + (s.tone_badge || '') + '">' + esc(s.status) + '</span></div><div class="space-y-1 text-xs"><div class="flex items-center justify-between"><span class="text-slate-500">Actual</span><span class="font-semibold ' + (s.tone_value || '') + '">' + peso(s.act) + '</span></div><div class="flex items-center justify-between"><span class="text-slate-500">Target</span><span class="font-semibold text-slate-800">' + peso(s.target_mtd) + '</span></div><div class="flex items-center justify-between"><span class="text-slate-500">Attainment</span><span class="font-bold ' + (s.tone_value || '') + '">' + pct(s.attainment_percent) + '</span></div><div class="mt-1.5 h-1.5 overflow-hidden rounded-full ' + (s.tone_bar_bg || '') + '"><div class="h-full rounded-full ' + (s.tone_bar_fill || '') + '" style="width:' + (s.progress_percent || 0) + '%"></div></div></div></div>';
+      icuHtml += '<div class="rounded-xl border border-rose-200/70 primary_background p-3"><div class="mb-2 flex items-start justify-between gap-2"><div><h3 class="text-sm font-bold primary_color">' + esc(s.store_name) + '</h3><p class="mt-0.5 text-xs primary_color">' + esc(s.note) + '</p></div><span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold ' + (s.tone_badge || '') + '">' + esc(s.status) + '</span></div><div class="space-y-1 text-xs"><div class="flex items-center justify-between"><span class="primary_color">Actual</span><span class="font-semibold ' + (s.tone_value || '') + '">' + peso(s.act) + '</span></div><div class="flex items-center justify-between"><span class="primary_color">Target</span><span class="font-semibold primary_color">' + peso(s.target_mtd) + '</span></div><div class="flex items-center justify-between"><span class="primary_color">Attainment</span><span class="font-bold ' + (s.tone_value || '') + '">' + pct(s.attainment_percent) + '</span></div><div class="mt-1.5 h-1.5 overflow-hidden rounded-full ' + (s.tone_bar_bg || '') + '"><div class="h-full rounded-full ' + (s.tone_bar_fill || '') + '" style="width:' + (s.progress_percent || 0) + '%"></div></div></div></div>';
     });
   } else {
-    icuHtml = '<div class="rounded-xl border border-dashed border-emerald-300 bg-white px-4 py-6 text-center text-sm text-emerald-700">No ICU/Critical ' + esc(ELP.toLowerCase()) + ' for the selected range.</div>';
+    icuHtml = '<div class="rounded-xl border border-dashed border-emerald-300 primary_background px-4 py-6 text-center text-sm text-emerald-700">No ICU/Critical ' + esc(ELP.toLowerCase()) + ' for the selected range.</div>';
   }
 
   document.getElementById('dsh-rankings').innerHTML =
-    '<div class="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-5 shadow-sm"><div class="mb-4 flex items-start justify-between"><div><h2 class="text-lg font-bold text-slate-900">' + (EL === 'Store' ? 'Store Ranking' : 'Cluster Ranking') + '</h2><p class="mt-1 text-sm text-slate-500">Highest average daily sales</p></div><span class="inline-flex items-center rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">Top 3</span></div><div class="space-y-2.5">' + adsHtml + '</div></div>' +
-    '<div class="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/70 to-white p-5 shadow-sm"><div class="mb-4 flex items-start justify-between"><div><h2 class="text-lg font-bold text-slate-900">Top 3 Attainment Rate AR</h2><p class="mt-1 text-sm text-slate-500">Achievement rate percentage</p></div><span class="inline-flex items-center rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">Leaders</span></div><div class="space-y-2.5">' + arHtml + '</div></div>' +
-    '<div class="rounded-2xl border border-rose-200 bg-gradient-to-b from-rose-50/70 to-white p-5 shadow-sm"><div class="mb-4 flex items-start justify-between"><div><h2 class="text-lg font-bold text-slate-900">ICU ' + esc(ELP) + '</h2><p class="mt-1 text-sm text-slate-500">' + esc(ELP) + ' needing attention</p></div><span class="inline-flex items-center rounded-full bg-rose-600 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">Urgent</span></div><div class="space-y-2.5">' + icuHtml + '</div></div>';
+    '<div class="rounded-2xl primary_background p-5 shadow-sm"><div class="mb-4 flex items-start justify-between"><div><h2 class="text-lg font-bold primary_color">' + (EL === 'Store' ? 'Store Ranking' : 'Cluster Ranking') + '</h2><p class="mt-1 text-sm primary_color">Highest average daily sales</p></div><span class="inline-flex items-center rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">Top 3</span></div><div class="space-y-2.5">' + adsHtml + '</div></div>' +
+    '<div class="rounded-2xl emerald_to_primary_gradient p-5 shadow-sm"><div class="mb-4 flex items-start justify-between"><div><h2 class="text-lg font-bold primary_color">Top 3 Attainment Rate AR</h2><p class="mt-1 text-sm primary_color">Achievement rate percentage</p></div><span class="inline-flex items-center rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">Leaders</span></div><div class="space-y-2.5">' + arHtml + '</div></div>' +
+    '<div class="rounded-2xl rose_to_primary_gradient p-5 shadow-sm"><div class="mb-4 flex items-start justify-between"><div><h2 class="text-lg font-bold primary_color">ICU ' + esc(ELP) + '</h2><p class="mt-1 text-sm primary_color">' + esc(ELP) + ' needing attention</p></div><span class="inline-flex items-center rounded-full bg-rose-600 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">Urgent</span></div><div class="space-y-2.5">' + icuHtml + '</div></div>';
 }
 
 // - Bottom sections: wastage, icount tracker, discount -
@@ -1087,14 +1090,14 @@ function buildWastageWeekRows(wastage) {
   if (wastage && wastage.rows) {
     wastage.rows.forEach(function (r) {
       let pc = wastageToneClass(r.percent || 0, ['text-red-600', 'text-amber-600', 'text-emerald-600']);
-      rows += '<tr><td class="px-4 py-2.5 font-medium text-slate-700">' + esc(r.label) + '</td><td class="px-4 py-2.5 text-right text-slate-900">\u20B1' + fmt(r.gross_sales || 0) + '</td><td class="px-4 py-2.5 text-right text-slate-900">\u20B1' + fmt(r.wastage || 0) + '</td><td class="px-4 py-2.5 text-right font-semibold ' + pc + '">' + pct(r.percent || 0) + '</td></tr>';
+      rows += '<tr class="row_styles_tr"><td class="px-4 py-2.5 font-medium primary_color">' + esc(r.label) + '</td><td class="px-4 py-2.5 text-right primary_color">\u20B1' + fmt(r.gross_sales || 0) + '</td><td class="px-4 py-2.5 text-right primary_color">\u20B1' + fmt(r.wastage || 0) + '</td><td class="px-4 py-2.5 text-right font-semibold ' + pc + '">' + pct(r.percent || 0) + '</td></tr>';
     });
     if (wastage.mtd) {
       let mtdPc = wastageToneClass(wastage.mtd.percent || 0, ['text-red-700', 'text-amber-700', 'text-emerald-700']);
-      rows += '<tr class="bg-slate-50"><td class="px-4 py-2.5 font-bold text-slate-900">' + esc(wastage.mtd.label) + '</td><td class="px-4 py-2.5 text-right font-bold text-slate-900">\u20B1' + fmt(wastage.mtd.gross_sales || 0) + '</td><td class="px-4 py-2.5 text-right font-bold text-slate-900">\u20B1' + fmt(wastage.mtd.wastage || 0) + '</td><td class="px-4 py-2.5 text-right font-extrabold ' + mtdPc + '">' + pct(wastage.mtd.percent || 0) + '</td></tr>';
+      rows += '<tr class="primary_background_darker"><td class="px-4 py-2.5 font-bold primary_color">' + esc(wastage.mtd.label) + '</td><td class="px-4 py-2.5 text-right font-bold primary_color">\u20B1' + fmt(wastage.mtd.gross_sales || 0) + '</td><td class="px-4 py-2.5 text-right font-bold primary_color">\u20B1' + fmt(wastage.mtd.wastage || 0) + '</td><td class="px-4 py-2.5 text-right font-extrabold ' + mtdPc + '">' + pct(wastage.mtd.percent || 0) + '</td></tr>';
     }
   } else {
-    rows = '<tr><td colspan="4" class="px-4 py-6 text-center text-sm text-slate-500">No wastage data available for the selected period.</td></tr>';
+    rows = '<tr><td colspan="4" class="px-4 py-6 text-center text-sm primary_color">No wastage data available for the selected period.</td></tr>';
   }
   return rows;
 }
@@ -1104,14 +1107,14 @@ function buildWastageStoreRows(wastage) {
   if (wastage && wastage.per_store && wastage.per_store.rows) {
     wastage.per_store.rows.forEach(function (r) {
       let pc = wastageToneClass(r.percent || 0, ['text-red-600', 'text-amber-600', 'text-emerald-600']);
-      rows += '<tr><td class="px-4 py-2.5 font-medium text-slate-700">' + esc(r.store_name) + '</td><td class="px-4 py-2.5 text-right text-slate-900">\u20B1' + fmt(r.gross_sales || 0) + '</td><td class="px-4 py-2.5 text-right text-slate-900">\u20B1' + fmt(r.wastage || 0) + '</td><td class="px-4 py-2.5 text-right font-semibold ' + pc + '">' + pct(r.percent || 0) + '</td></tr>';
+      rows += '<tr class="row_styles_tr"><td class="px-4 py-2.5 font-medium primary_color">' + esc(r.store_name) + '</td><td class="px-4 py-2.5 text-right primary_color">\u20B1' + fmt(r.gross_sales || 0) + '</td><td class="px-4 py-2.5 text-right primary_color">\u20B1' + fmt(r.wastage || 0) + '</td><td class="px-4 py-2.5 text-right font-semibold ' + pc + '">' + pct(r.percent || 0) + '</td></tr>';
     });
     if (wastage.per_store.total) {
       let totalPc = wastageToneClass(wastage.per_store.total.percent || 0, ['text-red-700', 'text-amber-700', 'text-emerald-700']);
-      rows += '<tr class="bg-slate-50"><td class="px-4 py-2.5 font-bold text-slate-900">Total</td><td class="px-4 py-2.5 text-right font-bold text-slate-900">\u20B1' + fmt(wastage.per_store.total.gross_sales || 0) + '</td><td class="px-4 py-2.5 text-right font-bold text-slate-900">\u20B1' + fmt(wastage.per_store.total.wastage || 0) + '</td><td class="px-4 py-2.5 text-right font-extrabold ' + totalPc + '">' + pct(wastage.per_store.total.percent || 0) + '</td></tr>';
+      rows += '<tr class="primary_background_darker row_styles_tr"><td class="px-4 py-2.5 font-bold primary_color">Total</td><td class="px-4 py-2.5 text-right font-bold primary_color">\u20B1' + fmt(wastage.per_store.total.gross_sales || 0) + '</td><td class="px-4 py-2.5 text-right font-bold primary_color">\u20B1' + fmt(wastage.per_store.total.wastage || 0) + '</td><td class="px-4 py-2.5 text-right font-extrabold ' + totalPc + '">' + pct(wastage.per_store.total.percent || 0) + '</td></tr>';
     }
   } else {
-    rows = '<tr><td colspan="4" class="px-4 py-6 text-center text-sm text-slate-500">No per-store wastage data available for the selected period.</td></tr>';
+    rows = '<tr><td colspan="4" class="px-4 py-6 text-center text-sm primary_color">No per-store wastage data available for the selected period.</td></tr>';
   }
   return rows;
 }
@@ -1122,14 +1125,14 @@ function buildIcountSection(key, tracker) {
   let badgeClass = isComplete ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700';
   let dotClass = isComplete ? 'bg-emerald-500' : 'bg-amber-500';
 
-  let html = '<section class="bg-white px-5 py-4 flex flex-col"><div class="flex items-center justify-between gap-2"><h4 class="text-sm font-bold text-slate-800">' + (item ? esc(item.label) : key) + '</h4>';
+  let html = '<section class="primary_background px-5 py-4 flex flex-col"><div class="flex items-center justify-between gap-2"><h4 class="text-sm font-bold primary_color">' + (item ? esc(item.label) : key) + '</h4>';
   if (item) {
     html += '<span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ' + badgeClass + '"><span class="h-2 w-2 rounded-full ' + dotClass + '"></span>' + item.count + '/' + (tracker.total_stores || 0) + '</span>';
   }
   html += '</div>';
 
   if (item && item.show_missing_details && item.missing_rows && item.missing_rows.length > 0) {
-    html += '<div class="mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">' + item.missing_rows.length + ' store' + (item.missing_rows.length === 1 ? '' : 's') + ' need update</div>';
+    html += '<div class="mt-3 text-[11px] font-semibold uppercase tracking-wide primary_color">' + item.missing_rows.length + ' store' + (item.missing_rows.length === 1 ? '' : 's') + ' need update</div>';
     html += '<div class="icount-scroll-wrap relative mt-2 flex-1"><div class="icount-tracker-scroll max-h-64 overflow-y-auto overscroll-contain pr-3 text-left"><div class="space-y-1.5">';
     item.missing_rows.forEach(function (m) {
       html += '<div class="icount-tracker-missing-card rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5"><div class="status-title flex items-center gap-2 text-sm font-semibold text-amber-800"><span class="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500"></span><span class="min-w-0 flex-1 truncate">' + esc(m.store_name) + '</span></div><p class="status-copy mt-1 text-xs text-amber-800/80">' + m.missing_count + ' missing date' + (m.missing_count === 1 ? '' : 's') + ' in the selected period.</p>';
@@ -1146,9 +1149,9 @@ function buildIcountSection(key, tracker) {
   } else if (item && item.show_missing_details) {
     html += '<div class="icount-tracker-complete-card mt-3 flex flex-1 items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-600"><path d="M20 6 9 17l-5-5"/></svg><span class="status-title text-sm font-bold text-emerald-700">All stores complete</span></div>';
   } else if (item) {
-    html += '<div class="mt-3 flex flex-1 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">Setup progress</div>';
+    html += '<div class="mt-3 flex flex-1 items-center rounded-lg primary_background_darker px-3 py-2.5 text-xs font-bold primary_color">Setup progress</div>';
   } else {
-    html += '<div class="mt-3 flex flex-1 items-center text-sm font-semibold text-slate-400">--</div>';
+    html += '<div class="mt-3 flex flex-1 items-center text-sm font-semibold primary_color">--</div>';
   }
   html += '</section>';
   return html;
@@ -1158,13 +1161,13 @@ function buildDiscountRows(discount) {
   let rows = '';
   if (discount && discount.rows) {
     discount.rows.forEach(function (r) {
-      rows += '<tr><td class="px-4 py-2.5 font-medium text-slate-700">' + esc(r.label) + '</td><td class="px-4 py-2.5 text-right text-slate-900">\u20B1' + fmt(r.amount || 0) + '</td><td class="px-4 py-2.5 text-right font-semibold text-slate-700">' + pct(r.percent || 0) + '</td></tr>';
+      rows += '<tr class="row_styles_tr"><td class="px-4 py-2.5 font-medium primary_color">' + esc(r.label) + '</td><td class="px-4 py-2.5 text-right primary_color">\u20B1' + fmt(r.amount || 0) + '</td><td class="px-4 py-2.5 text-right font-semibold primary_color">' + pct(r.percent || 0) + '</td></tr>';
     });
     if (discount.mtd) {
-      rows += '<tr class="bg-slate-50"><td class="px-4 py-2.5 font-bold text-slate-900">' + esc(discount.mtd.label) + '</td><td class="px-4 py-2.5 text-right font-bold text-slate-900">\u20B1' + fmt(discount.mtd.amount || 0) + '</td><td class="px-4 py-2.5 text-right font-extrabold text-slate-900">' + pct(discount.mtd.percent || 0) + '</td></tr>';
+      rows += '<tr class="primary_background_darker"><td class="px-4 py-2.5 font-bold primary_color">' + esc(discount.mtd.label) + '</td><td class="px-4 py-2.5 text-right font-bold primary_color">\u20B1' + fmt(discount.mtd.amount || 0) + '</td><td class="px-4 py-2.5 text-right font-extrabold primary_color">' + pct(discount.mtd.percent || 0) + '</td></tr>';
     }
   } else {
-    rows = '<tr><td colspan="3" class="px-4 py-6 text-center text-sm text-slate-500">No discount data available for the selected period.</td></tr>';
+    rows = '<tr><td colspan="3" class="px-4 py-6 text-center text-sm primary_color">No discount data available for the selected period.</td></tr>';
   }
   return rows;
 }
@@ -1184,16 +1187,16 @@ function renderBottomSections(data) {
   });
 
   document.getElementById('dsh-bottom-sections').innerHTML =
-    '<div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">' +
-      '<div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-lg font-bold text-slate-900">' + esc(clusterName) + ' Wastage Performance</h2><p class="mt-1 text-sm text-slate-500">Weekly and per-store MTD wastage breakdown</p></div>' +
+    '<div class="rounded-2xl primary_background p-5 shadow-sm">' +
+      '<div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-lg font-bold primary_color">' + esc(clusterName) + ' Wastage Performance</h2><p class="mt-1 text-sm primary_color">Weekly and per-store MTD wastage breakdown</p></div>' +
       '<span class="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700">' + esc(wastage.month_label || '') + '</span></div>' +
       '<div class="grid grid-cols-1 gap-4 xl:grid-cols-2">' +
-        '<div class="rounded-xl border border-slate-200"><div class="border-b border-slate-200 bg-slate-50 px-4 py-2.5"><h3 class="text-sm font-bold text-slate-800">' + esc(wastage.title_label || 'Wastage Performance') + '</h3></div><div class="overflow-x-auto"><table class="min-w-full divide-y divide-slate-200 text-sm"><thead class="bg-slate-50"><tr><th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Week #</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Gross Sales</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Wastage</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">%</th></tr></thead><tbody class="divide-y divide-slate-100 bg-white">' + wastageWeekRows + '</tbody></table></div></div>' +
-        '<div class="rounded-xl border border-slate-200"><div class="border-b border-slate-200 bg-slate-50 px-4 py-2.5"><h3 class="text-sm font-bold text-slate-800">' + esc((wastage.per_store && wastage.per_store.title_label) || 'MTD Wastage Performance Per Store') + '</h3></div><div class="overflow-x-auto"><table class="min-w-full divide-y divide-slate-200 text-sm"><thead class="bg-slate-50"><tr><th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Store</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Gross Sales</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Wastage</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">%</th></tr></thead><tbody class="divide-y divide-slate-100 bg-white">' + wastageStoreRows + '</tbody></table></div></div>' +
+        '<div class="rounded-xl overflow-hidden"><div class="primary_background_darker px-4 py-2.5"><h3 class="text-sm font-bold primary_color">' + esc(wastage.title_label || 'Wastage Performance') + '</h3></div><div class="overflow-x-auto"><table class="min-w-full divide-y divide-slate-200 text-sm"><thead class="primary_background_darker"><tr><th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide primary_color">Week #</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide primary_color">Gross Sales</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide primary_color">Wastage</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide primary_color">%</th></tr></thead><tbody class="divide-y divide-slate-100 primary_background">' + wastageWeekRows + '</tbody></table></div></div>' +
+        '<div class="rounded-xl overflow-hidden"><div class="primary_background_darker px-4 py-2.5"><h3 class="text-sm font-bold primary_color">' + esc((wastage.per_store && wastage.per_store.title_label) || 'MTD Wastage Performance Per Store') + '</h3></div><div class="overflow-x-auto"><table class="min-w-full divide-y divide-slate-200 text-sm"><thead class="primary_background_darker"><tr><th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide primary_color">Store</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide primary_color">Gross Sales</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide primary_color">Wastage</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide primary_color">%</th></tr></thead><tbody class="divide-y divide-slate-100 primary_background">' + wastageStoreRows + '</tbody></table></div></div>' +
       '</div>' +
       '<div class="mt-4 space-y-4">' +
-        '<div class="rounded-2xl border border-slate-200 bg-white shadow-sm"><div class="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5"><h3 class="text-sm font-bold text-slate-800">Icount Tool Tracker</h3><span class="text-[11px] font-semibold text-slate-500">' + esc(data.selected_start_date_display || '') + (data.selected_start_date !== data.selected_end_date ? ' - ' + esc(data.selected_end_date_display || '') : '') + '</span></div><div class="grid grid-cols-1 gap-px bg-slate-200 sm:grid-cols-3">' + icountHtml + '</div></div>' +
-        '<div class="grid grid-cols-1 gap-4 xl:grid-cols-2"><div class="rounded-xl border border-slate-200"><div class="border-b border-slate-200 bg-slate-50 px-4 py-2.5"><h3 class="text-sm font-bold text-slate-800">' + esc(discount.title_label || 'Discount Performance Breakdown') + '</h3></div><div class="overflow-x-auto"><table class="min-w-full divide-y divide-slate-200 text-sm"><thead class="bg-slate-50"><tr><th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Disc Type</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">% Cont</th></tr></thead><tbody class="divide-y divide-slate-100 bg-white">' + discountRows + '</tbody></table></div></div></div>' +
+        '<div class="rounded-2xl primary_background shadow-sm"><div class="flex items-center justify-between gap-3 px-5 py-3.5"><h3 class="text-sm font-bold primary_color">Icount Tool Tracker</h3><span class="text-[11px] font-semibold primary_color">' + esc(data.selected_start_date_display || '') + (data.selected_start_date !== data.selected_end_date ? ' - ' + esc(data.selected_end_date_display || '') : '') + '</span></div><div class="grid grid-cols-1 gap-px bg-slate-200 sm:grid-cols-3">' + icountHtml + '</div></div>' +
+        '<div class="grid grid-cols-1 gap-4 xl:grid-cols-2"><div class="rounded-xl overflow-hidden"><div class="primary_background_darker px-4 py-2.5"><h3 class="text-sm font-bold primary_color">' + esc(discount.title_label || 'Discount Performance Breakdown') + '</h3></div><div class="overflow-x-auto"><table class="min-w-full divide-y divide-slate-200 text-sm"><thead class="primary_background_darker"><tr><th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide primary_color">Disc Type</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide primary_color">Amount</th><th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide primary_color">% Cont</th></tr></thead><tbody class="divide-y divide-slate-100 primary_background">' + discountRows + '</tbody></table></div></div></div>' +
       '</div>' +
     '</div>';
 }

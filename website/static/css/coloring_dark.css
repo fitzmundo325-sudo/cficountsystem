@@ -1,12 +1,12 @@
 
 :root {
-  --primary_background: #121212; /* Dark base */
+  --primary_background: #121225; /* Dark base */
   --primary_background_darker: #1e1e1e; /* Slightly lighter dark */
-  --primary_background_faded: #efefef35;
+  --primary_background_faded: rgba(18, 25, 42, 0.8);
   --primary_color: rgba(230,230,230,1); /* Light text */
-  --primary_color_faded: rgba(230,230,230,0.6);
+  --primary_color_faded: rgba(230,230,230,0.45);
   --primary_color_invert: rgba(240,240,240,1); /* Near-black for invert */
-  --secondary_color: #F57C00;
+  --secondary_color: #7376f1;
   --secondary_color_faded: #ff980088;
   --secondary_color_darker: #f5c800;
   --third_color_faded: rgba(24,24,24,0.30);
@@ -23,6 +23,10 @@
   --failed_color_faded: #e91e63a0;
   
   --bg_src: url('../images/mosiac_dark.png');
+  
+  --emerald_color: #15c674b3;
+  --rose_color: #c00707b3;
+  
 }
 
 *::-moz-selection {
@@ -65,6 +69,12 @@
 .primary_background_darker {
   background-color: var(--primary_background_darker);
 }
+
+
+.primary_color_faded{
+	color: var(--primary_color_faded);	
+}
+
 .secondary_background {
   background-color: var(--secondary_background);
 }
