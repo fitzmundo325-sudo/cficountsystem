@@ -106,7 +106,11 @@
       </div>
 
       <!-- Dashboard -->
-      <a href="{% if user and user.role == 'Area Manager' %}/admin/area-manager-dashboard{% else %}/admin/dashboard{% endif %}"
+      <a onclick="clickOnDashBoard(this)"
+	  id="_dashboard"
+	  
+	  href_="{% if user and user.role == 'Area Manager' %}/admin/area-manager-dashboard{% else %}/admin/dashboard{% endif %}"
+	  
         class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
           {% if request.path.startswith('/admin/dashboard') or request.path.startswith('/admin/area-manager-dashboard') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
         data-tooltip="Dashboard">

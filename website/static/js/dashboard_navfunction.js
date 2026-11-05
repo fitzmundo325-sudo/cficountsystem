@@ -43,6 +43,13 @@ function activate(elm){
 	
 };
 
+function clickOnDashBoard(elm){
+	activate(elm);
+
+	closeAllPages();
+	hideDashboardContents(false);
+	
+}
 
 
 // ====================================
@@ -55,8 +62,6 @@ function showUsersAdminView(elm){
 	let page = open_modal("users_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
 	closeAllPages(page,false);
 	hideDashboardContents(true);
-	
-
 	
 }
 
@@ -228,14 +233,18 @@ async function hideDashboardContents(hide=false){
 	
 	if(hide){
 	_('header_title').classList.add("slideOut");
+	_('dash_contents').classList.add("slideOut");
 	await sleep(200);
 	
 	_('header_title').classList.add("hide_main_con");
 	// _('dash_title_top').classList.add("hide_from_view");
+	_('dash_contents').classList.add("hide_from_view");
 		
 	}else{
 		_('header_title').classList.remove("slideOut");
 		_('header_title').classList.remove("hide_main_con");
+		_('dash_contents').classList.remove("hide_from_view");		
+		_('dash_contents').classList.remove("slideOut");
 		// _('dash_title_top').classList.remove("hide_from_view");
 		
 	}
