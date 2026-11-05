@@ -287,6 +287,15 @@ function closeAllPages(exclude=undefined,retain_elements=false){
 	
 }
 
+
+function okayG(elm){
+	
+	let page = open_modal("/chatbot?no_header=true", 'modal_on_container,chat_bot_modal');
+
+	
+
+}
+
 	
 
 function closeSidebar(){
