@@ -660,3 +660,17 @@ class SupplyRequestItem(db.Model):
     category = db.Column(db.String(100), nullable=True)
     quantity = db.Column(db.Integer, nullable=False, default=0)
     
+
+class ApiUsage(db.Model):
+    __tablename__ = 'api_usage'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    type = db.Column(db.String(100),default='api')
+    date_of_use = db.Column(db.DateTime(timezone=True), default=func.now())
+    messages_count = db.Column(db.Integer, default=0)
+    request_count = db.Column(db.Integer, default=0)
+    token_count = db.Column(db.Integer, default=0)
+    is_limited = db.Column(db.Boolean, default=True)
+    changed_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+    
+    

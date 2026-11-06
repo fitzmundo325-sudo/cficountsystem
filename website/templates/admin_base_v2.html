@@ -559,11 +559,13 @@
 
 
 
+{% if current_user.role | lower in ["admin", "superadmin"] %}
+
 <div id="chat_floater" class="chat_bubble_floating primary_background" title="iCount Chatbot" onclick="okayG(this)">
 	<img class="bot_icon" src="{{ url_for('static', filename='icons/bot.webp') }}" innert />
 </div>
 
-
+{% endif %}
 
 <!-- ===========================================================
    SCRIPTS

@@ -370,6 +370,33 @@ def _ensure_daily_ending_inventory_columns():
         conn.commit()
 
 
+def _ensure_api_usage_model():
+    inspector = inspect(db.engine)
+    if not inspector.has_table('api_usage'):
+        ApiUsage.__table__.create(db.engine)
+        return
+
+    columns = {column['name'] for column in inspector.get_columns('api_usage')}
+    with db.engine.begin() as conn:
+        if 'user_id' not in columns:
+            conn.execute(text('ALTER TABLE api_usage ADD COLUMN user_id INTEGER NOT NULL'))
+        if 'type' not in columns:
+            conn.execute(text("ALTER TABLE api_usage ADD COLUMN type VARCHAR(100) DEFAULT 'api'"))
+        if 'date_of_use' not in columns:
+            conn.execute(text('ALTER TABLE api_usage ADD COLUMN date_of_use DATETIME DEFAULT CURRENT_TIMESTAMP'))
+        if 'messages_count' not in columns:
+            conn.execute(text('ALTER TABLE api_usage ADD COLUMN messages_count INTEGER DEFAULT 0'))
+        if 'request_count' not in columns:
+            conn.execute(text('ALTER TABLE api_usage ADD COLUMN request_count INTEGER DEFAULT 0'))
+        if 'token_count' not in columns:
+            conn.execute(text('ALTER TABLE api_usage ADD COLUMN token_count INTEGER DEFAULT 0'))
+        if 'is_limited' not in columns:
+            conn.execute(text('ALTER TABLE api_usage ADD COLUMN is_limited BOOLEAN DEFAULT 1'))
+        if 'changed_at' not in columns:
+            conn.execute(text('ALTER TABLE api_usage ADD COLUMN changed_at DATETIME DEFAULT CURRENT_TIMESTAMP'))
+
+# End if Ensure Querries ============
+
 def _backfill_beginning_finalized_flags():
     from .models import DailyEndingInventory, GlobalInvenSyncConfig
 
@@ -498,6 +525,7 @@ def create_app():
     with app.app_context():
         db.create_all()
         _ensure_oracle_order_review_columns()
+        _ensure_api_usage_model()
         if not configured_secret_key:
             stored_secret = SystemSecret.query.order_by(SystemSecret.id.asc()).first()
             if not stored_secret:
