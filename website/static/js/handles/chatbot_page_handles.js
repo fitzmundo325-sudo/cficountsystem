@@ -562,10 +562,20 @@ function handleChatKeydown(event) {
 
 
 
-function applyNoHeaderMode() {
-  let params = new URLSearchParams(window.location.search);
-  let val = (params.get('no_header') || '').toLowerCase();
-  if (val !== 'true' && val !== '1') {
+
+function applyNoHeaderMode(override) {
+  let hasOverride = typeof override === 'boolean';
+  let enable;
+
+  if (hasOverride) {
+    enable = override;
+  } else {
+    let params = new URLSearchParams(window.location.search);
+    let val = (params.get('no_header') || '').toLowerCase();
+    enable = val === 'true' || val === '1';
+  }
+
+  if (!enable && !hasOverride) {
     return;
   }
 
@@ -573,22 +583,51 @@ function applyNoHeaderMode() {
   let pageHeader = document.getElementById('chat-page-header');
   let shell = document.getElementById('chatbot-page-shell');
   let card = document.getElementById('chat-card');
+  let headless_controls = document.getElementById('headless_controls');
 
-  if (topHeader) {
-    topHeader.classList.add('hidden');
-  }
-  if (pageHeader) {
-    pageHeader.classList.add('hidden');
-  }
-  // Adjust shell/card height so the chat fills the space left by the hidden headers
-  if (shell) {
-    shell.classList.remove('h-[calc(100dvh-3.5rem)]');
-    shell.classList.add('h-dvh');
-  }
-  if (card && card.style.height) {
-    card.style.height = 'calc(100dvh - 3rem)';
+  if (enable) {
+    if (topHeader) {
+      topHeader.classList.add('hidden');
+    }
+    if (pageHeader) {
+      pageHeader.classList.add('hidden');
+    }
+    if (headless_controls) {
+      headless_controls.classList.remove('hidden');
+    }
+    if (shell) {
+      shell.classList.remove('h-[calc(100dvh-3.5rem)]');
+      shell.classList.add('h-dvh');
+      shell.classList.add('less_padding');
+    }
+    if (card && card.style.height) {
+      if (!card.dataset.origHeight) {
+        card.dataset.origHeight = card.style.height;
+      }
+      card.style.height = 'calc(100dvh - 3rem)';
+    }
+  } else {
+    if (topHeader) {
+      topHeader.classList.remove('hidden');
+    }
+    if (pageHeader) {
+      pageHeader.classList.remove('hidden');
+    }
+    if (headless_controls) {
+      headless_controls.classList.add('hidden');
+    }
+    if (shell) {
+      shell.classList.remove('h-dvh');
+      shell.classList.remove('less_padding');
+      shell.classList.add('h-[calc(100dvh-3.5rem)]');
+    }
+    if (card && card.dataset.origHeight) {
+      card.style.height = card.dataset.origHeight;
+      delete card.dataset.origHeight;
+    }
   }
 }
+
 
 
 //Chart Tools:// Fallback in case getCSSVar is not defined in base_headless.html
@@ -708,6 +747,43 @@ document.addEventListener('keydown', function (event) {
     }
   }
 });
+
+
+
+// Controls and Page Window Management ========
+
+function closeThis(){
+
+	if(chatHistory.length <= 0){
+		closeWindow();
+		return;
+	}
+
+	if (typeof showConfirmationModal === 'function') {
+	showConfirmationModal({
+	  title: 'Close Chat Window?',
+	  message: 'This conversation would be gone as well',
+	  confirmText: 'Close',
+	  cancelText: 'Cancel',
+	  onConfirm: closeWindow
+	});
+	} else if (confirm('This conversation would be gone as well')) {
+	closeWindow();
+	}
+
+	function closeWindow(){
+		postMessageToParent("close");
+	}
+}
+
+
+function minimizeChatG(){
+	
+	postMessageToParent("function:minimizeChatG:1");
+	
+}
+
+
 
 // - Init -
 

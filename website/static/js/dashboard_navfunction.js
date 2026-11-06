@@ -287,15 +287,29 @@ function closeAllPages(exclude=undefined,retain_elements=false){
 	
 }
 
-
+let gPage = undefined;
 function okayG(elm){
 	
-	let page = open_modal("/chatbot?no_header=true", 'modal_on_container,chat_bot_modal');
-
-	
-
+	if(gPage){
+		gPage.classList.remove("minimized_bubble");
+		gPage.classList.remove("slideOutRight");
+		return;
+	}	
+	gPage = open_modal("/chatbot?no_header=true", 'modal_on_container,no_close_button,chat_bot_modal',undefined, false, chatBubbleClosed, true);
 }
 
+
+function chatBubbleClosed(){
+	gPage = undefined;
+}
+
+
+async function minimizeChatG(){
+	console.log("Was called to Minimize the chat bubble");
+	gPage.classList.add("slideOutRight");
+	await sleep(300);
+	gPage.classList.add("minimized_bubble");	
+}
 	
 
 function closeSidebar(){
@@ -305,8 +319,6 @@ function closeSidebar(){
 
 function toggleSidebarCollapse(){
 	console.log("Element");
-	
-	
 	toggleMobileSidebar();
 }
 
