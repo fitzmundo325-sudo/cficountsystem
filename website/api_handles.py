@@ -24,6 +24,10 @@ from . import db, cache
 from datetime import datetime, date, timedelta, timezone
 from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem, AuditLog, StoreProductBuffer
 
+def clear_product_alias_cache():
+    cache.delete_memoized(_get_product_alias_lookup)
+
+
 from calendar import monthrange
 
 from collections import defaultdict
@@ -824,6 +828,49 @@ def add_product_master():
         return {'type': 'error', 'message': f'Error adding product: {str(e)}'}, 500
     
     
+# Updating Product route for v2
+@api_handles.route('/update_product_alias', methods=['POST'])
+@login_required
+def update_product_alias():
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}, 403
+    try:
+        data = request.get_json()
+        alias_id = data.get('alias_id')
+        new_alias_name = (data.get('alias_name') or '').strip()
+        if not alias_id or not new_alias_name:
+            return {'type': 'error', 'message': 'Missing alias_id or alias_name'}, 400
+        
+        alias = ProductAlias.query.get(alias_id)
+        if not alias:
+            return {'type': 'error', 'message': 'Alias not found'}, 404
+        
+        alias.alias_name = new_alias_name
+        alias.normalized_alias = _normalize_product_text(new_alias_name)
+        db.session.commit()
+        clear_product_alias_cache()
+        return {'type': 'success', 'message': 'Alias updated successfully.'}, 200
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error: {str(e)}'}, 500
+
+@api_handles.route('/delete_product_alias/<int:alias_id>', methods=['POST'])
+@login_required
+def delete_product_alias(alias_id):
+    if current_user.role not in ('Superadmin', 'Admin'):
+        return {'type': 'error', 'message': 'Access denied.'}, 403
+    try:
+        alias = ProductAlias.query.get(alias_id)
+        if not alias:
+            return {'type': 'error', 'message': 'Alias not found'}, 404
+        db.session.delete(alias)
+        db.session.commit()
+        clear_product_alias_cache()
+        return {'type': 'success', 'message': 'Alias deleted successfully.'}, 200
+    except Exception as e:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Error: {str(e)}'}, 500
+
 # Updating Product route for v2
 @api_handles.route('update_product_master/<int:product_id>', methods=['POST',"GET"])
 @login_required

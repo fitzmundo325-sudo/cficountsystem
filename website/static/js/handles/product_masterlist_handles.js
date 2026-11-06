@@ -255,7 +255,26 @@ function searchQ(){
 searchQ();
 
 
-// Utilities End
+// Alias Management
+function deleteAlias(aliasId, aliasName) {
+  if (confirm(`Are you sure you want to delete the alias "${aliasName}"? The product will return to the System Analyzer as unmatched.`)) {
+    fetch(`/apis/delete_product_alias/${aliasId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    })
+    .then(r => r.json())
+    .then(result => {
+      if (result.type === 'success') {
+        toast.success('Alias deleted successfully');
+        loadAllItems();
+        editProductModal.close(); // Refresh modal content or close it
+      } else {
+        toast.error('Error: ' + (result.message || 'Failed to delete alias'));
+      }
+    })
+    .catch(() => toast.error('Error deleting alias. Please try again.'));
+  }
+}
 
 
 
@@ -372,8 +391,63 @@ document.addEventListener('click', function (e) {
   document.getElementById('edit-product-sp-np').value        = p.sp_np     ?? '';
   document.getElementById('edit-product-shelf-life').value   = p.shelf_life ?? '';
 
+  // Populate aliases list
+  renderAliasesInEditModal(p.aliases || []);
+
   editProductModal.open();
 });
+
+function renderAliasesInEditModal(aliases) {
+  const container = document.getElementById('edit-product-aliases-container');
+  if (!container) return;
+  
+  container.innerHTML = '';
+  
+  if (aliases.length === 0) {
+    container.innerHTML = '<p class="text-slate-500 text-sm">No aliases linked to this product.</p>';
+    return;
+  }
+  
+  aliases.forEach(alias => {
+    const div = document.createElement('div');
+    div.className = 'flex items-center gap-2 p-2 bg-slate-50 rounded-lg';
+    div.innerHTML = `
+      <input type="text" value="${alias.alias_name}" class="flex-1 px-2 py-1 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500" data-alias-id="${alias.id}" data-original-name="${alias.alias_name}" />
+      <button class="px-2 py-1 text-xs text-blue-600 hover:text-blue-800" onclick="updateAlias(${alias.id}, this)">Save</button>
+      <button class="px-2 py-1 text-xs text-red-600 hover:text-red-800" onclick="deleteAlias(${alias.id}, '${alias.alias_name.replace(/'/g, "\\'")}')">Delete</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function updateAlias(aliasId, btn) {
+  const input = btn.parentElement.querySelector('input');
+  const newName = input.value.trim();
+  const originalName = input.dataset.originalName;
+  
+  if (!newName || newName === originalName) return;
+  
+  fetch('/apis/update_product_alias', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alias_id: aliasId, alias_name: newName })
+  })
+  .then(r => r.json())
+  .then(result => {
+    if (result.type === 'success') {
+      toast.success('Alias updated successfully');
+      input.dataset.originalName = newName;
+      loadAllItems();
+    } else {
+      toast.error('Error: ' + (result.message || 'Failed to update alias'));
+      input.value = originalName;
+    }
+  })
+  .catch(() => {
+    toast.error('Error updating alias. Please try again.');
+    input.value = originalName;
+  });
+}
 
 const editProductModal = new Modal('editProductModal');
 
