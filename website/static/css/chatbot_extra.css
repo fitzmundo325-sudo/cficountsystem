@@ -64,3 +64,14 @@
 	padding-left:5px;
 	
 }
+
+
+/* Chat Statistics */
+.free_usage_limit{
+	padding:5px;
+	background:rgba(99, 102, 241, 1);
+	color:var(--primary_color_invert);
+	border-radius:4px;
+	
+	
+}
