@@ -103,6 +103,31 @@ async function loadModels() {
   populateModels();
 }
 
+
+
+async function loadChatStats() {
+  try {
+    let res = await fetch(chatStatsEndpoint);
+    let data = await res.json();
+    if (data.type !== 'success') {
+      throw new Error(data.message || 'Could not load stats.');
+    }
+	
+	populateStats(data);
+	
+  } catch (error) {
+    notifyError(error.message);
+  }
+  
+  function populateStats(data){
+	_("chat_limit").innerText = data.remaining+"/"+data.limit;
+	_("chat_limit").title = "Messages Remaining, RESETS at: \n"+ utility.formatDate(data.resets_at,false,true);
+	
+  };
+}
+
+
+
 function getSelectedModel() {
   return chatModelList.length ? chatModelSelect.value : '';
 }
@@ -498,6 +523,9 @@ async function sendMessage(text) {
   if (reply) {
     chatHistory.push({ role: 'assistant', content: reply });
   }
+  
+  loadChatStats();
+  
 }
 
 function stopStreaming() {
@@ -749,6 +777,15 @@ document.addEventListener('keydown', function (event) {
 });
 
 
+// Chat Statistics ============================
+function getCurrentStats(){
+	
+	
+	
+	
+}
+
+
 
 // Controls and Page Window Management ========
 
@@ -796,6 +833,7 @@ chatModelSelect.addEventListener('change', handleModelChange);
 
 initMarkdown();
 loadModels();
+loadChatStats();
 applyStoreName();
 chatInput.focus();
 

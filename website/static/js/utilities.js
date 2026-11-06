@@ -115,14 +115,16 @@ const utility = {
   },
   
   //Returns the Date in formated like: Fri, 2024 MAR 1
-  formatDate: function(dateString, simple=false) {
+  formatDate: function(dateString, simple=false, time=false) {
     const dateObject = new Date(dateString);
 		if (isNaN(dateObject.getTime())) {
 			return null; // Return null if the date is not valid
 		} else {
 			let options;
-			if(simple){
+			if(simple && !time){
 				options = { year: 'numeric', month: 'short', day: 'numeric' };
+			}else if(time){
+				options = { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: "numeric", minute: "numeric" };
 			}else{
 				options = { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' };
 			}

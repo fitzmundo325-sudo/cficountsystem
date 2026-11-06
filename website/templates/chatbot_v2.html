@@ -97,6 +97,7 @@ let initialStoreId = {{ request.args.get('store_id', '')|tojson }};
 let initialStoreName = {{ (store.name if store is defined and store else '')|tojson }};
 let chatEndpoint = {{ url_for('openrouter_chat.chat')|tojson }};
 let chatModelsEndpoint = {{ url_for('openrouter_chat.chat_models')|tojson }};
+let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
 </script>
 
 <!-- Top Header -->
@@ -159,6 +160,13 @@ let chatModelsEndpoint = {{ url_for('openrouter_chat.chat_models')|tojson }};
         <label for="chat-model-select" class="text-xs font-black uppercase tracking-wide text-sky-700">Model</label>
         <select id="chat-model-select" class="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"></select>
       </div>
+	   <div class="flex items-center gap-2">
+        <label for="chat-model-select" class="text-xs font-black uppercase tracking-wide text-sky-700">Available: 
+		<span class="free_usage_limit" id="chat_limit"> -- </span>
+		</label>
+
+      </div>
+	  
       <button id="chat-clear-btn" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Clear chat</button>
     </div>
 
