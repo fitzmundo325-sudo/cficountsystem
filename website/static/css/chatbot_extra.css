@@ -1,0 +1,66 @@
+.headless_con_controlls{
+	position:fixed;
+	top:0px;
+	right:10px;
+	min-width:120px;
+	height:30px;
+	/* border:solid red 1px; */
+	display:flex;
+	
+	justify-content:center;
+	align-items:center;
+	padding:2px;
+	border-radius:10px 10px 0 0;
+	background:var(--primary_background);
+	gap:2px;
+	-webkit-app-region: no-drag;
+}
+
+.control_button{
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 20px;
+	border: 1px solid #3b4c63;
+	border-top: none;
+	background: linear-gradient(#d4dfee 0%, #b4c5dd 48%, #9fb4d2 52%, #bccde4 100%);
+	cursor: pointer;
+	transition: filter 0.15s;
+	opacity:0.8;
+}
+
+
+.minimize_btn {
+	width: 29px;
+	border-radius: 4px 0 0 0;
+}
+
+.close_btn {
+	width: 47px;
+	border-left: none;
+	border-radius: 0 4px 0 0;
+	background: linear-gradient(#e8a799 0%, #d1705c 48%, #c2452d 52%, #d98b78 100%);
+}
+
+.control_button:hover {
+	filter: brightness(1.12);
+}
+
+.close_btn:hover {
+	background: linear-gradient(#f4b7a8 0%, #e5654a 48%, #d1301a 52%, #ee9a85 100%);
+	filter: none;
+}
+
+.control_button:active {
+	filter: brightness(0.85);
+}
+
+
+/* Others */
+
+.less_padding{
+	padding:2px;
+	padding-bottom:2px;
+	padding-left:5px;
+	
+}

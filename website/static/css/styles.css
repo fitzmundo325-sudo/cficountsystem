@@ -150,6 +150,31 @@
   }
 }
 
+@-webkit-keyframes slideOutRight {
+	from {
+		-webkit-transform: translate3d(0, 0, 0);
+		transform: translate3d(0, 0, 0);
+		opacity: 1;
+	}
+	to {
+		-webkit-transform: translate3d(100%, 0, 0);
+		transform: translate3d(100%, 0, 0);
+		opacity: 0;
+	}
+}
+
+@keyframes slideOutRight {
+	from {
+		-webkit-transform: translate3d(0, 0, 0);
+		transform: translate3d(0, 0, 0);
+		opacity: 1;
+	}
+	to {
+		-webkit-transform: translate3d(100%, 0, 0);
+		transform: translate3d(100%, 0, 0);
+		opacity: 0;
+	}
+}
 
 
 body {
@@ -726,6 +751,18 @@ th.sortable:hover {
   animation: slideOut 0.4s ease forwards;
 }
 
+
+.slideOutRight {
+	-webkit-animation-name: slideOutRight;
+	animation-name: slideOutRight;
+	-webkit-animation-duration: 0.4s;
+	animation-duration: 0.4s;
+	-webkit-animation-timing-function: ease-in;
+	animation-timing-function: ease-in;
+	-webkit-animation-fill-mode: both;
+	animation-fill-mode: both;
+}
+
 .close_modal_rev{
 	position:fixed;
 	top:0;
@@ -995,8 +1032,6 @@ tr.hide_child_inputs > td:not(:first-child) {
 	left:0;
 	z-index:50;
 	margin-left:0px !important;
-	
-	
 }
 
 @media (max-width: 1023px) {

@@ -83,7 +83,8 @@
   
   
 </style>
-
+ 
+<link rel="stylesheet" href="{{ url_for('static', filename='css/chatbot_extra.css') }}" >
 
 <script src="{{ url_for('static', filename='js/charts/chart.js') }}"></script>
 <script src="{{ url_for('static', filename='js/charts/chartjs-plugin-datalabels.min.js') }}"></script>
@@ -119,8 +120,26 @@ let chatModelsEndpoint = {{ url_for('openrouter_chat.chat_models')|tojson }};
   </div>
 </header>
 
+
+
+<div id="headless_controls" class="headless_con_controlls hidden">
+	<div class="control_button minimize_btn" title="Minimize" onclick="minimizeChatG()">
+		<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+			<rect x="3" y="9" width="10" height="3" fill="#fff" stroke="#2b3a4d" stroke-width="1"/>
+		</svg>
+	</div>
+	<div class="control_button close_btn" title="Close" onclick="closeThis()">
+		<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+			<path d="M3.5 3.5 L12.5 12.5 M12.5 3.5 L3.5 12.5" stroke="#2b3a4d" stroke-width="4" stroke-linecap="square" fill="none"/>
+			<path d="M3.5 3.5 L12.5 12.5 M12.5 3.5 L3.5 12.5" stroke="#fff" stroke-width="2.4" stroke-linecap="square" fill="none"/>
+		</svg>
+	</div>
+</div>
+
+
+
 <!-- Content -->
-<div id="chatbot-page-shell"  class="px-6 pt-4 pb-2 md:px-8 md:pt-6 md:pb-8 max-w-[4000px] w-full mx-auto space-y-6" style="padding-top:5px;">
+<div id="chatbot-page-shell"  class="px-6 pt-4 pb-2 md:px-8 md:pt-6 md:pb-8 max-w-[4000px] w-full mx-auto space-y-6 " style="padding-top:5px;">
 
   <!-- Page Header -->
 
@@ -138,7 +157,7 @@ let chatModelsEndpoint = {{ url_for('openrouter_chat.chat_models')|tojson }};
     <div class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
       <div id="chat-model-wrap" class="flex items-center gap-2">
         <label for="chat-model-select" class="text-xs font-black uppercase tracking-wide text-sky-700">Model</label>
-        <select id="chat-model-select" class="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"></select>
+        <select id="chat-model-select" class="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"></select>
       </div>
       <button id="chat-clear-btn" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Clear chat</button>
     </div>
@@ -155,7 +174,7 @@ let chatModelsEndpoint = {{ url_for('openrouter_chat.chat_models')|tojson }};
         <textarea id="chat-input" rows="1" placeholder="Type a message..." class="max-h-40 flex-1 resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"></textarea>
         <button id="chat-send-btn" type="submit" data-state="send" class="inline-flex shrink-0 items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">Send</button>
       </div>
-      <p class="mt-1.5 text-xs text-slate-400">Enter to send, Shift+Enter for a new line</p>
+      <p class="mt-1.5 text-xs text-slate-400">Enter to send, Shift+Enter for a new line. <i class="tiny secondary_color"> LLM's can make mistakes always validate accuracy. </i></p>
     </form>
 
   </section>
