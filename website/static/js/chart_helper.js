@@ -39,6 +39,15 @@ if (typeof abbreviateNumber == "undefined") {
   };
 }
 
+//helpers
+
+function getCSSVar(varName, element = document.documentElement) {
+  return getComputedStyle(element)
+    .getPropertyValue(varName)
+    .trim();
+}
+
+
 // ====================
 // Pie Chart Generators
 // ====================
@@ -554,7 +563,7 @@ function generateMultiLineChart(
 			}
           },
           datalabels: {
-            color: getCSSVar("--primary_color_invert"),
+            color: getCSSVar("--primary_color"),
             formatter: (value, ctx) => {
               if (asPercentage) {
                 let sum = ctx.dataset.data.reduce((a, b) => a + b, 0);
@@ -564,8 +573,15 @@ function generateMultiLineChart(
                 return abbreviateNumber(value).abbreviated;
               }
             },
-            anchor: "center",
-            align: "center",
+            anchor: "right",
+            align: "right",
+			padding: {
+				top: 4,
+				bottom: 4,
+				left: 8,
+				right: 8,
+			  
+			},
           },
         },
       },
