@@ -38,22 +38,6 @@ def _load_local_env():
         os.environ.setdefault(key, value)
 
 
-def _ensure_pos_sold_columns():
-    with db.engine.connect() as conn:
-        existing_columns = {
-            row[1]
-            for row in conn.execute(text("PRAGMA table_info('pos_sold')")).fetchall()
-        }
-
-        if 'gross_sales' not in existing_columns:
-            conn.execute(text("ALTER TABLE pos_sold ADD COLUMN gross_sales FLOAT NOT NULL DEFAULT 0"))
-        if 'discount' not in existing_columns:
-            conn.execute(text("ALTER TABLE pos_sold ADD COLUMN discount FLOAT NOT NULL DEFAULT 0"))
-        if 'z_reading_image_path' not in existing_columns:
-            conn.execute(text("ALTER TABLE pos_sold ADD COLUMN z_reading_image_path VARCHAR(500)"))
-        conn.commit()
-
-
 def _ensure_daily_report_pos_columns():
     with db.engine.connect() as conn:
         existing_columns = {
@@ -533,7 +517,6 @@ def create_app():
                 db.session.add(stored_secret)
                 db.session.commit()
             app.config['SECRET_KEY'] = stored_secret.secret_value
-        _ensure_pos_sold_columns()
         _ensure_daily_report_pos_columns()
         _ensure_store_group_column()
         _ensure_user_assigned_store_column()
