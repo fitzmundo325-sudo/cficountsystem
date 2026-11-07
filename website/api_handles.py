@@ -5730,7 +5730,7 @@ def purge_audit_logs():
     
     
 # ================================
-# POS Sold Section End
+# POS Sold Section Start
 # ================================
 POS_SOLD_ROLES = ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager')
 POS_SOLD_READONLY_ROLES = ('Auditor', 'Area Manager')
@@ -5765,14 +5765,22 @@ def _pos_sold_num(value, cast):
     except (TypeError, ValueError):
         return cast(0)
 
-
 def _pos_sold_scope():
     from .views import _apply_store_scope_filter, _get_area_manager_cluster_ids
     allowed = _get_area_manager_cluster_ids(current_user)
     clusters = Cluster.query.order_by(Cluster.name.asc()).all()
     if allowed is not None:
         clusters = [c for c in clusters if int(c.id) in allowed]
-    stores = _apply_store_scope_filter(Store.query.order_by(Store.name.asc()).all(), request)
+
+    stores = Store.query.order_by(Store.name.asc()).all()
+    store_scope = (_pos_sold_param('store_scope') or '').lower()
+    if store_scope == 'starlink':
+        stores = [s for s in stores if 'starlink' in (s.name or '').lower()]
+    elif store_scope == 'official':
+        stores = [s for s in stores if 'starlink' not in (s.name or '').lower()]
+    else:
+        stores = _apply_store_scope_filter(stores, request)
+
     if allowed is not None:
         stores = [s for s in stores if int(s.cluster_id or 0) in allowed]
     return allowed, clusters, stores
