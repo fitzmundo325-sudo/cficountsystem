@@ -1034,6 +1034,40 @@ tr.hide_child_inputs > td:not(:first-child) {
 	margin-left:0px !important;
 }
 
+
+
+.loading_overlay_ui{
+	
+	width:100%;
+	position:absolute;
+	top:0;
+	bottom:0;
+	
+}
+
+button:has(> .loading_overlay_ui) {
+    position: relative;
+	overflow:hidden;
+}
+
+.loading_overlay_ui{
+	width:100%;
+	position:absolute;
+	top:0;
+	left:0;
+	right:0;
+	bottom:0;
+	display:flex;
+	align-items:center;
+	justify-content:center;
+	z-index:2;
+	backdrop-filter:blur(2px);
+	background-color:inherit;
+	opacity:0.95;
+	cursor:wait;
+}
+
+
 @media (max-width: 1023px) {
 	
 }

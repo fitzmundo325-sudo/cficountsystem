@@ -161,6 +161,33 @@ const utility = {
 };
 
 
+function addLoading(elm) {
+    if (elm.querySelector('.loading_overlay_ui')) {
+        return; 
+    }
+
+    let overlay = document.createElement('div');
+    overlay.setAttribute('tag', 'loading_overlay');
+    overlay.className = 'loading_overlay_ui';
+    
+
+    let spinner = document.createElement('span');
+    spinner.className = 'fa fa-spinner fa-spin fa-2x';
+    
+
+    overlay.appendChild(spinner);
+    elm.appendChild(overlay);
+}
+
+
+
+function removeLoading(elm){
+	let ovr = tag("loading_overlay",elm);
+	for(each of ovr){
+		each.remove();
+	}
+}
+
 
 var shown = false;
 var created = false;
