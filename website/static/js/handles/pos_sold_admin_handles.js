@@ -65,6 +65,12 @@ function setBusy(button, busy) {
   if (button) {
     button.disabled = busy;
   }
+  
+  if(busy == false){
+	removeLoading();
+  }
+  
+  addLoading(button);
 }
 
 // - URL sync -
@@ -203,7 +209,7 @@ function onFiltersLoaded(data) {
   fillClusterSelect(byId('cluster_id'), 'Select Cluster', '');
   populateReviewStores();
   if (data.warning) {
-    toast.warn(data.warning);
+    toast.warning(data.warning);
   }
   restoreFromUrl();
 }
@@ -269,11 +275,11 @@ function loadConsolidated(push) {
   let startDate = byId('consolidated_start_date').value;
   let endDate = byId('consolidated_end_date').value;
   if (!clusterId) {
-    toast.warn('Please select a cluster first.');
+    toast.warning('Please select a cluster first.');
     return;
   }
   if (!startDate || !endDate) {
-    toast.warn('Please select valid start and end dates.');
+    toast.warning('Please select valid start and end dates.');
     return;
   }
   let params = { cluster_id: clusterId, start_date: startDate, end_date: endDate, page: state.page };
@@ -315,7 +321,10 @@ function onConsolidatedSuccess(data, push) {
   renderCategories(data.category_metrics || []);
   renderConsolidatedRows(data.data || []);
   renderPagination(data);
-
+	
+	removeLoading();
+	
+	
   if (push) {
     syncCurrentUrl();
   }
@@ -513,7 +522,7 @@ function loadReview(push) {
   let storeId = byId('review_store_id').value;
   let date = byId('review_date').value;
   if (!storeId) {
-    toast.warn('Please select a store first.');
+    toast.warning('Please select a store first.');
     return;
   }
   setBusy(byId('review-submit'), true);
@@ -524,6 +533,7 @@ function loadReview(push) {
 
 function onReviewLoaded(data, storeId, push) {
   setBusy(byId('review-submit'), false);
+  removeLoading();
   if (data.type !== 'success') {
     toast.error(data.message || 'Failed to load review.');
     byId('review-results').classList.add('hidden');
@@ -688,7 +698,7 @@ function onEditSubmit(event) {
   let row = state.pendingRow;
   let quantity = byId('edit_pos_sold_quantity').value;
   if (!row || quantity === '' || Number(quantity) < 0) {
-    toast.warn('Please enter a valid quantity.');
+    toast.warning('Please enter a valid quantity.');
     return;
   }
   let params = baseActionParams();
@@ -719,7 +729,7 @@ function onDeleteSubmit(event) {
   let row = state.pendingRow;
   let password = byId('delete_row_admin_password').value;
   if (!row || !password) {
-    toast.warn('Please enter your admin password.');
+    toast.warning('Please enter your admin password.');
     return;
   }
   let params = baseActionParams();
@@ -747,7 +757,7 @@ function onDeleteAllSubmit(event) {
   event.preventDefault();
   let password = byId('delete_all_admin_password').value;
   if (!password) {
-    toast.warn('Please enter your admin password.');
+    toast.warning('Please enter your admin password.');
     return;
   }
   let params = baseActionParams();
