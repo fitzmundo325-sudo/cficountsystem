@@ -1,4 +1,4 @@
-import os, json, re
+import os, json, re, math
 from operator import or_, and_
 from typing import Union
 from difflib import SequenceMatcher
@@ -5725,6 +5725,353 @@ def purge_audit_logs():
     
 # ================================
 # Audit Log Section End
+# ================================
+
+    
+    
+# ================================
+# POS Sold Section End
+# ================================
+POS_SOLD_ROLES = ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager')
+POS_SOLD_READONLY_ROLES = ('Auditor', 'Area Manager')
+
+
+def _pos_sold_param(name):
+    value = request.form.get(name)
+    if value is None or str(value).strip() == '':
+        value = request.args.get(name)
+    if value is None or str(value).strip() == '':
+        return None
+    return str(value).strip()
+
+
+def _pos_sold_int(name):
+    try:
+        return int(_pos_sold_param(name))
+    except (TypeError, ValueError):
+        return None
+
+
+def _pos_sold_date(value):
+    try:
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _pos_sold_num(value, cast):
+    try:
+        return cast(value or 0)
+    except (TypeError, ValueError):
+        return cast(0)
+
+
+def _pos_sold_scope():
+    from .views import _apply_store_scope_filter, _get_area_manager_cluster_ids
+    allowed = _get_area_manager_cluster_ids(current_user)
+    clusters = Cluster.query.order_by(Cluster.name.asc()).all()
+    if allowed is not None:
+        clusters = [c for c in clusters if int(c.id) in allowed]
+    stores = _apply_store_scope_filter(Store.query.order_by(Store.name.asc()).all(), request)
+    if allowed is not None:
+        stores = [s for s in stores if int(s.cluster_id or 0) in allowed]
+    return allowed, clusters, stores
+
+
+@api_handles.route('/pos_sold_filters', methods=['GET', 'POST'])
+@login_required
+def pos_sold_filters():
+    if current_user.role not in POS_SOLD_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    allowed, clusters, stores = _pos_sold_scope()
+    warning = None
+    if allowed is not None and not stores:
+        warning = 'No stores are assigned to your clusters yet. Please contact your administrator.'
+
+    today = datetime.today().date()
+    return {
+        'type': 'success',
+        'clusters': [{'id': c.id, 'name': c.name} for c in clusters],
+        'stores': [{'id': s.id, 'name': s.name, 'cluster_id': s.cluster_id} for s in stores],
+        'can_edit': current_user.role not in POS_SOLD_READONLY_ROLES,
+        'default_start_date': today.replace(day=1).strftime('%Y-%m-%d'),
+        'today': today.strftime('%Y-%m-%d'),
+        'warning': warning,
+    }
+
+
+@api_handles.route('/pos_sold_consolidated', methods=['GET', 'POST'])
+@login_required
+def pos_sold_consolidated():
+    if current_user.role not in POS_SOLD_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    allowed, clusters, stores = _pos_sold_scope()
+    cluster_ids = {int(c.id) for c in clusters}
+    cluster_id = _pos_sold_int('cluster_id')
+    store_id = _pos_sold_int('store_id')
+    
+    per_page = int(request.form.get('rows') or request.args.get('rows') or 50)
+
+    try:
+        page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        page = 1
+
+
+    if not cluster_id:
+        return {'type': 'error', 'message': 'Please select a cluster first.'}
+    if allowed is not None and cluster_id not in allowed:
+        return {'type': 'error', 'message': 'Selected cluster is not assigned to you.'}
+    if cluster_id not in cluster_ids:
+        return {'type': 'error', 'message': 'Selected cluster does not exist.'}
+
+    start_date = _pos_sold_date(_pos_sold_param('start_date'))
+    end_date = _pos_sold_date(_pos_sold_param('end_date'))
+    if not start_date or not end_date:
+        return {'type': 'error', 'message': 'Please select valid start and end dates.'}
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    warning = None
+    allowed_store_ids = {int(s.id) for s in stores if int(s.cluster_id or 0) == cluster_id}
+    if store_id and store_id not in allowed_store_ids:
+        warning = 'Selected store does not belong to the chosen cluster.'
+        store_id = None
+
+    alias_lookup = _get_product_alias_lookup()
+    master_rows = ProductMaster.query.with_entities(ProductMaster.description, ProductMaster.category).all()
+    master_category_by_name = {
+        _normalize_product_text(description): (category or '').strip() or 'Uncategorized'
+        for description, category in master_rows
+        if _normalize_product_text(description)
+    }
+
+    pos_query = (
+        db.session.query(
+            Store.id.label('store_id'),
+            Store.name.label('store_name'),
+            Cluster.name.label('cluster_name'),
+            PosSold.product_name.label('product_name'),
+            DailyReport.report_date.label('report_date'),
+            func.sum(PosSold.quantity).label('daily_qty'),
+            func.sum(PosSold.gross_sales).label('daily_gross_sales'),
+            func.sum(PosSold.discount).label('daily_discount'),
+            func.sum(PosSold.net_sales).label('daily_net_sales'),
+        )
+        .join(DailyReport, DailyReport.id == PosSold.daily_report_id)
+        .join(Store, Store.id == DailyReport.store_id)
+        .outerjoin(Cluster, Cluster.id == Store.cluster_id)
+        .filter(
+            Store.cluster_id == cluster_id,
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= end_date,
+        )
+    )
+    if store_id:
+        pos_query = pos_query.filter(Store.id == store_id)
+
+    pos_rows = (
+        pos_query
+        .group_by(Store.id, Store.name, Cluster.name, PosSold.product_name, DailyReport.report_date)
+        .order_by(Store.name.asc(), DailyReport.report_date.asc(), PosSold.product_name.asc())
+        .all()
+    )
+
+    consolidated_map = {}
+    for row in pos_rows:
+        raw_name = (row.product_name or '').strip() or 'Unnamed Product'
+        canonical_name = alias_lookup.get(_normalize_product_text(raw_name), raw_name)
+        canonical_name = (canonical_name or '').strip() or 'Unnamed Product'
+        row_store_id = int(row.store_id)
+
+        bucket_key = (row_store_id, canonical_name.lower())
+        if bucket_key not in consolidated_map:
+            consolidated_map[bucket_key] = {
+                'cluster_name': row.cluster_name or 'Unassigned',
+                'store_id': row_store_id,
+                'store_name': row.store_name or f'Store {row.store_id}',
+                'product_name': canonical_name,
+                'days_set': set(),
+                'quantity': 0,
+                'gross_sales': 0.0,
+                'discount': 0.0,
+                'net_sales': 0.0,
+            }
+        bucket = consolidated_map[bucket_key]
+        bucket['days_set'].add(row.report_date.strftime('%Y-%m-%d') if row.report_date else '')
+        bucket['quantity'] += int(row.daily_qty or 0)
+        bucket['gross_sales'] += float(row.daily_gross_sales or 0.0)
+        bucket['discount'] += float(row.daily_discount or 0.0)
+        bucket['net_sales'] += float(row.daily_net_sales or 0.0)
+
+    table_rows = sorted(
+        [
+            {
+                'cluster_name': payload['cluster_name'],
+                'store_id': payload['store_id'],
+                'store_name': payload['store_name'],
+                'product_name': payload['product_name'],
+                'in_masterlist': _normalize_product_text(payload['product_name']) in master_category_by_name,
+                'category': master_category_by_name.get(_normalize_product_text(payload['product_name']), 'Uncategorized'),
+                'days_count': len([day for day in payload['days_set'] if day]),
+                'quantity': int(payload['quantity'] or 0),
+                'gross_sales': float(payload['gross_sales'] or 0.0),
+                'discount': float(payload['discount'] or 0.0),
+                'net_sales': float(payload['net_sales'] or 0.0),
+            }
+            for payload in consolidated_map.values()
+        ],
+        key=lambda item: (
+            (item.get('store_name') or '').lower(),
+            -int(item.get('quantity') or 0),
+            (item.get('product_name') or '').lower(),
+        ),
+    )
+
+    summary = {
+        'rows_count': len(table_rows),
+        'stores_count': len({int(r['store_id']) for r in table_rows}),
+        'total_qty': sum(r['quantity'] for r in table_rows),
+        'total_gross_sales': sum(r['gross_sales'] for r in table_rows),
+        'total_discount': sum(r['discount'] for r in table_rows),
+        'total_net_sales': sum(r['net_sales'] for r in table_rows),
+    }
+
+    category_totals = {}
+    for row in table_rows:
+        category_name = (row.get('category') or '').strip() or 'Uncategorized'
+        bucket = category_totals.get(category_name)
+        if not bucket:
+            parts = [part for part in category_name.replace('-', ' ').split() if part]
+            if len(parts) >= 2:
+                short_name = ''.join(part[0] for part in parts[:3]).upper()
+            else:
+                short_name = category_name[:4].upper()
+            bucket = {
+                'category': category_name,
+                'short': short_name or 'UNC',
+                'rows': 0,
+                'quantity': 0,
+                'net_sales': 0.0,
+            }
+            category_totals[category_name] = bucket
+        bucket['rows'] += 1
+        bucket['quantity'] += int(row.get('quantity') or 0)
+        bucket['net_sales'] += float(row.get('net_sales') or 0.0)
+
+    category_metrics = sorted(
+        category_totals.values(),
+        key=lambda item: (-int(item.get('quantity') or 0), (item.get('category') or '').lower()),
+    )
+
+    total_results = len(table_rows)
+    total_pages = math.ceil(total_results / per_page) if total_results > 0 else 1
+    page = max(1, min(page, total_pages))
+
+    return {
+        'type': 'success',
+        'data': table_rows[(page - 1) * per_page: page * per_page],
+        'summary': summary,
+        'category_metrics': category_metrics,
+        'start_date': start_date.strftime('%Y-%m-%d'),
+        'end_date': end_date.strftime('%Y-%m-%d'),
+        'warning': warning,
+        'current_page': page,
+        'total_pages': total_pages,
+        'total_results': total_results,
+    }
+
+
+@api_handles.route('/pos_sold_review', methods=['GET', 'POST'])
+@login_required
+def pos_sold_review():
+    if current_user.role not in POS_SOLD_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    allowed, clusters, stores = _pos_sold_scope()
+    store_id = _pos_sold_int('review_store_id')
+    review_date = _pos_sold_date(_pos_sold_param('review_date')) or datetime.today().date()
+
+    if not store_id:
+        return {'type': 'error', 'message': 'Please select a store first.'}
+
+    store = Store.query.get(store_id)
+    if not store:
+        return {'type': 'error', 'message': 'Selected review store does not exist.'}
+    if allowed is not None and int(store.cluster_id or 0) not in allowed:
+        return {'type': 'error', 'message': 'Selected review store is not assigned to you.'}
+
+    report = DailyReport.query.filter_by(store_id=store_id, report_date=review_date).first()
+    rows = []
+    is_staged = False
+    staging_id = None
+
+    if report:
+        pos_rows = (
+            PosSold.query
+            .filter_by(daily_report_id=report.id)
+            .order_by(PosSold.product_name.asc(), PosSold.id.asc())
+            .all()
+        )
+        rows = [
+            {
+                'id': r.id,
+                'staged_index': None,
+                'product_name': r.product_name,
+                'quantity': int(r.quantity or 0),
+                'gross_sales': float(r.gross_sales or 0.0),
+                'discount': float(r.discount or 0.0),
+                'net_sales': float(r.net_sales or 0.0),
+            }
+            for r in pos_rows
+        ]
+
+    if not rows:
+        staging = PosSoldStaging.query.filter_by(store_id=store_id, report_date=review_date).first()
+        if staging:
+            try:
+                staged_items = json.loads(staging.items_json or '[]')
+            except (TypeError, ValueError):
+                staged_items = []
+            if isinstance(staged_items, list):
+                rows = [
+                    {
+                        'id': None,
+                        'staged_index': index,
+                        'product_name': str(item.get('product_name') or '').strip(),
+                        'quantity': _pos_sold_num(item.get('quantity'), int),
+                        'gross_sales': _pos_sold_num(item.get('gross_sales'), float),
+                        'discount': _pos_sold_num(item.get('discount'), float),
+                        'net_sales': _pos_sold_num(item.get('net_sales'), float),
+                    }
+                    for index, item in enumerate(staged_items)
+                    if isinstance(item, dict) and str(item.get('product_name') or '').strip()
+                ]
+                rows.sort(key=lambda r: r['product_name'].lower())
+                is_staged = True
+                staging_id = staging.id
+
+    return {
+        'type': 'success',
+        'data': rows,
+        'summary': {
+            'rows_count': len(rows),
+            'total_qty': sum(r['quantity'] for r in rows),
+            'total_gross_sales': sum(r['gross_sales'] for r in rows),
+            'total_discount': sum(r['discount'] for r in rows),
+            'total_net_sales': sum(r['net_sales'] for r in rows),
+        },
+        'review_date': review_date.strftime('%Y-%m-%d'),
+        'report_id': report.id if report else None,
+        'is_staged': is_staged,
+        'staging_id': staging_id,
+        'can_edit': current_user.role not in POS_SOLD_READONLY_ROLES,
+    }
+    
+# ================================
+# POS Sold Section End
 # ================================
  
  

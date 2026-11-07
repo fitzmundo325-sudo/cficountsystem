@@ -1,0 +1,463 @@
+{% extends "base_headless.html" %}
+{% block title %}POS Sold{% endblock %}
+
+{% block content %}
+
+<header class="sticky top-0 z-20 bg-white/85 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">POS Sold</span>
+    </nav>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <div class="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+    <button type="button" data-tab="consolidated" class="tab-btn inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold transition-colors bg-slate-900 text-white">Consolidated View</button>
+    <button type="button" data-tab="review" class="tab-btn inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold transition-colors bg-slate-100 text-slate-700 hover:bg-slate-200">Store Date Review</button>
+  </div>
+
+  <!-- Consolidated Panel -->
+  <div id="panel-consolidated" class="space-y-6">
+    <section class="space-y-4">
+      <div>
+        <h1 class="text-3xl font-bold text-slate-900 tracking-tight">POS Sold</h1>
+        <p class="text-slate-600 mt-1">Select cluster and date range first, then apply filter to load POS sold data.</p>
+      </div>
+      <div class="flex justify-center">
+        <form id="consolidated-form" class="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-2 items-end">
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Cluster</label>
+            <select id="cluster_id" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+              <option value="">Select Cluster</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Store</label>
+            <select id="store_id" disabled class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+              <option value="">Select Cluster First</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Start Date</label>
+            <input type="date" id="consolidated_start_date" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">End Date</label>
+            <input type="date" id="consolidated_end_date" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+          </div>
+          <div class="flex items-center gap-1 xl:col-span-2">
+            <button id="apply-btn" type="submit" class="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors whitespace-nowrap disabled:opacity-60">Apply</button>
+            <button id="reset-consolidated-btn" type="button" class="px-5 py-2 bg-white border border-slate-300 text-slate-700 text-sm rounded-lg font-medium hover:bg-slate-50 transition-colors text-center whitespace-nowrap">Reset</button>
+            <button id="openExportPosSoldModal" type="button" class="hidden px-5 py-2 bg-emerald-600 text-white text-sm rounded-lg font-medium hover:bg-emerald-700 transition-colors whitespace-nowrap" title="Export to Excel">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline mr-1">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              Export Excel
+            </button>
+          </div>
+        </form>
+      </div>
+      <div id="consolidated-warning" class="hidden max-w-5xl mx-auto rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"></div>
+    </section>
+
+    <section id="consolidated-initial" class="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+      <h2 class="text-base font-bold text-amber-900">No Data Loaded Yet</h2>
+      <p class="text-sm text-amber-800 mt-1">Choose a cluster, optional store, start date, and end date, then click Apply.</p>
+    </section>
+
+    <div id="consolidated-results" class="hidden space-y-6">
+      <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div class="rounded-2xl border border-slate-200 bg-white p-4">
+          <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Rows</p>
+          <p id="sum-rows" class="text-2xl font-bold text-slate-900 mt-2">0</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-4">
+          <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Stores</p>
+          <p id="sum-stores" class="text-2xl font-bold text-slate-900 mt-2">0</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-4">
+          <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Qty</p>
+          <p id="sum-qty" class="text-2xl font-bold text-slate-900 mt-2">0</p>
+        </div>
+        <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <p class="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Total Net Sales</p>
+          <p id="sum-net" class="text-2xl font-bold text-emerald-800 mt-2">0.00</p>
+        </div>
+      </section>
+
+      <section id="category-section" class="hidden rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-200 bg-slate-50">
+          <h2 class="text-lg font-bold text-slate-900">Category Quick Stats</h2>
+          <p class="text-xs text-slate-500">Quick cards with short labels and quantity only.</p>
+        </div>
+        <div id="category-grid" class="p-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2"></div>
+      </section>
+
+      <section class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">POS Sold Entries (Consolidated)</h2>
+            <p class="text-xs text-slate-500">Same store + product are merged across the selected date range.</p>
+          </div>
+          <div id="sum-gross-discount" class="text-xs text-slate-600 font-medium"></div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Product</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Category</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Qty</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Gross</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Discount</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Net</th>
+              </tr>
+            </thead>
+            <tbody id="consolidated-body" class="divide-y divide-slate-100"></tbody>
+            <tbody id="consolidated-empty" class="hidden">
+              <tr>
+                <td colspan="6" class="px-4 py-8 text-center text-sm text-slate-500">No POS sold records found for the selected filters.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div id="consolidated-pagination" class="hidden flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3">
+        <div id="pagination-info" class="text-sm text-slate-600"></div>
+        <div id="pagination-buttons" class="flex items-center gap-1"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Review Panel -->
+  <div id="panel-review" class="hidden space-y-6">
+    <section class="space-y-4">
+      <div>
+        <h1 class="text-3xl font-bold text-slate-900 tracking-tight">POS Sold Review</h1>
+        <p class="text-slate-600 mt-1">Select a store and date to review POS Sold entries. Deleted rows are removed from that store/date record.</p>
+      </div>
+      <form id="review-form" class="grid w-full grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-3 lg:max-w-4xl">
+        <div>
+          <label class="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">Store</label>
+          <select id="review_store_id" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
+            <option value="">Select Store</option>
+          </select>
+        </div>
+        <div>
+          <label class="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">Date</label>
+          <input type="date" id="review_date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
+        </div>
+        <div class="flex items-end gap-2">
+          <button id="review-submit" type="submit" class="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-60">Load Review</button>
+          <button id="reset-review-btn" type="button" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-center text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50">Reset</button>
+        </div>
+      </form>
+    </section>
+
+    <div id="review-results" class="hidden space-y-6">
+      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="rounded-2xl border border-slate-200 bg-white p-4">
+          <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Rows</p>
+          <p id="rev-rows" class="mt-2 text-2xl font-bold text-slate-900">0</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-4">
+          <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Qty</p>
+          <p id="rev-qty" class="mt-2 text-2xl font-bold text-slate-900">0</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-4">
+          <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Gross / Discount</p>
+          <p id="rev-gross" class="mt-2 text-lg font-bold text-slate-900">0.00</p>
+          <p class="text-xs text-slate-500">Discount: <span id="rev-discount">0.00</span></p>
+        </div>
+        <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <p class="text-xs font-semibold uppercase tracking-wider text-emerald-700">Total Net Sales</p>
+          <p id="rev-net" class="mt-2 text-2xl font-bold text-emerald-800">0.00</p>
+        </div>
+      </section>
+
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        <div class="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Store Date POS Sold Entries</h2>
+            <p class="text-xs text-slate-500">
+              <span id="review-meta"></span>
+              <span id="review-staged-badge" class="hidden ml-2 inline-flex rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800">Saved — awaiting Daily Report</span>
+            </p>
+          </div>
+          <button type="button" id="openDeleteAllPosSoldModal" class="hidden inline-flex items-center justify-center rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-rose-700">Delete All</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Product</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Qty</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Gross</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Discount</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Net</th>
+                <th id="review-actions-th" class="hidden px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Action</th>
+              </tr>
+            </thead>
+            <tbody id="review-body" class="divide-y divide-slate-100"></tbody>
+            <tbody id="review-empty" class="hidden">
+              <tr>
+                <td colspan="6" class="px-4 py-8 text-center text-sm text-slate-500">No POS sold entries found for the selected store/date.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+</div>
+
+<!-- Templates -->
+<template id="tmpl-pos-row">
+  <tr class="hover:bg-slate-50 transition-colors">
+    <td class="px-4 py-3 text-sm text-slate-700">
+      <div class="inline-flex items-center gap-2">
+        <span data-cell="product"></span>
+        <span data-cell="in-masterlist" class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-bold" title="Matched in Product Masterlist" aria-label="Matched in Product Masterlist">✓</span>
+        <span data-cell="not-in-masterlist" class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700" title="Warning: Not in Product Masterlist" aria-label="Warning: Not in Product Masterlist">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </span>
+      </div>
+    </td>
+    <td data-cell="category" class="px-4 py-3 text-sm text-slate-700"></td>
+    <td data-cell="quantity" class="px-4 py-3 text-sm text-slate-800 text-right"></td>
+    <td data-cell="gross" class="px-4 py-3 text-sm text-slate-800 text-right"></td>
+    <td data-cell="discount" class="px-4 py-3 text-sm text-slate-800 text-right"></td>
+    <td data-cell="net" class="px-4 py-3 text-sm text-slate-900 text-right font-semibold"></td>
+  </tr>
+</template>
+
+<template id="tmpl-category-card">
+  <article class="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+    <p data-cell="title" class="text-[11px] font-semibold text-slate-800 truncate">
+      <span data-cell="short" class="inline-flex items-center rounded bg-indigo-50 text-indigo-700 px-1.5 py-0.5 text-[10px] font-semibold mr-1"></span><span data-cell="category"></span>
+    </p>
+    <p class="text-[11px] text-slate-700 mt-0.5">
+      <span class="inline-flex items-center rounded bg-slate-100 text-slate-700 px-1.5 py-0.5 text-[10px] font-semibold mr-1">Qty</span>
+      <span data-cell="quantity" class="inline-flex items-center rounded bg-emerald-100 text-emerald-800 px-1.5 py-0.5 text-[10px] font-bold"></span>
+    </p>
+  </article>
+</template>
+
+<template id="tmpl-review-row">
+  <tr class="transition-colors hover:bg-slate-50">
+    <td data-cell="product" class="px-4 py-3 text-sm font-medium text-slate-800"></td>
+    <td data-cell="quantity" class="px-4 py-3 text-right text-sm text-slate-700"></td>
+    <td data-cell="gross" class="px-4 py-3 text-right text-sm text-slate-700"></td>
+    <td data-cell="discount" class="px-4 py-3 text-right text-sm text-slate-700"></td>
+    <td data-cell="net" class="px-4 py-3 text-right text-sm font-semibold text-slate-900"></td>
+    <td data-cell="actions" class="px-4 py-3 text-right">
+      <button type="button" data-action="edit" class="rounded-lg bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100">Edit</button>
+      <button type="button" data-action="delete" class="ml-2 rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100">Delete</button>
+    </td>
+  </tr>
+</template>
+
+<!-- Edit Modal -->
+<div id="editPosSoldModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-xl font-bold text-slate-900">Edit POS Sold Quantity</h3>
+          <p class="text-sm text-slate-500 mt-1">Update the quantity for this product row.</p>
+        </div>
+        <button type="button" data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <form id="editPosSoldForm" class="space-y-4 px-6 py-5">
+        <div class="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+          <p id="editPosSoldProductName" class="font-semibold">This item</p>
+        </div>
+        <div>
+          <label for="edit_pos_sold_quantity" class="mb-1 block text-sm font-semibold text-slate-700">Quantity</label>
+          <input id="edit_pos_sold_quantity" type="number" min="0" step="1" required class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
+        </div>
+        <div class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" data-modal-close class="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100">Cancel</button>
+          <button id="editPosSoldBtn" type="submit" class="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-60">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Row Modal -->
+<div id="deletePosSoldModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-xl font-bold text-slate-900">Delete this POS Sold entry?</h3>
+          <p class="text-sm text-slate-500 mt-1">This will remove the selected product row from this store/date.</p>
+        </div>
+        <button type="button" data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <form id="deletePosSoldForm" class="space-y-4 px-6 py-5">
+        <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          <p class="font-semibold">Are you sure?</p>
+          <p class="mt-1"><span id="deletePosSoldProductName">This item</span></p>
+          <p class="mt-1 text-xs">Qty: <span id="deletePosSoldQty">0</span> · Net: <span id="deletePosSoldNet">0.00</span></p>
+        </div>
+        <div>
+          <label for="delete_row_admin_password" class="mb-1 block text-sm font-semibold text-slate-700">Admin Password</label>
+          <input id="delete_row_admin_password" type="password" required autocomplete="current-password" placeholder="Enter your password to proceed" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500">
+        </div>
+        <div class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" data-modal-close class="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100">Cancel</button>
+          <button id="deletePosSoldBtn" type="submit" class="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:opacity-60">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Delete All Modal -->
+<div id="deleteAllPosSoldModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-xl font-bold text-slate-900">Delete all POS Sold entries?</h3>
+          <p class="text-sm text-slate-500 mt-1">This will delete all POS Sold rows for this selected store and date.</p>
+        </div>
+        <button type="button" data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <form id="deleteAllPosSoldForm" class="space-y-4 px-6 py-5">
+        <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          <p class="font-semibold">Are you sure?</p>
+          <p class="mt-1">This will delete <span id="deleteAllPosSoldCount">0</span> entries and cannot be undone.</p>
+        </div>
+        <div>
+          <label for="delete_all_admin_password" class="mb-1 block text-sm font-semibold text-slate-700">Admin Password</label>
+          <input id="delete_all_admin_password" type="password" required autocomplete="current-password" placeholder="Enter your password to proceed" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500">
+        </div>
+        <div class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" data-modal-close class="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100">Cancel</button>
+          <button id="deleteAllPosSoldBtn" type="submit" class="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:opacity-60">Delete All</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Export Modal -->
+<div id="exportPosSoldModal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 opacity-0" data-modal-backdrop></div>
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" data-modal-content>
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div>
+          <h3 class="text-xl font-bold text-slate-900">Export POS Sold Data</h3>
+          <p class="text-sm text-slate-500 mt-1">Choose what data to export</p>
+        </div>
+        <button type="button" data-modal-close class="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200 hover:rotate-90 transform">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <form id="exportPosSoldForm" method="GET" class="space-y-4 px-6 py-5">
+        <input type="hidden" name="store_id" id="export_store_id" value="">
+        <input type="hidden" name="scope" id="export_scope" value="cluster">
+        <input type="hidden" name="export_type" id="export_type" value="range">
+        <div>
+          <label class="block text-sm font-semibold text-slate-700 mb-3">Export Option</label>
+          <div class="space-y-2">
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_option" value="cluster_range" checked class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">This Cluster</p><p class="text-xs text-slate-500">Selected cluster, specific date range</p></div>
+            </label>
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_option" value="cluster_all" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">This Cluster</p><p class="text-xs text-slate-500">Selected cluster, all historical dates</p></div>
+            </label>
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_option" value="all_range" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">All Cluster Stores Data</p><p class="text-xs text-slate-500">All clusters and stores, specific date range</p></div>
+            </label>
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="radio" name="export_option" value="all_all" class="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500">
+              <div><p class="font-medium text-slate-900">All Cluster Stores Data</p><p class="text-xs text-slate-500">All clusters and stores, all historical dates</p></div>
+            </label>
+          </div>
+        </div>
+        <div id="posSoldExportClusterField">
+          <label for="export_pos_cluster_id" class="mb-1 block text-sm font-semibold text-slate-700">Cluster</label>
+          <select id="export_pos_cluster_id" name="cluster_id" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"></select>
+        </div>
+        <div id="posSoldRangeFields">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label for="export_pos_start_date" class="mb-1 block text-sm font-semibold text-slate-700">Start Date</label>
+              <input type="date" id="export_pos_start_date" name="start_date" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
+            </div>
+            <div>
+              <label for="export_pos_end_date" class="mb-1 block text-sm font-semibold text-slate-700">End Date</label>
+              <input type="date" id="export_pos_end_date" name="end_date" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
+            </div>
+          </div>
+        </div>
+        <div class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" data-modal-close class="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100">Cancel</button>
+          <button id="export-submit" type="submit" class="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-60">Export Excel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  let POS_SOLD_ROUTES = {
+    edit: "{{ url_for('admin.edit_pos_sold_entry', pos_sold_id=987654321) }}",
+    remove: "{{ url_for('admin.delete_pos_sold_entry', pos_sold_id=987654321) }}",
+    editStaged: "{{ url_for('admin.edit_staged_pos_sold_entry', staging_id=987654321, row_index=123456789) }}",
+    removeStaged: "{{ url_for('admin.delete_staged_pos_sold_entry', staging_id=987654321, row_index=123456789) }}",
+    removeAll: "{{ url_for('admin.delete_all_pos_sold_entries') }}",
+    removeAllStaged: "{{ url_for('admin.delete_all_staged_pos_sold_entries', staging_id=987654321) }}",
+    exportExcel: "{{ url_for('admin.export_pos_sold_excel') }}"
+  };
+
+  let UI_CLASSES = {
+    tabActive: 'bg-slate-900 text-white',
+    tabInactive: 'bg-slate-100 text-slate-700 hover:bg-slate-200',
+    pageButton: 'rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50',
+    pageCurrent: 'rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white',
+    pageGap: 'px-2 text-slate-400'
+  };
+
+  let SPINNER_HTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4 inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+</script>
+<script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/handles/pos_sold_admin_handles.js') }}"></script>
+
+{% endblock %}

@@ -14241,6 +14241,16 @@ def invensync_details_v2():
     page = 'invensync'
     return render_template("store_manager/invensync_v2.html", user=current_user, page=page)
     
+    
+#v2 of the POS Sold 
+@views.route('/admin/pos_sold_v2', methods=['GET'])
+@login_required
+def pos_sold_v2():
+
+
+    page = 'pos_sold'
+    return render_template("admin/pos_sold_v2.html", user=current_user, page=page)
+    
 
   
 #v2 of the Oracle
