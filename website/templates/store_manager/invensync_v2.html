@@ -159,6 +159,7 @@
 
 <link rel="stylesheet" href="{{ url_for('static', filename='css/skeleton_style.css') }}">
 
+
 <script>
 let currentUserRole = {{ user.role|tojson }};
 let initialStoreId = {{ request.args.get('store_id', '')|tojson }};
