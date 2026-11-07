@@ -272,7 +272,9 @@
       </a>
       {% endif %}
 
-      <a href="/admin/pos-sold"
+      <a 
+		onclick="showPosSoldPageAdmin(this)"
+		id="_pos_sold_v2"
         class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
           {% if request.path.startswith('/admin/pos-sold') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
         data-tooltip="POS Sold">
@@ -284,6 +286,8 @@
         </div>
         <span class="nav-label whitespace-nowrap truncate">POS Sold</span>
       </a>
+
+
 
       <a href="/admin/delivery"
         class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
