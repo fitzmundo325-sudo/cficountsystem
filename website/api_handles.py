@@ -5735,6 +5735,48 @@ def purge_audit_logs():
 POS_SOLD_ROLES = ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager')
 POS_SOLD_READONLY_ROLES = ('Auditor', 'Area Manager')
 
+POS_SOLD_CONSOLIDATED_SORT = {
+    'product_name': lambda r: (r.get('product_name') or '').lower(),
+    'category':     lambda r: (r.get('category') or '').lower(),
+    'quantity':     lambda r: int(r.get('quantity') or 0),
+    'gross_sales':  lambda r: float(r.get('gross_sales') or 0.0),
+    'discount':     lambda r: float(r.get('discount') or 0.0),
+    'net_sales':    lambda r: float(r.get('net_sales') or 0.0),
+}
+
+POS_SOLD_REVIEW_SORT = {
+    'product_name': lambda r: (r.get('product_name') or '').lower(),
+    'quantity':     lambda r: int(r.get('quantity') or 0),
+    'gross_sales':  lambda r: float(r.get('gross_sales') or 0.0),
+    'discount':     lambda r: float(r.get('discount') or 0.0),
+    'net_sales':    lambda r: float(r.get('net_sales') or 0.0),
+}
+
+
+def _pos_sold_consolidated_default(row):
+    return (
+        (row.get('store_name') or '').lower(),
+        -int(row.get('quantity') or 0),
+        (row.get('product_name') or '').lower(),
+    )
+
+
+def _pos_sold_review_default(row):
+    return (
+        (row.get('product_name') or '').lower(),
+        row.get('id') or 0,
+        row.get('staged_index') or 0,
+    )
+
+
+def _pos_sold_apply_sort(rows, sortable, default_key):
+    sortby = _pos_sold_param('sort')
+    order = (_pos_sold_param('order_by') or 'asc').lower()
+    rows = sorted(rows, key=default_key)
+    if sortby in sortable:
+        rows = sorted(rows, key=sortable[sortby], reverse=(order == 'desc'))
+    return rows
+
 
 def _pos_sold_param(name):
     value = request.form.get(name)
@@ -5820,7 +5862,12 @@ def pos_sold_consolidated():
     cluster_id = _pos_sold_int('cluster_id')
     store_id = _pos_sold_int('store_id')
     
-    per_page = int(request.form.get('rows') or request.args.get('rows') or 50)
+    try:
+        per_page = int(request.form.get('rows') or request.args.get('rows') or 50)
+    except (ValueError, TypeError):
+        per_page = 50
+        
+    per_page = max(1, min(per_page, 500))
 
     try:
         page = int(request.form.get('page') or request.args.get('page') or 1)
@@ -5914,29 +5961,23 @@ def pos_sold_consolidated():
         bucket['discount'] += float(row.daily_discount or 0.0)
         bucket['net_sales'] += float(row.daily_net_sales or 0.0)
 
-    table_rows = sorted(
-        [
-            {
-                'cluster_name': payload['cluster_name'],
-                'store_id': payload['store_id'],
-                'store_name': payload['store_name'],
-                'product_name': payload['product_name'],
-                'in_masterlist': _normalize_product_text(payload['product_name']) in master_category_by_name,
-                'category': master_category_by_name.get(_normalize_product_text(payload['product_name']), 'Uncategorized'),
-                'days_count': len([day for day in payload['days_set'] if day]),
-                'quantity': int(payload['quantity'] or 0),
-                'gross_sales': float(payload['gross_sales'] or 0.0),
-                'discount': float(payload['discount'] or 0.0),
-                'net_sales': float(payload['net_sales'] or 0.0),
-            }
-            for payload in consolidated_map.values()
-        ],
-        key=lambda item: (
-            (item.get('store_name') or '').lower(),
-            -int(item.get('quantity') or 0),
-            (item.get('product_name') or '').lower(),
-        ),
-    )
+    table_rows = [
+        {
+            'cluster_name': payload['cluster_name'],
+            'store_id': payload['store_id'],
+            'store_name': payload['store_name'],
+            'product_name': payload['product_name'],
+            'in_masterlist': _normalize_product_text(payload['product_name']) in master_category_by_name,
+            'category': master_category_by_name.get(_normalize_product_text(payload['product_name']), 'Uncategorized'),
+            'days_count': len([day for day in payload['days_set'] if day]),
+            'quantity': int(payload['quantity'] or 0),
+            'gross_sales': float(payload['gross_sales'] or 0.0),
+            'discount': float(payload['discount'] or 0.0),
+            'net_sales': float(payload['net_sales'] or 0.0),
+        }
+        for payload in consolidated_map.values()
+    ]
+    table_rows = _pos_sold_apply_sort(table_rows, POS_SOLD_CONSOLIDATED_SORT, _pos_sold_consolidated_default)
 
     summary = {
         'rows_count': len(table_rows),
@@ -6057,7 +6098,7 @@ def pos_sold_review():
                     for index, item in enumerate(staged_items)
                     if isinstance(item, dict) and str(item.get('product_name') or '').strip()
                 ]
-                rows.sort(key=lambda r: r['product_name'].lower())
+                rows = _pos_sold_apply_sort(rows, POS_SOLD_REVIEW_SORT, _pos_sold_review_default)
                 is_staged = True
                 staging_id = staging.id
 
