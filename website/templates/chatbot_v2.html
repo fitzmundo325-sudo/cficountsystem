@@ -128,7 +128,15 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
 		<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
 			<rect x="3" y="9" width="10" height="3" fill="#fff" stroke="#2b3a4d" stroke-width="1"/>
 		</svg>
+	</div>	
+	
+	
+	<div class="control_button maximize_btn" title="Maximize" onclick="maximizeChatG()">
+		<svg width="17" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+			<path d="M3 3 H13 V13 H3 Z M5 6 V11 H11 V6 Z" fill="#fff" fill-rule="evenodd" stroke="#2b3a4d" stroke-width="1"/>
+		</svg>
 	</div>
+	
 	<div class="control_button close_btn" title="Close" onclick="closeThis()">
 		<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
 			<path d="M3.5 3.5 L12.5 12.5 M12.5 3.5 L3.5 12.5" stroke="#2b3a4d" stroke-width="4" stroke-linecap="square" fill="none"/>
@@ -184,7 +192,7 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
       </div>
       <p class="mt-1.5 text-xs text-slate-400">Enter to send, Shift+Enter for a new line. <i class="tiny secondary_color"> LLMs can make mistakes, always validate accuracy. 
 		
-		</i><span class="text-xs secondary_color"> (v1.0) </span></p>
+		</i><span class="text-xs secondary_color" title="Current Version of the Chatbot engine."> (v1.0.2) </span></p>
 	  
 	  
 

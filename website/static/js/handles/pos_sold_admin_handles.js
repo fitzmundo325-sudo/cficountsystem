@@ -492,6 +492,8 @@ function makePageButton(label, page) {
   button.dataset.page = String(page);
   button.className = UI_CLASSES.pageButton;
   button.textContent = label;
+
+  
   return button;
 }
 

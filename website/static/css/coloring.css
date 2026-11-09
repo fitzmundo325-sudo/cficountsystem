@@ -9,6 +9,7 @@
   --secondary_color: #6366f1;
   --secondary_color_faded: #ff980088;
   --secondary_color_darker: #f5c800;
+  --third_color: rgba(214,254,214,0.80);
   --third_color_faded: rgba(24,24,24,0.30);
   --third_much_faded: rgba(24,24,24,0.05);
   
@@ -26,6 +27,8 @@
 	
   --emerald_color: #c3f9e0b3;
   --rose_color: #fdc4c4b3;
+  
+  
 }
 
 
@@ -91,6 +94,12 @@
 .third_background_faded{
 	background-color:var(--third_color_faded);
 	
+	
+}
+
+
+.third_background{
+	background-color:var(--third_color);
 	
 }
 
