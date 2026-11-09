@@ -39,8 +39,14 @@ HOURS_RATE_RESET = 6
 MODEL_BUCKET = [
     {"id": "nvidia/nemotron-3.5-super-vl:free", "label": "NVIDIA Nemotron 3.5 Super VL (free)", "tools": True},
     {"id": "stealth/crouton-alpha", "label": "Crouton Alpha (free)", "tools": True},
-    {"id": "liquid/lfm-2.5-2.6b:free", "label": "LiquidAI: LFM2.5-2.6B (free)", "tools": True},    
+    # {"id": "liquid/lfm-2.5-2.6b:free", "label": "LiquidAI: LFM2.5-2.6B (free)", "tools": True},    
+    
+    {"id": "recursive/flint-v1.0:free", "label": "Recursive: Flint (free)", "tools": True},
+        
     {"id": "nvidia/nemotron-3-ultra-550b-a55b:free", "label": "NVIDIA: Nemotron 3 Ultra (free)", "tools": True},
+    
+    {"id": "nvidia/nemotron-3.5-lightning:free", "label": "NVIDIA: Nemotron 3.5 Lightning (free)", "tools": True},
+    
     {"id": "xingchen-agi/xing4.0-29b-a4b:free", "label": "XingChen: Xing4.0 29B A4B (free)"},
 ]
 
