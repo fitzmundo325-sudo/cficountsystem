@@ -14,6 +14,14 @@
 </style>
 
 
+<link rel="stylesheet" href="{{ url_for('static', filename='css/skeleton_style.css') }}">
+
+<script src="{{ url_for('static', filename='js/skeleton.js') }}"></script>
+
+<script>
+	showPageSkeleton(); 
+</script>
+
 <script>
 let currentUserRole = {{ user.role|tojson }};
 let initialPage = {{ request.args.get('page', 1)|tojson }};
@@ -187,6 +195,8 @@ let initialOrder = {{ request.args.get('order_by', 'asc')|tojson }};
 <template id="auditPageGapTemplate">
   <span class="px-2 text-slate-400">&hellip;</span>
 </template>
+
+
 
 <script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/handles/audit_logs_page_handles.js') }}"></script>

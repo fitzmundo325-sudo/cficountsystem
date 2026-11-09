@@ -96,6 +96,9 @@ function handleAuditSuccess(response) {
     renderAuditRows(data.results);
     renderAuditPagination(data);
     auditVisibleCount.textContent = 'Showing ' + data.results.length + ' of ' + data.total_results + ' records.';
+	
+	hidePageSkeleton();
+	
 }
 
 function handleAuditError() {
