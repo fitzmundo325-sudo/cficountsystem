@@ -4,7 +4,7 @@ let SENTINEL_INDEX = '123456789';
 let API_FILTERS = '/apis/pos_sold_filters';
 let API_CONSOLIDATED = '/apis/pos_sold_consolidated';
 let API_REVIEW = '/apis/pos_sold_review';
-let URL_KEYS = ['tab', 'apply', 'cluster_id', 'store_id', 'start_date', 'end_date', 'page', 'review_store_id', 'review_date'];
+let URL_KEYS = ['tab', 'apply', 'cluster_id', 'store_id', 'start_date', 'end_date', 'page', 'sort', 'order_by', 'review_store_id', 'review_date', 'review_sort', 'review_order'];
 
 let state = {
   tab: 'consolidated',
@@ -17,7 +17,8 @@ let state = {
   filtersReady: false,
   consolidatedLoaded: false,
   review: { loaded: false, storeId: '', date: '', rows: [], isStaged: false, stagingId: null, reportId: null },
-  pendingRow: null
+  pendingRow: null,
+  sort: { consolidated: { column: '', order: 'asc' }, review: { column: '', order: 'asc' } },
 };
 
 let editModal = null;
@@ -61,16 +62,16 @@ function postLegacy(url, params) {
   return fetch(url, { method: 'POST', body: buildBody(params), credentials: 'same-origin', redirect: 'manual' });
 }
 
+
 function setBusy(button, busy) {
   if (button) {
     button.disabled = busy;
   }
-  
-  if(busy == false){
-	removeLoading();
+  if (busy) {
+    addLoading(button);
+  } else {
+    removeLoading();
   }
-  
-  addLoading(button);
 }
 
 // - URL sync -
@@ -86,6 +87,8 @@ function syncUrl(extra) {
   history.pushState({}, '', '?' + params.toString());
 }
 
+
+
 function syncCurrentUrl() {
   let extra = { tab: state.tab };
   if (state.tab === 'consolidated' && state.consolidatedLoaded) {
@@ -95,11 +98,24 @@ function syncCurrentUrl() {
     extra.start_date = byId('consolidated_start_date').value;
     extra.end_date = byId('consolidated_end_date').value;
     extra.page = state.page;
+	
+	if (state.sort.consolidated.column) {
+		extra.sort = state.sort.consolidated.column;
+		extra.order_by = state.sort.consolidated.order;
+	}
+	
   }
+  
+  
   if (state.tab === 'review' && state.review.loaded) {
     extra.review_store_id = state.review.storeId;
     extra.review_date = state.review.date;
+	if (state.sort.review.column) {
+		extra.review_sort = state.sort.review.column;
+		extra.review_order = state.sort.review.order;
+	}
   }
+  
   syncUrl(extra);
 }
 
@@ -233,6 +249,12 @@ function restoreFromUrl() {
   byId('review_date').value = params.get('review_date') || state.today;
   state.page = Number(params.get('page')) || 1;
   setTab(tab);
+  
+	state.sort.consolidated = { column: params.get('sort') || '', order: params.get('order_by') === 'desc' ? 'desc' : 'asc' };
+	state.sort.review = { column: params.get('review_sort') || '', order: params.get('review_order') === 'desc' ? 'desc' : 'asc' };
+	renderSortIndicators('consolidated');
+	renderSortIndicators('review');
+  
   if (tab === 'consolidated' && params.get('apply') === '1' && clusterId) {
     loadConsolidated(false);
   } else if (tab === 'consolidated') {
@@ -248,6 +270,66 @@ function onPopState() {
     restoreFromUrl();
   }
 }
+
+// -- Sorting --
+function sortParams(scope) {
+  let current = state.sort[scope];
+  if (!current.column) {
+    return {};
+  }
+  return { sort: current.column, order_by: current.order };
+}
+
+function toggleSort(scope, column) {
+  let current = state.sort[scope];
+  if (current.column === column) {
+    current.order = current.order === 'asc' ? 'desc' : 'asc';
+  } else {
+    current.column = column;
+    current.order = 'asc';
+  }
+}
+
+function renderSortIndicators(scope) {
+  let current = state.sort[scope];
+  byId(scope + '-head').querySelectorAll('[data-sort]').forEach(function(header) {
+    let icon = header.querySelector('[data-sort-icon]');
+    let active = header.dataset.sort === current.column;
+    icon.textContent = active ? (current.order === 'desc' ? '\u25bc' : '\u25b2') : '\u2195';
+    UI_CLASSES.sortActive.split(' ').forEach(function(name) { icon.classList.toggle(name, active); });
+    UI_CLASSES.sortInactive.split(' ').forEach(function(name) { icon.classList.toggle(name, !active); });
+    header.setAttribute('aria-sort', active ? (current.order === 'desc' ? 'descending' : 'ascending') : 'none');
+  });
+}
+
+function refreshReview() {
+  requestReview(state.review.storeId, state.review.date)
+    .then(function(data) {
+      if (data.type !== 'success') {
+        toast.error(data.message || 'Failed to load review.');
+        return;
+      }
+      renderReview(data);
+      syncCurrentUrl();
+    })
+    .catch(onReviewError);
+}
+
+function onSortClick(event) {
+  let header = event.target.closest('[data-sort]');
+  if (!header) {
+    return;
+  }
+  let scope = header.dataset.sortScope;
+  toggleSort(scope, header.dataset.sort);
+  if (scope === 'consolidated') {
+    state.page = 1;
+    loadConsolidated(true);
+  } else {
+    refreshReview();
+  }
+}
+
 
 // - Consolidated -
 
@@ -286,6 +368,10 @@ function loadConsolidated(push) {
   if (storeId) {
     params.store_id = storeId;
   }
+  
+  params.rows = 100;
+  
+  Object.assign(params, sortParams('consolidated'));
   setApplyBusy(true);
   fetchJson(API_CONSOLIDATED, params)
     .then(function(data) { onConsolidatedSuccess(data, push); })
@@ -321,6 +407,8 @@ function onConsolidatedSuccess(data, push) {
   renderCategories(data.category_metrics || []);
   renderConsolidatedRows(data.data || []);
   renderPagination(data);
+  renderSortIndicators('consolidated');
+
 	
 	removeLoading();
 	
@@ -439,6 +527,8 @@ function onConsolidatedReset() {
   byId('consolidated_start_date').value = state.defaultStartDate;
   byId('consolidated_end_date').value = '';
   state.page = 1;
+  state.sort.consolidated = { column: '', order: 'asc' };
+  renderSortIndicators('consolidated');
   showConsolidatedInitial();
   syncCurrentUrl();
 }
@@ -510,7 +600,9 @@ function onExportSubmit() {
 // - Review -
 
 function requestReview(storeId, date) {
-  return fetchJson(API_REVIEW, { review_store_id: storeId, review_date: date });
+  let params = { review_store_id: storeId, review_date: date };
+  Object.assign(params, sortParams('review'));
+  return fetchJson(API_REVIEW, params);
 }
 
 function onReviewSubmit(event) {
@@ -581,6 +673,7 @@ function renderReview(data) {
   byId('openDeleteAllPosSoldModal').classList.toggle('hidden', !(state.canEdit && state.review.rows.length > 0));
   byId('review-actions-th').classList.toggle('hidden', !state.canEdit);
   renderReviewRows();
+  renderSortIndicators('review');
 }
 
 function renderReviewRows() {
@@ -609,6 +702,8 @@ function onReviewReset() {
   byId('review_date').value = state.today;
   state.review.loaded = false;
   byId('review-results').classList.add('hidden');
+  state.sort.review = { column: '', order: 'asc' };
+	renderSortIndicators('review');
   syncCurrentUrl();
 }
 
@@ -807,5 +902,9 @@ byId('editPosSoldForm').addEventListener('submit', onEditSubmit);
 byId('deletePosSoldForm').addEventListener('submit', onDeleteSubmit);
 byId('deleteAllPosSoldForm').addEventListener('submit', onDeleteAllSubmit);
 window.addEventListener('popstate', onPopState);
+
+//Sorting Columns
+byId('consolidated-head').addEventListener('click', onSortClick);
+byId('review-head').addEventListener('click', onSortClick);
 
 initPage();

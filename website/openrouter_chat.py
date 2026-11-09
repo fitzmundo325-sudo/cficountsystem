@@ -347,6 +347,10 @@ def _fetch_dashboard(ctx, start_date, end_date):
 # - POS Sold tools -
 
 STORE_SCOPES = ("official", "starlink", "all")
+POS_SOLD_CONSOLIDATED_SORT_KEYS = ('product_name', 'category', 'quantity', 'gross_sales', 'discount', 'net_sales')
+POS_SOLD_REVIEW_SORT_KEYS = ('product_name', 'quantity', 'gross_sales', 'discount', 'net_sales')
+
+ORDER_VALUES = ['asc', 'desc']
 
 def _match_entity_by_name(items, query_name):
     if not query_name or not isinstance(items, list):
@@ -402,9 +406,12 @@ def _tool_get_pos_sold_consolidated(args, ctx):
     store_name = args.get("store_name")
     store_scope = _clean_store_scope(args.get("store_scope"))
     start_date = args.get("start_date") or None
+    sort = args.get("sort") or None
+    order_by = args.get("order_by") or None
     end_date = args.get("end_date") or None
     page = args.get("page") or 1
     rows = min(int(args.get("rows") or 50), 200)
+    
 
     # Fetch filters if we need to resolve names, missing cluster_id, or default dates
     if not cluster_id or (store_name and not store_id) or not start_date or not end_date:
@@ -463,6 +470,8 @@ def _tool_get_pos_sold_consolidated(args, ctx):
     params = {
         "cluster_id": cluster_id,
         "start_date": start_date,
+        "sort": sort,
+        "order_by": order_by,
         "end_date": end_date,
         "page": page,
         "rows": rows,
@@ -498,6 +507,8 @@ def _tool_get_pos_sold_review(args, ctx):
     store_name = args.get("store_name")
     store_scope = _clean_store_scope(args.get("store_scope"))
     review_date = args.get("review_date") or None
+    sort = args.get("sort") or None
+    order_by = args.get("order_by") or None
 
     if review_date:
         problem = _check_dates(review_date, review_date)
@@ -531,7 +542,13 @@ def _tool_get_pos_sold_review(args, ctx):
     if review_date:
         params["review_date"] = review_date
     if store_scope:
-        params["store_scope"] = store_scope
+        params["store_scope"] = store_scope    
+    
+    if sort:
+        params["sort"] = sort 
+        
+    if order_by:
+        params["order_by"] = order_by
 
     data, problem = _fetch_internal_api(ctx, POS_REVIEW_PATH, params)
     if problem:
@@ -804,6 +821,12 @@ TOOL_SPECS = [
                     "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format (defaults to today)"},
                     "page": {"type": "integer", "description": "Page number (defaults to 1)"},
                     "rows": {"type": "integer", "description": "Rows per page (defaults to 50, max 200)"},
+                    "sort": {"type": "string", "description": "Sortable Columns",
+                     "enum": list(POS_SOLD_CONSOLIDATED_SORT_KEYS),
+                    },
+                    "order_by": {"type": "string", "description": "Sorting Order",
+                     "enum": list(ORDER_VALUES),
+                    },
                 },
                 "required": [],
             },
@@ -828,6 +851,12 @@ TOOL_SPECS = [
                         "description": "Optional store scope: 'official', 'starlink', or 'all'.",
                     },
                     "review_date": {"type": "string", "description": "Date to review in YYYY-MM-DD format (defaults to today)"},
+                    "sort": {"type": "string", "description": "Sortable Columns",
+                     "enum": list(POS_SOLD_REVIEW_SORT_KEYS),
+                    },
+                     "order_by": {"type": "string", "description": "Sorting Order",
+                     "enum": list(ORDER_VALUES),
+                    },
                 },
                 "required": [],
             },
@@ -871,6 +900,8 @@ def _describe_call(name, args):
         )
         start = args.get("start_date")
         end = args.get("end_date")
+        sort = args.get("sort")
+        order_by = args.get("order_by")
         span = f" ({start} to {end})" if start and end else ""
         return f"Checking consolidated POS sold: {target}{span}"
 
