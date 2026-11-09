@@ -63,6 +63,28 @@ function postLegacy(url, params) {
 }
 
 
+
+
+function monitorChangesHere(key="shouldReload",loader=undefined, custom_counter=2000){
+	let timer_c = setInterval(check, custom_counter);
+	function check(){
+		if(firstLoad){
+			firstLoad = false;
+			return;
+		}
+		let rl = localStorage.getItem(key);
+		if(rl == 'true'){
+			localStorage.removeItem(key);
+			if(loader == undefined){
+			}else{
+				loader();
+			}
+			
+		}
+	}
+}
+
+
 function setBusy(button, busy) {
   if (button) {
     button.disabled = busy;
@@ -880,6 +902,26 @@ function initPage() {
   byId('exportPosSoldForm').action = POS_SOLD_ROUTES.exportExcel;
   loadFilters();
 }
+
+
+//Extra Changes Monitor
+monitorChangesHere("hasStoreScopeChanges", handleStoreScopeChanges, 1000);
+let hasFirstOpen = true;
+
+function handleStoreScopeChanges(){
+	
+	let storeScope = localStorage.getItem('storeScope') || 'official';
+
+	loadFilters();
+	
+	if(hasFirstOpen){
+		return hasFirstOpen = false;
+	}
+}
+
+
+
+
 
 // - Event listeners -
 
