@@ -815,9 +815,12 @@ function closeThis(){
 
 
 function minimizeChatG(){
-	
 	postMessageToParent("function:minimizeChatG:1");
-	
+}
+
+
+function maximizeChatG(){
+	postMessageToParent("function:maximizeChatG:1");	
 }
 
 

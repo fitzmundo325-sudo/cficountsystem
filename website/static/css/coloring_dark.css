@@ -9,6 +9,7 @@
   --secondary_color: #7376f1;
   --secondary_color_faded: #ff980088;
   --secondary_color_darker: #f5c800;
+  --third_color: #112211cc;
   --third_color_faded: rgba(24,24,24,0.30);
   --third_much_faded: rgba(24,24,24,0.05);
   
@@ -93,6 +94,13 @@
 	
 	
 }
+
+.third_background{
+	background-color:var(--third_color);
+	
+	
+}
+
 
 .profile_page_con {
   border-right: var(--secondary_background);
