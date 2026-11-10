@@ -6454,7 +6454,7 @@ def admin_oracle():
         return redirect(url_for('views.home'))
 
     from datetime import date
-    from .views import _apply_store_scope_filter
+    from .views import _apply_store_scope_filter, _get_team_name
 
     all_clusters = (
         Cluster.query
@@ -6491,6 +6491,46 @@ def admin_oracle():
         if value is not None:
             buffers_map.setdefault(int(row.store_id), {})[int(row.product_id)] = float(value)
 
+    # Fetch and serialize Oracle orders for this cluster's stores
+    from .models import OracleOrder
+    oracle_orders = (
+        OracleOrder.query
+        .filter(OracleOrder.store_id.in_(store_ids) if store_ids else db.false())
+        .order_by(OracleOrder.created_at.desc())
+        .all()
+    )
+
+    def serialize_oracle_order(order):
+        order_store = next((item for item in stores if item.id == order.store_id), None)
+        creator = User.query.get(order.created_by)
+        reviewer = User.query.get(order.reviewed_by) if order.reviewed_by else None
+        return {
+            'id': order.id,
+            'orderDate': order.order_date.isoformat(),
+            'deliveryDate': order.delivery_date.isoformat(),
+            'storeId': order.store_id,
+            'storeName': order_store.name if order_store else '',
+            'productId': order.product_id,
+            'productName': order.product.description if order.product else str(order.product_id),
+            'suggested': order.suggested_qty,
+            'minSug': order.min_suggested_qty,
+            'maxSug': order.max_suggested_qty,
+            'finalOrder': order.quantity,
+            'totalCost': order.quantity * float(order.product.tp or 0) if order.product else 0,
+            'unitCost': float(order.product.tp or 0) if order.product else 0,
+            'manager': creator.full_name or creator.username if creator else '',
+            'timestamp': order.created_at.isoformat() if order.created_at else '',
+            'status': (order.status or 'pending').lower(),
+            'reviewer': (reviewer.full_name or reviewer.username) if reviewer else '',
+            'reviewedAt': order.reviewed_at.isoformat() if order.reviewed_at else '',
+        }
+
+    serialized_oracle_orders = [serialize_oracle_order(order) for order in oracle_orders]
+    oracle_pending_approvals = [item for item in serialized_oracle_orders if item['status'] == 'pending']
+    oracle_approval_history = [item for item in serialized_oracle_orders if item['status'] in ('approved', 'rejected') and item['reviewedAt']]
+
+    can_approve = current_user.role in ('Superadmin', 'Admin', 'General Manager', 'Area Manager')
+
     return render_template(
         'admin/oracle.html',
         user=current_user,
@@ -6499,9 +6539,9 @@ def admin_oracle():
         stores=stores,
         products=products,
         buffers_map=buffers_map,
-        can_approve_oracle_orders=current_user.role in ('Superadmin', 'Admin', 'General Manager', 'Area Manager'),
-        oracle_pending_approvals=[],
-        oracle_approval_history=[],
+        can_approve_oracle_orders=can_approve,
+        oracle_pending_approvals=oracle_pending_approvals,
+        oracle_approval_history=oracle_approval_history,
         selected_date=request.args.get('date') or date.today().isoformat(),
         cluster_sidebar_cluster_id=cluster.id,
     )

@@ -236,11 +236,8 @@ function navigate(id, storeId=null){
   if(breadcrumbBack){
     breadcrumbBack.classList.toggle('hidden', !['approvals','store-performance'].includes(id));
   }
-  if(id==='approvals'){
-    loadOracleApprovals(DB.selectedApprovalStoreId);
-    return;
-  }
   ({  'dashboard':renderDashboard,
+      'approvals':renderApprovals,
       'cluster-dashboard':renderClusterDashboard,
       'store-performance':renderStorePerformance}[id]||Function)();
 }
@@ -263,32 +260,6 @@ function updateApprovalsBadge(){
     const count=Number(DB.pendingApprovalCounts[Number(el.closest('[data-approval-store-id]')?.dataset.approvalStoreId)]||0);
     if(count>0){el.classList.remove('hidden');el.textContent=count;}else el.classList.add('hidden');
   });
-}
-
-async function loadOracleApprovals(storeId=DB.selectedApprovalStoreId){
-  const tbody=document.getElementById('approvals-tbody');
-  DB.pendingApprovals=[];
-  if(storeId===null)DB.pendingApprovalCounts={};
-  tbody.innerHTML='<tr><td colspan="9" class="px-4 py-8 text-center text-slate-400">Loading pending orders...</td></tr>';
-  try{
-    const params=new URLSearchParams({cluster_id:String(ORACLE_CLUSTER_ID)});
-    if(storeId!==null&&storeId!==undefined)params.set('store_id',String(storeId));
-    const response=await fetch(`/cluster-manager/oracle/approvals-data?${params.toString()}`,{cache:'no-store'});
-    const result=await response.json();
-    if(!response.ok||!result.ok)throw new Error(result.error||'Could not load pending orders.');
-    DB.pendingApprovals=Array.isArray(result.orders)?result.orders:[];
-    if(storeId===null){
-      DB.pendingApprovalCounts={};
-      DB.pendingApprovals.forEach(order=>{const id=Number(order.storeId);DB.pendingApprovalCounts[id]=(DB.pendingApprovalCounts[id]||0)+1;});
-    }else{
-      DB.pendingApprovalCounts[Number(storeId)]=DB.pendingApprovals.length;
-    }
-    updateApprovalsBadge();
-    renderApprovals();
-  }catch(error){
-    tbody.innerHTML='<tr><td colspan="9" class="px-4 py-8 text-center text-rose-500">Unable to load pending approvals. Refresh and try again.</td></tr>';
-    showToast(error.message||'Could not load pending approvals.','error');
-  }
 }
 
 function renderApprovals(){
