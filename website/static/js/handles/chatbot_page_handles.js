@@ -1485,7 +1485,7 @@ function closeThis(){
 	if (typeof showConfirmationModal === 'function') {
 	showConfirmationModal({
 	  title: 'Close Chat Window?',
-	  message: 'This conversation would be gone as well',
+	  message: 'Unsaved Chat would be gone as well.',
 	  confirmText: 'Close',
 	  cancelText: 'Cancel',
 	  onConfirm: closeWindow
