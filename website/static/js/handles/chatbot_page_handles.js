@@ -792,6 +792,13 @@ function chatSetView(view) {
   chatHistPanel.classList.toggle('is-open', isHistory);
   chatLog.classList.toggle('hidden', isHistory);
   chatForm.classList.toggle('hidden', isHistory);
+  
+  if(isHistory){
+	_("notice_banner").classList.remove("hidden");
+  }else{
+	_("notice_banner").classList.add("hidden");
+  }
+  
 }
 
 function chatDateGroup(ts) {
@@ -859,6 +866,8 @@ function chatBuildHistItem(entry) {
   return item;
 }
 
+
+
 function chatRenderHistList() {
   let query = chatHistSearch.value.trim().toLowerCase();
   let all = chatReadIndex();
@@ -901,6 +910,7 @@ function chatOpenHistory() {
   chatRenderHistList();
   chatHistBack.hidden = chatHistory.length === 0;
   chatSetView('history');
+  
 }
 
 function chatCloseHistory() {
