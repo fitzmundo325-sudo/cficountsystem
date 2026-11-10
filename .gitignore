@@ -30,3 +30,5 @@ git
 *.pyc
 .env
 .env
+instance/database.db
+instance/database.db
