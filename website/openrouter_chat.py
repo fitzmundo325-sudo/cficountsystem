@@ -38,7 +38,7 @@ HOURS_RATE_RESET = 6
 
 MODEL_BUCKET = [
     {"id": "nvidia/nemotron-3.5-super-vl:free", "label": "NVIDIA Nemotron 3.5 Super VL (free)", "tools": True},
-    {"id": "stealth/crouton-alpha", "label": "Crouton Alpha (free)", "tools": True},
+    # {"id": "stealth/crouton-alpha", "label": "Crouton Alpha (free)", "tools": True},
     # {"id": "liquid/lfm-2.5-2.6b:free", "label": "LiquidAI: LFM2.5-2.6B (free)", "tools": True},    
     
     {"id": "recursive/flint-v1.0:free", "label": "Recursive: Flint (free)", "tools": True},
