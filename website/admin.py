@@ -2123,6 +2123,10 @@ def dashboard():
         flash('Access denied. Only Admins, Superadmins, General Managers, and Auditors can access this page.', category='error')
         return redirect(url_for('views.home'))
 
+    #redirect Admin Accounts to the new v2 dashboard
+    if current_user.role in ('Superadmin', 'Admin'):
+        return redirect(url_for('views.v2_main'))
+
     month_arg = request.args.get('month')
     year_arg = request.args.get('year')
     start_date_arg = request.args.get('start_date')

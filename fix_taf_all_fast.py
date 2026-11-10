@@ -59,19 +59,20 @@ with app.app_context():
         quantity = int(transfer_item.quantity or 0)
         received_qty = int(transfer_item.received_quantity) if transfer_item.received_quantity is not None else quantity
         
-        tx_date = transfer.transaction_date
+        out_tx_date = transfer.transaction_date
+        in_tx_date = getattr(transfer, 'received_date', None) or transfer.transaction_date
         
         # OUT
         out_store_id = transfer.store_id
         if quantity > 0:
-            traced_out_totals[(out_store_id, tx_date, resolved_master_id)] += quantity
+            traced_out_totals[(out_store_id, out_tx_date, resolved_master_id)] += quantity
             
         # IN
         if str(transfer.status or '').strip().lower() != 'pending':
             transfer_to_normalized = str(transfer.transfer_to or '').strip().lower()
             in_store_id = store_name_to_id.get(transfer_to_normalized)
             if in_store_id and received_qty > 0:
-                traced_in_totals[(in_store_id, tx_date, resolved_master_id)] += received_qty
+                traced_in_totals[(in_store_id, in_tx_date, resolved_master_id)] += received_qty
                 
     # 3. Iterate inventories and fix items
     print("Checking inventories for discrepancies...", flush=True)

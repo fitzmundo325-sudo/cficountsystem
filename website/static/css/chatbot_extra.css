@@ -7,12 +7,12 @@
 	/* border:solid red 1px; */
 	display:flex;
 	
-	justify-content:center;
+	justify-content:flex-end;
 	align-items:center;
 	padding:2px;
 	border-radius:10px 10px 0 0;
 	background:var(--primary_background);
-	gap:2px;
+	gap:1px;
 	-webkit-app-region: no-drag;
 }
 
@@ -33,6 +33,13 @@
 .minimize_btn {
 	width: 29px;
 	border-radius: 4px 0 0 0;
+}
+
+.maximize_btn {
+	width: 29px;
+	border-radius: 0 0 0 0;
+	padding-left:none;
+	margin-left:none;
 }
 
 .close_btn {
@@ -56,12 +63,24 @@
 }
 
 
+#headless_controls.hidden{
+	display:none;
+}
+
+
 /* Others */
 
 .less_padding{
 	padding:2px;
 	padding-bottom:2px;
 	padding-left:5px;
+	
+}
+
+.padded_text{
+	padding:15px;
+	padding-bottom:2px;
+	padding-top:2px;
 	
 }
 
@@ -74,4 +93,298 @@
 	border-radius:4px;
 	
 	
+}
+
+
+
+
+/* Chat History ================================ */  
+#chat-log .chat-chart-card.is-fullscreen {
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	margin: 0;
+	height: 100dvh;
+	width: 100vw;
+	max-width: none;
+	border-radius: 0;
+	border: 0;
+	display: flex;
+	flex-direction: column;
+	padding: 1.25rem 1.5rem;
+	background-color: #ffffff;
+}
+
+#chat-log .chat-chart-card.is-fullscreen .chat-chart-canvas-wrap {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+#chat-log .chat-chart-card.is-fullscreen canvas {
+	max-height: 100% !important;
+	max-width: 100% !important;
+}
+
+#chat-card[data-view="history"] #chat-save-btn,
+  #chat-card[data-view="history"] #chat-clear-btn,
+  #chat-card[data-view="history"] #chat-history-btn {
+	display: none;
+}
+
+#chat-save-btn:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+#chat-log .chat-older-btn {
+	display: block;
+	margin: 0 auto;
+	border: 1px solid #cbd5e1;
+	border-radius: 9999px;
+	background: #ffffff;
+	color: #475569;
+	cursor: pointer;
+	font-size: 0.72rem;
+	font-weight: 600;
+	padding: 0.25rem 0.8rem;
+}
+
+#chat-log .chat-older-btn:hover {
+	background: #f8fafc;
+}
+
+.chat-hist-panel {
+	display: none;
+	flex: 1;
+	min-height: 0;
+	flex-direction: column;
+}
+
+.chat-hist-panel.is-open {
+	display: flex;
+}
+
+.chat-hist-panel [hidden] {
+	display: none !important;
+}
+
+.chat-hist-toolbar {
+	display: flex;
+	gap: 0.5rem;
+	padding: 0.75rem 1rem;
+	border-bottom: 1px solid #e2e8f0;
+}
+
+.chat-hist-search {
+	flex: 1;
+	min-width: 0;
+	border: 1px solid #cbd5e1;
+	border-radius: 0.5rem;
+	padding: 0.4rem 0.7rem;
+	font-size: 0.85rem;
+	outline: none;
+}
+
+.chat-hist-search:focus {
+	border-color: #38bdf8;
+	box-shadow: 0 0 0 2px #e0f2fe;
+}
+
+.chat-hist-btn {
+	border: 1px solid var(--primary_color_darker);
+	background: var(--primary_background);
+	color: var(--primary_color);
+	border-radius: 0.5rem;
+	padding: 0.35rem 0.75rem;
+	font-size: 0.8rem;
+	font-weight: 600;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.chat-hist-btn:hover {
+	filter:brightness(1.3);
+}
+
+.chat-hist-btn-primary {
+	background: #0f172a;
+	border-color: #0f172a;
+	color: #ffffff;
+}
+
+.chat-hist-btn-primary:hover {
+	background: #1e293b;
+}
+
+.chat-hist-btn-danger:hover {
+	background: var(--rose_color);
+	border-color: #fecaca;
+	color: var(--primary_color);
+}
+
+.chat-hist-list {
+	flex: 1;
+	overflow-y: auto;
+	padding: 0.5rem 1rem 1rem;
+}
+
+.chat-hist-group {
+	margin: 0.9rem 0 0.3rem;
+	font-size: 0.7rem;
+	font-weight: 700;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	color: #64748b;
+}
+
+.chat-hist-item {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.6rem 0.75rem;
+	border: 1px solid var(--primary_background_darker);
+	border-radius: 0.6rem;
+	margin-bottom: 0.4rem;
+	cursor: pointer;
+	background: var(--primary_background_darker);
+	transition: 0.15s;
+}
+
+.chat-hist-item:hover {
+	-webkit-filter:brightness(1.2);
+	filter:brightness(1.2);
+	
+	box-shadow:0px 0px 4px 1px var(--secondary_color);
+	
+}
+
+.chat-hist-item.is-current {
+	border-color: #38bdf8;
+}
+
+.chat-hist-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.chat-hist-title {
+	font-size: 0.875rem;
+	font-weight: 600;
+	color: var(--primary_color);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.chat-hist-meta {
+	font-size: 0.72rem;
+	color: #64748b;
+	margin-top: 0.1rem;
+}
+
+.chat-hist-actions {
+	display: flex;
+	gap: 0.35rem;
+	flex-shrink: 0;
+}
+
+.chat-hist-rename-input {
+	width: 100%;
+	border: 1px solid #38bdf8;
+	border-radius: 0.4rem;
+	padding: 0.2rem 0.45rem;
+	font-size: 0.875rem;
+	font-weight: 600;
+	outline: none;
+}
+
+.chat-hist-empty {
+	text-align: center;
+	color: #64748b;
+	font-size: 0.875rem;
+	padding: 2rem 0;
+}
+
+.chat-hist-footer {
+	display: flex;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0.6rem 1rem;
+	border-top: 1px solid #e2e8f0;
+}
+
+.chat-actions-wrap {
+	position: relative;
+}
+
+.chat-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+	border-radius:5px;
+}
+
+.chat-menu-toggle {
+	display: none;
+}
+
+#chat-card[data-view="history"] .chat-menu-toggle {
+	display: none;
+}
+
+@media (max-width: 849.98px) {
+	#chat-card .chat-menu-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+
+	#chat-card[data-view="history"] .chat-menu-toggle {
+		display: none;
+	}
+
+	#chat-card .chat-actions {
+		display: none;
+		position: absolute;
+		right: 0;
+		top: calc(100% + 0.4rem);
+		z-index: 60;
+		flex-direction: column;
+		align-items: stretch;
+		flex-wrap: nowrap;
+		gap: 0.15rem;
+		min-width: 11rem;
+		padding: 0.35rem;
+		background: var(--primary_background);
+		border: 1px solid var(--primary_background_darker);
+		border-radius: 0.6rem;
+		box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15);
+	}
+
+	#chat-card .chat-actions.is-open {
+		display: flex;
+	}
+
+	#chat-card .chat-actions button {
+		display: block;
+		width: 100%;
+		text-align: left;
+		border: 0;
+		border-radius: 0.4rem;
+		background: transparent;
+		padding: 0.5rem 0.75rem;
+	}
+
+	#chat-card .chat-actions button:hover:not(:disabled) {
+		background: #f1f5f9;
+	}
+
+	#chat-card .chat-actions button:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
 }

@@ -294,3 +294,11 @@ html.admin-dark.sidebar-collapsed [data-tooltip]:hover::after { background: #0f1
 	display:none;
 	
 }
+
+.full_screen_overide{
+	max-width:unset;
+	right:0px;
+	left:0px !important;
+	z-index:999;
+	
+}

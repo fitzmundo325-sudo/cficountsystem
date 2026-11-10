@@ -322,6 +322,13 @@ async function minimizeChatG(){
 	gPage.classList.add("minimized_bubble");	
 }
 	
+	
+async function maximizeChatG(){
+	console.log("Was called to Maximize the chat bubble");
+	gPage.classList.toggle("full_screen_overide");
+
+}
+	
 
 function closeSidebar(){
 	document.documentElement.classList.remove('sidebar-open');

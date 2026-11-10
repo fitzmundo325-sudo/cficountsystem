@@ -42,7 +42,7 @@
   #chat-log .chat-md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0.5rem 0; font-size: 0.85rem; }
   #chat-log .chat-md th, #chat-log .chat-md td { border: 1px solid #cbd5e1; padding: 0.3rem 0.6rem; text-align: left; }
   #chat-log .chat-md th { background-color: #e2e8f0; font-weight: 600; }
-  #chat-log .chat-md code { background-color: var(--primary_background) }; border-radius: 0.25rem; padding: 0.1rem 0.3rem; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #chat-log .chat-md code { background-color: var(--primary_background); border-radius: 0.25rem; padding: 0.1rem 0.3rem; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   #chat-log .chat-code { margin: 0.6rem 0; overflow: hidden; border: 1px solid #1e293b; border-radius: 0.6rem; background-color: #0d1117; }
   #chat-log .chat-code-header { display: flex; align-items: center; justify-content: space-between; padding: 0.25rem 0.75rem; background-color: #1e293b; color: #cbd5e1; font-size: 0.7rem; }
   #chat-log .chat-code-lang { font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
@@ -51,35 +51,7 @@
   #chat-log .chat-code pre { margin: 0; overflow-x: auto; padding: 0.75rem; background: transparent; }
   #chat-log .chat-code pre code { background: transparent; color: var(--primary_color); font-size: 0.8rem; line-height: 1.5; padding: 0; white-space: pre; }
   
-  
-  
-  
-  #chat-log .chat-chart-card.is-fullscreen {
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    margin: 0;
-    height: 100dvh;
-    width: 100vw;
-    max-width: none;
-    border-radius: 0;
-    border: 0;
-    display: flex;
-    flex-direction: column;
-    padding: 1.25rem 1.5rem;
-    background-color: #ffffff;
-  }
-  #chat-log .chat-chart-card.is-fullscreen .chat-chart-canvas-wrap {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  #chat-log .chat-chart-card.is-fullscreen canvas {
-    max-height: 100% !important;
-    max-width: 100% !important;
-  }
+
   
   
 </style>
@@ -128,7 +100,15 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
 		<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
 			<rect x="3" y="9" width="10" height="3" fill="#fff" stroke="#2b3a4d" stroke-width="1"/>
 		</svg>
+	</div>	
+	
+	
+	<div class="control_button maximize_btn" title="Maximize" onclick="maximizeChatG()">
+		<svg width="17" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+			<path d="M3 3 H13 V13 H3 Z M5 6 V11 H11 V6 Z" fill="#fff" fill-rule="evenodd" stroke="#2b3a4d" stroke-width="1"/>
+		</svg>
 	</div>
+	
 	<div class="control_button close_btn" title="Close" onclick="closeThis()">
 		<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
 			<path d="M3.5 3.5 L12.5 12.5 M12.5 3.5 L3.5 12.5" stroke="#2b3a4d" stroke-width="4" stroke-linecap="square" fill="none"/>
@@ -158,16 +138,39 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
     <div class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
       <div id="chat-model-wrap" class="flex items-center gap-2">
         <label for="chat-model-select" class="text-xs font-black uppercase tracking-wide text-sky-700">Model</label>
-        <select id="chat-model-select" class="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"></select>
+        <select id="chat-model-select" class="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100 fancy_button"></select>
       </div>
 	   <div class="flex items-center gap-2">
-        <label for="chat-model-select" class="text-xs font-black uppercase tracking-wide text-sky-700">Available: 
+        <label class="text-xs font-black uppercase tracking-wide text-sky-700">Available:
 		<span class="free_usage_limit" id="chat_limit"> -- </span>
 		</label>
 
       </div>
 	  
-      <button id="chat-clear-btn" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Clear chat</button>
+      <div class="chat-actions-wrap primary_background">
+        <button id="chat-menu-btn" type="button" class="chat-menu-toggle rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 fancy_button" aria-haspopup="true" aria-expanded="false" aria-controls="chat-actions">Menu <span aria-hidden="true">&#9662;</span></button>
+        <div id="chat-actions" class="chat-actions">
+        <button id="chat-history-btn" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">History</button>
+        <button id="chat-save-btn" type="button" disabled class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Save to History</button>
+        <button id="chat-clear-btn" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Clear chat</button>
+        </div>
+      </div>
+    </div>
+	
+	<p class="mt-1.5 text-xs padded_text secondary_color hidden" id="notice_banner">
+		<span class="fa fa-info"> </span> Chat history are only saved locally on your current device for now.
+	</p>
+
+    <div id="chat-history-panel" class="chat-hist-panel">
+      <div class="chat-hist-toolbar border-b border-slate-200">
+        <input id="chat-hist-search" type="search" placeholder="Search conversations..." class="chat-hist-search">
+        <button id="chat-hist-new" type="button" class="chat-hist-btn chat-hist-btn-primary">+ New chat</button>
+      </div>
+      <div id="chat-hist-list" class="chat-hist-list"></div>
+      <div class="chat-hist-footer border-t border-slate-200">
+        <button id="chat-hist-back" type="button" class="chat-hist-btn" hidden>Back to current chat</button>
+        <button id="chat-hist-clear-all" type="button" class="chat-hist-btn chat-hist-btn-danger" hidden>Delete all</button>
+      </div>
     </div>
 
     <div id="chat-log" class="flex-1 space-y-3 overflow-y-auto px-4 py-4">
@@ -184,7 +187,7 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
       </div>
       <p class="mt-1.5 text-xs text-slate-400">Enter to send, Shift+Enter for a new line. <i class="tiny secondary_color"> LLMs can make mistakes, always validate accuracy. 
 		
-		</i><span class="text-xs secondary_color"> (v1.0) </span></p>
+		</i><span class="text-xs secondary_color" title="Current Version of the Chatbot engine."> (v1.0.3) </span></p>
 	  
 	  
 
@@ -197,7 +200,7 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
 
 <template id="chatUserMessageTemplate">
   <div class="flex justify-end" data-cell="row">
-    <div class="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-slate-900 px-4 py-2.5 text-sm leading-relaxed text-white" data-cell="bubble"></div>
+    <div class="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-slate-900 px-4 py-2.5 text-sm leading-relaxed text-white primary_background" data-cell="bubble"></div>
   </div>
 </template>
 
@@ -226,7 +229,7 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
 <script defer src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
-<script defer src="{{ url_for('static', filename='js/handles/chatbot_page_handles.js') }}?v=chatbot-v2-20261104-5"></script>
+<script defer src="{{ url_for('static', filename='js/handles/chatbot_page_handles.js') }}?v=chatbot-v2-20261110-6"></script>
 <script defer src="{{ url_for('static', filename='js/modalizer.js') }}?v=chatbot-v2-20261104-5"></script>
 
 {% endblock %}

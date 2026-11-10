@@ -9,6 +9,28 @@ let chatModelSelect = document.getElementById('chat-model-select');
 let chatUserTemplate = document.getElementById('chatUserMessageTemplate');
 let chatBotTemplate = document.getElementById('chatBotMessageTemplate');
 let chatToolTemplate = document.getElementById('chatToolTemplate');
+let chatCard = document.getElementById('chat-card');
+let chatSaveBtn = document.getElementById('chat-save-btn');
+let chatHistoryBtn = document.getElementById('chat-history-btn');
+let chatHistPanel = document.getElementById('chat-history-panel');
+let chatHistSearch = document.getElementById('chat-hist-search');
+let chatHistList = document.getElementById('chat-hist-list');
+let chatHistNew = document.getElementById('chat-hist-new');
+let chatHistBack = document.getElementById('chat-hist-back');
+let chatHistClearAll = document.getElementById('chat-hist-clear-all');
+let chatMenuBtn = document.getElementById('chat-menu-btn');
+let chatActions = document.getElementById('chat-actions');
+let chatMenuQuery = '(max-width: 849.98px)';
+
+let chatIndexKey = 'chatHistoryIndex';
+let chatConvoPrefix = 'chatConvo:';
+let chatPageSize = 10;
+let chatConvoId = null;
+let chatSessionToken = 0;
+let chatRenderedStart = 0;
+let chatLoadingOlder = false;
+let chatOlderLoader = null;
+let chatScrollQueued = false;
 
 let chatHistory = [];
 let chatController = null;
@@ -286,6 +308,12 @@ function restoreCopyLabel(button) {
 
 
 async function handleChatLogClick(event) {
+  let olderBtn = event.target.closest('.chat-older-btn');
+  if (olderBtn) {
+    chatLoadOlder();
+    return;
+  }
+
   let fsBtn = event.target.closest('.chat-chart-fs-btn');
   if (fsBtn) {
     toggleChartFullscreen(fsBtn.closest('.chat-chart-card'));
@@ -363,7 +391,10 @@ function parseEvent(raw) {
 }
 
 async function sendMessage(text) {
-  chatHistory.push({ role: 'user', content: text });
+  let sessionToken = chatSessionToken;
+  let charts = [];
+  chatHistory.push({ role: 'user', content: text, ts: Date.now() });
+  chatUpdateSaveBtn();
   appendMessage('user', text);
 
   let row = appendMessage('bot', 'Thinking...');
@@ -392,7 +423,12 @@ async function sendMessage(text) {
     let res = await fetch(chatEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: chatHistory, model: getSelectedModel() }),
+      body: JSON.stringify({
+        messages: chatHistory.map(function (m) {
+          return { role: m.role, content: m.content };
+        }),
+        model: getSelectedModel()
+      }),
       signal: chatController.signal
     });
 
@@ -441,6 +477,7 @@ async function sendMessage(text) {
 		
 		if (payload.chart) {
           let stickChart = isNearBottom();
+          charts.push(payload.chart);
           renderChatChart(chartBox, payload.chart);
           if (stickChart) {
             scrollToBottom();
@@ -497,7 +534,9 @@ async function sendMessage(text) {
       bot.textContent = (reply ? reply + '\n\n' : '') + 'Error: ' + error.message;
       notifyError(error.message);
       if (!reply) {
-        chatHistory.pop();
+        if (sessionToken === chatSessionToken) {
+          chatHistory.pop();
+        }
         if (!chatInput.value) {
           chatInput.value = text;
           autoResizeInput();
@@ -521,7 +560,14 @@ async function sendMessage(text) {
   }
 
   if (reply) {
-    chatHistory.push({ role: 'assistant', content: reply });
+    if (sessionToken === chatSessionToken) {
+      chatHistory.push({ role: 'assistant', content: reply, ts: Date.now(), charts: charts });
+    }
+  }
+
+  if (sessionToken === chatSessionToken) {
+    chatPersistConvo();
+    chatUpdateSaveBtn();
   }
   
   loadChatStats();
@@ -534,16 +580,656 @@ function stopStreaming() {
   }
 }
 
-// - Chat actions -
+// - History storage -
 
-function clearChat() {
+function chatNewId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  let bytes = new Uint8Array(16);
+  if (window.crypto && window.crypto.getRandomValues) {
+    window.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 16; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  let hex = '';
+  for (let b of bytes) {
+    hex += b.toString(16).padStart(2, '0');
+  }
+  return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+}
+
+function chatStoreGet(key, fallback) {
+  try {
+    let raw = localStorage.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function chatStoreSet(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (error) {
+    notifyError('Could not save to this browser. Storage may be full.');
+    return false;
+  }
+}
+
+function chatStoreRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    return;
+  }
+}
+
+function chatNotifySuccess(message) {
+  if (typeof toast !== 'undefined' && toast.success) {
+    toast.success(message);
+  }
+}
+
+function chatReadIndex() {
+  let list = chatStoreGet(chatIndexKey, []);
+  return Array.isArray(list) ? list : [];
+}
+
+function chatWriteIndex(list) {
+  return chatStoreSet(chatIndexKey, list);
+}
+
+function chatFindEntry(list, id) {
+  for (let entry of list) {
+    if (entry.id === id) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+function chatMakeTitle(messages) {
+  for (let message of messages) {
+    if (message.role === 'user' && message.content) {
+      let text = message.content.replace(/\s+/g, ' ').trim();
+      return text.length > 60 ? text.slice(0, 57) + '...' : text;
+    }
+  }
+  return 'New conversation';
+}
+
+function chatSaveConvo() {
+  if (chatHistory.length === 0 || chatConvoId) {
+    return;
+  }
+  let id = chatNewId();
+  let now = Date.now();
+  if (!chatStoreSet(chatConvoPrefix + id, chatHistory)) {
+    return;
+  }
+  let list = chatReadIndex();
+  list.push({ id: id, title: chatMakeTitle(chatHistory), createdAt: now, updatedAt: now, count: chatHistory.length });
+  if (!chatWriteIndex(list)) {
+    chatStoreRemove(chatConvoPrefix + id);
+    return;
+  }
+  chatConvoId = id;
+  chatUpdateSaveBtn();
+  chatNotifySuccess('Conversation saved to History.');
+}
+
+function chatPersistConvo() {
+  if (!chatConvoId) {
+    return;
+  }
+  if (!chatStoreSet(chatConvoPrefix + chatConvoId, chatHistory)) {
+    return;
+  }
+  let list = chatReadIndex();
+  let entry = chatFindEntry(list, chatConvoId);
+  if (!entry) {
+    entry = { id: chatConvoId, title: chatMakeTitle(chatHistory), createdAt: Date.now() };
+    list.push(entry);
+  }
+  entry.updatedAt = Date.now();
+  entry.count = chatHistory.length;
+  chatWriteIndex(list);
+}
+
+function chatRemoveConvo(id) {
+  chatStoreRemove(chatConvoPrefix + id);
+  let list = chatReadIndex().filter(function (entry) {
+    return entry.id !== id;
+  });
+  chatWriteIndex(list);
+  if (id === chatConvoId) {
+    chatConvoId = null;
+    chatUpdateSaveBtn();
+  }
+}
+
+function chatRenameConvo(id, title) {
+  let clean = title.replace(/\s+/g, ' ').trim();
+  if (!clean) {
+    return;
+  }
+  let list = chatReadIndex();
+  let entry = chatFindEntry(list, id);
+  if (entry) {
+    entry.title = clean.slice(0, 120);
+    chatWriteIndex(list);
+  }
+}
+
+function chatUpdateSaveBtn() {
+  let saved = Boolean(chatConvoId);
+  chatSaveBtn.disabled = saved || chatHistory.length === 0;
+  chatSaveBtn.textContent = saved ? 'Saved ✓' : 'Save to History';
+  chatSaveBtn.title = saved ? 'Saved. New messages are added automatically.' : 'Save this conversation to History';
+}
+
+// - History panel -
+
+function chatCloseMenu() {
+  chatActions.classList.remove('is-open');
+  chatMenuBtn.setAttribute('aria-expanded', 'false');
+}
+
+function chatToggleMenu() {
+  let open = !chatActions.classList.contains('is-open');
+  chatActions.classList.toggle('is-open', open);
+  chatMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function chatHandleMenuOutside(event) {
+  if (!chatActions.classList.contains('is-open')) {
+    return;
+  }
+  if (event.target.closest('.chat-actions-wrap')) {
+    return;
+  }
+  chatCloseMenu();
+}
+
+function chatHandleMenuKey(event) {
+  if (event.key === 'Escape' && chatActions.classList.contains('is-open')) {
+    chatCloseMenu();
+    chatMenuBtn.focus();
+  }
+}
+
+function chatHandleActionClick(event) {
+  if (event.target.closest('button')) {
+    chatCloseMenu();
+  }
+}
+
+function initChatMenu() {
+  chatMenuBtn.addEventListener('click', chatToggleMenu);
+  chatActions.addEventListener('click', chatHandleActionClick);
+  document.addEventListener('click', chatHandleMenuOutside);
+  document.addEventListener('keydown', chatHandleMenuKey);
+  if (window.matchMedia) {
+    let query = window.matchMedia(chatMenuQuery);
+    if (query.addEventListener) {
+      query.addEventListener('change', chatCloseMenu);
+    } else if (query.addListener) {
+      query.addListener(chatCloseMenu);
+    }
+  }
+}
+
+function chatSetView(view) {
+  chatCloseMenu();
+  let isHistory = view === 'history';
+  chatCard.setAttribute('data-view', view);
+  chatHistPanel.classList.toggle('is-open', isHistory);
+  chatLog.classList.toggle('hidden', isHistory);
+  chatForm.classList.toggle('hidden', isHistory);
+  
+  if(isHistory){
+	_("notice_banner").classList.remove("hidden");
+  }else{
+	_("notice_banner").classList.add("hidden");
+  }
+  
+}
+
+function chatDateGroup(ts) {
+  let now = new Date();
+  let startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  let day = 86400000;
+  if (ts >= startToday) {
+    return 'Today';
+  }
+  if (ts >= startToday - day) {
+    return 'Yesterday';
+  }
+  if (ts >= startToday - 7 * day) {
+    return 'Previous 7 days';
+  }
+  if (ts >= startToday - 30 * day) {
+    return 'Previous 30 days';
+  }
+  return 'Older';
+}
+
+function chatBuildHistItem(entry) {
+  let item = document.createElement('div');
+  item.className = 'chat-hist-item' + (entry.id === chatConvoId ? ' is-current' : '');
+  item.dataset.id = entry.id;
+
+  let main = document.createElement('div');
+  main.className = 'chat-hist-main';
+
+  let title = document.createElement('div');
+  title.className = 'chat-hist-title';
+  title.textContent = entry.title || 'Untitled';
+
+  let count = entry.count || 0;
+  let when = new Date(entry.updatedAt || entry.createdAt || Date.now());
+  let meta = document.createElement('div');
+  meta.className = 'chat-hist-meta';
+  meta.textContent = count + (count === 1 ? ' message' : ' messages') + ' · ' +
+    when.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+  main.appendChild(title);
+  main.appendChild(meta);
+
+  let actions = document.createElement('div');
+  actions.className = 'chat-hist-actions';
+
+  let rename = document.createElement('button');
+  rename.type = 'button';
+  rename.className = 'chat-hist-btn';
+  rename.dataset.action = 'rename';
+  rename.title = 'Rename';
+  rename.innerHTML = '<span class="fa fa-i-cursor"></span>';
+
+  let remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'chat-hist-btn chat-hist-btn-danger';
+  remove.dataset.action = 'delete';
+  remove.title = 'Delete';
+  remove.innerHTML = '<span class="fa fa-trash"></span>';
+
+  actions.appendChild(rename);
+  actions.appendChild(remove);
+  item.appendChild(main);
+  item.appendChild(actions);
+  return item;
+}
+
+
+
+function chatRenderHistList() {
+  let query = chatHistSearch.value.trim().toLowerCase();
+  let all = chatReadIndex();
+  let list = all.slice().sort(function (a, b) {
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
+  if (query) {
+    list = list.filter(function (entry) {
+      return (entry.title || '').toLowerCase().indexOf(query) !== -1;
+    });
+  }
+
+  chatHistList.innerHTML = '';
+  chatHistClearAll.hidden = all.length === 0;
+
+  if (list.length === 0) {
+    let empty = document.createElement('div');
+    empty.className = 'chat-hist-empty';
+    empty.textContent = query ? 'No conversations match your search.' : 'No saved conversations yet. Start chatting, then press Save to History.';
+    chatHistList.appendChild(empty);
+    return;
+  }
+
+  let lastGroup = '';
+  for (let entry of list) {
+    let group = chatDateGroup(entry.updatedAt || entry.createdAt || 0);
+    if (group !== lastGroup) {
+      let label = document.createElement('div');
+      label.className = 'chat-hist-group';
+      label.textContent = group;
+      chatHistList.appendChild(label);
+      lastGroup = group;
+    }
+    chatHistList.appendChild(chatBuildHistItem(entry));
+  }
+}
+
+function chatOpenHistory() {
+  chatHistSearch.value = '';
+  chatRenderHistList();
+  chatHistBack.hidden = chatHistory.length === 0;
+  chatSetView('history');
+  
+}
+
+function chatCloseHistory() {
+  chatSetView('chat');
+  chatInput.focus();
+}
+
+function chatConfirmDiscard(onProceed) {
+  if (chatHistory.length === 0 || chatConvoId) {
+    onProceed();
+    return;
+  }
+  if (typeof showConfirmationModal === 'function') {
+    showConfirmationModal({
+      title: 'Discard current chat?',
+      message: 'This conversation is not saved to History yet.',
+      confirmText: 'Discard',
+      cancelText: 'Cancel',
+      onConfirm: onProceed
+    });
+  } else if (confirm('This conversation is not saved to History yet. Discard it?')) {
+    onProceed();
+  }
+}
+
+function chatStartNew() {
+  chatConfirmDiscard(function () {
+    resetConversation();
+    chatSetView('chat');
+    chatInput.focus();
+  });
+}
+
+function chatRequestOpen(id) {
+  if (id === chatConvoId) {
+    chatCloseHistory();
+    return;
+  }
+  chatConfirmDiscard(function () {
+    chatOpenConvo(id);
+  });
+}
+
+function chatConfirmAction(title, message, confirmText, onConfirm) {
+  if (typeof showConfirmationModal === 'function') {
+    showConfirmationModal({
+      title: title,
+      message: message,
+      confirmText: confirmText,
+      cancelText: 'Cancel',
+      onConfirm: onConfirm
+    });
+  } else if (confirm(message)) {
+    onConfirm();
+  }
+}
+
+function chatRequestDelete(id) {
+  chatConfirmAction('Delete conversation', 'This conversation will be removed from History.', 'Delete', function () {
+    chatRemoveConvo(id);
+    chatRenderHistList();
+    chatHistBack.hidden = chatHistory.length === 0;
+  });
+}
+
+function chatRequestDeleteAll() {
+  chatConfirmAction('Delete all history', 'Every saved conversation will be removed from this browser.', 'Delete all', function () {
+    for (let entry of chatReadIndex()) {
+      chatStoreRemove(chatConvoPrefix + entry.id);
+    }
+    chatWriteIndex([]);
+    chatConvoId = null;
+    chatUpdateSaveBtn();
+    chatRenderHistList();
+    chatHistBack.hidden = chatHistory.length === 0;
+  });
+}
+
+function chatStartRename(item) {
+  let titleEl = item.querySelector('.chat-hist-title');
+  if (!titleEl) {
+    return;
+  }
+  let id = item.dataset.id;
+  let input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'chat-hist-rename-input';
+  input.maxLength = 120;
+  input.value = titleEl.textContent;
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  function finish(save) {
+    if (done) {
+      return;
+    }
+    done = true;
+    if (save) {
+      chatRenameConvo(id, input.value);
+    }
+    chatRenderHistList();
+  }
+
+  input.addEventListener('keydown', function (event) {
+    event.stopPropagation();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      finish(true);
+    } else if (event.key === 'Escape') {
+      finish(false);
+    }
+  });
+  input.addEventListener('blur', function () {
+    finish(true);
+  });
+}
+
+function chatHandleHistClick(event) {
+  if (event.target.closest('.chat-hist-rename-input')) {
+    return;
+  }
+  let item = event.target.closest('.chat-hist-item');
+  if (!item) {
+    return;
+  }
+  let actionBtn = event.target.closest('[data-action]');
+  if (actionBtn) {
+    if (actionBtn.dataset.action === 'rename') {
+      chatStartRename(item);
+    } else if (actionBtn.dataset.action === 'delete') {
+      chatRequestDelete(item.dataset.id);
+    }
+    return;
+  }
+  chatRequestOpen(item.dataset.id);
+}
+
+// - Loading and lazy rendering -
+
+function resetConversation() {
   stopStreaming();
+  chatSessionToken += 1;
   chatHistory = [];
+  chatConvoId = null;
+  chatRenderedStart = 0;
+  chatLoadingOlder = false;
+  chatPendingRender = null;
+  if (chatOlderLoader) {
+    chatOlderLoader.remove();
+    chatOlderLoader = null;
+  }
   let rows = chatLog.querySelectorAll('[data-cell="row"]');
   for (let row of rows) {
     row.remove();
   }
   chatEmpty.classList.remove('hidden');
+  chatUpdateSaveBtn();
+}
+
+function chatBuildRow(message) {
+  let isUser = message.role === 'user';
+  let template = isUser ? chatUserTemplate : chatBotTemplate;
+  let row = template.content.firstElementChild.cloneNode(true);
+  let bubble = row.querySelector('[data-cell="bubble"]');
+  if (isUser) {
+    bubble.textContent = message.content;
+    return row;
+  }
+  if (message.content) {
+    bubble.classList.add('chat-md');
+    renderMarkdown(bubble, message.content, true);
+  } else {
+    bubble.classList.add('hidden');
+  }
+  if (Array.isArray(message.charts) && message.charts.length > 0) {
+    row.chartSpecs = message.charts;
+  }
+  return row;
+}
+
+function chatMountCharts(rows) {
+  for (let row of rows) {
+    if (!row.chartSpecs) {
+      continue;
+    }
+    let box = row.querySelector('[data-cell="charts"]');
+    for (let spec of row.chartSpecs) {
+      renderChatChart(box, spec);
+    }
+    row.chartSpecs = null;
+  }
+}
+
+function chatPageStart(end) {
+  let start = Math.max(0, end - chatPageSize);
+  while (start > 0 && chatHistory[start].role !== 'user') {
+    start -= 1;
+  }
+  return start;
+}
+
+function chatUpdateOlderLoader() {
+  if (chatRenderedStart > 0) {
+    if (!chatOlderLoader) {
+      chatOlderLoader = document.createElement('button');
+      chatOlderLoader.type = 'button';
+      chatOlderLoader.className = 'chat-older-btn';
+      chatLog.insertBefore(chatOlderLoader, chatLog.firstChild);
+    }
+    chatOlderLoader.textContent = 'Load older messages (' + chatRenderedStart + ' more)';
+  } else if (chatOlderLoader) {
+    chatOlderLoader.remove();
+    chatOlderLoader = null;
+  }
+}
+
+function chatLoadOlder() {
+  if (chatRenderedStart <= 0 || chatLoadingOlder) {
+    return;
+  }
+  chatLoadingOlder = true;
+  let end = chatRenderedStart;
+  let start = chatPageStart(end);
+  let anchor = chatLog.querySelector('[data-cell="row"]');
+  let prevHeight = chatLog.scrollHeight;
+  let prevTop = chatLog.scrollTop;
+  let rows = [];
+
+  for (let i = start; i < end; i++) {
+    let row = chatBuildRow(chatHistory[i]);
+    chatLog.insertBefore(row, anchor);
+    rows.push(row);
+  }
+  chatRenderedStart = start;
+  chatMountCharts(rows);
+  chatUpdateOlderLoader();
+  chatLog.scrollTop = prevTop + (chatLog.scrollHeight - prevHeight);
+  chatLoadingOlder = false;
+}
+
+function chatRenderInitial() {
+  let total = chatHistory.length;
+  if (total === 0) {
+    return;
+  }
+  chatEmpty.classList.add('hidden');
+  let start = chatPageStart(total);
+  chatRenderedStart = start;
+  let rows = [];
+  for (let i = start; i < total; i++) {
+    let row = chatBuildRow(chatHistory[i]);
+    chatLog.appendChild(row);
+    rows.push(row);
+  }
+  chatMountCharts(rows);
+  chatUpdateOlderLoader();
+  scrollToBottom();
+
+  while (chatRenderedStart > 0 && chatLog.scrollHeight <= chatLog.clientHeight + 120) {
+    let before = chatRenderedStart;
+    chatLoadOlder();
+    if (chatRenderedStart === before) {
+      break;
+    }
+  }
+  scrollToBottom();
+}
+
+function chatOpenConvo(id) {
+  let messages = chatStoreGet(chatConvoPrefix + id, null);
+  if (!Array.isArray(messages)) {
+    notifyError('That conversation could not be loaded.');
+    chatRemoveConvo(id);
+    chatRenderHistList();
+    return;
+  }
+  resetConversation();
+  chatHistory = messages;
+  chatConvoId = id;
+  chatSetView('chat');
+  chatRenderInitial();
+  chatUpdateSaveBtn();
+  chatInput.focus();
+}
+
+function chatHandleScroll() {
+  if (chatScrollQueued) {
+    return;
+  }
+  chatScrollQueued = true;
+  requestAnimationFrame(function () {
+    chatScrollQueued = false;
+    if (chatLog.scrollTop < 120) {
+      chatLoadOlder();
+    }
+  });
+}
+
+function initChatHistory() {
+  chatSaveBtn.addEventListener('click', chatSaveConvo);
+  chatHistoryBtn.addEventListener('click', chatOpenHistory);
+  chatHistNew.addEventListener('click', chatStartNew);
+  chatHistBack.addEventListener('click', chatCloseHistory);
+  chatHistClearAll.addEventListener('click', chatRequestDeleteAll);
+  chatHistSearch.addEventListener('input', chatRenderHistList);
+  chatHistList.addEventListener('click', chatHandleHistClick);
+  chatLog.addEventListener('scroll', chatHandleScroll);
+  chatUpdateSaveBtn();
+  if (chatReadIndex().length > 0) {
+    chatOpenHistory();
+  }
+}
+
+// - Chat actions -
+
+function clearChat() {
+  resetConversation();
   chatInput.focus();
 }
 
@@ -554,7 +1240,7 @@ function requestClearChat() {
   if (typeof showConfirmationModal === 'function') {
     showConfirmationModal({
       title: 'Clear chat',
-      message: 'This will remove the whole conversation.',
+      message: chatConvoId ? 'This clears the chat window. The saved copy stays in History.' : 'This will remove the whole conversation. It is not saved to History yet.',
       confirmText: 'Clear',
       cancelText: 'Cancel',
       onConfirm: clearChat
@@ -804,7 +1490,7 @@ function closeThis(){
 	  cancelText: 'Cancel',
 	  onConfirm: closeWindow
 	});
-	} else if (confirm('This conversation would be gone as well')) {
+	} else if (confirm('Unsaved Chat would be gone as well.')) {
 	closeWindow();
 	}
 
@@ -815,9 +1501,12 @@ function closeThis(){
 
 
 function minimizeChatG(){
-	
 	postMessageToParent("function:minimizeChatG:1");
-	
+}
+
+
+function maximizeChatG(){
+	postMessageToParent("function:maximizeChatG:1");	
 }
 
 
@@ -832,6 +1521,8 @@ chatLog.addEventListener('click', handleChatLogClick);
 chatModelSelect.addEventListener('change', handleModelChange);
 
 initMarkdown();
+initChatMenu();
+initChatHistory();
 loadModels();
 loadChatStats();
 applyStoreName();
