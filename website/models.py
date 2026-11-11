@@ -259,6 +259,7 @@ class RsoDelivery(db.Model):
         db.Index('ix_rso_delivery_store_date', 'store_id', 'report_date'),
         db.Index('ix_rso_delivery_store_source', 'store_id', 'upload_source'),
         db.Index('ix_rso_delivery_uploaded_at', 'uploaded_at'),
+        db.Index('ix_rso_delivery_store_uploaded', 'store_id', 'uploaded_at'),
     )
 
 
@@ -569,17 +570,19 @@ class OracleOrder(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=func.now(), nullable=False)
     approved_at = db.Column(db.DateTime(timezone=True), nullable=True)
-    reviewed_by = db.Column(db.Integer, nullable=True)
+    reviewed_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     reviewed_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     store = db.relationship('Store', backref='oracle_orders')
     product = db.relationship('ProductMaster')
     creator = db.relationship('User', foreign_keys=[created_by])
+    reviewer = db.relationship('User', foreign_keys=[reviewed_by])
 
     __table_args__ = (
         db.Index('ix_oracle_order_store_delivery', 'store_id', 'delivery_date'),
         db.Index('ix_oracle_order_store_status', 'store_id', 'status'),
         db.Index('ix_oracle_order_store_order_date', 'store_id', 'order_date'),
+        db.Index('ix_oracle_order_store_status_delivery', 'store_id', 'status', 'delivery_date'),
     )
     
     

@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, send_file, current_app
 from flask_login import login_required, current_user
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from .models import (
     User,
     Store,
@@ -49,7 +49,6 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.sqltypes import Integer as SAInteger, Float as SAFloat, Numeric as SANumeric
 
 views = Blueprint('views', __name__)
@@ -10551,22 +10550,29 @@ def cluster_manager_oracle():
     for b in saved_buffers:
         buffers_map.setdefault(b.store_id, {})[b.product_id] = b.buffer_pct
 
+    from sqlalchemy.orm import joinedload
     oracle_orders = (
         OracleOrder.query
+        .options(
+            joinedload(OracleOrder.creator),
+            joinedload(OracleOrder.reviewer),
+            joinedload(OracleOrder.product),
+            joinedload(OracleOrder.store)
+        )
         .filter(OracleOrder.store_id.in_(store_ids) if store_ids else db.false())
         .order_by(OracleOrder.created_at.desc())
         .all()
     )
     def serialize_cluster_oracle_order(order):
-        order_store = next((item for item in stores if item.id == order.store_id), None)
-        creator = User.query.get(order.created_by)
-        reviewer = User.query.get(order.reviewed_by) if order.reviewed_by else None
+        creator = order.creator
+        reviewer = order.reviewer
+        store = order.store
         return {
             'id': order.id,
             'orderDate': order.order_date.isoformat(),
             'deliveryDate': order.delivery_date.isoformat(),
             'storeId': order.store_id,
-            'storeName': order_store.name if order_store else '',
+            'storeName': store.name if store else '',
             'productId': order.product_id,
             'productName': order.product.description if order.product else str(order.product_id),
             'suggested': order.suggested_qty,
@@ -13394,7 +13400,9 @@ def oracle():
     # Load saved per-product buffers for this store (if any)
     saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()
     store_buffers = {b.product_id: b.buffer_pct for b in saved}
-    incoming_orders = OracleOrder.query.filter_by(store_id=store.id, status='approved').filter(
+    incoming_orders = OracleOrder.query.options(
+            joinedload(OracleOrder.product)
+        ).filter_by(store_id=store.id, status='approved').filter(
         OracleOrder.delivery_date >= oracle_date
     ).all()
     oracle_incoming_orders = {}
@@ -13420,7 +13428,10 @@ def oracle():
         'manager': order.creator.username if order.creator else '',
         'timestamp': order.created_at.isoformat() if order.created_at else '',
         'status': order.status,
-    } for order in OracleOrder.query.filter_by(store_id=store.id).order_by(OracleOrder.created_at.desc()).all()]
+    } for order in OracleOrder.query.options(
+            joinedload(OracleOrder.creator),
+            joinedload(OracleOrder.product)
+        ).filter_by(store_id=store.id).order_by(OracleOrder.created_at.desc()).all()]
 
     # Fetch invensync data (ending inventory from prev day, delivery/trans from oracle date)
     invensync_data, prev_inventory_date = _fetch_oracle_invensync_data(store, products, oracle_date=oracle_date)

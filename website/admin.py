@@ -6493,23 +6493,30 @@ def admin_oracle():
 
     # Fetch and serialize Oracle orders for this cluster's stores
     from .models import OracleOrder
+    from sqlalchemy.orm import joinedload
     oracle_orders = (
         OracleOrder.query
+        .options(
+            joinedload(OracleOrder.creator),
+            joinedload(OracleOrder.reviewer),
+            joinedload(OracleOrder.product),
+            joinedload(OracleOrder.store)
+        )
         .filter(OracleOrder.store_id.in_(store_ids) if store_ids else db.false())
         .order_by(OracleOrder.created_at.desc())
         .all()
     )
 
     def serialize_oracle_order(order):
-        order_store = next((item for item in stores if item.id == order.store_id), None)
-        creator = User.query.get(order.created_by)
-        reviewer = User.query.get(order.reviewed_by) if order.reviewed_by else None
+        creator = order.creator
+        reviewer = order.reviewer
+        store = order.store
         return {
             'id': order.id,
             'orderDate': order.order_date.isoformat(),
             'deliveryDate': order.delivery_date.isoformat(),
             'storeId': order.store_id,
-            'storeName': order_store.name if order_store else '',
+            'storeName': store.name if store else '',
             'productId': order.product_id,
             'productName': order.product.description if order.product else str(order.product_id),
             'suggested': order.suggested_qty,
