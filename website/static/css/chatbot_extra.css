@@ -96,6 +96,25 @@
 }
 
 
+.chat-chart-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px;
+	background: var(--primary_background);
+	color: var(--secondary_color);
+	border-radius: 10px;
+	text-decoration: none;
+}
+
+.chat-chart-link::after {
+	content: "\f080"; /* fa-chart */
+	font-family: "FontAwesome";
+	font-weight: normal;
+	text-decoration:none;
+	font-style: normal;
+	line-height: 1;
+}
 
 
 /* Chat History ================================ */  

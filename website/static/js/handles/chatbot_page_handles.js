@@ -205,13 +205,20 @@ function finishThinking(parts, startedAt) {
 }
 
 // - Markdown -
-
 function handleSanitizedAttributes(node) {
   if (node.tagName === 'A') {
-    node.setAttribute('target', '_blank');
-    node.setAttribute('rel', 'noopener noreferrer');
+    let href = node.getAttribute('href') || '';
+    if (href.startsWith('#')) {
+      node.removeAttribute('target');
+      node.removeAttribute('rel');
+      node.classList.add('chat-chart-link');
+    } else {
+      node.setAttribute('target', '_blank');
+      node.setAttribute('rel', 'noopener noreferrer');
+    }
   }
 }
+
 
 function getCodeLanguage(code) {
   let match = /language-([\w+-]+)/.exec(code.className);
@@ -311,6 +318,21 @@ async function handleChatLogClick(event) {
   let olderBtn = event.target.closest('.chat-older-btn');
   if (olderBtn) {
     chatLoadOlder();
+    return;
+  }
+
+  let anchorLink = event.target.closest('a[href^="#"]');
+  if (anchorLink) {
+    let targetId = (anchorLink.getAttribute('href') || '').slice(1);
+    let targetCard = targetId ? document.getElementById(targetId) : null;
+    if (targetCard) {
+      event.preventDefault();
+      targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      targetCard.classList.add('ring-2', 'ring-blue-500');
+      setTimeout(function () {
+        targetCard.classList.remove('ring-2', 'ring-blue-500');
+      }, 1600);
+    }
     return;
   }
 
@@ -1380,10 +1402,11 @@ function renderChatChart(container, spec) {
     return;
   }
   chatChartSeq += 1;
-  let canvasId = 'chat-chart-' + Date.now() + '-' + chatChartSeq;
+  let canvasId = 'chat-chart-canvas-' + Date.now() + '-' + chatChartSeq;
 
   let card = document.createElement('div');
-  card.className = 'chat-chart-card w-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm';
+  card.id = spec.chart_id || ('chat-chart-' + Date.now() + '-' + chatChartSeq);
+  card.className = 'chat-chart-card w-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow';
 
   let header = document.createElement('div');
   header.className = 'mb-2 flex items-center justify-between gap-2';
