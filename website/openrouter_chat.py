@@ -160,16 +160,32 @@ def _compose_system_prompt(base, use_tools):
 
 # ==================== Rate helpers =============================
 
-# message based limit 
-def is_rate_limited(user_id, usage_type="chat"):
-    now = datetime.now(timezone.utc)
+# message based limit
+def _window_expired(usage, now):
+    start = usage.date_of_use
+    if start is None:
+        return True
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return now - start >= timedelta(hours=HOURS_RATE_RESET)
 
+
+def is_rate_limited(user_id, usage_type="chat"):
+    usage = ApiUsage.query.filter_by(user_id=user_id, type=usage_type).first()
+    if usage is None or not usage.is_limited:
+        return False
+    if _window_expired(usage, datetime.now(timezone.utc)):
+        return False
+    return (usage.messages_count or 0) >= LIMITED_MESSAGE_MAX
+
+
+def record_message(user_id, usage_type="chat"):
+    now = datetime.now(timezone.utc)
     usage = (
         ApiUsage.query.filter_by(user_id=user_id, type=usage_type)
         .with_for_update()
         .first()
     )
-
     if usage is None:
         usage = ApiUsage(
             user_id=user_id,
@@ -180,20 +196,21 @@ def is_rate_limited(user_id, usage_type="chat"):
             token_count=0,
         )
         db.session.add(usage)
-
-    window_start = usage.date_of_use
-    if window_start is not None and window_start.tzinfo is None:
-        window_start = window_start.replace(tzinfo=timezone.utc)
-
-    if window_start is None or now - window_start >= timedelta(hours=HOURS_RATE_RESET):
+    if _window_expired(usage, now):
         usage.messages_count = 0
         usage.date_of_use = now
-
     usage.messages_count = (usage.messages_count or 0) + 1
-    limited = bool(usage.is_limited) and usage.messages_count > LIMITED_MESSAGE_MAX
-
     db.session.commit()
-    return limited
+
+
+def _record_message_safe(user_id):
+    if user_id is None:
+        return
+    try:
+        record_message(user_id)
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Could not record chat usage")
 
 
 # ==================== Tool helpers =============================
@@ -1371,6 +1388,7 @@ def _stream_round(headers, body):
 def _generate(headers, model, system_prompt, messages, use_tools, ctx):
     convo = [{"role": "system", "content": system_prompt}] + messages
     calls_made = 0
+    counted = False
 
     for round_no in range(MAX_TOOL_ROUNDS + 1):
         body = {"model": model, "messages": convo, "stream": True}
@@ -1380,6 +1398,10 @@ def _generate(headers, model, system_prompt, messages, use_tools, ctx):
         result = yield from _stream_round(headers, body)
         if result["error"]:
             return
+
+        if not counted and (result["content"] or result["tool_calls"]):
+            counted = True
+            _record_message_safe(ctx.get("usage_user_id"))
 
         calls = result["tool_calls"]
         if not calls:
@@ -1455,6 +1477,7 @@ def chat():
         "remote_addr": request.remote_addr or "127.0.0.1",
         "host_url": request.host_url,
         "loaded_groups": set(),
+        "usage_user_id": current_user.id,
     }
 
     return Response(
