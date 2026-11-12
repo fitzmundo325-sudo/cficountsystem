@@ -20,6 +20,9 @@ let chatHistBack = document.getElementById('chat-hist-back');
 let chatHistClearAll = document.getElementById('chat-hist-clear-all');
 let chatMenuBtn = document.getElementById('chat-menu-btn');
 let chatActions = document.getElementById('chat-actions');
+let chatAsk = document.getElementById('chat-ask');
+let chatAskReason = document.getElementById('chat-ask-reason');
+let chatAskChoices = document.getElementById('chat-ask-choices');
 let chatMenuQuery = '(max-width: 849.98px)';
 
 let chatIndexKey = 'chatHistoryIndex';
@@ -364,6 +367,46 @@ function initMarkdown() {
   }
 }
 
+
+// Ask the user Tool call -------------------
+
+function hideChatAsk() {
+  chatAsk.classList.add('hidden');
+  chatAskChoices.innerHTML = '';
+  chatAskReason.textContent = '';
+}
+
+function showChatAsk(ask) {
+  if (!ask || !Array.isArray(ask.choices) || ask.choices.length === 0) {
+    return;
+  }
+	renderMarkdown(chatAskReason, ask.reason || 'More tool calls are needed to continue.', true);
+	
+  chatAskChoices.innerHTML = '';
+  for (let choice of ask.choices) {
+    let btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chat-ask-choice fancy_button';
+    btn.textContent = choice;
+    chatAskChoices.appendChild(btn);
+  }
+  chatAsk.classList.remove('hidden');
+}
+
+function handleChatAskClick(event) {
+  if (event.target.closest('#chat-ask-close')) {
+    hideChatAsk();
+    return;
+  }
+  let btn = event.target.closest('.chat-ask-choice');
+  if (!btn || chatStreaming) {
+    return;
+  }
+  let text = btn.textContent;
+  hideChatAsk();
+  sendMessage(text);
+}
+
 // - Tools -
 
 function addToolChip(container, chips, info) {
@@ -415,6 +458,7 @@ function parseEvent(raw) {
 async function sendMessage(text) {
   let sessionToken = chatSessionToken;
   let charts = [];
+  let ask = null;
   chatHistory.push({ role: 'user', content: text, ts: Date.now() });
   chatUpdateSaveBtn();
   appendMessage('user', text);
@@ -495,6 +539,9 @@ async function sendMessage(text) {
         }
         if (payload.tool_done) {
           finishToolChip(toolChips, payload.tool_done);
+        }
+        if (payload.ask) {
+          ask = payload.ask;
         }
 		
 		if (payload.chart) {
@@ -578,6 +625,9 @@ async function sendMessage(text) {
     }
     chatController = null;
     setStreaming(false);
+    if (ask && !failed && sessionToken === chatSessionToken) {
+      showChatAsk(ask);
+    }
     chatInput.focus();
   }
 
@@ -809,6 +859,7 @@ function initChatMenu() {
 
 function chatSetView(view) {
   chatCloseMenu();
+  hideChatAsk();
   let isHistory = view === 'history';
   chatCard.setAttribute('data-view', view);
   chatHistPanel.classList.toggle('is-open', isHistory);
@@ -1076,6 +1127,7 @@ function chatHandleHistClick(event) {
 
 function resetConversation() {
   stopStreaming();
+  hideChatAsk();
   chatSessionToken += 1;
   chatHistory = [];
   chatConvoId = null;
@@ -1284,6 +1336,7 @@ function handleChatSubmit(event) {
   }
   chatInput.value = '';
   autoResizeInput();
+  hideChatAsk();
   sendMessage(text);
 }
 
@@ -1541,6 +1594,7 @@ chatInput.addEventListener('keydown', handleChatKeydown);
 chatInput.addEventListener('input', autoResizeInput);
 chatClearBtn.addEventListener('click', requestClearChat);
 chatLog.addEventListener('click', handleChatLogClick);
+chatAsk.addEventListener('click', handleChatAskClick);
 chatModelSelect.addEventListener('change', handleModelChange);
 
 initMarkdown();
@@ -1552,5 +1606,3 @@ applyStoreName();
 chatInput.focus();
 
 applyNoHeaderMode();
-
-

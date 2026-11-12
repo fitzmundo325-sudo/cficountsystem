@@ -52,8 +52,7 @@
   #chat-log .chat-code pre code { background: transparent; color: var(--primary_color); font-size: 0.8rem; line-height: 1.5; padding: 0; white-space: pre; }
   
 
-  
-  
+
 </style>
  
 <link rel="stylesheet" href="{{ url_for('static', filename='css/chatbot_extra.css') }}" >
@@ -181,6 +180,13 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
     </div>
 
     <form id="chat-form" class="border-t border-slate-200 p-3">
+      <div id="chat-ask" class="hidden" role="dialog" aria-live="polite">
+        <div class="chat-ask-head">
+          <div id="chat-ask-reason" class="chat-ask-reason chat-md"></div>
+          <button id="chat-ask-close" type="button" class="chat-ask-close" aria-label="Dismiss">&times;</button>
+        </div>
+        <div id="chat-ask-choices" class="chat-ask-choices"></div>
+      </div>
       <div class="flex items-end gap-2">
         <textarea id="chat-input" rows="1" placeholder="Type a message..." class="max-h-40 flex-1 resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"></textarea>
         <button id="chat-send-btn" type="submit" data-state="send" class="inline-flex shrink-0 items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">Send</button>
@@ -229,7 +235,7 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
 <script defer src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
-<script defer src="{{ url_for('static', filename='js/handles/chatbot_page_handles.js') }}?v=chatbot-v2-20261110-6"></script>
+<script defer src="{{ url_for('static', filename='js/handles/chatbot_page_handles.js') }}?v=chatbot-v2-20261112-1"></script>
 <script defer src="{{ url_for('static', filename='js/modalizer.js') }}?v=chatbot-v2-20261104-5"></script>
 
 {% endblock %}
