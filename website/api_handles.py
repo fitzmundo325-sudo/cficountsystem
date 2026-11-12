@@ -5158,6 +5158,7 @@ def cluster_oracle_daily_averages():
         'name': product.description,
         'category': product.category or '',
         'selling_price': float((product.sp_p if is_premium else product.sp_np) or 0),
+        'min_order': product.min_order or 1,
     } for product in products]
 
     # Build 8 weeks of data (current 4 + previous 4) to match store manager structure
@@ -5315,6 +5316,7 @@ def get_oracle_data():
         'category': p.category,
         'plantPrice': float(p.tp or 0),
         'sellingPrice': float((p.sp_p if is_premium else p.sp_np) or 0),
+        'minOrder': p.min_order or 1,
     } for p in products]
 
     saved = StoreProductBuffer.query.filter_by(store_id=store.id).all()

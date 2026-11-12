@@ -934,9 +934,9 @@
     id: {{ p.id }}, code: {{ p.code if p.code is not none else p.id }}, name: {{ p.description | tojson }}, category: {{ p.category | tojson }}, unit: 'pc',
       plantPrice: {{ p.tp or 0 }},
     sellingPrice: {{ (p.sp_p if store.store_group == 'premium' else p.sp_np) or 0 }},
-    buffer: 20, minOrder: 0
+    buffer: 20, minOrder: {{ p.min_order or 1 }}
   },
-  {% endfor %}
+    {% endfor %}
   ];
   const CLUSTER_VIEW = {{ 'true' if cluster_view|default (false) else 'false' }};
   const STORE_SAVED_BUFFERS = {{ store_buffers| tojson if store_buffers is defined else '{}' }};

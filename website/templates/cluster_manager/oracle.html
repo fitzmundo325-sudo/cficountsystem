@@ -94,7 +94,7 @@
 
         <div class="px-4 py-3 bg-slate-50 border-t border-slate-200">
           <div class="grid grid-cols-1 gap-2">
-            <button type="button" onclick="navigate('approvals')"
+            <button type="button" data-store-id="{{ s.id }}" onclick="navigateStoreApprovals({{ s.id }})"
                     class="inline-flex items-center justify-center gap-1 px-2.5 py-2 text-[11px] font-semibold rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition">
               <i class="bi bi-check2-circle"></i>
               Approvals
@@ -589,8 +589,14 @@ const DB={
   approvalHistory:{{ oracle_approval_history|tojson }},
   canApprove:{{ can_approve_oracle_orders|tojson }},
   storeBuffers:{},
-  settings:{clusterName:'{{ cluster.name }}',defaultBuffer:20,leadTime:1}
+  settings:{clusterName:'{{ cluster.name }}',defaultBuffer:20,leadTime:1},
+  pendingApprovalCounts:{},
+  selectedApprovalStoreId:null
 };
+DB.pendingApprovals.forEach(order=>{
+  const storeId=Number(order.storeId);
+  DB.pendingApprovalCounts[storeId]=(DB.pendingApprovalCounts[storeId]||0)+1;
+});
 
 // Initialize store product buffers, seeding from server-saved values
 STORES.forEach(s=>{
@@ -601,7 +607,8 @@ STORES.forEach(s=>{
   });
 });
 
-function navigate(id){
+function navigate(id, storeId){
+  if(id==='approvals')DB.selectedApprovalStoreId=storeId===null?null:Number(storeId);
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.o-tab').forEach(t=>t.classList.remove('active'));
   const view=document.getElementById('view-'+id);if(!view)return;
@@ -617,27 +624,38 @@ function navigate(id){
       'store-performance':renderStorePerformance}[id]||Function)();
 }
 
+function navigateStoreApprovals(storeId){
+  navigate('approvals',storeId);
+}
+
 function renderDashboard(){
   updateApprovalsBadge();
 }
 
 function updateApprovalsBadge(){
   const b=document.getElementById('badge-approvals');
+  const total=Object.values(DB.pendingApprovalCounts).reduce((sum,count)=>sum+Number(count||0),0);
   if(b){
-    if(DB.pendingApprovals.length>0){b.classList.remove('hidden');b.textContent=DB.pendingApprovals.length;}else b.classList.add('hidden');
+    if(total>0){b.classList.remove('hidden');b.textContent=total;}else b.classList.add('hidden');
   }
   document.querySelectorAll('.approval-button-count').forEach(el=>{
-    if(DB.pendingApprovals.length>0){el.classList.remove('hidden');el.textContent=DB.pendingApprovals.length;}else el.classList.add('hidden');
+    const storeId=Number(el.closest('[data-store-id]')?.dataset.storeId);
+    const count=Number(DB.pendingApprovalCounts[storeId]||0);
+    if(count>0){el.classList.remove('hidden');el.textContent=count;}else el.classList.add('hidden');
   });
 }
 
 function renderApprovals(){
   const tbody=document.getElementById('approvals-tbody');
-  if(!DB.pendingApprovals.length){
+  let approvals=DB.pendingApprovals;
+  if(DB.selectedApprovalStoreId!==null){
+    approvals=approvals.filter(a=>Number(a.storeId)===DB.selectedApprovalStoreId);
+  }
+  if(!approvals.length){
     tbody.innerHTML=`<tr><td colspan="9" class="px-4 py-8 text-center text-slate-400"><i class="bi bi-check-circle text-2xl block mb-2 text-emerald-400"></i>No pending approvals. All orders are approved!</td></tr>`;
     return;
   }
-  tbody.innerHTML=[...DB.pendingApprovals].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).map(a=>{
+  tbody.innerHTML=[...approvals].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).map(a=>{
     const t=new Date(a.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
     const variance=a.suggested>0?Math.round((a.finalOrder-a.suggested)/a.suggested*100):0;
     const varianceColor=variance>20?'text-rose-600':variance<-20?'text-amber-600':'text-slate-600';
@@ -674,6 +692,10 @@ async function decideOracleOrder(id, decision){
 }
 function approveOrder(id){return decideOracleOrder(id,'approve');}
 function rejectOrder(id){return decideOracleOrder(id,'reject');}
+
+function escapeOracleHtml(value){
+  return String(value ?? '').replace(/[&<>"']/g, char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+}
 
 function renderOrderForm(){
   const grid=document.getElementById('of-store-grid');
