@@ -259,7 +259,6 @@ class RsoDelivery(db.Model):
         db.Index('ix_rso_delivery_store_date', 'store_id', 'report_date'),
         db.Index('ix_rso_delivery_store_source', 'store_id', 'upload_source'),
         db.Index('ix_rso_delivery_uploaded_at', 'uploaded_at'),
-        db.Index('ix_rso_delivery_store_uploaded', 'store_id', 'uploaded_at'),
     )
 
 
@@ -370,9 +369,14 @@ class ProductMaster(db.Model):
     sp_p = db.Column(db.Float, nullable=True)
     sp_np = db.Column(db.Float, nullable=True)
     shelf_life = db.Column(db.String(100), nullable=True)
+    min_order = db.Column(db.Integer, nullable=False, default=1)
     created_at = db.Column(db.DateTime(timezone=True), default=func.now())
     updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
     aliases = db.relationship('ProductAlias', backref='master_product', lazy=True, cascade='all, delete-orphan')
+
+    __table_args__ = (
+        db.CheckConstraint('min_order >= 1', name='ck_min_order_positive'),
+    )
 
 
 class ProductAlias(db.Model):
@@ -550,7 +554,10 @@ class StoreProductBuffer(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
     updated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
 
-    __table_args__ = (db.UniqueConstraint('store_id', 'product_id', name='uq_store_product_buffer'),)
+    __table_args__ = (
+        db.UniqueConstraint('store_id', 'product_id', name='uq_store_product_buffer'),
+        db.CheckConstraint('buffer_pct >= 0 AND buffer_pct <= 200', name='ck_buffer_pct_range'),
+    )
 
 
 class OracleOrder(db.Model):
@@ -570,19 +577,22 @@ class OracleOrder(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=func.now(), nullable=False)
     approved_at = db.Column(db.DateTime(timezone=True), nullable=True)
-    reviewed_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    reviewed_by = db.Column(db.Integer, nullable=True)
     reviewed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    approved_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    rejection_reason = db.Column(db.Text, nullable=True)
+    approval_comment = db.Column(db.Text, nullable=True)
 
     store = db.relationship('Store', backref='oracle_orders')
     product = db.relationship('ProductMaster')
     creator = db.relationship('User', foreign_keys=[created_by])
-    reviewer = db.relationship('User', foreign_keys=[reviewed_by])
+    approver = db.relationship('User', foreign_keys=[approved_by])
 
     __table_args__ = (
         db.Index('ix_oracle_order_store_delivery', 'store_id', 'delivery_date'),
         db.Index('ix_oracle_order_store_status', 'store_id', 'status'),
         db.Index('ix_oracle_order_store_order_date', 'store_id', 'order_date'),
-        db.Index('ix_oracle_order_store_status_delivery', 'store_id', 'status', 'delivery_date'),
+        db.Index('ix_oracle_order_store_product_order', 'store_id', 'product_id', 'order_date'),
     )
     
     

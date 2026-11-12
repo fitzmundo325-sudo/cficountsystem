@@ -6498,7 +6498,6 @@ def admin_oracle():
         OracleOrder.query
         .options(
             joinedload(OracleOrder.creator),
-            joinedload(OracleOrder.reviewer),
             joinedload(OracleOrder.product),
             joinedload(OracleOrder.store)
         )
@@ -6509,8 +6508,12 @@ def admin_oracle():
 
     def serialize_oracle_order(order):
         creator = order.creator
-        reviewer = order.reviewer
         store = order.store
+        # reviewer relationship removed - looked up from reviewed_by integer
+        reviewer = User.query.get(order.reviewed_by) if order.reviewed_by else None
+        reviewer_name = reviewer.full_name or reviewer.username if reviewer else ''
+        approver = User.query.get(order.approved_by) if order.approved_by else None
+        approver_name = approver.full_name or approver.username if approver else ''
         return {
             'id': order.id,
             'orderDate': order.order_date.isoformat(),
@@ -6528,8 +6531,11 @@ def admin_oracle():
             'manager': creator.full_name or creator.username if creator else '',
             'timestamp': order.created_at.isoformat() if order.created_at else '',
             'status': (order.status or 'pending').lower(),
-            'reviewer': (reviewer.full_name or reviewer.username) if reviewer else '',
+            'reviewer': reviewer_name,
             'reviewedAt': order.reviewed_at.isoformat() if order.reviewed_at else '',
+            'approvedBy': approver_name,
+            'rejectionReason': order.rejection_reason or '',
+            'approvalComment': order.approval_comment or '',
         }
 
     serialized_oracle_orders = [serialize_oracle_order(order) for order in oracle_orders]

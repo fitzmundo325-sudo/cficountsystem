@@ -10508,7 +10508,7 @@ def cluster_manager_cluster_data_export_excel():
 @views.route('/cluster-manager/oracle')
 @login_required
 def cluster_manager_oracle():
-    from datetime import date as _date
+    from datetime import datetime, date as _date
     role = (current_user.role or '').strip()
     if role not in ('Cluster Manager', 'Admin', 'Superadmin', 'General Manager', 'Auditor', 'Area Manager'):
         flash('Access denied. Only Cluster Managers and Admins can access this page.', category='error')
@@ -10555,7 +10555,6 @@ def cluster_manager_oracle():
         OracleOrder.query
         .options(
             joinedload(OracleOrder.creator),
-            joinedload(OracleOrder.reviewer),
             joinedload(OracleOrder.product),
             joinedload(OracleOrder.store)
         )
@@ -10565,8 +10564,12 @@ def cluster_manager_oracle():
     )
     def serialize_cluster_oracle_order(order):
         creator = order.creator
-        reviewer = order.reviewer
         store = order.store
+        # reviewer relationship not defined - looked up from reviewed_by integer
+        reviewer = User.query.get(order.reviewed_by) if order.reviewed_by else None
+        reviewer_name = reviewer.full_name or reviewer.username if reviewer else ''
+        approver = User.query.get(order.approved_by) if order.approved_by else None
+        approver_name = approver.full_name or approver.username if approver else ''
         return {
             'id': order.id,
             'orderDate': order.order_date.isoformat(),
@@ -10584,8 +10587,11 @@ def cluster_manager_oracle():
             'manager': creator.full_name or creator.username if creator else '',
             'timestamp': order.created_at.isoformat() if order.created_at else '',
             'status': (order.status or 'pending').lower(),
-            'reviewer': (reviewer.full_name or reviewer.username) if reviewer else '',
+            'reviewer': reviewer_name,
             'reviewedAt': order.reviewed_at.isoformat() if order.reviewed_at else '',
+            'approvedBy': approver_name,
+            'rejectionReason': order.rejection_reason or '',
+            'approvalComment': order.approval_comment or '',
         }
     serialized_oracle_orders = [serialize_cluster_oracle_order(order) for order in oracle_orders]
 
@@ -10921,8 +10927,11 @@ def cluster_manager_decide_oracle_order(order_id):
         cluster = Cluster.query.filter_by(manager_id=current_user.id).first()
         if not cluster or store.cluster_id != cluster.id:
             return jsonify({'ok': False, 'error': 'This store is outside your cluster'}), 403
-    elif not _apply_store_scope_filter([store], request):
-        return jsonify({'ok': False, 'error': 'Access denied for this store'}), 403
+    elif role == 'Area Manager':
+        allowed_clusters = _get_area_manager_cluster_ids(current_user)
+        if allowed_clusters is not None and store.cluster_id not in allowed_clusters:
+            return jsonify({'ok': False, 'error': 'Access denied for this store'}), 403
+    # Admin, Superadmin, General Manager can approve any order
     if (order.status or '').lower() != 'pending':
         return jsonify({'ok': False, 'error': f'This order is already {order.status.lower()}'}), 409
     data = request.get_json(silent=True) or {}
@@ -12980,11 +12989,19 @@ def _fetch_oracle_invensync_data(store, products, oracle_date=None):
     # Build invensync_data keyed by string product id (for JSON serialization)
     invensync_data = {}
     for p in products:
+        has_prev_record = prev_inventory is not None
+        has_today_record = today_inventory is not None
         invensync_data[str(p.id)] = {
             'ending_stock': prev_ending.get(p.id, 0),
             'delivery': today_delivery.get(p.id, 0),
             'trans_in': today_trans_in.get(p.id, 0),
             'trans_out': today_trans_out.get(p.id, 0),
+            'data_quality': {
+                'ending_stock_source': 'actual' if has_prev_record else ('carried_forward' if has_today_record else 'missing'),
+                'delivery_source': 'actual' if has_today_record else 'missing',
+                'trans_in_source': 'actual' if has_today_record else 'missing',
+                'trans_out_source': 'actual' if has_today_record else 'missing',
+            }
         }
 
     if prev_inventory:
@@ -13054,12 +13071,19 @@ def _fetch_oracle_invensync_data_for_order_form(store, products, selected_date=N
             trans_out[product_id] = trans_out.get(product_id, 0) + (item.trans_out_qty or 0)
 
     invensync_data = {}
+    has_source = source_inventory is not None
     for product in products:
         invensync_data[str(product.id)] = {
             'ending_stock': total_ending.get(product.id, 0),
             'delivery': delivery.get(product.id, 0),
             'trans_in': trans_in.get(product.id, 0),
             'trans_out': trans_out.get(product.id, 0),
+            'data_quality': {
+                'ending_stock_source': 'actual' if has_source else 'missing',
+                'delivery_source': 'actual' if has_source else 'missing',
+                'trans_in_source': 'actual' if has_source else 'missing',
+                'trans_out_source': 'actual' if has_source else 'missing',
+            }
         }
 
     source_date = source_inventory.inventory_date.isoformat() if source_inventory else None
