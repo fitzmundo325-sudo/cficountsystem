@@ -38,28 +38,17 @@ def _load_local_env():
         os.environ.setdefault(key, value)
 
 
-def _ensure_daily_report_pos_columns():
+def _ensure_product_master_columns():
     with db.engine.connect() as conn:
         existing_columns = {
             row[1]
-            for row in conn.execute(text("PRAGMA table_info('daily_report')")).fetchall()
-        }
-        if 'pos_motif_breakdown_json' not in existing_columns:
-            conn.execute(text("ALTER TABLE daily_report ADD COLUMN pos_motif_breakdown_json TEXT"))
-        conn.commit()
-
-
-def _ensure_store_group_column():
-    with db.engine.connect() as conn:
-        existing_columns = {
-            row[1]
-            for row in conn.execute(text("PRAGMA table_info('store')")).fetchall()
+            for row in conn.execute(text("PRAGMA table_info('product_master')")).fetchall()
         }
 
-        if 'store_group' not in existing_columns:
-            conn.execute(
-                text("ALTER TABLE store ADD COLUMN store_group VARCHAR(20) NOT NULL DEFAULT 'premium'")
-            )
+        if 'shelf_life' not in existing_columns:
+            conn.execute(text("ALTER TABLE product_master ADD COLUMN shelf_life INTEGER DEFAULT 0"))
+        if 'min_order' not in existing_columns:
+            conn.execute(text("ALTER TABLE product_master ADD COLUMN min_order INTEGER NOT NULL DEFAULT 1"))
         conn.commit()
 
 
@@ -72,6 +61,25 @@ def _ensure_user_assigned_store_column():
 
         if 'assigned_store_id' not in existing_columns:
             conn.execute(text("ALTER TABLE user ADD COLUMN assigned_store_id INTEGER"))
+        conn.commit()
+
+def _ensure_approved_oracle_approved_by():
+    with db.engine.connect() as conn:
+        existing_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info('oracle_order')")).fetchall()
+        }
+
+        if 'approved_by' not in existing_columns:
+            conn.execute(text("ALTER TABLE oracle_order ADD COLUMN approved_by INTEGER"))
+            
+        if 'rejection_reason' not in existing_columns:
+            conn.execute(text("ALTER TABLE oracle_order ADD COLUMN rejection_reason VARCHAR(1024)"))
+                        
+        if 'approval_comment' not in existing_columns:
+            conn.execute(text("ALTER TABLE oracle_order ADD COLUMN approval_comment VARCHAR(1024)"))
+            
+            
         conn.commit()
 
 
@@ -510,6 +518,7 @@ def create_app():
         db.create_all()
         _ensure_oracle_order_review_columns()
         _ensure_api_usage_model()
+        _ensure_product_master_columns()
         if not configured_secret_key:
             stored_secret = SystemSecret.query.order_by(SystemSecret.id.asc()).first()
             if not stored_secret:
@@ -517,9 +526,8 @@ def create_app():
                 db.session.add(stored_secret)
                 db.session.commit()
             app.config['SECRET_KEY'] = stored_secret.secret_value
-        _ensure_daily_report_pos_columns()
-        _ensure_store_group_column()
         _ensure_user_assigned_store_column()
+        _ensure_approved_oracle_approved_by()
         _ensure_user_presence_column()
         _backfill_inventory_staff_store_assignments()
         _ensure_product_master_sp_np_column()
@@ -535,6 +543,7 @@ def create_app():
         _drop_daily_forecasting_tables()
         _backfill_store_group_values()
         _backfill_beginning_finalized_flags()
+
         print("Created database!")
 
     login_manager = LoginManager()
