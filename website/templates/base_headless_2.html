@@ -1,0 +1,1322 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="application-name" content="iDashboard">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="iDashboard">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>{% block title %}{% endblock %} - iDashboard</title>
+
+  <script>
+    try {
+      if (localStorage.getItem('adminTheme') === 'dark') {
+        document.documentElement.classList.add('admin-dark');
+      }
+    } catch (error) {}
+  </script>
+
+  {% if get_theme() == 'dark' %}
+  <link id="theme" rel="stylesheet" href="{{ url_for('static', filename='css/coloring_dark.css') }}">
+  {% else %}
+  <link id="theme" rel="stylesheet" href="{{ url_for('static', filename='css/coloring.css') }}">
+  {% endif %}
+
+  <script src="{{ url_for('static', filename='js/light_dark.js') }}"></script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.tailwindcss.com">
+
+  <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" as="style">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" as="style">
+  <link rel="preload" href="{{ url_for('static', filename='js/sidebar.js') }}" as="script">
+  <link rel="preload" href="{{ url_for('static', filename='js/modal.js') }}" as="script">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+  <link href="{{ url_for('static', filename='css/styles.css') }}?v=skeleton-v1" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/modal_styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/modal_views.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/font-awesome.css') }}">
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      -ms-overflow-style: none !important;
+      scrollbar-width: none !important;
+    }
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar,
+    #main-content::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+
+    #sidebar nav.custom-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    #sidebar nav.custom-scrollbar::-webkit-scrollbar,
+    #sidebar nav.custom-scrollbar::-webkit-scrollbar-button {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+
+    .app-page-shell {
+      width: 100%;
+      max-width: 2400px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 1rem 1rem 1.5rem;
+      overflow-x: hidden;
+    }
+
+    @media (min-width: 768px) {
+      .app-page-shell {
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+      }
+    }
+
+    /* SPA Centered Page Loading Overlay */
+    #spa-loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 9998;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(248, 250, 252, 0.75);
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+      transition-delay: 0s;
+    }
+    @media (min-width: 1024px) {
+      #spa-loading-overlay {
+        left: 256px; /* lg:ml-64 — only covers main content, not sidebar */
+      }
+    }
+    #spa-loading-overlay.spa-visible {
+      opacity: 1;
+      pointer-events: all;
+      transition-delay: 300ms; /* Delay showing spinner to avoid flicker on fast loads */
+    }
+    .spa-spinner {
+      width: 44px;
+      height: 44px;
+      border: 3.5px solid #e2e8f0;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spa-spin 0.7s linear infinite;
+    }
+    @keyframes spa-spin {
+      to { transform: rotate(360deg); }
+    }
+    /* Smooth slide-up fade-in for swapped page content */
+    @keyframes spa-content-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .spa-content-enter {
+      animation: spa-content-in 0.2s ease both;
+    }
+
+    /* ===== Admin dark mode (headless v2) ===== */
+    html.admin-dark { color-scheme: dark; }
+    html.admin-dark body,
+    html.admin-dark #main-content {
+      background-color: #020617 !important;
+      color: #e2e8f0;
+    }
+
+    /* Light surfaces */
+    html.admin-dark #main-content .bg-white,
+    html.admin-dark #main-content .bg-white\/80,
+    html.admin-dark #main-content .bg-white\/85,
+    html.admin-dark #main-content .bg-slate-50,
+    html.admin-dark #main-content .bg-slate-100,
+    html.admin-dark #main-content .bg-sky-50,
+    html.admin-dark #main-content .bg-indigo-50,
+    html.admin-dark #main-content .bg-blue-50,
+    html.admin-dark #main-content .bg-amber-50,
+    html.admin-dark #main-content .bg-emerald-50,
+    html.admin-dark #main-content .bg-green-50,
+    html.admin-dark #main-content .bg-rose-50 {
+      background-color: #0f172a !important;
+    }
+
+    /* Text */
+    html.admin-dark #main-content .text-slate-900,
+    html.admin-dark #main-content .text-slate-800,
+    html.admin-dark #main-content .text-black {
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content .text-slate-700,
+    html.admin-dark #main-content .text-slate-600,
+    html.admin-dark #main-content .text-slate-500,
+    html.admin-dark #main-content .text-slate-400 {
+      color: #cbd5e1 !important;
+    }
+    html.admin-dark #main-content .text-slate-300 {
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content .text-indigo-700,
+    html.admin-dark #main-content .text-indigo-600 {
+      color: #a5b4fc !important;
+    }
+    html.admin-dark #main-content .text-sky-800,
+    html.admin-dark #main-content .text-sky-700,
+    html.admin-dark #main-content .text-blue-800,
+    html.admin-dark #main-content .text-blue-700 {
+      color: #7dd3fc !important;
+    }
+    html.admin-dark #main-content .text-emerald-800,
+    html.admin-dark #main-content .text-emerald-700,
+    html.admin-dark #main-content .text-green-800,
+    html.admin-dark #main-content .text-green-700 {
+      color: #6ee7b7 !important;
+    }
+    html.admin-dark #main-content .text-amber-900,
+    html.admin-dark #main-content .text-amber-800,
+    html.admin-dark #main-content .text-amber-700,
+    html.admin-dark #main-content .text-orange-700 {
+      color: #fcd34d !important;
+    }
+    html.admin-dark #main-content .text-red-800,
+    html.admin-dark #main-content .text-red-700,
+    html.admin-dark #main-content .text-rose-700 {
+      color: #fda4af !important;
+    }
+    html.admin-dark #main-content a:not([class*="text-white"]):hover {
+      color: #ffffff !important;
+    }
+
+    /* Borders */
+    html.admin-dark #main-content .border-slate-100,
+    html.admin-dark #main-content .border-slate-200,
+    html.admin-dark #main-content .border-slate-300 {
+      border-color: #334155 !important;
+    }
+
+    /* Inputs */
+    html.admin-dark #main-content input,
+    html.admin-dark #main-content select,
+    html.admin-dark #main-content textarea {
+      background-color: #0f172a;
+      border-color: #475569;
+      color: #f8fafc;
+    }
+    html.admin-dark #main-content input::placeholder,
+    html.admin-dark #main-content textarea::placeholder {
+      color: #64748b;
+    }
+
+    /* Slate buttons */
+    html.admin-dark #main-content button.bg-white,
+    html.admin-dark #main-content a.bg-white {
+      background-color: #1e293b !important;
+      border-color: #475569 !important;
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content button.bg-slate-900,
+    html.admin-dark #main-content a.bg-slate-900,
+    html.admin-dark #main-content button.bg-slate-800,
+    html.admin-dark #main-content a.bg-slate-800,
+    html.admin-dark #main-content button.bg-slate-700,
+    html.admin-dark #main-content a.bg-slate-700,
+    html.admin-dark #main-content button.bg-slate-600,
+    html.admin-dark #main-content a.bg-slate-600 {
+      background-color: #334155 !important;
+      border-color: #475569 !important;
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-slate-800:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-800:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-700:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-700:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-600:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-600:hover {
+      background-color: #475569 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-slate-300,
+    html.admin-dark #main-content a.bg-slate-300,
+    html.admin-dark #main-content button.bg-slate-200,
+    html.admin-dark #main-content a.bg-slate-200,
+    html.admin-dark #main-content button.bg-slate-100,
+    html.admin-dark #main-content a.bg-slate-100 {
+      background-color: #1e293b !important;
+      border-color: #475569 !important;
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-slate-300:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-300:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-200:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-200:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-100:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-100:hover,
+    html.admin-dark #main-content button.hover\:bg-slate-50:hover,
+    html.admin-dark #main-content a.hover\:bg-slate-50:hover {
+      background-color: #334155 !important;
+      color: #f8fafc !important;
+    }
+
+    /* Indigo */
+    html.admin-dark #main-content button.bg-indigo-600,
+    html.admin-dark #main-content a.bg-indigo-600 {
+      background-color: #4f46e5 !important;
+      border-color: #6366f1 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-indigo-700:hover,
+    html.admin-dark #main-content a.hover\:bg-indigo-700:hover {
+      background-color: #6366f1 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-indigo-100,
+    html.admin-dark #main-content a.bg-indigo-100,
+    html.admin-dark #main-content button.bg-indigo-50,
+    html.admin-dark #main-content a.bg-indigo-50 {
+      background-color: #312e81 !important;
+      border-color: #4f46e5 !important;
+      color: #c7d2fe !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-indigo-200:hover,
+    html.admin-dark #main-content a.hover\:bg-indigo-200:hover,
+    html.admin-dark #main-content button.hover\:bg-indigo-100:hover,
+    html.admin-dark #main-content a.hover\:bg-indigo-100:hover {
+      background-color: #4338ca !important;
+      color: #ffffff !important;
+    }
+
+    /* Violet */
+    html.admin-dark #main-content button.bg-violet-600,
+    html.admin-dark #main-content a.bg-violet-600 {
+      background-color: #4f46e5 !important;
+      border-color: #6366f1 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-violet-700:hover {
+      background-color: #6366f1 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .bg-violet-100 {
+      background-color: #312e81 !important;
+      border-color: #4f46e5 !important;
+    }
+    html.admin-dark #main-content .bg-violet-500,
+    html.admin-dark #main-content .bg-violet-600 {
+      background-color: #4f46e5 !important;
+      border-color: #818cf8 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .text-violet-700,
+    html.admin-dark #main-content .text-violet-800 {
+      color: #c4b5fd !important;
+    }
+
+    /* Sky */
+    html.admin-dark #main-content button.bg-sky-600 {
+      background-color: #0284c7 !important;
+      border-color: #38bdf8 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-sky-700:hover {
+      background-color: #0ea5e9 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .bg-sky-100 {
+      background-color: #0c4a6e !important;
+      border-color: #0284c7 !important;
+    }
+    html.admin-dark #main-content .bg-sky-500,
+    html.admin-dark #main-content .bg-sky-600 {
+      background-color: #0284c7 !important;
+      border-color: #7dd3fc !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .border-sky-200,
+    html.admin-dark #main-content .border-sky-300 {
+      border-color: #0284c7 !important;
+    }
+
+    /* Emerald / Green */
+    html.admin-dark #main-content button.bg-emerald-600,
+    html.admin-dark #main-content a.bg-emerald-600,
+    html.admin-dark #main-content button.bg-green-600,
+    html.admin-dark #main-content a.bg-green-600 {
+      background-color: #047857 !important;
+      border-color: #10b981 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-emerald-700:hover {
+      background-color: #059669 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-emerald-100,
+    html.admin-dark #main-content a.bg-emerald-100,
+    html.admin-dark #main-content button.bg-emerald-50,
+    html.admin-dark #main-content a.bg-emerald-50 {
+      background-color: #064e3b !important;
+      border-color: #10b981 !important;
+      color: #a7f3d0 !important;
+    }
+    html.admin-dark #main-content .bg-emerald-500,
+    html.admin-dark #main-content .bg-emerald-600,
+    html.admin-dark #main-content .bg-green-500,
+    html.admin-dark #main-content .bg-green-600 {
+      background-color: #047857 !important;
+      border-color: #6ee7b7 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .text-emerald-900,
+    html.admin-dark #main-content .text-emerald-600,
+    html.admin-dark #main-content .text-green-900,
+    html.admin-dark #main-content .text-green-600 {
+      color: #6ee7b7 !important;
+    }
+    html.admin-dark #main-content .border-emerald-200,
+    html.admin-dark #main-content .border-emerald-300,
+    html.admin-dark #main-content .border-green-200,
+    html.admin-dark #main-content .border-green-300 {
+      border-color: #059669 !important;
+    }
+
+    /* Amber */
+    html.admin-dark #main-content button.bg-amber-100,
+    html.admin-dark #main-content a.bg-amber-100,
+    html.admin-dark #main-content button.bg-amber-50,
+    html.admin-dark #main-content a.bg-amber-50 {
+      background-color: #78350f !important;
+      border-color: #f59e0b !important;
+      color: #fde68a !important;
+    }
+    html.admin-dark #main-content .border-amber-200,
+    html.admin-dark #main-content .border-amber-300 {
+      border-color: #d97706 !important;
+    }
+
+    /* Red / Rose */
+    html.admin-dark #main-content button.bg-red-600,
+    html.admin-dark #main-content a.bg-red-600,
+    html.admin-dark #main-content button.bg-rose-600,
+    html.admin-dark #main-content a.bg-rose-600 {
+      background-color: #be123c !important;
+      border-color: #fb7185 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content button.bg-rose-100,
+    html.admin-dark #main-content a.bg-rose-100,
+    html.admin-dark #main-content button.bg-rose-50,
+    html.admin-dark #main-content a.bg-rose-50,
+    html.admin-dark #main-content button.bg-red-100,
+    html.admin-dark #main-content a.bg-red-100,
+    html.admin-dark #main-content button.bg-red-50,
+    html.admin-dark #main-content a.bg-red-50 {
+      background-color: #4c0519 !important;
+      border-color: #be123c !important;
+      color: #fecdd3 !important;
+    }
+    html.admin-dark #main-content button.hover\:bg-rose-200:hover,
+    html.admin-dark #main-content a.hover\:bg-rose-200:hover,
+    html.admin-dark #main-content button.hover\:bg-rose-100:hover,
+    html.admin-dark #main-content a.hover\:bg-rose-100:hover {
+      background-color: #881337 !important;
+      color: #ffffff !important;
+    }
+    html.admin-dark #main-content .bg-red-50,
+    html.admin-dark #main-content .bg-red-100,
+    html.admin-dark #main-content .bg-rose-50,
+    html.admin-dark #main-content .bg-rose-100 {
+      background-color: #4c0519 !important;
+      border-color: #be123c !important;
+    }
+    html.admin-dark #main-content .text-red-900,
+    html.admin-dark #main-content .text-red-600,
+    html.admin-dark #main-content .text-rose-900,
+    html.admin-dark #main-content .text-rose-800,
+    html.admin-dark #main-content .text-rose-600 {
+      color: #fda4af !important;
+    }
+    html.admin-dark #main-content .border-red-200,
+    html.admin-dark #main-content .border-red-300,
+    html.admin-dark #main-content .border-rose-200,
+    html.admin-dark #main-content .border-rose-300 {
+      border-color: #be123c !important;
+    }
+
+    /* Disabled */
+    html.admin-dark #main-content button:disabled,
+    html.admin-dark #main-content a[aria-disabled="true"] {
+      background-color: #475569 !important;
+      border-color: #64748b !important;
+      color: #cbd5e1 !important;
+      opacity: 0.7;
+    }
+
+    html.admin-dark #main-content [class*="shadow"] {
+      --tw-shadow-color: rgba(0, 0, 0, 0.35);
+    }
+
+    /* Row hover */
+    html.admin-dark #main-content tr.hover\:bg-slate-50:hover,
+    html.admin-dark #main-content .hover\:bg-slate-50:hover,
+    html.admin-dark #main-content .hover\:bg-slate-100:hover {
+      background-color: #1e293b !important;
+    }
+
+    /* Tables */
+    html.admin-dark #main-content table {
+      background-color: #0f172a !important;
+      color: #e2e8f0;
+    }
+    html.admin-dark #main-content table thead,
+    html.admin-dark #main-content table thead tr,
+    html.admin-dark #main-content table th {
+      background-color: #1e293b !important;
+      border-color: #475569 !important;
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content table tbody,
+    html.admin-dark #main-content table tbody tr,
+    html.admin-dark #main-content table td {
+      background-color: #0f172a !important;
+      border-color: #334155 !important;
+      color: #e2e8f0 !important;
+    }
+    html.admin-dark #main-content table tbody tr:nth-child(even) td {
+      background-color: #111827 !important;
+    }
+    html.admin-dark #main-content table tbody tr:hover td {
+      background-color: #1e293b !important;
+    }
+    html.admin-dark #main-content table .bg-slate-100,
+    html.admin-dark #main-content table .bg-sky-50,
+    html.admin-dark #main-content table .bg-emerald-50,
+    html.admin-dark #main-content table .bg-emerald-100,
+    html.admin-dark #main-content table .bg-green-100 {
+      background-color: #172033 !important;
+    }
+    html.admin-dark #main-content table input,
+    html.admin-dark #main-content table select,
+    html.admin-dark #main-content table textarea {
+      background-color: #020617 !important;
+      border-color: #475569 !important;
+      color: #f8fafc !important;
+    }
+    html.admin-dark #main-content table [class*="divide-"] > :not([hidden]) ~ :not([hidden]) {
+      border-color: #334155 !important;
+    }
+  </style>
+  <script src="{{ url_for('static', filename='js/modal.js') }}?v=modal-no-spinner-20260727"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}?v=toast-fix-1"></script>
+  <script src="{{ url_for('static', filename='js/auto_scrollbar.js') }}?v=scrollbar-fade-1"></script>
+
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="m-0 overflow-x-hidden">
+
+  <!-- Mobile Overlay -->
+  <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden backdrop-blur-sm lg:hidden"></div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar-transition fixed inset-y-0 left-0 h-screen max-h-screen z-40 w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex min-h-0 flex-col -translate-x-full lg:translate-x-0">
+    
+    <!-- Logo Section -->
+    <div class="flex items-center justify-between h-20 px-6 border-b border-slate-800 shrink-0">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/20">
+          <span class="text-white font-bold text-lg">I</span>
+        </div>
+        <span class="logo-text text-xl font-bold text-white tracking-tight">
+          i<span class="text-indigo-400">Dashboard</span>
+        </span>
+      </div>
+      
+      <!-- Toggle Button (Desktop) -->
+      <button id="toggle-desktop" class="hidden lg:flex items-center justify-center w-8 h-8 rounded-md hover:bg-slate-800 text-slate-400 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+    </div>
+
+    
+    <!-- Navigation -->
+    {% set current_path = request.path %}
+    {% set current_store_id = request.args.get('store_id', '') %}
+    {% set is_home_active = current_path == '/' %}
+    {% set is_daily_report_active = current_path == '/store-manager/daily-report' %}
+    {% set is_pos_sold_active = current_path.startswith('/store-manager/daily-report/pos-sold') %}
+    {% set is_delivery_recon_active = current_path.startswith('/store-manager/delivery-recon') or current_path.startswith('/inventory/delivery-recon') %}
+    {% set is_delivery_active = current_path.startswith('/store-manager/delivery') and not is_delivery_recon_active %}
+    {% set is_taf_active = current_path.startswith('/store-manager/transaction-activity-form') %}
+    {% set is_trans_active = current_path == '/store-manager/trans' or current_path.startswith('/store-manager/trans/') %}
+    {% set is_trans_out_active = current_path == '/store-manager/trans-out' or current_path.startswith('/store-manager/trans-out/') %}
+    {% set is_wastage_active = current_path == '/store-manager/wastage' or current_path.startswith('/store-manager/wastage/') %}
+    {% set is_charge_slip_active = current_path == '/store-manager/charge-slip' or current_path.startswith('/store-manager/charge-slip') %}
+    {% set is_taf_menu_active = is_taf_active or is_trans_active or is_trans_out_active or is_wastage_active or is_charge_slip_active %}
+    {% set is_store_data_active = current_path.startswith('/store-manager/store-data') %}
+    {% set is_help_active = current_path.startswith('/store-manager/help') %}
+    {% set is_cluster_dashboard_active = current_path.startswith('/cluster-dashboard') %}
+    {% set is_cluster_data_active = current_path.startswith('/cluster-manager/cluster-data') %}
+    {% set is_cluster_oracle_active = current_path.startswith('/cluster-manager/oracle') %}
+    {% set is_cluster_invensync_active = current_path.startswith('/cluster-manager/invensync') %}
+    {% set is_cluster_sbase_active = current_path.startswith('/cluster-manager/cluster-sbase') %}
+    {% set is_raw_data_active = current_path.startswith('/cluster-manager/raw-data') %}
+    {% set is_admin_users_active = current_path.startswith('/admin/users') %}
+    {% set is_admin_stores_active = current_path.startswith('/admin/stores') %}
+    {% set is_admin_clusters_active = current_path.startswith('/admin/clusters') %}
+    {% set force_cluster_sidebar = force_cluster_sidebar|default(false) %}
+    {% set use_cluster_sidebar = user and (user.role == 'Cluster Manager' or force_cluster_sidebar) %}
+    {% set cluster_context_id = cluster_sidebar_cluster_id|default('') %}
+    {% set cluster_query_suffix = '?cluster_id=' ~ cluster_context_id if cluster_context_id else '' %}
+    {% set cluster_dashboard_href = '/cluster-dashboard' ~ cluster_query_suffix %}
+    {% set cluster_data_href = '/cluster-manager/cluster-data' ~ cluster_query_suffix %}
+    {% set cluster_oracle_href = '/cluster-manager/oracle' ~ cluster_query_suffix %}
+    {% set cluster_invensync_href = '/cluster-manager/invensync' ~ cluster_query_suffix %}
+    {% set cluster_sbase_href = '/cluster-manager/cluster-sbase' ~ cluster_query_suffix %}
+    {% set managed_clusters = user.managed_clusters|default([]) if user else [] %}
+    {% set cluster_stores = cluster_sidebar_stores|default((managed_clusters[0].stores if managed_clusters and managed_clusters|length > 0 else [])) %}
+    {% set is_cluster_data_nav_active = is_cluster_data_active and (not force_cluster_sidebar or not current_store_id) %}
+    {% set is_cluster_oracle_nav_active = is_cluster_oracle_active %}
+    {% set is_cluster_sbase_nav_active = is_cluster_sbase_active %}
+    {% set is_stores_menu_active = is_raw_data_active or (force_cluster_sidebar and is_cluster_data_active and current_store_id) %}
+    {% set cluster_store_href_base = '/cluster-manager/cluster-data' if force_cluster_sidebar else '/cluster-manager/raw-data' %}
+
+    <nav class="min-h-0 flex-1 px-3 space-y-1 custom-scrollbar overflow-y-auto overscroll-contain mt-2 pb-3">
+      {% set store_scope = (request.cookies.get('store_scope') or 'official')|lower %}
+
+      {% if use_cluster_sidebar %}
+      <!-- Global Store Scope Filter -->
+      <div class="mb-2 rounded-xl border border-slate-700/60 bg-slate-800/40 p-2">
+        <p class="px-1 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Store View</p>
+        <div class="grid grid-cols-2 gap-1">
+          <button type="button" class="store-scope-btn rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition-colors {% if store_scope == 'official' %}bg-indigo-500 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}" data-scope="official">Official</button>
+          <button type="button" class="store-scope-btn rounded-lg px-2 py-1.5 text-center text-xs font-semibold transition-colors {% if store_scope == 'starlink' %}bg-indigo-500 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}" data-scope="starlink">Starlink</button>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if user and user.role == 'Store Manager' %}
+      <!-- Store Manager Navigation -->
+      <a href="/store-manager/invensync" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/store-manager/invensync') and request.args.get('guide') != '1' %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="InvenSync">
+        <div class="shrink-0 {% if request.path.startswith('/store-manager/invensync') and request.args.get('guide') != '1' %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 14 3-3 3 2 4-5"/><circle cx="7" cy="14" r="1.2"/><circle cx="10" cy="11" r="1.2"/><circle cx="13" cy="13" r="1.2"/><circle cx="17" cy="8" r="1.2"/><rect x="3" y="14" width="18" height="6" rx="1"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">InvenSync</span>
+      </a>
+      <a href="/store-manager/oracle" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/store-manager/oracle') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Oracle">
+        <div class="shrink-0 {% if request.path.startswith('/store-manager/oracle') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12h6"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Oracle</span>
+      </a>
+      <a href="/store-manager/daily-report" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_daily_report_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Daily Report">
+        <div class="shrink-0 {% if is_daily_report_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Daily Report</span>
+      </a>
+      <a href="/store-manager/daily-report/pos-sold" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_pos_sold_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="POS Sold">
+        <div class="shrink-0 {% if is_pos_sold_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7h18"/><path d="M5 7l1.2 12.4a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L19 7"/><path d="M9 11v6"/><path d="M15 11v6"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">POS Sold</span>
+      </a>
+      <a href="/store-manager/delivery" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_delivery_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Delivery">
+        <div class="shrink-0 {% if is_delivery_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Delivery</span>
+      </a>
+      <div class="nav-item-group">
+        <button id="taf-menu-toggle" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_taf_menu_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="TAF">
+          <div class="shrink-0 {% if is_taf_menu_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h6"/><path d="M10 8h4"/><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
+          </div>
+          <span class="nav-label whitespace-nowrap truncate flex-1 text-left">TransAct Form</span>
+          <svg id="taf-chevron" class="nav-label w-4 h-4 transition-transform {% if is_taf_menu_active %}rotate-180 text-white{% else %}text-slate-400{% endif %}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </button>
+        <div id="taf-submenu" class="{% if not is_taf_menu_active %}hidden {% endif %}ml-4 mt-1 space-y-1">
+          <a href="/store-manager/transaction-activity-form" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if is_taf_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group" data-tooltip="TAF | Charge Slip">
+            <div class="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0"></div>
+            <span class="nav-label whitespace-nowrap truncate">TAF | Charge Slip</span>
+          </a>
+          <a href="/store-manager/trans" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if is_trans_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group" data-tooltip="Trans-In">
+            <div class="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0"></div>
+            <span class="nav-label whitespace-nowrap truncate">Trans-In</span>
+            {% if (pending_trans_in_count|default(0)|int) > 0 %}
+            <span class="nav-label ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-yellow-400 px-1.5 text-[11px] font-bold leading-none text-slate-900">{{ pending_trans_in_count }}</span>
+            {% endif %}
+          </a>
+          <a href="/store-manager/trans-out" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if is_trans_out_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group" data-tooltip="Trans-Out">
+            <div class="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0"></div>
+            <span class="nav-label whitespace-nowrap truncate">Trans-Out</span>
+          </a>
+          <a href="/store-manager/wastage" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if is_wastage_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group" data-tooltip="Wastage">
+            <div class="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0"></div>
+            <span class="nav-label whitespace-nowrap truncate">Wastage</span>
+          </a>
+          <a href="/store-manager/charge-slip-history" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if current_path.startswith('/store-manager/charge-slip-history') %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group" data-tooltip="CSI">
+            <div class="w-1.5 h-1.5 rounded-full bg-pink-400 shrink-0"></div>
+            <span class="nav-label whitespace-nowrap truncate">CSI</span>
+          </a>
+        </div>
+      </div>
+      <a href="/store-manager/store-data" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_store_data_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Store Data">
+        <div class="shrink-0 {% if is_store_data_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3h18v18H3z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Store Data</span>
+      </a>
+      <a href="/store-manager/help" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_help_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Help">
+        <div class="shrink-0 {% if is_help_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Help</span>
+      </a>
+      {% endif %}
+
+      {% if user and user.role == 'Inventory Staff' %}
+      {% set staff_store_id = inventory_staff_selected_store_id|default('') %}
+      {% set staff_store_query = '?store_id=' ~ staff_store_id if staff_store_id else '' %}
+      <div class="nav-label mb-3 rounded-xl border border-slate-700 bg-slate-800/70 p-2">
+        <label for="inventory-staff-store-switcher" class="mb-1 block px-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Working Store</label>
+        <select id="inventory-staff-store-switcher" class="w-full rounded-lg border border-slate-600 bg-slate-900 px-2 py-2 text-xs font-semibold text-white outline-none focus:border-indigo-400">
+          {% for assigned_store in inventory_staff_stores|default([]) %}<option value="{{ assigned_store.id }}" {% if assigned_store.id == staff_store_id %}selected{% endif %}>{{ assigned_store.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <a href="/store-manager/invensync{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/store-manager/invensync') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="InvenSync">
+        <div class="shrink-0 {% if request.path.startswith('/store-manager/invensync') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 14 3-3 3 2 4-5"/><circle cx="7" cy="14" r="1.2"/><circle cx="10" cy="11" r="1.2"/><circle cx="13" cy="13" r="1.2"/><circle cx="17" cy="8" r="1.2"/><rect x="3" y="14" width="18" height="6" rx="1"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">InvenSync</span>
+      </a>
+      <a href="/store-manager/daily-report/pos-sold{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_pos_sold_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="POS Sold">
+        <div class="shrink-0 {% if is_pos_sold_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7h18"/><path d="M5 7l1.2 12.4a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L19 7"/><path d="M9 11v6"/><path d="M15 11v6"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">POS Sold</span>
+      </a>
+      <a href="/store-manager/trans{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_trans_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Trans-In">
+        <div class="shrink-0 {% if is_trans_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h16"/><path d="m11 5-7 7 7 7"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Trans-In</span>
+      </a>
+      <a href="/store-manager/trans-out{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_trans_out_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Trans-Out">
+        <div class="shrink-0 {% if is_trans_out_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h16"/><path d="m13 5 7 7-7 7"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Trans-Out</span>
+      </a>
+      <a href="/store-manager/wastage{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_wastage_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Wastage">
+        <div class="shrink-0 {% if is_wastage_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Wastage</span>
+      </a>
+      <a href="/store-manager/charge-slip-history{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if current_path.startswith('/store-manager/charge-slip-history') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="CSI">
+        <div class="shrink-0 {% if current_path.startswith('/store-manager/charge-slip-history') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">CSI</span>
+      </a>
+      <a href="/store-manager/delivery{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_delivery_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Delivery">
+        <div class="shrink-0 {% if is_delivery_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Delivery</span>
+      </a>
+      <a href="/store-manager/delivery-recon{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_delivery_recon_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Delivery Recon">
+        <div class="shrink-0 {% if is_delivery_recon_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Delivery Recon</span>
+      </a>
+      <a href="/store-manager/supply-request{{ staff_store_query }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if request.path.startswith('/store-manager/supply-request') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Supply Request">
+        <div class="shrink-0 {% if request.path.startswith('/store-manager/supply-request') %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Supply Request</span>
+      </a>
+      {% endif %}
+
+      {% if use_cluster_sidebar %}
+      <!-- Cluster Manager Navigation -->
+
+      
+      <a href="{{ cluster_dashboard_href }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_cluster_dashboard_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Cluster Dashboard">
+        <div class="shrink-0 {% if is_cluster_dashboard_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9M3 9l9-7 9 7m-9 7v-7"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Cluster Dashboard</span>
+      </a>
+      
+      <a href="{{ cluster_data_href }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_cluster_data_nav_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Cluster Data">
+        <div class="shrink-0 {% if is_cluster_data_nav_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15h6"/><path d="M9 19h6"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Cluster Data</span>
+      </a>
+
+      <a href="{{ cluster_invensync_href }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_cluster_invensync_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="InvenSync">
+        <div class="shrink-0 {% if is_cluster_invensync_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 14 3-3 3 2 4-5"/><circle cx="7" cy="14" r="1.2"/><circle cx="10" cy="11" r="1.2"/><circle cx="13" cy="13" r="1.2"/><circle cx="17" cy="8" r="1.2"/><rect x="3" y="14" width="18" height="6" rx="1"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">InvenSync</span>
+      </a>
+
+      <a href="{{ cluster_oracle_href }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_cluster_oracle_nav_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Oracle">
+        <div class="shrink-0 {% if is_cluster_oracle_nav_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12h6"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Oracle</span>
+      </a>
+      <a href="{{ cluster_sbase_href }}" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_cluster_sbase_nav_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="CL Sbase">
+        <div class="shrink-0 {% if is_cluster_sbase_nav_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">CL Sbase</span>
+      </a>
+      
+      <!-- Stores Menu (always expanded) -->
+      <div class="nav-item-group">
+        <div class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_stores_menu_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group">
+          <div class="shrink-0 {% if is_stores_menu_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/></svg>
+          </div>
+          <span class="nav-label whitespace-nowrap truncate flex-1 text-left">My Stores</span>
+        </div>
+        
+        <div id="stores-submenu" class="ml-4 mt-1 space-y-1">
+          {% if cluster_stores %}
+            {% for store in cluster_stores %}
+            <a href="{{ cluster_store_href_base }}?store_id={{ store.id }}{% if cluster_context_id %}&cluster_id={{ cluster_context_id }}{% endif %}" class="nav-item w-full flex items-center gap-3 p-2 pl-4 rounded-lg {% if current_store_id|string == store.id|string and ((force_cluster_sidebar and is_cluster_data_active) or ((not force_cluster_sidebar) and is_raw_data_active)) %}bg-slate-800 text-white{% else %}hover:bg-slate-800/50 hover:text-white{% endif %} transition-all text-sm group">
+              <div class="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0"></div>
+              <span class="nav-label whitespace-nowrap truncate">
+                {{ store.name }}
+                {% if (store.pending_count|default(0)|int) > 0 %}
+                <span class="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-yellow-400 px-1.5 text-[11px] font-bold leading-none text-slate-900">{{ store.pending_count }}</span>
+                {% endif %}
+              </span>
+            </a>
+            {% endfor %}
+          {% else %}
+            <div class="p-2 pl-4 text-xs text-slate-500">
+              No stores assigned
+            </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if user and user.role in ['Admin', 'Superadmin'] and not force_cluster_sidebar %}
+      <!-- Admin Navigation -->
+      <a href="/admin/users" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_admin_users_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Users">
+        <div class="shrink-0 {% if is_admin_users_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Users</span>
+      </a>
+
+      <a href="/admin/stores" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_admin_stores_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Stores">
+        <div class="shrink-0 {% if is_admin_stores_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Stores</span>
+      </a>
+
+      <a href="/admin/clusters" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_admin_clusters_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Clusters">
+        <div class="shrink-0 {% if is_admin_clusters_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+        </div>
+        <span class="nav-label whitespace-nowrap truncate">Clusters</span>
+      </a>
+      {% endif %}
+    </nav>
+
+    <!-- User Section -->
+    <div class="mt-auto border-t border-slate-800 p-4 shrink-0">
+      <button type="button" class="pwa-install-btn mb-3 w-full flex items-center gap-3 rounded-xl border border-indigo-400/20 bg-indigo-500/10 p-2 text-left text-indigo-100 transition-colors hover:bg-indigo-500/20" data-tooltip="Install App">
+        <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12"></path>
+            <path d="m7 10 5 5 5-5"></path>
+            <path d="M5 21h14"></path>
+          </svg>
+        </span>
+        <span class="nav-label min-w-0">
+          <span class="block text-sm font-semibold text-white">Install App</span>
+          <span class="block truncate text-xs text-indigo-200">Desktop shortcut</span>
+        </span>
+      </button>
+      <div class="flex items-center gap-2 hover:bg-slate-800/50 p-2 rounded-xl cursor-pointer transition-colors group">
+        <div class="relative">
+          <div class="w-10 h-10 rounded-full border-2 border-slate-800 group-hover:border-indigo-500 transition-colors bg-indigo-500 flex items-center justify-center text-white font-bold">
+            {% if user %}{{ user.username[:1].upper() }}{% else %}U{% endif %}
+          </div>
+          <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-900 rounded-full"></div>
+        </div>
+        <div class="user-info flex-1 min-w-0">
+          <p class="text-sm font-semibold text-white truncate">{% if user %}{{ user.full_name }}{% else %}Guest{% endif %}</p>
+          <p class="text-xs text-slate-500 truncate">{% if user %}{{ user.role }}{% else %}Not Logged In{% endif %}</p>
+        </div>
+        {% if user %}
+        <a href="/logout" class="inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-500 transition-colors" title="Logout" aria-label="Logout">
+          <svg class="block h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" x2="9" y1="12" y2="12"/>
+          </svg>
+        </a>
+        {% endif %}
+      </div>
+    </div>
+  </aside>
+
+  <!-- SPA Centered Loading Overlay (outside #main-content so it survives swaps) -->
+  <div id="spa-loading-overlay" class="htmx-indicator" aria-hidden="true">
+    <div class="spa-spinner"></div>
+  </div>
+
+  <!-- Main Content Area -->
+  <main id="main-content" class="sidebar-transition flex-1 min-h-screen lg:ml-64 flex flex-col">
+    {% block content %}{% endblock %}
+  </main>
+
+    <script src="{{ url_for('static', filename='js/sidebar.js') }}?v=sidebar-htmx-1"></script>
+    <script src="{{ url_for('static', filename='js/pwa.js') }}?v=pwa-htmx-1"></script>
+    <script src="{{ url_for('static', filename='js/spa_navigation.js') }}?v=modal-no-spinner-20260902"></script>
+    <script>
+      // Global Store View (Official / Starlink) scope toggle
+      (function () {
+        const buttons = Array.from(document.querySelectorAll('.store-scope-btn'));
+        if (!buttons.length) return;
+
+        function updateButtonStyles(activeScope) {
+          buttons.forEach((btn) => {
+            const isSelected = (btn.getAttribute('data-scope') || 'official').toLowerCase() === activeScope.toLowerCase();
+            if (isSelected) {
+              btn.classList.add('bg-indigo-500', 'text-white');
+              btn.classList.remove('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+            } else {
+              btn.classList.remove('bg-indigo-500', 'text-white');
+              btn.classList.add('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+            }
+          });
+        }
+
+        buttons.forEach((btn) => {
+          btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            const scope = (this.getAttribute('data-scope') || 'official').toLowerCase();
+            const maxAge = 60 * 60 * 24 * 365;
+            document.cookie = `store_scope=${encodeURIComponent(scope)}; path=/; max-age=${maxAge}; samesite=lax`;
+
+            updateButtonStyles(scope);
+
+            const url = new URL(window.location.href);
+            if (url.searchParams.has('store_id')) {
+              url.searchParams.delete('store_id');
+              window.history.replaceState({}, '', url.toString());
+            }
+
+            if (typeof window.reloadDashboard === 'function') {
+              window.reloadDashboard(true);
+            } else {
+              const mainContent = document.getElementById('main-content');
+              if (mainContent) {
+                mainContent.style.opacity = '0.5';
+                fetch(window.location.href)
+                  .then((res) => res.text())
+                  .then((html) => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const newMain = doc.getElementById('main-content');
+                    if (newMain) {
+                      mainContent.innerHTML = newMain.innerHTML;
+                      Array.from(mainContent.querySelectorAll('script')).forEach((oldScript) => {
+                        const newScript = document.createElement('script');
+                        Array.from(oldScript.attributes).forEach((attr) => newScript.setAttribute(attr.name, attr.value));
+                        newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                        oldScript.parentNode.replaceChild(newScript, oldScript);
+                      });
+                    }
+                  })
+                  .catch(() => {
+                    window.location.reload();
+                  })
+                  .finally(() => {
+                    mainContent.style.opacity = '1';
+                  });
+              } else {
+                window.location.reload();
+              }
+            }
+          });
+        });
+      })();
+    </script>
+    {% if user and user.role == 'Inventory Staff' %}
+    <script>
+      document.getElementById('inventory-staff-store-switcher')?.addEventListener('change', function() {
+        const storeId = this.value;
+        const scopedPaths = ['/store-manager/invensync-dashboard', '/'];
+        if (scopedPaths.includes(window.location.pathname)) {
+          window.location.href = `/store-manager/invensync?store_id=${encodeURIComponent(storeId)}`;
+          return;
+        }
+        const target = new URL(window.location.href);
+        target.searchParams.set('store_id', storeId);
+        window.location.href = target.toString();
+      });
+    </script>
+    {% endif %}
+
+    {% if user and user.role == 'Store Manager' %}
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        const guideParams = new URLSearchParams(window.location.search);
+        if (guideParams.get('guide') !== '1') return;
+
+        const path = window.location.pathname;
+        const pageOwnedTours = [
+          '/store-manager/daily-report/pos-sold',
+          '/store-manager/delivery',
+          '/store-manager/transaction-activity-form'
+        ];
+        if (pageOwnedTours.some(prefix => path.startsWith(prefix))) return;
+
+        if (path.startsWith('/store-manager/invensync') && typeof window.startBeginningStockGuide === 'function') {
+          setTimeout(() => window.startBeginningStockGuide(true), 500);
+          return;
+        }
+
+        const guideStyle = document.createElement('style');
+        guideStyle.textContent = `
+          .store-help-tour-panel {
+            position: fixed;
+            z-index: 9998;
+            background: rgba(15, 23, 42, 0.72);
+            pointer-events: auto;
+          }
+          .store-help-tour-target {
+            position: relative;
+            z-index: 9999 !important;
+            box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.45), 0 0 24px rgba(14, 165, 233, 0.6) !important;
+          }
+          .store-help-tour-label {
+            position: fixed;
+            z-index: 10000;
+            max-width: min(380px, calc(100vw - 32px));
+            background: #0f172a;
+            color: #fff;
+            padding: 18px 20px;
+            border-radius: 14px;
+            border: 1px solid rgba(148, 163, 184, 0.32);
+            font-size: 17px;
+            font-weight: 700;
+            line-height: 1.35;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+            box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
+            pointer-events: auto;
+          }
+          .store-help-tour-label button {
+            margin-top: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            background: #fff;
+            color: #0f172a;
+            padding: 10px 24px;
+            font-size: 14px;
+            font-weight: 800;
+            text-shadow: none;
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+          }
+        `;
+        document.head.appendChild(guideStyle);
+
+        function visible(el) {
+          return Boolean(el && el.offsetParent !== null);
+        }
+
+        function first(selectors) {
+          for (const selector of selectors) {
+            const found = Array.from(document.querySelectorAll(selector)).find(visible);
+            if (found) return found;
+          }
+          return null;
+        }
+
+        function textButton(words) {
+          const buttons = Array.from(document.querySelectorAll('button, a'));
+          return buttons.find(el => visible(el) && words.some(word => String(el.textContent || '').toLowerCase().includes(word))) || null;
+        }
+
+        function rectFor(elements) {
+          const visibleElements = elements.filter(visible);
+          if (!visibleElements.length) return null;
+          const rects = visibleElements.map(el => el.getBoundingClientRect());
+          const padding = 10;
+          return {
+            top: Math.max(0, Math.min(...rects.map(rect => rect.top)) - padding),
+            left: Math.max(0, Math.min(...rects.map(rect => rect.left)) - padding),
+            right: Math.min(window.innerWidth, Math.max(...rects.map(rect => rect.right)) + padding),
+            bottom: Math.min(window.innerHeight, Math.max(...rects.map(rect => rect.bottom)) + padding)
+          };
+        }
+
+        const pageTitles = {
+          '/store-manager/daily-report': 'Daily Report',
+          '/store-manager/oracle': 'Oracle',
+          '/store-manager/store-data': 'Store Data',
+          '/store-manager/trans': 'Trans-In',
+          '/store-manager/trans-out': 'Trans-Out',
+          '/store-manager/wastage': 'Wastage'
+        };
+        const pageTitle = Object.entries(pageTitles).find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`))?.[1] || 'This tool';
+        const isTransferListGuide = path === '/store-manager/trans' || path === '/store-manager/trans-out';
+        const transferActionTarget = first(['.transfer-action-guide-target']);
+
+        const steps = [
+          {
+            elements: [first(['header nav', 'header'])],
+            text: `Welcome to the ${pageTitle} walkthrough. This guide will point out the main areas of this tool.`,
+            placement: 'bottom',
+            nextText: 'Next'
+          },
+          {
+            elements: [first(['input[type="date"]', 'select[name="month"]', 'select[name="year"]', 'form'])],
+            text: 'Start here by choosing the correct date, month, year, or filter before reviewing data.',
+            placement: 'bottom',
+            nextText: 'Next'
+          },
+          {
+            elements: [first(['table', 'form', 'section article', 'section', '.rounded-2xl', '.rounded-xl'])],
+            text: 'This is the main work area. Review the rows, fields, cards, or records shown here.',
+            placement: 'right',
+            nextText: 'Next'
+          },
+          ...(isTransferListGuide && transferActionTarget ? [{
+            elements: [transferActionTarget],
+            text: path === '/store-manager/trans'
+              ? 'Use the Action eye button to open an incoming transfer. From there, review the items and confirm or save the received quantities.'
+              : 'Use the Action eye button to open an outgoing transfer. From there, view the full transfer details, destination, items, quantities, status, and remarks.',
+            placement: 'left',
+            nextText: 'Finish'
+          }] : []),
+          {
+            elements: [textButton(['submit', 'save', 'export', 'view', 'open'])],
+            text: 'Use the action button when you are ready to submit, save, export, or open the selected data.',
+            placement: 'left',
+            nextText: 'Finish'
+          }
+        ].filter(step => step.elements.some(Boolean));
+
+        let stepIndex = 0;
+        let tourActive = false;
+        let renderTimer = null;
+
+        function removeTour() {
+          document.querySelectorAll('.store-help-tour-panel, .store-help-tour-label').forEach(el => el.remove());
+          document.querySelectorAll('.store-help-tour-target').forEach(el => el.classList.remove('store-help-tour-target'));
+        }
+
+        function clearTour() {
+          tourActive = false;
+          removeTour();
+          document.body.classList.remove('overflow-hidden');
+          const url = new URL(window.location.href);
+          url.searchParams.delete('guide');
+          window.history.replaceState({}, document.title, url.toString());
+        }
+
+        function renderStep(options = {}) {
+          if (!tourActive) return;
+          const shouldScrollTarget = options.scrollTarget !== false;
+          if (renderTimer) {
+            clearTimeout(renderTimer);
+            renderTimer = null;
+          }
+          removeTour();
+          const step = steps[stepIndex];
+          if (!step) {
+            clearTour();
+            return;
+          }
+          const target = step.elements.find(visible) || step.elements.find(Boolean);
+          if (target && shouldScrollTarget) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+          }
+          renderTimer = setTimeout(() => {
+            renderTimer = null;
+            const rect = rectFor(step.elements);
+            if (!rect) {
+              stepIndex += 1;
+              renderStep();
+              return;
+            }
+            step.elements.forEach(el => {
+              if (el) el.classList.add('store-help-tour-target');
+            });
+            [
+              { top: 0, left: 0, width: window.innerWidth, height: rect.top },
+              { top: rect.bottom, left: 0, width: window.innerWidth, height: window.innerHeight - rect.bottom },
+              { top: rect.top, left: 0, width: rect.left, height: rect.bottom - rect.top },
+              { top: rect.top, left: rect.right, width: window.innerWidth - rect.right, height: rect.bottom - rect.top }
+            ].forEach(panel => {
+              const el = document.createElement('div');
+              el.className = 'store-help-tour-panel';
+              el.style.top = `${panel.top}px`;
+              el.style.left = `${panel.left}px`;
+              el.style.width = `${Math.max(0, panel.width)}px`;
+              el.style.height = `${Math.max(0, panel.height)}px`;
+              document.body.appendChild(el);
+            });
+
+            const label = document.createElement('div');
+            label.className = 'store-help-tour-label';
+            const message = document.createElement('div');
+            message.textContent = step.text;
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = step.nextText;
+            button.addEventListener('click', function() {
+              stepIndex += 1;
+              renderStep();
+            });
+            label.appendChild(message);
+            label.appendChild(button);
+
+            if (step.placement === 'left') {
+              label.style.left = `${Math.max(16, rect.left - 400)}px`;
+              label.style.top = `${Math.max(24, rect.top)}px`;
+            } else if (step.placement === 'right') {
+              const labelLeft = rect.right + 24;
+              const hasRightSpace = labelLeft + 340 <= window.innerWidth;
+              label.style.left = `${hasRightSpace ? labelLeft : Math.max(16, rect.left - 360)}px`;
+              label.style.top = `${Math.max(24, rect.top)}px`;
+            } else {
+              label.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 396))}px`;
+              label.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 18)}px`;
+            }
+            document.body.appendChild(label);
+          }, 350);
+        }
+
+        if (steps.length) {
+          tourActive = true;
+          document.body.classList.add('overflow-hidden');
+          setTimeout(renderStep, 400);
+          window.addEventListener('resize', () => renderStep({ scrollTarget: false }));
+        }
+      });
+    </script>
+    {% endif %}
+      
+    <!-- Flash Messages as Toast Notifications -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <script>
+          document.addEventListener('DOMContentLoaded', function() {
+            {% for category, message in messages %}
+              if (window.toast && typeof window.toast.show === 'function') {
+                window.toast.show({{ message|tojson }}, {{ category|tojson }});
+              }
+            {% endfor %}
+          });
+        </script>
+      {% endif %}
+    {% endwith %}
+    {% if current_user.is_authenticated and current_user.role == 'Store Manager' %}
+    <script>
+      (() => {
+        let lastBrowsePresenceSentAt = 0;
+        let lastTypingPresenceSentAt = 0;
+        let lastPresenceType = '';
+        const pingPresence = (activityType) => {
+          const now = Date.now();
+          if (activityType === 'typing' || activityType === 'uploading') {
+            if ((lastPresenceType === 'typing' || lastPresenceType === 'uploading') && now - lastTypingPresenceSentAt < 10000) return;
+            lastTypingPresenceSentAt = now;
+          } else {
+            if (lastPresenceType === 'browsing' && now - lastBrowsePresenceSentAt < 30000) return;
+            lastBrowsePresenceSentAt = now;
+          }
+          lastPresenceType = activityType;
+          fetch({{ url_for('views.presence_ping')|tojson }}, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ activity_type: activityType }),
+            keepalive: true
+          }).catch(() => {});
+        };
+        document.addEventListener('keydown', event => {
+          const target = event.target;
+          if (target && (target.matches('input, textarea, select') || target.isContentEditable)) {
+            pingPresence('typing');
+          }
+        });
+        document.addEventListener('input', () => pingPresence('typing'), { passive: true });
+        document.addEventListener('change', event => {
+          const target = event.target;
+          if (target && target.matches('input[type="file"]') && target.files && target.files.length) {
+            pingPresence('uploading');
+          }
+        });
+        document.addEventListener('submit', event => {
+          const form = event.target;
+          if (!form) return;
+          const hasSelectedFile = Array.from(form.querySelectorAll('input[type="file"]'))
+            .some(input => input.files && input.files.length);
+          if (hasSelectedFile) pingPresence('uploading');
+        });
+        ['pointerdown', 'touchstart', 'scroll'].forEach(eventName => {
+          document.addEventListener(eventName, () => pingPresence('browsing'), { passive: true });
+        });
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) pingPresence('browsing');
+        });
+      })();
+    </script>
+    {% endif %}
+
+    <script src="{{ url_for('static', filename='js/utilities.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/request_builder.js') }}"></script>
+
+    <script>
+      qBuilder.server_address = "_";
+      function inIframe() {
+        return window.self !== window.top;
+      }
+    </script>
+</body>
+</html>

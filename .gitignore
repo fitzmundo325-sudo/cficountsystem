@@ -14,12 +14,8 @@ instance/database.db
 __pycache__/
 *.pyc
 /website/__pycache__
-/tests/__pycache__
 *.pyo
 *.pyd
-
-# Pytest cache
-.pytest_cache/
 
 # Environment & IDE
 .env
