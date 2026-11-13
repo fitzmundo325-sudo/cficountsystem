@@ -62,7 +62,9 @@ MODEL_BUCKET = [
     
     {"id": "cohere/north-mini-code:free", "label": "North Mini Code(free)", "tools": True},   
     
-    # {"id": "baidu/ernie-5.5-flash-preview:free", "label": "Baidu: ERNIE-5.5-Flash-Preview (free) - Trail only", "tools":True},
+    {"id": "particle-ai/particle-1:free", "label": "Particle AI: Particle-1 (free)", "tools":True},   
+    
+    {"id": "apodex/apodex-1.1-mini:free", "label": "Apodex: Apodex 1.1 Mini (free)", "tools":True},
 ]
 
 TOOL_PROMPT = (
