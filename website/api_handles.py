@@ -23,6 +23,12 @@ from dotenv import load_dotenv
 from . import db, cache
 from datetime import datetime, date, timedelta, timezone
 from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cluster, Store, StoreTarget, SupplyItem, SupplyRequest, SupplyRequestItem, PosSold, DailyReport, RsoDelivery, DailyEndingInventory, PosSoldStaging, DailyEndingInventoryItem, GlobalInvenSyncConfig, TafTransfer, TafTransferItem, AuditLog, StoreProductBuffer
+from .views import (
+    _build_pos_sold_master_lookups,
+    _resolve_pos_sold_master_id,
+    _resolve_pos_sold_master_id_batch,
+    _resolve_bitbit_6s_pos_sold_rule,
+)
 
 def clear_product_alias_cache():
     cache.delete_memoized(_get_product_alias_lookup)
@@ -74,28 +80,6 @@ def _normalize_product_text(value):
     return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
 
 
-
-
-def _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup, similarity_threshold=0.85):
-    normalized_name = _normalize_product_text(product_name)
-    if not normalized_name:
-        return None
-    if normalized_name in alias_lookup:
-        return alias_lookup[normalized_name]
-    if normalized_name in master_lookup:
-        return master_lookup[normalized_name]
-
-    best_score = 0.0
-    best_master_id = None
-    for normalized_master, product_master_id in master_lookup.items():
-        if not normalized_master:
-            continue
-        score = SequenceMatcher(None, normalized_name, normalized_master).ratio()
-        if score > best_score:
-            best_score = score
-            best_master_id = product_master_id
-
-    return best_master_id if best_score >= similarity_threshold else None
 
 
 def _get_saved_motif_rows(raw_value):
@@ -5066,34 +5050,6 @@ def _match_rso_to_inventory(rso_item, product, alias_master_lookup=None):
         return True
     
     return False
-
-
-
-def _build_pos_sold_master_lookups():
-    alias_lookup = {}
-    master_lookup = {}
-
-    for alias_text, product_master_id in DEFAULT_POS_SOLD_ALIASES.items():
-        norm = _normalize_product_text(alias_text)
-        if norm:
-            alias_lookup[norm] = int(product_master_id)
-
-    for normalized_alias, product_master_id in (
-        db.session.query(ProductAlias.normalized_alias, ProductAlias.product_master_id)
-        .all()
-    ):
-        alias_text = str(normalized_alias or '').strip()
-        if alias_text:
-            alias_lookup[alias_text] = int(product_master_id)
-
-    for product_id, description in (
-        db.session.query(ProductMaster.id, ProductMaster.description).all()
-    ):
-        normalized_description = _normalize_product_text(description)
-        if normalized_description:
-            master_lookup[normalized_description] = int(product_id)
-
-    return alias_lookup, master_lookup
 
 
 # ================================

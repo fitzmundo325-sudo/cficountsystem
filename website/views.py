@@ -2901,6 +2901,7 @@ def _ensure_default_pos_sold_aliases():
         db.session.rollback()
 
 
+@cache.memoize(timeout=300)
 def _build_pos_sold_master_lookups():
     alias_lookup = {}
     master_lookup = {}
@@ -2926,6 +2927,37 @@ def _build_pos_sold_master_lookups():
             master_lookup[normalized_description] = int(product_id)
 
     return alias_lookup, master_lookup
+
+
+def _resolve_pos_sold_master_id_batch(product_names, alias_lookup, master_lookup, similarity_threshold=0.85):
+    """Resolve multiple product names in batch to avoid repeated SequenceMatcher calls."""
+    results = {}
+    for product_name in product_names:
+        if product_name in results:
+            continue
+        normalized_name = _normalize_product_text(product_name)
+        if not normalized_name:
+            results[product_name] = None
+            continue
+        if normalized_name in alias_lookup:
+            results[product_name] = alias_lookup[normalized_name]
+            continue
+        if normalized_name in master_lookup:
+            results[product_name] = master_lookup[normalized_name]
+            continue
+
+        best_score = 0.0
+        best_master_id = None
+        for normalized_master, product_master_id in master_lookup.items():
+            if not normalized_master:
+                continue
+            score = SequenceMatcher(None, normalized_name, normalized_master).ratio()
+            if score > best_score:
+                best_score = score
+                best_master_id = product_master_id
+
+        results[product_name] = best_master_id if best_score >= similarity_threshold else None
+    return results
 
 
 def _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup, similarity_threshold=0.85):
@@ -12991,16 +13023,37 @@ def _fetch_oracle_invensync_data(store, products, oracle_date=None):
     for p in products:
         has_prev_record = prev_inventory is not None
         has_today_record = today_inventory is not None
+        
+        # Determine ending stock source and quality
+        ending_source = 'actual' if has_prev_record else ('carried_forward' if has_today_record else 'missing')
+        ending_fallback = not has_prev_record and has_today_record
+        
+        # Count missing days for delivery/trans data
+        missing_days = 0 if has_today_record else 1
+        
+        # Calculate confidence score (0-1)
+        # 1.0 = all data present, 0.5 = partial, 0.0 = missing
+        quality_score = 1.0
+        if ending_source == 'missing':
+            quality_score = 0.0
+        elif ending_source == 'carried_forward':
+            quality_score = 0.6
+        if not has_today_record:
+            quality_score *= 0.7  # Reduce for missing today's data
+        
         invensync_data[str(p.id)] = {
             'ending_stock': prev_ending.get(p.id, 0),
             'delivery': today_delivery.get(p.id, 0),
             'trans_in': today_trans_in.get(p.id, 0),
             'trans_out': today_trans_out.get(p.id, 0),
             'data_quality': {
-                'ending_stock_source': 'actual' if has_prev_record else ('carried_forward' if has_today_record else 'missing'),
+                'ending_stock_source': ending_source,
+                'ending_stock_fallback_used': ending_fallback,
                 'delivery_source': 'actual' if has_today_record else 'missing',
                 'trans_in_source': 'actual' if has_today_record else 'missing',
                 'trans_out_source': 'actual' if has_today_record else 'missing',
+                'missing_days_count': missing_days,
+                'confidence_score': round(quality_score, 2),
             }
         }
 
@@ -13073,6 +13126,7 @@ def _fetch_oracle_invensync_data_for_order_form(store, products, selected_date=N
     invensync_data = {}
     has_source = source_inventory is not None
     for product in products:
+        quality_score = 1.0 if has_source else 0.0
         invensync_data[str(product.id)] = {
             'ending_stock': total_ending.get(product.id, 0),
             'delivery': delivery.get(product.id, 0),
@@ -13080,9 +13134,12 @@ def _fetch_oracle_invensync_data_for_order_form(store, products, selected_date=N
             'trans_out': trans_out.get(product.id, 0),
             'data_quality': {
                 'ending_stock_source': 'actual' if has_source else 'missing',
+                'ending_stock_fallback_used': False,
                 'delivery_source': 'actual' if has_source else 'missing',
                 'trans_in_source': 'actual' if has_source else 'missing',
                 'trans_out_source': 'actual' if has_source else 'missing',
+                'missing_days_count': 0 if has_source else 1,
+                'confidence_score': round(quality_score, 2),
             }
         }
 
@@ -13127,9 +13184,11 @@ def _cached_oracle_pos_sales_data(store_id, product_ids_tuple, anchor_date_str, 
     if not pos_rows:
         return sales_data
 
-    from .views import _build_pos_sold_master_lookups, _resolve_pos_sold_master_id, _resolve_bitbit_6s_pos_sold_rule
+    from .views import _build_pos_sold_master_lookups, _resolve_pos_sold_master_id_batch, _resolve_bitbit_6s_pos_sold_rule
     alias_lookup, master_lookup = _build_pos_sold_master_lookups()
-    bulk_totals = {}
+    
+    # Collect all unique product names for batch resolution
+    all_product_names = set()
     bulk_rows = RsoDelivery.query.filter(
         RsoDelivery.store_id == store_id,
         RsoDelivery.report_date >= start_date,
@@ -13137,7 +13196,17 @@ def _cached_oracle_pos_sales_data(store_id, product_ids_tuple, anchor_date_str, 
         RsoDelivery.upload_source == 'bulk',
     ).all()
     for bulk_row in bulk_rows:
-        bulk_product_id = _resolve_pos_sold_master_id(bulk_row.product_name, alias_lookup, master_lookup)
+        all_product_names.add(bulk_row.product_name)
+    for _, product_name, _ in pos_rows:
+        all_product_names.add(product_name)
+    
+    # Batch resolve all product names
+    resolved_ids = _resolve_pos_sold_master_id_batch(list(all_product_names), alias_lookup, master_lookup)
+    
+    # Process bulk rows
+    bulk_totals = {}
+    for bulk_row in bulk_rows:
+        bulk_product_id = resolved_ids.get(bulk_row.product_name)
         if bulk_product_id not in product_ids:
             continue
         bulk_quantity = int(bulk_row.received_quantity if bulk_row.received_quantity is not None else (bulk_row.quantity or 0))
@@ -13148,7 +13217,7 @@ def _cached_oracle_pos_sales_data(store_id, product_ids_tuple, anchor_date_str, 
     for report_date, product_name, total_qty in pos_rows:
         if _resolve_bitbit_6s_pos_sold_rule(product_name, alias_lookup, master_lookup):
             continue
-        master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+        master_id = resolved_ids.get(product_name)
         if master_id not in product_ids:
             continue
 
@@ -13307,7 +13376,7 @@ def _build_oracle_bulk_order_weeks(store, anchor_date=None):
 @cache.memoize(timeout=300)
 def _cached_oracle_bulk_order_product_data(store_id, product_ids_tuple, anchor_date_str):
     from .models import RsoDelivery
-    from .views import _build_pos_sold_master_lookups, _resolve_pos_sold_master_id
+    from .views import _build_pos_sold_master_lookups, _resolve_pos_sold_master_id_batch
     from datetime import date as _date, timedelta as _timedelta, datetime
     from zoneinfo import ZoneInfo
     from sqlalchemy import func
@@ -13340,6 +13409,11 @@ def _cached_oracle_bulk_order_product_data(store_id, product_ids_tuple, anchor_d
         return bulk_data
 
     alias_lookup, master_lookup = _build_pos_sold_master_lookups()
+    
+    # Batch resolve all unique product names
+    all_product_names = {row.product_name for row in bulk_rows}
+    resolved_ids = _resolve_pos_sold_master_id_batch(list(all_product_names), alias_lookup, master_lookup)
+    
     bulk_totals = {}
     for row in bulk_rows:
         uploaded_at = getattr(row, 'uploaded_at', None)
@@ -13354,8 +13428,7 @@ def _cached_oracle_bulk_order_product_data(store_id, product_ids_tuple, anchor_d
         if not indicator_date or indicator_date < start_date or indicator_date > end_date:
             continue
 
-        product_name = row.product_name
-        master_id = _resolve_pos_sold_master_id(product_name, alias_lookup, master_lookup)
+        master_id = resolved_ids.get(row.product_name)
         if master_id not in product_ids:
             continue
 

@@ -444,6 +444,26 @@ class GlobalInvenSyncConfig(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
 
+class GlobalOracleConfig(db.Model):
+    """Global Oracle calculation settings."""
+    __tablename__ = 'global_oracle_config'
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_time = db.Column(db.Integer, nullable=False, default=1)
+    default_buffer_pct = db.Column(db.Float, nullable=False, default=20.0)
+    min_order_override = db.Column(db.Integer, nullable=True)  # Null = use product default
+    created_at = db.Column(db.DateTime(timezone=True), default=func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), default=func.now(), onupdate=func.now())
+    updated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+
+    updater = db.relationship('User', foreign_keys=[updated_by])
+
+    __table_args__ = (
+        db.CheckConstraint('lead_time >= 0 AND lead_time <= 30', name='ck_oracle_lead_time_range'),
+        db.CheckConstraint('default_buffer_pct >= 0 AND default_buffer_pct <= 200', name='ck_oracle_buffer_pct_range'),
+    )
+
+
 class SystemSecret(db.Model):
     __tablename__ = 'system_secret'
 
@@ -593,6 +613,10 @@ class OracleOrder(db.Model):
         db.Index('ix_oracle_order_store_status', 'store_id', 'status'),
         db.Index('ix_oracle_order_store_order_date', 'store_id', 'order_date'),
         db.Index('ix_oracle_order_store_product_order', 'store_id', 'product_id', 'order_date'),
+        db.CheckConstraint('quantity >= 0', name='ck_oracle_order_quantity_nonneg'),
+        db.CheckConstraint('suggested_qty >= 0', name='ck_oracle_order_suggested_nonneg'),
+        db.CheckConstraint('min_suggested_qty >= 0', name='ck_oracle_order_min_suggested_nonneg'),
+        db.CheckConstraint('max_suggested_qty >= 0', name='ck_oracle_order_max_suggested_nonneg'),
     )
     
     
