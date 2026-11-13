@@ -289,7 +289,10 @@
 
 
 
-      <a href="/admin/delivery"
+      <a
+	  onclick="showDeliveryPageAdmin(this)"	  
+	  id="_delivery_v2"
+	  
         class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
           {% if request.path.startswith('/admin/delivery') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
         data-tooltip="Delivery">
