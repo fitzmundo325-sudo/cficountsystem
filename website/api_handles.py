@@ -6082,7 +6082,263 @@ def pos_sold_review():
 # ================================
  
  
- 
+# ================================
+# Delivery Section Start
+# ================================
+DELIVERY_ROLES = ('Superadmin', 'Admin', 'General Manager', 'Auditor', 'Area Manager')
+DELIVERY_READONLY_ROLES = ('Auditor', 'Area Manager')
+
+DELIVERY_REVIEW_SORT = {
+    'rso_no':            func.lower(func.coalesce(RsoDelivery.rso_no, '')),
+    'product_name':      func.lower(RsoDelivery.product_name),
+    'quantity':          RsoDelivery.quantity,
+    'received_quantity': func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity),
+    'upload_source':     func.lower(func.coalesce(RsoDelivery.upload_source, 'delivery')),
+    'reviewed_date':     RsoDelivery.delivery_reviewed_date,
+}
+
+
+def _delivery_per_page():
+    try:
+        value = int(request.form.get('rows') or request.args.get('rows') or 50)
+    except (ValueError, TypeError):
+        value = 50
+    return max(1, min(value, 500))
+
+
+def _delivery_order_clauses(sort_map, tie_breakers):
+    sortby = _pos_sold_param('sort')
+    order = (_pos_sold_param('order_by') or 'asc').lower()
+    clauses = [asc(col) for col in tie_breakers]
+    if sortby in sort_map:
+        column = sort_map[sortby]
+        primary = desc(column) if order == 'desc' else asc(column)
+        clauses = [primary] + clauses
+    return clauses
+
+
+@api_handles.route('/delivery_filters', methods=['GET', 'POST'])
+@login_required
+def delivery_filters():
+    if current_user.role not in DELIVERY_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    allowed, clusters, stores = _pos_sold_scope()
+    warning = None
+    if allowed is not None and not stores:
+        warning = 'No stores are assigned to your clusters yet. Please contact your administrator.'
+
+    today = datetime.today().date()
+    return {
+        'type': 'success',
+        'clusters': [{'id': c.id, 'name': c.name} for c in clusters],
+        'stores': [{'id': s.id, 'name': s.name, 'cluster_id': s.cluster_id} for s in stores],
+        'can_edit': current_user.role not in DELIVERY_READONLY_ROLES,
+        'default_start_date': today.replace(day=1).strftime('%Y-%m-%d'),
+        'today': today.strftime('%Y-%m-%d'),
+        'warning': warning,
+    }
+
+
+@api_handles.route('/delivery_consolidated', methods=['GET', 'POST'])
+@login_required
+def delivery_consolidated():
+    if current_user.role not in DELIVERY_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    allowed, clusters, stores = _pos_sold_scope()
+    cluster_ids = {int(c.id) for c in clusters}
+    cluster_id = _pos_sold_int('cluster_id')
+    store_id = _pos_sold_int('store_id')
+    per_page = _delivery_per_page()
+
+    try:
+        page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        page = 1
+
+    if not cluster_id:
+        return {'type': 'error', 'message': 'Please select a cluster first.'}
+    if allowed is not None and cluster_id not in allowed:
+        return {'type': 'error', 'message': 'Selected cluster is not assigned to you.'}
+    if cluster_id not in cluster_ids:
+        return {'type': 'error', 'message': 'Selected cluster does not exist.'}
+
+    start_date = _pos_sold_date(_pos_sold_param('start_date'))
+    end_date = _pos_sold_date(_pos_sold_param('end_date'))
+    if not start_date or not end_date:
+        return {'type': 'error', 'message': 'Please select valid start and end dates.'}
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    warning = None
+    allowed_store_ids = {int(s.id) for s in stores if int(s.cluster_id or 0) == cluster_id}
+    if store_id and store_id not in allowed_store_ids:
+        warning = 'Selected store does not belong to the chosen cluster.'
+        store_id = None
+
+    grouped_query = (
+        db.session.query(
+            Store.id.label('store_id'),
+            Store.name.label('store_name'),
+            Cluster.name.label('cluster_name'),
+            RsoDelivery.product_name.label('product_name'),
+            RsoDelivery.report_date.label('report_date'),
+            RsoDelivery.upload_source.label('upload_source'),
+            func.count(RsoDelivery.id).label('entry_count'),
+            func.sum(RsoDelivery.quantity).label('total_qty'),
+            func.sum(func.coalesce(RsoDelivery.received_quantity, RsoDelivery.quantity)).label('total_received_qty'),
+            func.max(case((RsoDelivery.rso_no == 'Manual Entry', 1), else_=0)).label('manual_entry_count'),
+            func.max(RsoDelivery.manual_note).label('manual_note'),
+        )
+        .join(Store, Store.id == RsoDelivery.store_id)
+        .outerjoin(Cluster, Cluster.id == Store.cluster_id)
+        .filter(
+            Store.cluster_id == cluster_id,
+            RsoDelivery.report_date >= start_date,
+            RsoDelivery.report_date <= end_date,
+        )
+    )
+    if store_id:
+        grouped_query = grouped_query.filter(Store.id == store_id)
+
+    grouped = (
+        grouped_query
+        .group_by(Store.id, Store.name, Cluster.name, RsoDelivery.product_name, RsoDelivery.report_date, RsoDelivery.upload_source)
+        .subquery()
+    )
+
+    total_results = db.session.query(func.count()).select_from(grouped).scalar() or 0
+    totals = (
+        db.session.query(
+            func.count(func.distinct(grouped.c.store_id)),
+            func.coalesce(func.sum(grouped.c.total_qty), 0),
+            func.coalesce(func.sum(grouped.c.total_received_qty), 0),
+        )
+        .select_from(grouped)
+        .one()
+    )
+
+    total_pages = math.ceil(total_results / per_page) if total_results > 0 else 1
+    page = max(1, min(page, total_pages))
+
+    sort_map = {
+        'store_name':        func.lower(grouped.c.store_name),
+        'report_date':       grouped.c.report_date,
+        'product_name':      func.lower(grouped.c.product_name),
+        'upload_source':     func.lower(func.coalesce(grouped.c.upload_source, 'delivery')),
+        'entry_count':       grouped.c.entry_count,
+        'quantity':          grouped.c.total_qty,
+        'received_quantity': grouped.c.total_received_qty,
+    }
+    tie_breakers = [
+        func.lower(grouped.c.store_name),
+        grouped.c.report_date,
+        func.lower(grouped.c.product_name),
+        func.lower(func.coalesce(grouped.c.upload_source, '')),
+    ]
+
+    delivery_rows = (
+        db.session.query(grouped)
+        .order_by(*_delivery_order_clauses(sort_map, tie_breakers))
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .all()
+    )
+
+    data = [
+        {
+            'cluster_name': row.cluster_name or 'Unassigned',
+            'store_id': int(row.store_id),
+            'store_name': row.store_name or f'Store {row.store_id}',
+            'report_date': row.report_date.strftime('%Y-%m-%d') if row.report_date else None,
+            'product_name': (row.product_name or '').strip() or 'Unnamed Product',
+            'upload_source': row.upload_source or 'delivery',
+            'has_manual': bool(row.manual_entry_count),
+            'manual_note': row.manual_note,
+            'entry_count': int(row.entry_count or 0),
+            'quantity': int(row.total_qty or 0),
+            'received_quantity': int(row.total_received_qty or 0),
+        }
+        for row in delivery_rows
+    ]
+
+    return {
+        'type': 'success',
+        'data': data,
+        'summary': {
+            'rows_count': int(total_results),
+            'stores_count': int(totals[0] or 0),
+            'total_qty': int(totals[1] or 0),
+            'total_received_qty': int(totals[2] or 0),
+        },
+        'start_date': start_date.strftime('%Y-%m-%d'),
+        'end_date': end_date.strftime('%Y-%m-%d'),
+        'warning': warning,
+        'current_page': page,
+        'total_pages': total_pages,
+        'total_results': int(total_results),
+    }
+
+
+@api_handles.route('/delivery_review', methods=['GET', 'POST'])
+@login_required
+def delivery_review():
+    if current_user.role not in DELIVERY_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    allowed, clusters, stores = _pos_sold_scope()
+    store_id = _pos_sold_int('review_store_id')
+    review_date = _pos_sold_date(_pos_sold_param('review_date')) or datetime.today().date()
+
+    if not store_id:
+        return {'type': 'error', 'message': 'Please select a store first.'}
+
+    store = Store.query.get(store_id)
+    if not store:
+        return {'type': 'error', 'message': 'Selected review store does not exist.'}
+    if allowed is not None and int(store.cluster_id or 0) not in allowed:
+        return {'type': 'error', 'message': 'Selected review store is not assigned to you.'}
+
+    tie_breakers = [RsoDelivery.rso_no, RsoDelivery.product_name, RsoDelivery.id]
+    review_rows = (
+        RsoDelivery.query
+        .filter_by(store_id=store_id, report_date=review_date)
+        .order_by(*_delivery_order_clauses(DELIVERY_REVIEW_SORT, tie_breakers))
+        .all()
+    )
+
+    rows = []
+    for r in review_rows:
+        raw_received = r.received_quantity
+        rows.append({
+            'id': r.id,
+            'rso_no': r.rso_no,
+            'product_name': r.product_name,
+            'is_manual': (r.rso_no or '').strip().lower() == 'manual entry',
+            'manual_note': r.manual_note,
+            'quantity': int(r.quantity or 0),
+            'received_quantity': int(raw_received if raw_received is not None else (r.quantity or 0)),
+            'received_quantity_raw': int(raw_received) if raw_received is not None else None,
+            'upload_source': r.upload_source or 'delivery',
+            'reviewed_date': r.delivery_reviewed_date.strftime('%Y-%m-%d') if r.delivery_reviewed_date else None,
+        })
+
+    return {
+        'type': 'success',
+        'data': rows,
+        'summary': {
+            'rows_count': len(rows),
+            'total_qty': sum(r['quantity'] for r in rows),
+            'total_received_qty': sum(r['received_quantity'] for r in rows),
+        },
+        'review_date': review_date.strftime('%Y-%m-%d'),
+        'can_edit': current_user.role not in DELIVERY_READONLY_ROLES,
+    }
+
+# ================================
+# Delivery Section End
+# ================================ 
  
  
 # ================================

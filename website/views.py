@@ -14359,6 +14359,17 @@ def pos_sold_v2():
     page = 'pos_sold'
     return render_template("admin/pos_sold_v2.html", user=current_user, page=page)
     
+    
+    
+#v2 of the Delivery
+@views.route('/admin/delivery_v2', methods=['GET'])
+@login_required
+def delivery_v2():
+
+
+    page = 'delivery'
+    return render_template("admin/delivery_v2.html", user=current_user, page=page)
+    
 
   
 #v2 of the Oracle
