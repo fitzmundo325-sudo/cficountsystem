@@ -1,0 +1,181 @@
+{% extends "base_headless.html" %}
+{% block title %}Charge Slips{% endblock %}
+
+{% block content %}
+
+<header class="sticky top-0 z-20 bg-white/85 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900 font-semibold">Charge Slips (All Stores)</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <input type="date" id="header_date" class="px-4 py-2 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 transition text-sm font-medium">
+    <button id="filter-date-btn" type="button" class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 active:scale-95">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 2.2" />
+      </svg>
+      <span>Filter Date</span>
+    </button>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <section class="space-y-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">All Charge Slips History</h1>
+      <p class="mt-1 text-slate-600">View, edit, and delete Charge Slips across all stores</p>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Charge Slips</p>
+        <p id="sum-total" class="mt-2 text-2xl font-bold text-slate-900">0</p>
+      </div>
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Net Charges</p>
+        <p id="sum-net" class="mt-2 text-2xl font-bold text-cyan-700">₱0.00</p>
+      </div>
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Spoilage Slips</p>
+        <p id="sum-spoilage" class="mt-2 text-2xl font-bold text-amber-700">0</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <form id="charge-form" class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(200px,1fr)_160px_160px_160px_auto_auto]">
+      <input id="cs-search" type="search" placeholder="Search control no, recipient, store..." class="rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
+
+      <select id="store_id" class="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+        <option value="">All Stores</option>
+      </select>
+
+      <select id="charge_type" class="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+        <option value="">All Charge Types</option>
+        <option value="charge">Charge</option>
+        <option value="spoilage">Spoilage</option>
+      </select>
+
+      <select id="status" class="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+        <option value="">All Statuses</option>
+        <option value="pending">Pending</option>
+        <option value="received">Received</option>
+      </select>
+
+      <button id="apply-btn" type="submit" class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 transition-colors disabled:opacity-60">Search</button>
+      <button id="reset-btn" type="button" class="rounded-xl border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Clear</button>
+    </form>
+    <p id="matching-info" class="mt-3 text-xs font-medium text-slate-500"></p>
+  </section>
+
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200 bg-slate-100">
+      <h3 class="text-lg font-bold text-slate-900">Charge Slip Records</h3>
+      <p class="text-sm text-slate-500 mt-0.5">All Charge and Spoilage slips submitted across all store locations</p>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead id="charge-head" class="bg-slate-100">
+          <tr>
+            <th data-sort="transaction_date" aria-sort="none" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Date <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="control_no" aria-sort="none" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Control No <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="store_name" aria-sort="none" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Store <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="customer_name" aria-sort="none" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Recipient / Name <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="charge_type" aria-sort="none" class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Type <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="items_count" aria-sort="none" class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Items <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="grand_total" aria-sort="none" class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Subtotal <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="discount_percent" aria-sort="none" class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Discount <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="net_total" aria-sort="none" class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Net Charges <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="status" aria-sort="none" class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Status <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Action</th>
+          </tr>
+        </thead>
+        <tbody id="charge-body" class="divide-y divide-slate-100 bg-white"></tbody>
+        <tbody id="charge-empty" class="hidden">
+          <tr>
+            <td colspan="11" class="text-center py-12">
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-slate-300 mb-4">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+              <h3 class="text-lg font-bold text-slate-900 mb-1">No Charge Slips Found</h3>
+              <p id="empty-message" class="text-sm text-slate-600"></p>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="charge-pagination" class="hidden flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4 bg-slate-50">
+      <p id="pagination-info" class="text-sm text-slate-500"></p>
+      <nav id="pagination-buttons" class="flex items-center gap-1"></nav>
+    </div>
+  </div>
+
+</div>
+
+<template id="tmpl-charge-row">
+  <tr class="odd:bg-white even:bg-slate-50 hover:bg-slate-100/80 transition-colors">
+    <td data-cell="date" class="px-4 py-3 text-sm text-slate-700 whitespace-nowrap"></td>
+    <td data-cell="control_no" class="px-4 py-3 text-sm font-semibold text-slate-900 whitespace-nowrap"></td>
+    <td data-cell="store" class="px-4 py-3 text-sm font-medium text-slate-800 whitespace-nowrap"></td>
+    <td data-cell="customer" class="px-4 py-3 text-sm font-medium text-slate-900 whitespace-nowrap"></td>
+    <td class="px-4 py-3 text-center whitespace-nowrap"><span data-cell="type"></span></td>
+    <td data-cell="items" class="px-4 py-3 text-sm text-slate-900 text-right font-semibold whitespace-nowrap"></td>
+    <td data-cell="subtotal" class="px-4 py-3 text-sm text-right text-slate-700 whitespace-nowrap"></td>
+    <td data-cell="discount" class="px-4 py-3 text-sm text-right text-slate-600 whitespace-nowrap"></td>
+    <td data-cell="net" class="px-4 py-3 text-sm text-right font-extrabold text-cyan-700 whitespace-nowrap"></td>
+    <td class="px-4 py-3 text-center whitespace-nowrap"><span data-cell="status"></span></td>
+    <td class="px-4 py-3 text-center whitespace-nowrap">
+      <div class="flex items-center justify-center gap-1.5">
+        <a data-action="edit" href="#" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors" title="Edit Charge Slip" aria-label="Edit Charge Slip">&#9998;</a>
+        <button type="button" data-action="delete" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 transition-colors" title="Delete Charge Slip" aria-label="Delete Charge Slip">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18"></path>
+            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+          </svg>
+        </button>
+      </div>
+    </td>
+  </tr>
+</template>
+
+<script>
+  let CHARGE_SLIP_ROUTES = {
+    edit: "{{ url_for('admin.admin_edit_taf', transfer_id=987654321) }}",
+    remove: "/admin/taf/delete/987654321"
+  };
+
+  let UI_CLASSES = {
+    pageButton: 'rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50 fancy_button',
+    pageCurrent: 'rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white',
+    pageGap: 'px-2 text-slate-400',
+    sortActive: 'text-indigo-600',
+    sortInactive: 'text-slate-300',
+    typeBase: 'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold',
+    statusBase: 'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold',
+    typeSpoilage: 'bg-amber-100 text-amber-800 border border-amber-200',
+    typeCharge: 'bg-cyan-100 text-cyan-800 border border-cyan-200',
+    statusPending: 'bg-amber-100 text-amber-800 border border-amber-200',
+    statusReceived: 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+  };
+
+  let SPINNER_HTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4 inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+</script>
+<script defer src="{{ url_for('static', filename='js/handles/charge_slips_admin_handles.js') }}"></script>
+
+{% endblock %}

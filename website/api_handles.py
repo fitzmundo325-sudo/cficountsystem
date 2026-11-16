@@ -6390,6 +6390,197 @@ def delivery_review():
 # ================================
 # Delivery Section End
 # ================================ 
+
+
+# ================================
+# Charge Slips Section Start
+# ================================ 
+CHARGE_SLIP_ROLES = ('Superadmin', 'Admin', 'Inventory Staff')
+
+
+def _charge_slip_param(name):
+    return (request.form.get(name) or request.args.get(name) or '').strip()
+
+
+def _charge_slip_date(value):
+    try:
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    except (ValueError, TypeError):
+        return None
+
+
+@api_handles.route('/charge_slips', methods=['GET', 'POST'])
+@login_required
+def charge_slips_list():
+    if current_user.role not in CHARGE_SLIP_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        page = 1
+
+    try:
+        per_page = int(request.form.get('rows') or request.args.get('rows') or 20)
+    except (ValueError, TypeError):
+        per_page = 20
+    per_page = max(1, min(per_page, 200))
+
+    selected_date = _charge_slip_date(_charge_slip_param('date'))
+    search_query = _charge_slip_param('search').lower()
+    charge_type_filter = _charge_slip_param('charge_type').lower()
+    status_filter = _charge_slip_param('status').lower()
+    try:
+        store_id = int(_charge_slip_param('store_id') or 0)
+    except ValueError:
+        store_id = 0
+
+    store_expr = func.coalesce(Store.name, TafTransfer.transfer_from)
+    type_expr = func.coalesce(func.nullif(func.trim(TafTransfer.charge_type), ''), 'Charge')
+    status_expr = func.coalesce(func.nullif(func.trim(TafTransfer.status), ''), 'Pending')
+    items_expr = (
+        db.session.query(func.count(TafTransferItem.id))
+        .filter(TafTransferItem.transfer_id == TafTransfer.id)
+        .correlate(TafTransfer)
+        .scalar_subquery()
+    )
+
+    query = (
+        db.session.query(
+            TafTransfer.id.label('id'),
+            TafTransfer.transaction_date.label('transaction_date'),
+            TafTransfer.control_no.label('control_no'),
+            store_expr.label('store_name'),
+            TafTransfer.customer_name.label('customer_name'),
+            type_expr.label('charge_type'),
+            items_expr.label('items_count'),
+            TafTransfer.grand_total.label('grand_total'),
+            TafTransfer.discount_percent.label('discount_percent'),
+            TafTransfer.net_total.label('net_total'),
+            status_expr.label('status'),
+        )
+        .outerjoin(Store, TafTransfer.store_id == Store.id)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip')
+    )
+
+    if selected_date:
+        query = query.filter(TafTransfer.transaction_date == selected_date)
+
+    if search_query:
+        like_query = f'%{search_query}%'
+        query = query.filter(or_(
+            func.lower(TafTransfer.control_no).like(like_query),
+            func.lower(TafTransfer.customer_name).like(like_query),
+            func.lower(TafTransfer.prepared_by_name).like(like_query),
+            func.lower(TafTransfer.approved_by_name).like(like_query),
+            func.lower(TafTransfer.received_by_name).like(like_query),
+            func.lower(Store.name).like(like_query),
+        ))
+
+    if charge_type_filter:
+        query = query.filter(func.lower(func.trim(TafTransfer.charge_type)) == charge_type_filter)
+
+    if status_filter:
+        query = query.filter(func.lower(status_expr) == status_filter)
+
+    if store_id:
+        query = query.filter(TafTransfer.store_id == store_id)
+
+    sort_columns = {
+        'transaction_date': TafTransfer.transaction_date,
+        'control_no': TafTransfer.control_no,
+        'store_name': store_expr,
+        'customer_name': TafTransfer.customer_name,
+        'charge_type': type_expr,
+        'items_count': items_expr,
+        'grand_total': TafTransfer.grand_total,
+        'discount_percent': TafTransfer.discount_percent,
+        'net_total': TafTransfer.net_total,
+        'status': status_expr,
+    }
+    sort_column = sort_columns.get(_charge_slip_param('sort'))
+    if sort_column is None:
+        order_clauses = [TafTransfer.transaction_date.desc(), TafTransfer.id.desc()]
+    else:
+        ascending = _charge_slip_param('order_by').lower() == 'asc'
+        order_clauses = [sort_column.asc() if ascending else sort_column.desc(), TafTransfer.id.desc()]
+    query = query.order_by(*order_clauses)
+
+    total_results = (
+        query.order_by(None)
+        .with_entities(func.count(TafTransfer.id))
+        .scalar()
+    ) or 0
+    total_pages = math.ceil(total_results / per_page) if total_results > 0 else 1
+    page = max(1, min(page, total_pages))
+
+    rows = query.offset((page - 1) * per_page).limit(per_page).all()
+
+    data = [
+        {
+            'id': int(row.id),
+            'transaction_date': row.transaction_date.strftime('%Y-%m-%d') if row.transaction_date else '',
+            'date_label': row.transaction_date.strftime('%b %d, %Y') if row.transaction_date else '',
+            'control_no': row.control_no or '',
+            'store_name': row.store_name or '-',
+            'customer_name': row.customer_name or '',
+            'charge_type': row.charge_type,
+            'items_count': int(row.items_count or 0),
+            'grand_total': float(row.grand_total or 0.0),
+            'discount_percent': float(row.discount_percent or 0.0),
+            'net_total': float(row.net_total or 0.0),
+            'status': row.status,
+        }
+        for row in rows
+    ]
+
+    net_amount_expr = case(
+        (func.coalesce(TafTransfer.net_total, 0) != 0, TafTransfer.net_total),
+        else_=func.coalesce(TafTransfer.grand_total, 0),
+    )
+    stats = (
+        db.session.query(
+            func.count(TafTransfer.id),
+            func.coalesce(func.sum(net_amount_expr), 0),
+            func.coalesce(func.sum(case(
+                (func.lower(func.trim(TafTransfer.charge_type)) == 'spoilage', 1),
+                else_=0,
+            )), 0),
+        )
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip')
+        .one()
+    )
+
+    return {
+        'type': 'success',
+        'data': data,
+        'summary': {
+            'total_count': int(stats[0] or 0),
+            'total_net_amount': float(stats[1] or 0.0),
+            'total_spoilage_count': int(stats[2] or 0),
+        },
+        'current_page': page,
+        'total_pages': total_pages,
+        'total_results': total_results,
+    }
+
+
+@api_handles.route('/charge_slips_filters', methods=['GET', 'POST'])
+@login_required
+def charge_slips_filters():
+    if current_user.role not in CHARGE_SLIP_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    stores = Store.query.order_by(Store.name.asc()).all()
+    return {
+        'type': 'success',
+        'stores': [{'id': int(s.id), 'name': s.name or f'Store {s.id}'} for s in stores],
+    }
+
+
+# ================================
+# Charge Slips Section End
+# ================================ 
  
  
 # ================================

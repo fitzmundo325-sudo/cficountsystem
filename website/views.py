@@ -14370,6 +14370,17 @@ def delivery_v2():
     page = 'delivery'
     return render_template("admin/delivery_v2.html", user=current_user, page=page)
     
+    
+    
+#v2 of the Charge Slip 
+@views.route('/admin/charge_slips_v2', methods=['GET'])
+@login_required
+def charge_slips_v2():
+
+
+    page = 'charge_slips'
+    return render_template("admin/charge_slips_v2.html", user=current_user, page=page)
+    
 
   
 #v2 of the Oracle
