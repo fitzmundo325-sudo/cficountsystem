@@ -28,6 +28,11 @@ from .views import (
     _resolve_bitbit_6s_pos_sold_rule,
 )
 
+from .admin import (
+    _reverse_inventory_trans_quantities,
+    _apply_inventory_trans_quantities
+)
+
 def clear_product_alias_cache():
     cache.delete_memoized(_get_product_alias_lookup)
 
@@ -6586,9 +6591,237 @@ def charge_slips_filters():
 # ================================ 
  
  
+# To-Do # Add the v2 of  Transact Form edit
+ 
+# ================================
+# TAF edit Start
+# ================================ 
+TAF_EDIT_ROLES = ('Superadmin', 'Admin', 'Inventory Staff')
+
+
+def _taf_edit_denied():
+    if current_user.role not in TAF_EDIT_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+    return None
+
+
+def _taf_store_for(transfer):
+    return transfer.store or Store.query.filter_by(name=transfer.transfer_from).first()
+
+
+def _taf_product_price_map(transfer):
+    product_rows = (
+        ProductMaster.query
+        .filter(ProductMaster.description.isnot(None))
+        .order_by(ProductMaster.description.asc())
+        .all()
+    )
+    store_obj = _taf_store_for(transfer)
+    store_group = Store.determine_store_group(store_obj.name) if store_obj else 'premium'
+    product_names = []
+    price_map = {}
+    for row in product_rows:
+        p_name = str(getattr(row, 'description', '') or '').strip()
+        if not p_name:
+            continue
+        if p_name not in product_names:
+            product_names.append(p_name)
+        price_val = getattr(row, 'sp_np' if store_group == 'non_premium' else 'sp_p', None)
+        if price_val is None or price_val == 0.0:
+            price_val = getattr(row, 'tp', 0.0)
+        price_map[p_name] = float(price_val or 0.0)
+    return product_names, price_map
+
+
+@api_handles.route('/taf/get/<int:transfer_id>', methods=['GET', 'POST'])
+@login_required
+def get_taf_edit(transfer_id):
+    denied = _taf_edit_denied()
+    if denied:
+        return denied
+
+    transfer = TafTransfer.query.options(selectinload(TafTransfer.items)).get(transfer_id)
+    if not transfer:
+        return {'type': 'error', 'message': 'Transfer not found.'}
+
+    product_names, price_map = _taf_product_price_map(transfer)
+    return {
+        'type': 'success',
+        'transfer': {
+            'id': transfer.id,
+            'control_no': transfer.control_no,
+            'transaction_date': transfer.transaction_date.strftime('%Y-%m-%d') if transfer.transaction_date else '',
+            'transaction_type': transfer.transaction_type,
+            'transfer_from': transfer.transfer_from,
+            'transfer_to': transfer.transfer_to,
+            'customer_name': transfer.customer_name,
+            'charge_type': transfer.charge_type,
+            'discount_percent': transfer.discount_percent,
+            'approved_by_name': transfer.approved_by_name,
+            'prepared_by_name': transfer.prepared_by_name,
+            'received_by_name': transfer.received_by_name,
+            'status': transfer.status,
+            'grand_total': transfer.grand_total,
+            'net_total': transfer.net_total,
+        },
+        'items': [
+            {
+                'id': item.id,
+                'item_name': item.item_name,
+                'unit_cost': item.unit_cost,
+                'quantity': item.quantity,
+                'received_quantity': item.received_quantity,
+                'short_over_qty': item.short_over_qty,
+                'line_total': item.line_total,
+                'remarks': item.remarks,
+            }
+            for item in transfer.items
+        ],
+        'stores': [{'id': s.id, 'name': s.name} for s in Store.query.order_by(Store.name.asc()).all()],
+        'product_names': product_names,
+        'product_price_map': price_map,
+    }
+
+
+@api_handles.route('/taf/update/<int:transfer_id>', methods=['POST'])
+@login_required
+def update_taf_edit(transfer_id):
+    denied = _taf_edit_denied()
+    if denied:
+        return denied
+
+    transfer = TafTransfer.query.options(selectinload(TafTransfer.items)).get(transfer_id)
+    if not transfer:
+        return {'type': 'error', 'message': 'Transfer not found.'}
+
+    try:
+        new_date = datetime.strptime(request.form.get('transaction_date') or '', '%Y-%m-%d').date()
+    except ValueError:
+        return {'type': 'error', 'message': 'A valid transaction date is required.'}
+
+    try:
+        from .views import _sync_taf_csi_inventory_for_store_date
+
+        old_store = _taf_store_for(transfer)
+        old_date = transfer.transaction_date
+        old_charge_type = str(transfer.charge_type or 'Charge').strip()
+        old_transaction_type = str(transfer.transaction_type or '').strip()
+
+        _reverse_inventory_trans_quantities(transfer)
+        transfer.transaction_date = new_date
+        transfer.control_no = (request.form.get('control_no') or '').strip()
+        transfer.transaction_type = (request.form.get('transaction_type') or '').strip()
+
+        if transfer.transaction_type == 'Charge Slip':
+            transfer.transfer_to = 'Charge Slip'
+            transfer.customer_name = (request.form.get('customer_name') or '').strip()
+            transfer.charge_type = (request.form.get('charge_type') or 'Charge').strip()
+            try:
+                transfer.discount_percent = max(0.0, float(request.form.get('discount_percent') or 0))
+            except ValueError:
+                transfer.discount_percent = 0.0
+            transfer.approved_by_name = (request.form.get('approved_by_name') or '').strip() or None
+        else:
+            transfer_to = (request.form.get('transfer_to') or '').strip()
+            if transfer.transaction_type == 'Wastage Transfer':
+                transfer_to = 'Main Office'
+            elif transfer.transaction_type in ('EGI Plant Transfer', 'Supplies Transfer'):
+                transfer_to = 'EGI Plant'
+            transfer.transfer_to = transfer_to
+
+        transfer.prepared_by_name = (request.form.get('prepared_by_name') or '').strip()
+        transfer.received_by_name = (request.form.get('received_by_name') or '').strip() or None
+        transfer.status = (request.form.get('status') or 'Pending').strip()
+
+        item_ids = request.form.getlist('item_id[]')
+        item_names = request.form.getlist('item_name[]')
+        unit_costs = request.form.getlist('unit_cost[]')
+        quantities = request.form.getlist('quantity[]') or request.form.getlist('qty[]')
+        received_quantities = request.form.getlist('received_quantity[]')
+        remarks = request.form.getlist('remarks[]')
+        existing_items = {str(item.id): item for item in transfer.items}
+        kept_ids = set()
+        grand_total = 0.0
+
+        for index, item_name in enumerate(item_names):
+            item_name = item_name.strip()
+            if not item_name:
+                continue
+            item_id = item_ids[index] if index < len(item_ids) else ''
+            item = existing_items.get(item_id) or TafTransferItem(transfer=transfer)
+            if item.id:
+                kept_ids.add(item.id)
+            try:
+                unit_cost = max(0.0, float(unit_costs[index])) if index < len(unit_costs) and unit_costs[index] else 0.0
+            except (ValueError, TypeError):
+                unit_cost = 0.0
+            try:
+                quantity = max(0, int(quantities[index])) if index < len(quantities) and quantities[index] else 0
+            except (ValueError, TypeError):
+                quantity = 0
+
+            received_raw = received_quantities[index].strip() if index < len(received_quantities) else ''
+            item.item_name = item_name
+            item.unit_cost = unit_cost
+            item.quantity = quantity
+            item.received_quantity = max(0, int(received_raw)) if received_raw else None
+            item.short_over_qty = (item.received_quantity - quantity) if item.received_quantity is not None else 0
+            item.line_total = unit_cost * quantity
+            item.remarks = remarks[index].strip() if index < len(remarks) else None
+            grand_total += item.line_total
+
+        for old_item in list(transfer.items):
+            if old_item.id and old_item.id not in kept_ids:
+                db.session.delete(old_item)
+
+        transfer.grand_total = grand_total
+        if transfer.transaction_type == 'Charge Slip':
+            discount_amount = grand_total * ((transfer.discount_percent or 0.0) / 100.0)
+            transfer.net_total = max(0.0, grand_total - discount_amount)
+
+        db.session.flush()
+
+        if old_transaction_type == 'Charge Slip' and old_store and old_date:
+            if old_date != transfer.transaction_date or old_charge_type != transfer.charge_type or transfer.transaction_type != 'Charge Slip':
+                if old_charge_type == 'Spoilage':
+                    _sync_taf_wastage_inventory_for_store_date(old_store, old_date)
+                else:
+                    _sync_taf_csi_inventory_for_store_date(old_store, old_date)
+
+        _apply_inventory_trans_quantities(transfer)
+
+        try:
+            log_audit_event(
+                action='taf.edit', entity_type='TafTransfer', entity_id=transfer.id,
+                reason=f'Admin edited TAF transfer {transfer.control_no}',
+                details={'control_no': transfer.control_no, 'item_count': len(item_names)},
+            )
+        except Exception:
+            pass
+
+        db.session.commit()
+        return {
+            'type': 'success',
+            'message': 'TAF updated successfully.',
+            'next': 'charge_slips' if transfer.transaction_type == 'Charge Slip' else 'taf',
+        }
+    except Exception as exc:
+        db.session.rollback()
+        return {'type': 'error', 'message': f'Unable to update TAF: {str(exc)}'}
+
+ 
+# ================================
+# TAF edit END
+# ================================ 
+
+
+
+
+
 # ================================
 # Users Section Start
 # ================================
+
 @api_handles.route('/users', methods=['POST', 'GET'])
 @login_required
 def api_users():

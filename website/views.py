@@ -14371,6 +14371,8 @@ def delivery_v2():
     return render_template("admin/delivery_v2.html", user=current_user, page=page)
     
     
+
+    
     
 #v2 of the Charge Slip 
 @views.route('/admin/charge_slips_v2', methods=['GET'])
@@ -14381,8 +14383,22 @@ def charge_slips_v2():
     page = 'charge_slips'
     return render_template("admin/charge_slips_v2.html", user=current_user, page=page)
     
+    
+@views.route('/admin/taf_edit_v2', methods=['GET'])
+@login_required
+def taf_edit():
+    if current_user.role not in ('Superadmin', 'Admin', 'Inventory Staff'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('admin.dashboard'))
 
-  
+    page = 'charge_slips'
+    return render_template("admin/taf_edit_v2.html", user=current_user, page=page)   
+#v2 of the Charge Slip End
+ 
+
+
+
+ 
 #v2 of the Oracle
 @views.route('/store-manager/oracle_v2', methods=['GET'])
 @login_required

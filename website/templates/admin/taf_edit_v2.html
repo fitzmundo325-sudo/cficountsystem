@@ -1,0 +1,284 @@
+{% extends "base_headless.html" %}
+{% block title %}Edit TAF & Charge Slip{% endblock %}
+
+{% block content %}
+
+<style>
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+</style>
+
+<header class="sticky top-0 z-20 bg-white/85 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Edit TAF</span>
+    </nav>
+  </div>
+</header>
+
+<div class="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+
+  <!-- Loading -->
+  <section id="taf-loading" class="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm font-medium text-slate-500 shadow-sm">
+    Loading transfer record...
+  </section>
+
+  <!-- Load Error -->
+  <section id="taf-load-error" class="hidden rounded-2xl border border-rose-200 bg-rose-50 p-6">
+    <h2 class="text-base font-bold text-rose-900">Unable to load this record</h2>
+    <p id="taf-load-error-message" class="mt-1 text-sm text-rose-800"></p>
+    <a id="taf-error-back" href="#" class="mt-4 inline-flex items-center justify-center rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-700 border border-slate-300 hover:bg-slate-50 transition-colors">Back to TAF List</a>
+  </section>
+
+  <div id="taf-content" class="hidden space-y-6">
+
+    <!-- Top Breadcrumb & Header Card -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+      <div class="space-y-1">
+        <nav class="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+          <a id="breadcrumb-taf-link" href="#" class="hover:text-slate-900 transition-colors">TAF List</a>
+          <span>/</span>
+          <span class="text-slate-900">Edit Record</span>
+        </nav>
+        <div class="flex flex-wrap items-center gap-3">
+          <h1 id="hdr-title" class="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">Edit TAF</h1>
+          <span id="hdr-control-no" class="px-2.5 py-1 text-xs font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200 rounded-md"></span>
+          <span id="hdr-status" class="px-2.5 py-1 text-xs font-bold rounded-md border bg-sky-50 text-sky-700 border-sky-200"></span>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <a id="back-link" href="#" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors" onclick="window.history.back()">Back to TAF List</a>
+      </div>
+    </div>
+
+    <form id="taf-edit-form" class="space-y-6">
+
+      <!-- Header Form Card -->
+      <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 primary_background">
+          <div class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            <h2 class="text-base font-bold text-slate-900">Header & Reference Details</h2>
+          </div>
+          <div class="text-xs font-medium text-slate-500">
+            Store: <span id="hdr-store" class="font-bold text-slate-800"></span>
+          </div>
+        </div>
+
+        <div class="p-5 md:p-6 grid grid-cols-1 md:grid-cols-12 gap-4">
+          <div class="md:col-span-3">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Date <span class="text-rose-500">*</span></label>
+            <input type="date" id="transaction_date" name="transaction_date" required class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all">
+          </div>
+
+          <div class="md:col-span-3">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Control No <span class="text-rose-500">*</span></label>
+            <input type="text" id="control_no" name="control_no" required class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all">
+          </div>
+
+          <div class="md:col-span-3">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Transaction Type <span class="text-rose-500">*</span></label>
+            <select id="taf-transaction-type" name="transaction_type" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all"></select>
+          </div>
+
+          <div class="md:col-span-3">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Status <span class="text-rose-500">*</span></label>
+            <select id="taf-status" name="status" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all"></select>
+          </div>
+
+          <div class="md:col-span-4">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Transfer From (Store)</label>
+            <input type="text" id="transfer_from_display" readonly class="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 cursor-not-allowed">
+          </div>
+
+          <div id="to-field-group" class="md:col-span-4">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Transfer To</label>
+            <select id="taf-transfer-to" name="transfer_to" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all"></select>
+          </div>
+
+          <div id="customer-name-group" class="md:col-span-5">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Name / Recipient <span class="text-rose-500">*</span></label>
+            <input id="customer_name" name="customer_name" placeholder="Enter recipient / employee name" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all">
+          </div>
+
+          <div id="charge-type-group" class="md:col-span-3">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Slip Type</label>
+            <div class="flex items-center gap-4 pt-1.5">
+              <label class="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
+                <input type="radio" name="charge_type" value="Charge" checked class="w-4 h-4 text-amber-600 focus:ring-amber-400 border-slate-300">
+                <span>Charge</span>
+              </label>
+              <label class="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
+                <input type="radio" name="charge_type" value="Spoilage" class="w-4 h-4 text-amber-600 focus:ring-amber-400 border-slate-300">
+                <span>Spoilage</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Particulars & Items Section -->
+      <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div class="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between primary_background">
+          <div class="flex items-center gap-2">
+            <p class="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Particulars & Items</p>
+          </div>
+          <button type="button" id="add-item-btn" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-lg shadow-xs transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span>Add Row</span>
+          </button>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-50">
+              <tr>
+                <th scope="col" class="px-4 py-3 text-left text-xs font-extrabold text-slate-600 uppercase tracking-wider">Particulars (Item Name)</th>
+                <th scope="col" class="w-32 px-3 py-3 text-right text-xs font-extrabold text-slate-600 uppercase tracking-wider">Price (₱)</th>
+                <th scope="col" class="w-28 px-3 py-3 text-right text-xs font-extrabold text-slate-600 uppercase tracking-wider">Qty</th>
+                <th scope="col" class="w-28 px-3 py-3 text-right text-xs font-extrabold text-slate-600 uppercase tracking-wider received-qty-col">Received Qty</th>
+                <th scope="col" class="w-36 px-3 py-3 text-right text-xs font-extrabold text-slate-600 uppercase tracking-wider">Amount (₱)</th>
+                <th scope="col" class="px-3 py-3 text-left text-xs font-extrabold text-slate-600 uppercase tracking-wider">Remarks</th>
+                <th scope="col" class="w-16 px-3 py-3 text-center text-xs font-extrabold text-slate-600 uppercase tracking-wider">Action</th>
+              </tr>
+            </thead>
+            <tbody id="item-rows" class="divide-y divide-slate-100 bg-white"></tbody>
+          </table>
+        </div>
+
+        <datalist id="product-catalog-options"></datalist>
+      </section>
+
+      <!-- Remarks, Discount Presets & Totals Card -->
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+        <div class="md:col-span-6 space-y-2">
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide">Remarks / Additional Info</label>
+          <p class="text-xs text-slate-500">Provide any context or notes regarding this edit for record keeping.</p>
+        </div>
+
+        <div class="md:col-span-6 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+          <div class="flex items-center justify-between text-sm">
+            <span class="font-bold text-slate-700">Subtotal / Total:</span>
+            <span id="cs-grand-total" class="text-lg font-extrabold text-slate-900">₱0.00</span>
+          </div>
+
+          <div id="discount-section" class="space-y-2 pt-3 border-t border-slate-200">
+            <div class="flex items-center justify-between gap-3">
+              <label for="discount_percent" class="text-xs font-bold text-slate-700 uppercase tracking-wide">Less: Discount (%)</label>
+              <div class="flex items-center gap-1.5 w-32">
+                <input id="discount_percent" name="discount_percent" type="number" min="0" max="100" step="0.01" value="0" placeholder="0" class="w-full px-3 py-1.5 text-right bg-white border border-slate-300 rounded-xl text-sm font-extrabold text-slate-900 focus:ring-2 focus:ring-amber-400 outline-none">
+                <span class="text-xs font-extrabold text-slate-600">%</span>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-1.5 pt-1">
+              <span class="text-xs text-slate-500 font-semibold mr-1">Presets:</span>
+              <button type="button" data-discount="0" class="discount-preset-btn px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition-colors">0%</button>
+              <button type="button" data-discount="5" class="discount-preset-btn px-2.5 py-1 text-xs font-bold rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 transition-colors">5%</button>
+              <button type="button" data-discount="10" class="discount-preset-btn px-2.5 py-1 text-xs font-bold rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 transition-colors">10%</button>
+              <button type="button" data-discount="15" class="discount-preset-btn px-2.5 py-1 text-xs font-bold rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 transition-colors">15%</button>
+            </div>
+          </div>
+
+          <div id="net-charges-section" class="flex items-center justify-between text-base pt-3 border-t border-slate-300">
+            <span class="font-extrabold text-slate-900 uppercase tracking-wide text-xs">Net Total / Charges:</span>
+            <span id="cs-net-charges" class="text-2xl font-black tracking-tight text-amber-600">₱0.00</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Signatures & Personnel -->
+      <section class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 md:p-6 space-y-4">
+        <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider border-b border-slate-200 pb-2">Signatures & Sign-offs</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Prepared By <span class="text-rose-500">*</span></label>
+            <input id="prepared_by_name" name="prepared_by_name" required placeholder="Prepared by name" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-400 outline-none">
+          </div>
+          <div id="approved-by-group">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Approved By</label>
+            <input id="approved_by_name" name="approved_by_name" placeholder="Approved by name" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-400 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">Received By</label>
+            <input id="received_by_name" name="received_by_name" placeholder="Received by name" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-amber-400 outline-none">
+          </div>
+        </div>
+      </section>
+
+      <!-- Form Submit Actions -->
+      <div class="flex items-center justify-end gap-3 pt-2">
+        <!-- <a id="cancel-link" href="#" class="px-5 py-2.5 text-sm font-bold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-xl transition-colors">Cancel</a> -->
+        <button id="save-taf-btn" type="submit" class="px-6 py-2.5 text-sm font-extrabold text-white bg-amber-500 hover:bg-amber-600 rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-60">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+          <span data-cell="save-label">Save Changes</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Templates -->
+<template id="tmpl-item-row">
+  <tr class="item-row hover:bg-slate-50/80 transition-colors">
+    <td class="px-3 py-2.5">
+      <input type="hidden" name="item_id[]" data-cell="item_id" value="">
+      <input type="text" name="item_name[]" data-cell="item_name" required list="product-catalog-options" placeholder="Select or type item name" class="item-name-input w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:ring-2 focus:ring-amber-400 outline-none">
+    </td>
+    <td class="px-3 py-2.5">
+      <input type="number" step="0.01" min="0" name="unit_cost[]" data-cell="unit_cost" value="0.00" placeholder="0.00" class="item-cost-input w-full px-3 py-2 text-right bg-white border border-slate-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-amber-400 outline-none">
+    </td>
+    <td class="px-3 py-2.5">
+      <input type="number" min="0" step="1" name="quantity[]" data-cell="quantity" value="1" placeholder="1" class="item-qty-input w-full px-3 py-2 text-right bg-white border border-slate-300 rounded-xl text-sm font-bold focus:ring-2 focus:ring-amber-400 outline-none">
+    </td>
+    <td class="px-3 py-2.5 received-qty-col">
+      <input type="number" min="0" step="1" name="received_quantity[]" data-cell="received_quantity" value="" placeholder="0" class="w-full px-3 py-2 text-right bg-white border border-slate-300 rounded-xl text-sm font-medium focus:ring-2 focus:ring-amber-400 outline-none">
+    </td>
+    <td class="px-3 py-2.5">
+      <input type="number" step="0.01" readonly data-cell="line_total" value="0.00" class="item-line-total w-full px-3 py-2 text-right bg-slate-100 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 outline-none" tabindex="-1">
+    </td>
+    <td class="px-3 py-2.5">
+      <input type="text" name="remarks[]" data-cell="remarks" value="" placeholder="Optional notes" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-normal focus:ring-2 focus:ring-amber-400 outline-none">
+    </td>
+    <td class="px-3 py-2.5 text-center">
+      <button type="button" class="remove-item p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Remove line">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+      </button>
+    </td>
+  </tr>
+</template>
+
+<script>
+  let TAF_EDIT_ROUTES = {
+    get: "{{ url_for('api_handles.get_taf_edit', transfer_id=987654321) }}",
+    update: "{{ url_for('api_handles.update_taf_edit', transfer_id=987654321) }}",
+    tafList: "{{ url_for('views.v2_main', m='taf') }}",
+    chargeSlips: "{{ url_for('views.v2_main', m='charge_slips_v2') }}"
+  };
+
+  let SPINNER_HTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4 inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+</script>
+<script defer src="{{ url_for('static', filename='js/handles/taf_edit_handles.js') }}"></script>
+
+{% endblock %}
