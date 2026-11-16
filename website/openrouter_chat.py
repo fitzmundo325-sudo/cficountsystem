@@ -33,6 +33,9 @@ DELIVERY_CONSOLIDATED_PATH = "/apis/delivery_consolidated"
 DELIVERY_REVIEW_PATH = "/apis/delivery_review"
 INVENSYNC_DETAIL_PATH = "/apis/get_invensync_detail_data"
 
+CHARGE_SLIPS_PATH = "/apis/charge_slips"
+CHARGE_SLIPS_FILTERS_PATH = "/apis/charge_slips_filters"
+
 MAX_MESSAGES = 40
 MAX_TOOL_ROUNDS = 12
 MAX_TOOL_CALLS = 15
@@ -145,6 +148,16 @@ TOOL_GROUPS = {
             "Use get_delivery_review for one store's daily delivery line items (RSO numbers, quantities, received quantities, reviewed dates) on a single date."
         ),
         "tools": ["get_delivery_filters", "get_delivery_consolidated", "get_delivery_review"],
+    },
+    "charge_slips": {
+        "summary": "charge slip transactions (including spoilage), control numbers, customer names, grand/net totals, discounts, statuses, and store lookup",
+        "guide": (
+            "Use get_charge_slips_filters to list all stores and look up their IDs. "
+            "Use get_charge_slips to list or search charge slip transactions and overall summary totals "
+            "(total count, total net amount, total spoilage count), with optional filters for date, store_id/store_name, "
+            "search keyword (control no, customer, prepared/approved/received by, store), charge_type (e.g. 'Charge', 'Spoilage'), and status (e.g. 'Pending', 'Approved')."
+        ),
+        "tools": ["get_charge_slips_filters", "get_charge_slips"],
     },
 }
 
@@ -911,7 +924,107 @@ def _tool_get_delivery_review(args, ctx):
 # Delivery Tool sets End ==============
 
 
-# InvenSync Tool sets =================
+# Charge Slip Tool sets =================
+
+CHARGE_SLIPS_SORT_KEYS = (
+    'transaction_date',
+    'control_no',
+    'store_name',
+    'customer_name',
+    'charge_type',
+    'items_count',
+    'grand_total',
+    'discount_percent',
+    'net_total',
+    'status',
+)
+
+
+# - Charge Slips tools -
+
+def _tool_get_charge_slips_filters(args, ctx):
+    data, problem = _fetch_internal_api(ctx, CHARGE_SLIPS_FILTERS_PATH)
+    if problem:
+        return _tool_error(problem)
+    return {
+        "type": "success",
+        "data": {
+            "stores": data.get("stores") or [],
+        },
+    }
+
+
+def _tool_get_charge_slips(args, ctx):
+    store_id = args.get("store_id")
+    store_name = args.get("store_name")
+    date = (args.get("date") or "").strip() or None
+    search = (args.get("search") or "").strip() or None
+    charge_type = (args.get("charge_type") or "").strip() or None
+    status = (args.get("status") or "").strip() or None
+    sort = args.get("sort") or None
+    order_by = args.get("order_by") or None
+    page = args.get("page") or 1
+    rows = min(int(args.get("rows") or 20), 200)
+
+    if date:
+        problem = _check_dates(date, date)
+        if problem:
+            return _tool_error(problem)
+
+    if not store_id and store_name:
+        filters_data, problem = _fetch_internal_api(ctx, CHARGE_SLIPS_FILTERS_PATH)
+        if problem:
+            return _tool_error(problem)
+        stores = filters_data.get("stores") or []
+        matched_store = _match_entity_by_name(stores, store_name)
+        if not matched_store:
+            return _tool_error(
+                f"Could not find store matching '{store_name}'. "
+                f"Available stores: {json.dumps(stores)}"
+            )
+        store_id = matched_store["id"]
+
+    params = {
+        "page": page,
+        "rows": rows,
+    }
+    if date:
+        params["date"] = date
+    if search:
+        params["search"] = search
+    if charge_type:
+        params["charge_type"] = charge_type
+    if status:
+        params["status"] = status
+    if store_id:
+        params["store_id"] = store_id
+    if sort:
+        params["sort"] = sort
+    if order_by:
+        params["order_by"] = order_by
+
+    data, problem = _fetch_internal_api(ctx, CHARGE_SLIPS_PATH, params)
+    if problem:
+        return _tool_error(problem)
+
+    return {
+        "type": "success",
+        "data": {
+            "filters": {
+                "date": date,
+                "store_id": store_id,
+                "search": search,
+                "charge_type": charge_type,
+                "status": status,
+            },
+            "summary": data.get("summary"),
+            "rows": data.get("data"),
+            "current_page": data.get("current_page"),
+            "total_pages": data.get("total_pages"),
+            "total_results": data.get("total_results"),
+        },
+    }
+# Charge Slip Tool sets End =============
 
 def _as_str_list(value):
     if isinstance(value, str):
@@ -1781,6 +1894,80 @@ TOOL_SPECS = [
             },
         },
     },
+    
+    # Charge Slips tool spec =======================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_charge_slips_filters",
+            "description": "List all available stores and their IDs for Charge Slips queries.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_charge_slips",
+            "description": (
+                "Read Charge Slip records (transaction date, control no, store name, customer name, charge type, "
+                "items count, grand total, discount percent, net total, and status) along with overall summary stats "
+                "(total count, total net amount, and total spoilage count). "
+                "Supports filtering by date, store_id or store_name, search keyword, charge_type, and status."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "Optional transaction date filter in YYYY-MM-DD format.",
+                    },
+                    "store_id": {
+                        "type": "integer",
+                        "description": "Optional Store ID filter.",
+                    },
+                    "store_name": {
+                        "type": "string",
+                        "description": "Optional Store name filter (if store_id is unknown).",
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Optional search keyword matching control_no, customer_name, prepared/approved/received by name, or store name.",
+                    },
+                    "charge_type": {
+                        "type": "string",
+                        "description": "Optional charge type filter (e.g. 'Charge', 'Spoilage').",
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Optional status filter (e.g. 'Pending', 'Approved').",
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "Page number (defaults to 1).",
+                    },
+                    "rows": {
+                        "type": "integer",
+                        "description": "Rows per page (defaults to 20, max 200).",
+                    },
+                    "sort": {
+                        "type": "string",
+                        "description": "Sortable column.",
+                        "enum": list(CHARGE_SLIPS_SORT_KEYS),
+                    },
+                    "order_by": {
+                        "type": "string",
+                        "description": "Sorting order ('asc' or 'desc').",
+                        "enum": list(ORDER_VALUES),
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 CORE_TOOLS = ("get_dashboard_data", "load_tools", "ask_user")
@@ -1834,6 +2021,10 @@ TOOL_FUNCS = {
     "get_delivery_review": _tool_get_delivery_review,
 
     "get_invensync_detail": _tool_get_invensync_detail,
+    
+    # Charge Slips Func
+    "get_charge_slips_filters": _tool_get_charge_slips_filters,
+    "get_charge_slips": _tool_get_charge_slips,
 }
 
 
@@ -1926,8 +2117,30 @@ def _describe_call(name, args):
         day = args.get("date")
         span = f" ({day})" if day else ""
         return f"Checking InvenSync inventory: {target}{span}"
-        
-        
+    
+
+    # Charge Slips ==============
+    
+    if name == "get_charge_slips_filters":
+        return "Checking available Charge Slip stores"
+
+    if name == "get_charge_slips":
+        parts = []
+        if args.get("store_name"):
+            parts.append(str(args["store_name"]))
+        elif args.get("store_id"):
+            parts.append(f"Store #{args['store_id']}")
+        if args.get("charge_type"):
+            parts.append(str(args["charge_type"]))
+        if args.get("status"):
+            parts.append(str(args["status"]))
+        if args.get("search"):
+            parts.append(f"'{args['search']}'")
+        target = f": {', '.join(parts)}" if parts else ""
+        date_span = f" ({args['date']})" if args.get("date") else ""
+        return f"Checking charge slips{target}{date_span}"    
+
+    
     return f"Running {name}"
 
 def _run_tool(name, args, args_error, ctx):
