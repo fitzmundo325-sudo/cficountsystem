@@ -688,6 +688,18 @@ th.sortable:hover {
 	right:0px;
 	
 }
+.sticky_column_left{
+	position:sticky;
+	left:0px;
+	
+}
+
+
+tr.table_header_class > th{
+	
+	min-width:150px;
+	overflow:none;
+}
 
 
 /* ======================================================= */

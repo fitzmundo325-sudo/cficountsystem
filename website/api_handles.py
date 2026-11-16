@@ -6399,7 +6399,8 @@ CHARGE_SLIP_ROLES = ('Superadmin', 'Admin', 'Inventory Staff')
 
 
 def _charge_slip_param(name):
-    return (request.form.get(name) or request.args.get(name) or '').strip()
+    value = (request.form.get(name) or request.args.get(name) or '').strip()
+    return '' if value.lower() in ('undefined', 'null') else value
 
 
 def _charge_slip_date(value):
@@ -6550,7 +6551,9 @@ def charge_slips_list():
         .filter(func.lower(func.trim(TafTransfer.transaction_type)) == 'charge slip')
         .one()
     )
+    
 
+    
     return {
         'type': 'success',
         'data': data,

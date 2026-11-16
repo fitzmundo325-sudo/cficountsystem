@@ -58,15 +58,22 @@ function setLoading(state) {
   applyBtn.innerHTML = state ? SPINNER_HTML + 'Search' : 'Search';
 }
 
+function hasParamValue(param) {
+  return param.value !== '' && param.value !== null && param.value !== undefined;
+}
+
+
 function buildParams() {
-  return [
+  let candidates = [
     { name: 'date', value: headerDate.value },
     { name: 'store_id', value: storeSelect.value },
     { name: 'charge_type', value: typeSelect.value },
     { name: 'status', value: statusSelect.value },
     { name: 'rows', value: PAGE_SIZE }
   ];
+  return candidates.filter(hasParamValue);
 }
+
 
 function loadChargeSlips() {
   qBuilder.server_address = '/apis/charge_slips';
@@ -81,21 +88,19 @@ function loadChargeSlips() {
 function onChargeSlipsLoaded(datas) {
 	
 	let data = JSON.parse(datas.responseText);
-	
-	console.log(data);
-	
-  setLoading(false);
-  if (data.type !== 'success') {
-    toast.error(data.message || 'Failed to load Charge Slips.');
-    return;
-  }
-  currentPage = data.current_page;
-  renderSummary(data.summary);
-  renderRows(data.data);
-  renderPagination(data);
-  updateSortIcons();
-  matchingInfo.textContent = 'Showing ' + data.total_results + ' matching Charge Slip' + (data.total_results === 1 ? '' : 's') + ' across all pages.';
-  syncUrl();
+
+	setLoading(false);
+	if (data.type !== 'success') {
+	toast.error(data.message || 'Failed to load Charge Slips.');
+	return;
+	}
+	currentPage = data.current_page;
+	renderSummary(data.summary);
+	renderRows(data.data);
+	renderPagination(data);
+	updateSortIcons();
+	matchingInfo.textContent = 'Showing ' + data.total_results + ' matching Charge Slip' + (data.total_results === 1 ? '' : 's') + ' across all pages.';
+	syncUrl();
 }
 
 function onChargeSlipsError() {
