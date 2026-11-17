@@ -14392,6 +14392,16 @@ def taf_edit():
         return redirect(url_for('admin.dashboard'))
 
     page = 'charge_slips'
+    return render_template("admin/taf_edit_v2.html", user=current_user, page=page)    
+    
+@views.route('/admin/taf_edit_v2_taf', methods=['GET'])
+@login_required
+def taf_edit_taf():
+    if current_user.role not in ('Superadmin', 'Admin', 'Inventory Staff'):
+        flash('Access denied.', category='error')
+        return redirect(url_for('admin.dashboard'))
+
+    page = 'charge_slips'
     return render_template("admin/taf_edit_v2.html", user=current_user, page=page)   
 #v2 of the Charge Slip End
  

@@ -336,7 +336,10 @@
         <span class="nav-label whitespace-nowrap truncate">Oracle</span>
       </a>
 
-      <a href="/admin/taf"
+      <a 
+		onclick="showTransactPageAdmin(this)"
+		id="_transact_form_v2"
+		
         class="nav-item w-full flex items-center gap-4 p-3 rounded-xl transition-all group
           {% if request.path.startswith('/admin/taf') %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}"
         data-tooltip="TransAct Form">

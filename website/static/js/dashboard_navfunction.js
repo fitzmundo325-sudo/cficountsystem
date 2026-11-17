@@ -184,10 +184,23 @@ function showDeliveryPageAdmin(elm){
 	
 	
 }
+
+
 function showChargeSlipPageAdmin(elm){
 	activate(elm);
 
 	let page = open_modal("charge_slips_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
+	closeAllPages(page,false);
+	hideDashboardContents(true);
+	
+	
+}
+
+
+function showTransactPageAdmin(elm){
+	activate(elm);
+
+	let page = open_modal("transact_form_v2", 'modal_on_container,no_close_button,page_containment', _('general_container'),false, undefined, true);
 	closeAllPages(page,false);
 	hideDashboardContents(true);
 	
