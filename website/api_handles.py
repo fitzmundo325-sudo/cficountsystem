@@ -6590,8 +6590,187 @@ def charge_slips_filters():
 # Charge Slips Section End
 # ================================ 
  
+
+# ================================
+# TAF v2 Section Start
+# ================================ 
+TAF_LIST_ROLES = ('Superadmin', 'Admin', 'Auditor', 'Area Manager')
+TAF_LIST_MANAGE_ROLES = ('Superadmin', 'Admin')
+
+
+def _taf_list_param(name):
+    value = (request.form.get(name) or request.args.get(name) or '').strip()
+    return '' if value.lower() in ('undefined', 'null') else value
+
+
+@api_handles.route('/taf_transfers', methods=['GET', 'POST'])
+@login_required
+def taf_transfers_list():
+    if current_user.role not in TAF_LIST_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    try:
+        page = int(request.form.get('page') or request.args.get('page') or 1)
+    except (ValueError, TypeError):
+        page = 1
+
+    try:
+        per_page = int(request.form.get('rows') or request.args.get('rows') or 20)
+    except (ValueError, TypeError):
+        per_page = 20
+    per_page = max(1, min(per_page, 200))
+
+    search_query = _taf_list_param('search').lower()
+    type_filter = _taf_list_param('type').lower()
+    status_filter = _taf_list_param('status').lower()
+    try:
+        store_id = int(_taf_list_param('store_id') or 0)
+    except ValueError:
+        store_id = 0
+
+    type_expr = case(
+        (TafTransfer.transaction_type == 'Supplies Transfer', 'EGI Plant Transfer'),
+        else_=TafTransfer.transaction_type,
+    )
+    status_expr = func.coalesce(func.nullif(func.trim(TafTransfer.status), ''), 'Pending')
+    items_expr = (
+        db.session.query(func.count(TafTransferItem.id))
+        .filter(TafTransferItem.transfer_id == TafTransfer.id)
+        .correlate(TafTransfer)
+        .scalar_subquery()
+    )
+
+    query = (
+        db.session.query(
+            TafTransfer.id.label('id'),
+            TafTransfer.transaction_date.label('transaction_date'),
+            TafTransfer.control_no.label('control_no'),
+            type_expr.label('transaction_type'),
+            TafTransfer.transfer_from.label('transfer_from'),
+            TafTransfer.transfer_to.label('transfer_to'),
+            items_expr.label('items_count'),
+            TafTransfer.grand_total.label('grand_total'),
+            status_expr.label('status'),
+            Store.name.label('store_name'),
+        )
+        .outerjoin(Store, TafTransfer.store_id == Store.id)
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) != 'charge slip')
+    )
+
+    if search_query:
+        like_query = f'%{search_query}%'
+        query = query.filter(or_(
+            func.lower(TafTransfer.control_no).like(like_query),
+            func.lower(TafTransfer.transaction_type).like(like_query),
+            func.lower(TafTransfer.transfer_from).like(like_query),
+            func.lower(TafTransfer.transfer_to).like(like_query),
+            func.lower(Store.name).like(like_query),
+        ))
+
+    if type_filter:
+        type_values = [type_filter]
+        if type_filter == 'egi plant transfer':
+            type_values.append('supplies transfer')
+        query = query.filter(func.lower(func.trim(TafTransfer.transaction_type)).in_(type_values))
+
+    if status_filter:
+        query = query.filter(func.lower(status_expr) == status_filter)
+
+    if store_id:
+        query = query.filter(TafTransfer.store_id == store_id)
+
+    sort_columns = {
+        'transaction_date': TafTransfer.transaction_date,
+        'control_no': TafTransfer.control_no,
+        'transaction_type': type_expr,
+        'transfer_from': TafTransfer.transfer_from,
+        'transfer_to': TafTransfer.transfer_to,
+        'items_count': items_expr,
+        'grand_total': TafTransfer.grand_total,
+        'status': status_expr,
+        'store_name': Store.name,
+    }
+    sort_column = sort_columns.get(_taf_list_param('sort'))
+    if sort_column is None:
+        order_clauses = [TafTransfer.transaction_date.desc(), TafTransfer.id.desc()]
+    else:
+        ascending = _taf_list_param('order_by').lower() == 'asc'
+        order_clauses = [sort_column.asc() if ascending else sort_column.desc(), TafTransfer.id.desc()]
+    query = query.order_by(*order_clauses)
+
+    total_results = (
+        query.order_by(None)
+        .with_entities(func.count(TafTransfer.id))
+        .scalar()
+    ) or 0
+    total_pages = math.ceil(total_results / per_page) if total_results > 0 else 1
+    page = max(1, min(page, total_pages))
+
+    rows = query.offset((page - 1) * per_page).limit(per_page).all()
+
+    data = [
+        {
+            'id': int(row.id),
+            'transaction_date': row.transaction_date.strftime('%Y-%m-%d') if row.transaction_date else '',
+            'date_label': row.transaction_date.strftime('%b %d, %Y') if row.transaction_date else '',
+            'control_no': row.control_no or '',
+            'transaction_type': row.transaction_type or '',
+            'transfer_from': row.transfer_from or '',
+            'transfer_to': row.transfer_to or '',
+            'items_count': int(row.items_count or 0),
+            'grand_total': float(row.grand_total or 0.0),
+            'status': row.status,
+            'store_name': row.store_name or '-',
+        }
+        for row in rows
+    ]
+
+    stats = (
+        db.session.query(
+            func.count(TafTransfer.id),
+            func.coalesce(func.sum(case(
+                (func.lower(status_expr) == 'pending', 1),
+                else_=0,
+            )), 0),
+        )
+        .filter(func.lower(func.trim(TafTransfer.transaction_type)) != 'charge slip')
+        .one()
+    )
+    total_transfers = int(stats[0] or 0)
+    pending_transfers = int(stats[1] or 0)
+
+    return {
+        'type': 'success',
+        'data': data,
+        'summary': {
+            'total_transfers': total_transfers,
+            'pending_transfers': pending_transfers,
+            'received_transfers': max(0, total_transfers - pending_transfers),
+        },
+        'can_manage': current_user.role in TAF_LIST_MANAGE_ROLES,
+        'current_page': page,
+        'total_pages': total_pages,
+        'total_results': total_results,
+    }
+
+
+@api_handles.route('/taf_transfers_filters', methods=['GET', 'POST'])
+@login_required
+def taf_transfers_filters():
+    if current_user.role not in TAF_LIST_ROLES:
+        return {'type': 'error', 'message': 'Access denied.'}
+
+    stores = Store.query.order_by(Store.name.asc()).all()
+    return {
+        'type': 'success',
+        'stores': [{'id': int(s.id), 'name': s.name or f'Store {s.id}'} for s in stores],
+    }
+
+# ================================
+# TAF v2 Section End
+# ================================ 
  
-# To-Do # Add the v2 of  Transact Form edit
+
  
 # ================================
 # TAF edit Start

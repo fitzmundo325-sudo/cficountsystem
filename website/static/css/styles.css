@@ -702,6 +702,16 @@ tr.table_header_class > th{
 }
 
 
+td.status_column_tr > span{
+	
+	min-width:130px;
+	overflow:hidden;
+	text-align:center;
+	justify-content:center;
+}
+
+
+
 /* ======================================================= */
 /*  ====================== Modalizer Styles =============== */
 /* ======================================================= */

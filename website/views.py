@@ -14396,10 +14396,27 @@ def taf_edit():
 #v2 of the Charge Slip End
  
 
+    
+    
+#v2 of the TransAct Slip ==========================
+
+@views.route('/admin/transact_form_v2', methods=['GET'])
+@login_required
+def transact_form_v2():
+
+
+    page = 'transact_form'
+    return render_template("admin/taf_v2.html", user=current_user, page=page)
+    
+    
+
+
 
 
  
-#v2 of the Oracle
+#v2 of the TransAct Form End ====================
+ 
+#v2 of the Oracle Start =========================
 @views.route('/store-manager/oracle_v2', methods=['GET'])
 @login_required
 def oracle_v2():

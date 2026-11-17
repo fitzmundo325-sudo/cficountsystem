@@ -1,0 +1,178 @@
+{% extends "base_headless.html" %}
+{% block title %}TransAct Form{% endblock %}
+
+{% block content %}
+
+<header class="sticky top-0 z-20 bg-white/85 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="hidden sm:flex text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Pages</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">TransAct Form</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <input type="date" id="dateInput" class="px-4 py-2 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 transition text-sm font-medium">
+    <button id="refresh-btn" type="button" class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 active:scale-95">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 2.2" />
+      </svg>
+      <span>Refresh</span>
+    </button>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">TransAct Form Dashboard</h1>
+      <p class="mt-1 text-slate-600">Monitor all Transaction Activity Forms across stores</p>
+    </div>
+  </section>
+
+  <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <form id="taf-filter-form" class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_180px_auto_auto]">
+      <input id="taf-search" type="search" placeholder="Search control no, store, from, to..." class="rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
+
+      <select id="taf-type-filter" class="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+        <option value="">All Types</option>
+        <option value="product transfer">Product Transfer</option>
+        <option value="wastage transfer">Wastage Transfer</option>
+        <option value="egi plant transfer">EGI Plant Transfer</option>
+        <option value="supplies request">Supplies Request</option>
+      </select>
+
+      <select id="taf-status-filter" class="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+        <option value="">All Statuses</option>
+        <option value="pending">Pending</option>
+        <option value="received">Received</option>
+        <option value="received - short">Received - Short</option>
+        <option value="received - over">Received - Over</option>
+        <option value="received - short/over">Received - Short/Over</option>
+      </select>
+
+      <select id="taf-store-filter" class="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+        <option value="">All Stores</option>
+      </select>
+
+      <button id="apply-btn" type="submit" class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60">Search</button>
+      <button id="reset-btn" type="button" class="rounded-xl border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50">Clear</button>
+    </form>
+    <p id="matching-info" class="mt-3 text-xs font-medium text-slate-500"></p>
+  </section>
+
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200 bg-slate-50">
+      <h3 class="text-lg font-bold text-slate-900">All Transaction Activity Forms</h3>
+      <p class="text-sm text-slate-500 mt-1">Complete list of TAF submissions across all stores</p>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead id="taf-head" class="bg-slate-100">
+          <tr class="table_header_class">
+            <th data-sort="transaction_date" aria-sort="none" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Date <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="control_no" aria-sort="none" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700 sticky_column_left primary_background">Control No <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="transaction_type" aria-sort="none" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Type <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="transfer_from" aria-sort="none" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">From <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="transfer_to" aria-sort="none" class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">To <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="items_count" aria-sort="none" class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Items <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="grand_total" aria-sort="none" class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Grand Total <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="status" aria-sort="none" class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Status <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th data-sort="store_name" aria-sort="none" class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase cursor-pointer select-none hover:text-slate-700">Store <span data-sort-icon class="ml-1 text-slate-300">&#8597;</span></th>
+            <th id="actions-th" class="hidden px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase sticky_column_right primary_background">Action</th>
+          </tr>
+        </thead>
+        <tbody id="taf-body" class="divide-y divide-slate-100"></tbody>
+        <tbody id="taf-empty" class="hidden">
+          <tr>
+            <td colspan="10" class="text-center py-12">
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-slate-300 mb-4">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+              <h3 class="text-lg font-bold text-slate-900 mb-1">No Transfers Found</h3>
+              <p id="empty-message" class="text-sm text-slate-600"></p>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="taf-pagination" class="hidden flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4">
+      <p id="pagination-info" class="text-sm text-slate-500"></p>
+      <nav id="pagination-buttons" class="flex items-center gap-1"></nav>
+    </div>
+  </div>
+
+</div>
+
+<template id="tmpl-taf-row">
+  <tr class="odd:bg-white even:bg-slate-50 hover:bg-slate-50 transition-colors">
+    <td data-cell="date" class="px-4 py-3 text-sm text-slate-700"></td>
+    <td data-cell="control_no" class="px-4 py-3 text-sm font-semibold text-slate-900 sticky_column_left primary_background"></td>
+    <td class="px-4 py-3 text-sm text-slate-700 status_column_tr"><span data-cell="type"></span></td>
+    <td data-cell="from" class="px-4 py-3 text-sm text-slate-700"></td>
+    <td data-cell="to" class="px-4 py-3 text-sm text-slate-700"></td>
+    <td data-cell="items" class="px-4 py-3 text-sm text-slate-900 text-right font-semibold"></td>
+    <td data-cell="total" class="px-4 py-3 text-sm text-slate-900 text-right font-semibold"></td>
+    <td class="px-4 py-3 text-center"><span data-cell="status"></span></td>
+    <td data-cell="store" class="px-4 py-3 text-sm text-slate-700 text-center"></td>
+    <td data-cell="actions" class="px-4 py-3 text-center sticky_column_right primary_background">
+      <a data-action="edit" href="#" class="mr-1 inline-flex h-8 w-8 items-center justify-center rounded-md border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100" title="Edit Transfer" aria-label="Edit Transfer">&#9998;</a>
+      <button type="button" data-action="delete" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 transition-colors" title="Delete Transfer" aria-label="Delete Transfer">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 6h18"></path>
+          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+        </svg>
+      </button>
+    </td>
+  </tr>
+</template>
+
+<script>
+  let TAF_ROUTES = {
+    edit: "{{ url_for('admin.admin_edit_taf', transfer_id=987654321) }}",
+    remove: "/admin/taf/delete/987654321"
+  };
+
+  let UI_CLASSES = {
+    pageButton: 'rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50 fancy_button',
+    pageCurrent: 'rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white',
+    pageGap: 'px-2 text-slate-400',
+    sortActive: 'text-indigo-600',
+    sortInactive: 'text-slate-300',
+    typeBase: 'inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold',
+    statusBase: 'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold',
+    badgeDefault: 'bg-slate-100 text-slate-700',
+    typeMap: {
+      'Product Transfer': 'bg-cyan-100 text-cyan-700',
+      'Wastage Transfer': 'bg-emerald-100 text-emerald-700',
+      'EGI Plant Transfer': 'bg-blue-100 text-blue-700',
+      'Supplies Request': 'bg-emerald-100 text-emerald-700',
+      'Charge Slip': 'bg-pink-100 text-pink-700'
+    },
+    statusMap: {
+      'Pending': 'bg-amber-100 text-amber-700',
+      'Received': 'bg-emerald-100 text-emerald-700',
+      'Received - Short': 'bg-rose-100 text-rose-700',
+      'Received - Over': 'bg-rose-100 text-rose-700',
+      'Received - Short/Over': 'bg-rose-100 text-rose-700'
+    }
+  };
+
+  let SPINNER_HTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4 inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+</script>
+<script defer src="{{ url_for('static', filename='js/handles/taf_handles.js') }}"></script>
+
+{% endblock %}
