@@ -36,6 +36,9 @@ INVENSYNC_DETAIL_PATH = "/apis/get_invensync_detail_data"
 CHARGE_SLIPS_PATH = "/apis/charge_slips"
 CHARGE_SLIPS_FILTERS_PATH = "/apis/charge_slips_filters"
 
+TAF_TRANSFERS_PATH = "/apis/taf_transfers"
+TAF_TRANSFERS_FILTERS_PATH = "/apis/taf_transfers_filters"
+
 MAX_MESSAGES = 40
 MAX_TOOL_ROUNDS = 12
 MAX_TOOL_CALLS = 15
@@ -159,6 +162,18 @@ TOOL_GROUPS = {
         ),
         "tools": ["get_charge_slips_filters", "get_charge_slips"],
     },
+    "taf_transfers": {
+        "summary": "TAF transfer transactions (including EGI Plant / Supplies transfers), control numbers, transfer from/to locations, item counts, grand totals, statuses, and store lookup",
+        "guide": (
+            "Use get_taf_transfers_filters to list all stores and look up their IDs. "
+            "Use get_taf_transfers to list or search TAF transfer records and overall summary counts "
+            "(total transfers, pending transfers, received transfers), with optional filters for store_id/store_name, "
+            "search keyword (control no, transaction type, transfer from, transfer to, store), "
+            "type (e.g. 'EGI Plant Transfer'), and status (e.g. 'Pending', 'Received')."
+        ),
+        "tools": ["get_taf_transfers_filters", "get_taf_transfers"],
+    },
+    
 }
 
 
@@ -1025,6 +1040,102 @@ def _tool_get_charge_slips(args, ctx):
         },
     }
 # Charge Slip Tool sets End =============
+
+
+# TAF Tool sets Start ===========
+
+TAF_TRANSFERS_SORT_KEYS = (
+    'transaction_date',
+    'control_no',
+    'transaction_type',
+    'transfer_from',
+    'transfer_to',
+    'items_count',
+    'grand_total',
+    'status',
+    'store_name',
+)
+
+
+# - TAF Transfers tools -
+
+def _tool_get_taf_transfers_filters(args, ctx):
+    data, problem = _fetch_internal_api(ctx, TAF_TRANSFERS_FILTERS_PATH)
+    if problem:
+        return _tool_error(problem)
+    return {
+        "type": "success",
+        "data": {
+            "stores": data.get("stores") or [],
+        },
+    }
+
+
+def _tool_get_taf_transfers(args, ctx):
+    store_id = args.get("store_id")
+    store_name = args.get("store_name")
+    search = (args.get("search") or "").strip() or None
+    transfer_type = (args.get("type") or args.get("transaction_type") or "").strip() or None
+    status = (args.get("status") or "").strip() or None
+    sort = args.get("sort") or None
+    order_by = args.get("order_by") or None
+    page = args.get("page") or 1
+    rows = min(int(args.get("rows") or 20), 200)
+
+    if not store_id and store_name:
+        filters_data, problem = _fetch_internal_api(ctx, TAF_TRANSFERS_FILTERS_PATH)
+        if problem:
+            return _tool_error(problem)
+        stores = filters_data.get("stores") or []
+        matched_store = _match_entity_by_name(stores, store_name)
+        if not matched_store:
+            return _tool_error(
+                f"Could not find store matching '{store_name}'. "
+                f"Available stores: {json.dumps(stores)}"
+            )
+        store_id = matched_store["id"]
+
+    params = {
+        "page": page,
+        "rows": rows,
+    }
+    if search:
+        params["search"] = search
+    if transfer_type:
+        params["type"] = transfer_type
+    if status:
+        params["status"] = status
+    if store_id:
+        params["store_id"] = store_id
+    if sort:
+        params["sort"] = sort
+    if order_by:
+        params["order_by"] = order_by
+
+    data, problem = _fetch_internal_api(ctx, TAF_TRANSFERS_PATH, params)
+    if problem:
+        return _tool_error(problem)
+
+    return {
+        "type": "success",
+        "data": {
+            "filters": {
+                "store_id": store_id,
+                "search": search,
+                "type": transfer_type,
+                "status": status,
+            },
+            "can_manage": data.get("can_manage"),
+            "summary": data.get("summary"),
+            "rows": data.get("data"),
+            "current_page": data.get("current_page"),
+            "total_pages": data.get("total_pages"),
+            "total_results": data.get("total_results"),
+        },
+    }
+
+
+# TAF Tool sets End =============
 
 def _as_str_list(value):
     if isinstance(value, str):
@@ -1968,6 +2079,76 @@ TOOL_SPECS = [
             },
         },
     },
+    
+    # TAF Transfers tool spec:
+    {
+        "type": "function",
+        "function": {
+            "name": "get_taf_transfers_filters",
+            "description": "List all available stores and their IDs for TAF Transfers queries.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_taf_transfers",
+            "description": (
+                "Read TAF Transfer records (transaction date, control no, transaction type, transfer from, "
+                "transfer to, items count, grand total, status, and store name) along with overall summary stats "
+                "(total transfers, pending transfers, and received transfers). "
+                "Supports filtering by store_id or store_name, search keyword, type (transaction type), and status."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "store_id": {
+                        "type": "integer",
+                        "description": "Optional Store ID filter.",
+                    },
+                    "store_name": {
+                        "type": "string",
+                        "description": "Optional Store name filter (if store_id is unknown).",
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Optional search keyword matching control_no, transaction_type, transfer_from, transfer_to, or store name.",
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Optional transaction type filter (e.g. 'EGI Plant Transfer', 'Supplies Transfer').",
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Optional status filter (e.g. 'Pending', 'Received').",
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "Page number (defaults to 1).",
+                    },
+                    "rows": {
+                        "type": "integer",
+                        "description": "Rows per page (defaults to 20, max 200).",
+                    },
+                    "sort": {
+                        "type": "string",
+                        "description": "Sortable column.",
+                        "enum": list(TAF_TRANSFERS_SORT_KEYS),
+                    },
+                    "order_by": {
+                        "type": "string",
+                        "description": "Sorting order ('asc' or 'desc').",
+                        "enum": list(ORDER_VALUES),
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 CORE_TOOLS = ("get_dashboard_data", "load_tools", "ask_user")
@@ -2025,6 +2206,10 @@ TOOL_FUNCS = {
     # Charge Slips Func
     "get_charge_slips_filters": _tool_get_charge_slips_filters,
     "get_charge_slips": _tool_get_charge_slips,
+    
+    # TAF Transfers Func
+    "get_taf_transfers_filters": _tool_get_taf_transfers_filters,
+    "get_taf_transfers": _tool_get_taf_transfers,
 }
 
 
@@ -2139,7 +2324,26 @@ def _describe_call(name, args):
         target = f": {', '.join(parts)}" if parts else ""
         date_span = f" ({args['date']})" if args.get("date") else ""
         return f"Checking charge slips{target}{date_span}"    
+    
+    
+    if name == "get_taf_transfers_filters":
+        return "Checking available TAF Transfer stores"
 
+    if name == "get_taf_transfers":
+        parts = []
+        if args.get("store_name"):
+            parts.append(str(args["store_name"]))
+        elif args.get("store_id"):
+            parts.append(f"Store #{args['store_id']}")
+        tx_type = args.get("type") or args.get("transaction_type")
+        if tx_type:
+            parts.append(str(tx_type))
+        if args.get("status"):
+            parts.append(str(args["status"]))
+        if args.get("search"):
+            parts.append(f"'{args['search']}'")
+        target = f": {', '.join(parts)}" if parts else ""
+        return f"Checking TAF transfers{target}"
     
     return f"Running {name}"
 

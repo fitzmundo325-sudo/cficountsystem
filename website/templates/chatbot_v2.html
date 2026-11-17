@@ -43,7 +43,7 @@
   #chat-log .chat-md th, #chat-log .chat-md td { border: 1px solid #cbd5e1; padding: 0.3rem 0.6rem; text-align: left; }
   #chat-log .chat-md th { background-color: #e2e8f0; font-weight: 600; }
   #chat-log .chat-md code { background-color: var(--primary_background); border-radius: 0.25rem; padding: 0.1rem 0.3rem; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  #chat-log .chat-code { margin: 0.6rem 0; overflow: hidden; border: 1px solid #1e293b; border-radius: 0.6rem; background-color: #0d1117; }
+  #chat-log .chat-code { margin: 0.6rem 0; overflow: hidden; border: 1px solid var(--primary_background_darker); border-radius: 0.6rem; background-color: var(--primary_background); }
   #chat-log .chat-code-header { display: flex; align-items: center; justify-content: space-between; padding: 0.25rem 0.75rem; background-color: #1e293b; color: #cbd5e1; font-size: 0.7rem; }
   #chat-log .chat-code-lang { font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
   #chat-log .chat-copy-btn { border: 0; border-radius: 0.25rem; background: transparent; color: #cbd5e1; cursor: pointer; font-size: 0.7rem; font-weight: 600; padding: 0.1rem 0.4rem; }
@@ -193,7 +193,7 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
       </div>
       <p class="mt-1.5 text-xs text-slate-400">Enter to send, Shift+Enter for a new line. <i class="tiny secondary_color"> LLMs can make mistakes, always validate accuracy. 
 		
-		</i><span class="text-xs secondary_color" title="Current Version of the Chatbot engine."> (v1.0.7) </span></p>
+		</i><span class="text-xs secondary_color" title="Current Version of the Chatbot engine."> (v1.0.8) </span></p>
     </form>
 
   </section>
