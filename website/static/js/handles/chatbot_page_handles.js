@@ -55,6 +55,263 @@ let chatPurifyConfig = {
   FORBID_ATTR: ['style']
 };
 
+// - IndexedDB Image Storage -
+
+let chatIdbName = 'iCountChatDB';
+let chatIdbVersion = 1;
+let chatIdbStore = 'images';
+let chatIdbPendingKey = '__pending__';
+let chatIdbPromise = null;
+
+function chatOpenIdb() {
+  if (chatIdbPromise) {
+    return chatIdbPromise;
+  }
+  chatIdbPromise = new Promise(function (resolve, reject) {
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB is not supported in this browser.'));
+      return;
+    }
+    let req = indexedDB.open(chatIdbName, chatIdbVersion);
+    req.onupgradeneeded = function (event) {
+      let db = event.target.result;
+      if (!db.objectStoreNames.contains(chatIdbStore)) {
+        let store = db.createObjectStore(chatIdbStore, { keyPath: 'id' });
+        store.createIndex('convoId', 'convoId', { unique: false });
+      }
+    };
+    req.onsuccess = function (event) {
+      resolve(event.target.result);
+    };
+    req.onerror = function () {
+      chatIdbPromise = null;
+      reject(req.error || new Error('Could not open IndexedDB.'));
+    };
+  });
+  return chatIdbPromise;
+}
+
+async function chatIdbSaveConvoImages(convoId, messages) {
+  if (!convoId || !Array.isArray(messages)) {
+    return;
+  }
+  let records = [];
+  for (let i = 0; i < messages.length; i++) {
+    let m = messages[i];
+    if (!m || !Array.isArray(m.images) || m.images.length === 0) {
+      continue;
+    }
+    if (!Array.isArray(m.imageIds) || m.imageIds.length !== m.images.length) {
+      m.imageIds = m.images.map(function (_, idx) {
+        return convoId + ':' + (m.ts || Date.now()) + ':' + i + ':' + idx;
+      });
+    }
+    for (let j = 0; j < m.images.length; j++) {
+      records.push({
+        id: m.imageIds[j],
+        convoId: convoId,
+        dataUrl: m.images[j],
+        updatedAt: Date.now()
+      });
+    }
+  }
+  if (records.length === 0) {
+    return;
+  }
+  try {
+    let db = await chatOpenIdb();
+    await new Promise(function (resolve, reject) {
+      let tx = db.transaction(chatIdbStore, 'readwrite');
+      let store = tx.objectStore(chatIdbStore);
+      for (let rec of records) {
+        store.put(rec);
+      }
+      tx.oncomplete = function () {
+        resolve();
+      };
+      tx.onerror = function () {
+        reject(tx.error);
+      };
+    });
+  } catch (error) {
+    console.warn('Could not save images to IndexedDB:', error);
+  }
+}
+
+async function chatIdbLoadConvoImages(convoId, messages) {
+  if (!convoId || !Array.isArray(messages)) {
+    return;
+  }
+  let needsHydration = messages.some(function (m) {
+    return m && Array.isArray(m.imageIds) && m.imageIds.length > 0 && (!m.images || m.images.length === 0);
+  });
+  if (!needsHydration) {
+    return;
+  }
+  try {
+    let db = await chatOpenIdb();
+    let byId = await new Promise(function (resolve, reject) {
+      let tx = db.transaction(chatIdbStore, 'readonly');
+      let store = tx.objectStore(chatIdbStore);
+      let index = store.index('convoId');
+      let req = index.getAll(IDBKeyRange.only(convoId));
+      req.onsuccess = function () {
+        let map = {};
+        for (let rec of req.result || []) {
+          if (rec && rec.id && rec.dataUrl) {
+            map[rec.id] = rec.dataUrl;
+          }
+        }
+        resolve(map);
+      };
+      req.onerror = function () {
+        reject(req.error);
+      };
+    });
+
+    for (let m of messages) {
+      if (m && Array.isArray(m.imageIds) && m.imageIds.length > 0) {
+        let loaded = [];
+        for (let imgId of m.imageIds) {
+          if (byId[imgId]) {
+            loaded.push(byId[imgId]);
+          }
+        }
+        if (loaded.length > 0) {
+          m.images = loaded;
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Could not load images from IndexedDB:', error);
+  }
+}
+
+async function chatIdbDeleteConvoImages(convoId) {
+  if (!convoId) {
+    return;
+  }
+  try {
+    let db = await chatOpenIdb();
+    await new Promise(function (resolve, reject) {
+      let tx = db.transaction(chatIdbStore, 'readwrite');
+      let store = tx.objectStore(chatIdbStore);
+      let index = store.index('convoId');
+      let req = index.openKeyCursor(IDBKeyRange.only(convoId));
+      req.onsuccess = function (event) {
+        let cursor = event.target.result;
+        if (cursor) {
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        }
+      };
+      tx.oncomplete = function () {
+        resolve();
+      };
+      tx.onerror = function () {
+        reject(tx.error);
+      };
+    });
+  } catch (error) {
+    console.warn('Could not delete conversation images from IndexedDB:', error);
+  }
+}
+
+async function chatIdbClearAllImages() {
+  try {
+    let db = await chatOpenIdb();
+    await new Promise(function (resolve, reject) {
+      let tx = db.transaction(chatIdbStore, 'readwrite');
+      tx.objectStore(chatIdbStore).clear();
+      tx.oncomplete = function () {
+        resolve();
+      };
+      tx.onerror = function () {
+        reject(tx.error);
+      };
+    });
+  } catch (error) {
+    console.warn('Could not clear IndexedDB images:', error);
+  }
+}
+
+async function chatIdbSavePendingImages() {
+  try {
+    let db = await chatOpenIdb();
+    await new Promise(function (resolve, reject) {
+      let tx = db.transaction(chatIdbStore, 'readwrite');
+      let store = tx.objectStore(chatIdbStore);
+      let index = store.index('convoId');
+      let req = index.openKeyCursor(IDBKeyRange.only(chatIdbPendingKey));
+      req.onsuccess = function (event) {
+        let cursor = event.target.result;
+        if (cursor) {
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        } else {
+          for (let i = 0; i < chatPendingImages.length; i++) {
+            let item = chatPendingImages[i];
+            store.put({
+              id: chatIdbPendingKey + ':' + i + ':' + item.id,
+              convoId: chatIdbPendingKey,
+              order: i,
+              name: item.name,
+              dataUrl: item.dataUrl
+            });
+          }
+        }
+      };
+      tx.oncomplete = function () {
+        resolve();
+      };
+      tx.onerror = function () {
+        reject(tx.error);
+      };
+    });
+  } catch (error) {
+    console.warn('Could not persist pending images to IndexedDB:', error);
+  }
+}
+
+async function chatIdbLoadPendingImages() {
+  if (!modelSupportsImages(getSelectedModel())) {
+    return;
+  }
+  try {
+    let db = await chatOpenIdb();
+    let records = await new Promise(function (resolve, reject) {
+      let tx = db.transaction(chatIdbStore, 'readonly');
+      let index = tx.objectStore(chatIdbStore).index('convoId');
+      let req = index.getAll(IDBKeyRange.only(chatIdbPendingKey));
+      req.onsuccess = function () {
+        resolve(req.result || []);
+      };
+      req.onerror = function () {
+        reject(req.error);
+      };
+    });
+    if (!records.length || chatPendingImages.length > 0) {
+      return;
+    }
+    records.sort(function (a, b) {
+      return (a.order || 0) - (b.order || 0);
+    });
+    for (let rec of records.slice(0, chatMaxImages)) {
+      if (rec && rec.dataUrl) {
+        chatImageSeq += 1;
+        chatPendingImages.push({
+          id: 'img' + chatImageSeq,
+          name: rec.name || ('image ' + chatImageSeq),
+          dataUrl: rec.dataUrl
+        });
+      }
+    }
+    renderAttachStrip();
+  } catch (error) {
+    console.warn('Could not load pending images from IndexedDB:', error);
+  }
+}
+
 // - Helpers -
 
 function notifyError(message) {
@@ -135,9 +392,8 @@ async function loadModels() {
     notifyError(error.message);
   }
   populateModels();
+  await chatIdbLoadPendingImages();
 }
-
-
 
 async function loadChatStats() {
   try {
@@ -146,21 +402,16 @@ async function loadChatStats() {
     if (data.type !== 'success') {
       throw new Error(data.message || 'Could not load stats.');
     }
-	
-	populateStats(data);
-	
+    populateStats(data);
   } catch (error) {
     notifyError(error.message);
   }
-  
-  function populateStats(data){
-	_("chat_limit").innerText = data.remaining+"/"+data.limit;
-	_("chat_limit").title = "Messages Remaining, RESETS at: \n"+ utility.formatDate(data.resets_at,false,true);
-	
-  };
+
+  function populateStats(data) {
+    _("chat_limit").innerText = data.remaining + "/" + data.limit;
+    _("chat_limit").title = "Messages Remaining, RESETS at: \n" + utility.formatDate(data.resets_at, false, true);
+  }
 }
-
-
 
 function getSelectedModel() {
   return chatModelList.length ? chatModelSelect.value : '';
@@ -234,7 +485,6 @@ function handleSanitizedAttributes(node) {
     }
   }
 }
-
 
 function getCodeLanguage(code) {
   let match = /language-([\w+-]+)/.exec(code.className);
@@ -329,7 +579,6 @@ function restoreCopyLabel(button) {
   button.textContent = 'Copy';
 }
 
-
 async function handleChatLogClick(event) {
   let olderBtn = event.target.closest('.chat-older-btn');
   if (olderBtn) {
@@ -372,14 +621,11 @@ async function handleChatLogClick(event) {
   }
 }
 
-
-
 function initMarkdown() {
   if (typeof DOMPurify !== 'undefined') {
     DOMPurify.addHook('afterSanitizeAttributes', handleSanitizedAttributes);
   }
 }
-
 
 // Ask the user Tool call -------------------
 
@@ -393,8 +639,8 @@ function showChatAsk(ask) {
   if (!ask || !Array.isArray(ask.choices) || ask.choices.length === 0) {
     return;
   }
-	renderMarkdown(chatAskReason, ask.reason || 'More tool calls are needed to continue.', true);
-	
+  renderMarkdown(chatAskReason, ask.reason || 'More tool calls are needed to continue.', true);
+
   chatAskChoices.innerHTML = '';
   for (let choice of ask.choices) {
     let btn = document.createElement('button');
@@ -458,6 +704,7 @@ function renderAttachStrip() {
 function clearPendingImages() {
   chatPendingImages = [];
   renderAttachStrip();
+  chatIdbSavePendingImages();
 }
 
 function restorePendingImages(images) {
@@ -466,6 +713,7 @@ function restorePendingImages(images) {
     return { id: 'img' + chatImageSeq, name: 'image ' + (index + 1), dataUrl: url };
   });
   renderAttachStrip();
+  chatIdbSavePendingImages();
 }
 
 function updateAttachUI() {
@@ -521,6 +769,7 @@ async function addImageFiles(files) {
       chatImageSeq += 1;
       chatPendingImages.push({ id: 'img' + chatImageSeq, name: file.name || 'pasted image', dataUrl: dataUrl });
       renderAttachStrip();
+      chatIdbSavePendingImages();
     } catch (error) {
       notifyError(error.message);
     }
@@ -546,6 +795,7 @@ function handleStripClick(event) {
     return item.id !== btn.dataset.id;
   });
   renderAttachStrip();
+  chatIdbSavePendingImages();
 }
 
 function handleChatPaste(event) {
@@ -662,7 +912,7 @@ async function sendMessage(text, images) {
   };
   let toolBox = row.querySelector('[data-cell="tools"]');
   let chartBox = row.querySelector('[data-cell="charts"]');
-  
+
   let toolChips = {};
   bot.classList.add('chat-thinking');
 
@@ -737,8 +987,8 @@ async function sendMessage(text, images) {
         if (payload.ask) {
           ask = payload.ask;
         }
-		
-		if (payload.chart) {
+
+        if (payload.chart) {
           let stickChart = isNearBottom();
           charts.push(payload.chart);
           renderChatChart(chartBox, payload.chart);
@@ -746,7 +996,7 @@ async function sendMessage(text, images) {
             scrollToBottom();
           }
         }
-		
+
         if (payload.reasoning) {
           if (!thinkingShown) {
             thinkingShown = true;
@@ -779,12 +1029,12 @@ async function sendMessage(text, images) {
         }
       }
     }
-	if (!reply && (!chartBox || chartBox.children.length === 0)) {
-		  revealBubble(bot);
-		  bot.textContent = '(no response)';
-		} else if (!reply) {
-		  bot.classList.add('hidden');
-	}
+    if (!reply && (!chartBox || chartBox.children.length === 0)) {
+      revealBubble(bot);
+      bot.textContent = '(no response)';
+    } else if (!reply) {
+      bot.classList.add('hidden');
+    }
   } catch (error) {
     revealBubble(bot);
     if (error.name === 'AbortError') {
@@ -838,9 +1088,8 @@ async function sendMessage(text, images) {
     chatPersistConvo();
     chatUpdateSaveBtn();
   }
-  
+
   loadChatStats();
-  
 }
 
 function stopStreaming() {
@@ -933,13 +1182,21 @@ function chatMakeTitle(messages) {
   return 'New conversation';
 }
 
-function chatForStorage() {
-  return chatHistory.map(function (m) {
-    if (!m.images || m.images.length === 0) {
+function chatForStorage(convoId) {
+  return chatHistory.map(function (m, msgIndex) {
+    if ((!m.images || m.images.length === 0) && (!m.imageIds || m.imageIds.length === 0)) {
       return m;
     }
     let copy = Object.assign({}, m);
-    copy.imageCount = m.images.length;
+    if (m.images && m.images.length > 0) {
+      if (!Array.isArray(m.imageIds) || m.imageIds.length !== m.images.length) {
+        m.imageIds = m.images.map(function (_, imgIndex) {
+          return (convoId || 'convo') + ':' + (m.ts || Date.now()) + ':' + msgIndex + ':' + imgIndex;
+        });
+      }
+      copy.imageIds = m.imageIds.slice();
+      copy.imageCount = m.images.length;
+    }
     delete copy.images;
     return copy;
   });
@@ -951,7 +1208,8 @@ function chatSaveConvo() {
   }
   let id = chatNewId();
   let now = Date.now();
-  if (!chatStoreSet(chatConvoPrefix + id, chatForStorage())) {
+  let serialized = chatForStorage(id);
+  if (!chatStoreSet(chatConvoPrefix + id, serialized)) {
     return;
   }
   let list = chatReadIndex();
@@ -961,6 +1219,7 @@ function chatSaveConvo() {
     return;
   }
   chatConvoId = id;
+  chatIdbSaveConvoImages(id, chatHistory);
   chatUpdateSaveBtn();
   chatNotifySuccess('Conversation saved to History.');
 }
@@ -969,9 +1228,11 @@ function chatPersistConvo() {
   if (!chatConvoId) {
     return;
   }
-  if (!chatStoreSet(chatConvoPrefix + chatConvoId, chatForStorage())) {
+  let serialized = chatForStorage(chatConvoId);
+  if (!chatStoreSet(chatConvoPrefix + chatConvoId, serialized)) {
     return;
   }
+  chatIdbSaveConvoImages(chatConvoId, chatHistory);
   let list = chatReadIndex();
   let entry = chatFindEntry(list, chatConvoId);
   if (!entry) {
@@ -985,6 +1246,7 @@ function chatPersistConvo() {
 
 function chatRemoveConvo(id) {
   chatStoreRemove(chatConvoPrefix + id);
+  chatIdbDeleteConvoImages(id);
   let list = chatReadIndex().filter(function (entry) {
     return entry.id !== id;
   });
@@ -1074,13 +1336,12 @@ function chatSetView(view) {
   chatHistPanel.classList.toggle('is-open', isHistory);
   chatLog.classList.toggle('hidden', isHistory);
   chatForm.classList.toggle('hidden', isHistory);
-  
-  if(isHistory){
-	_("notice_banner").classList.remove("hidden");
-  }else{
-	_("notice_banner").classList.add("hidden");
+
+  if (isHistory) {
+    _("notice_banner").classList.remove("hidden");
+  } else {
+    _("notice_banner").classList.add("hidden");
   }
-  
 }
 
 function chatDateGroup(ts) {
@@ -1148,8 +1409,6 @@ function chatBuildHistItem(entry) {
   return item;
 }
 
-
-
 function chatRenderHistList() {
   let query = chatHistSearch.value.trim().toLowerCase();
   let all = chatReadIndex();
@@ -1192,7 +1451,6 @@ function chatOpenHistory() {
   chatRenderHistList();
   chatHistBack.hidden = chatHistory.length === 0;
   chatSetView('history');
-  
 }
 
 function chatCloseHistory() {
@@ -1263,6 +1521,7 @@ function chatRequestDeleteAll() {
     for (let entry of chatReadIndex()) {
       chatStoreRemove(chatConvoPrefix + entry.id);
     }
+    chatIdbClearAllImages();
     chatWriteIndex([]);
     chatConvoId = null;
     chatUpdateSaveBtn();
@@ -1466,7 +1725,7 @@ function chatRenderInitial() {
   scrollToBottom();
 }
 
-function chatOpenConvo(id) {
+async function chatOpenConvo(id) {
   let messages = chatStoreGet(chatConvoPrefix + id, null);
   if (!Array.isArray(messages)) {
     notifyError('That conversation could not be loaded.');
@@ -1474,6 +1733,7 @@ function chatOpenConvo(id) {
     chatRenderHistList();
     return;
   }
+  await chatIdbLoadConvoImages(id, messages);
   resetConversation();
   chatHistory = messages;
   chatConvoId = id;
@@ -1564,9 +1824,6 @@ function handleChatKeydown(event) {
   }
 }
 
-
-
-
 function applyNoHeaderMode(override) {
   let hasOverride = typeof override === 'boolean';
   let enable;
@@ -1632,8 +1889,6 @@ function applyNoHeaderMode(override) {
   }
 }
 
-
-
 //Chart Tools:// Fallback in case getCSSVar is not defined in base_headless.html
 if (typeof window.getCSSVar === 'undefined') {
   window.getCSSVar = function (name) {
@@ -1643,7 +1898,6 @@ if (typeof window.getCSSVar === 'undefined') {
 }
 
 let chatChartSeq = 0;
-
 
 function toggleChartFullscreen(card, forceState) {
   if (!card) {
@@ -1662,8 +1916,6 @@ function toggleChartFullscreen(card, forceState) {
     chartInstances[canvas.id].resize();
   }
 }
-
-
 
 function renderChatChart(container, spec) {
   if (!container || !spec) {
@@ -1743,7 +1995,6 @@ function renderChatChart(container, spec) {
   }
 }
 
-
 document.addEventListener('keydown', function (event) {
   if (event.key === 'Escape') {
     let activeCard = chatLog.querySelector('.chat-chart-card.is-fullscreen');
@@ -1753,54 +2004,42 @@ document.addEventListener('keydown', function (event) {
   }
 });
 
-
 // Chat Statistics ============================
-function getCurrentStats(){
-	
-	
-	
-	
+function getCurrentStats() {
 }
-
-
 
 // Controls and Page Window Management ========
 
-function closeThis(){
+function closeThis() {
+  if (chatHistory.length <= 0) {
+    closeWindow();
+    return;
+  }
 
-	if(chatHistory.length <= 0){
-		closeWindow();
-		return;
-	}
+  if (typeof showConfirmationModal === 'function') {
+    showConfirmationModal({
+      title: 'Close Chat Window?',
+      message: 'Unsaved Chat would be gone as well.',
+      confirmText: 'Close',
+      cancelText: 'Cancel',
+      onConfirm: closeWindow
+    });
+  } else if (confirm('Unsaved Chat would be gone as well.')) {
+    closeWindow();
+  }
 
-	if (typeof showConfirmationModal === 'function') {
-	showConfirmationModal({
-	  title: 'Close Chat Window?',
-	  message: 'Unsaved Chat would be gone as well.',
-	  confirmText: 'Close',
-	  cancelText: 'Cancel',
-	  onConfirm: closeWindow
-	});
-	} else if (confirm('Unsaved Chat would be gone as well.')) {
-	closeWindow();
-	}
-
-	function closeWindow(){
-		postMessageToParent("close");
-	}
+  function closeWindow() {
+    postMessageToParent("close");
+  }
 }
 
-
-function minimizeChatG(){
-	postMessageToParent("function:minimizeChatG:1");
+function minimizeChatG() {
+  postMessageToParent("function:minimizeChatG:1");
 }
 
-
-function maximizeChatG(){
-	postMessageToParent("function:maximizeChatG:1");	
+function maximizeChatG() {
+  postMessageToParent("function:maximizeChatG:1");
 }
-
-
 
 // - Init -
 
