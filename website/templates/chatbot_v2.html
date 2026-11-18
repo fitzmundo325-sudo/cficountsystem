@@ -53,6 +53,13 @@
   
 
 
+  #chat-attach-strip:not(.hidden) { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .chat-attach-item { position: relative; width: 3.5rem; height: 3.5rem; overflow: hidden; border: 1px solid #cbd5e1; border-radius: 0.5rem; }
+  .chat-attach-item img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .chat-attach-remove { position: absolute; top: 0; right: 0; width: 1.15rem; height: 1.15rem; border: 0; border-bottom-left-radius: 0.4rem; background-color: rgba(15, 23, 42, 0.75); color: #ffffff; cursor: pointer; font-size: 0.85rem; line-height: 1; }
+  #chat-log .chat-msg-images { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.4rem; }
+  #chat-log .chat-msg-images img { max-width: 9rem; max-height: 9rem; border-radius: 0.5rem; object-fit: cover; }
+  #chat-log .chat-msg-imgnote { margin-bottom: 0.25rem; font-size: 0.75rem; opacity: 0.8; }
 </style>
  
 <link rel="stylesheet" href="{{ url_for('static', filename='css/chatbot_extra.css') }}" >
@@ -187,13 +194,18 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
         </div>
         <div id="chat-ask-choices" class="chat-ask-choices"></div>
       </div>
+      <div id="chat-attach-strip" class="hidden"></div>
       <div class="flex items-end gap-2">
+        <div id="chat-attach-wrap" class="hidden shrink-0">
+          <button id="chat-attach-btn" type="button" title="Attach an image" aria-label="Attach an image" class="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"><span class="fa fa-paperclip"></span></button>
+          <input id="chat-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+        </div>
         <textarea id="chat-input" rows="1" placeholder="Type a message..." class="max-h-40 flex-1 resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"></textarea>
         <button id="chat-send-btn" type="submit" data-state="send" class="inline-flex shrink-0 items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">Send</button>
       </div>
       <p class="mt-1.5 text-xs text-slate-400">Enter to send, Shift+Enter for a new line. <i class="tiny secondary_color"> LLMs can make mistakes, always validate accuracy. 
 		
-		</i><span class="text-xs secondary_color" title="Current Version of the Chatbot engine."> (v1.0.8) </span></p>
+		</i><span class="text-xs secondary_color" title="Current Version of the Chatbot engine."> (v1.1.8) </span></p>
     </form>
 
   </section>
@@ -231,7 +243,7 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
 <script defer src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
-<script defer src="{{ url_for('static', filename='js/handles/chatbot_page_handles.js') }}?v=chatbot-v2-20261112-1"></script>
+<script defer src="{{ url_for('static', filename='js/handles/chatbot_page_handles.js') }}?v=chatbot-v2-20261118-1"></script>
 <script defer src="{{ url_for('static', filename='js/modalizer.js') }}?v=chatbot-v2-20261104-5"></script>
 
 {% endblock %}

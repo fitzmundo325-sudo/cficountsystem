@@ -23,6 +23,10 @@ let chatActions = document.getElementById('chat-actions');
 let chatAsk = document.getElementById('chat-ask');
 let chatAskReason = document.getElementById('chat-ask-reason');
 let chatAskChoices = document.getElementById('chat-ask-choices');
+let chatAttachWrap = document.getElementById('chat-attach-wrap');
+let chatAttachBtn = document.getElementById('chat-attach-btn');
+let chatFileInput = document.getElementById('chat-file-input');
+let chatAttachStrip = document.getElementById('chat-attach-strip');
 let chatMenuQuery = '(max-width: 849.98px)';
 
 let chatIndexKey = 'chatHistoryIndex';
@@ -41,6 +45,10 @@ let chatStreaming = false;
 let chatModelList = [];
 let chatDefaultModel = '';
 let chatPendingRender = null;
+let chatPendingImages = [];
+let chatMaxImages = 4;
+let chatImageMaxSide = 1280;
+let chatImageSeq = 0;
 let chatPurifyConfig = {
   USE_PROFILES: { html: true },
   FORBID_TAGS: ['img', 'style', 'form', 'input', 'button', 'textarea', 'select'],
@@ -110,6 +118,7 @@ function populateModels() {
     chatModelSelect.value = chatDefaultModel;
   }
   chatModelWrap.classList.remove('hidden');
+  updateAttachUI();
 }
 
 async function loadModels() {
@@ -159,6 +168,7 @@ function getSelectedModel() {
 
 function handleModelChange() {
   saveModel(chatModelSelect.value);
+  updateAttachUI();
 }
 
 function autoResizeInput() {
@@ -174,11 +184,14 @@ function scrollToBottom() {
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
-function appendMessage(role, text) {
+function appendMessage(role, text, images) {
   let template = role === 'user' ? chatUserTemplate : chatBotTemplate;
   let row = template.content.firstElementChild.cloneNode(true);
   let bubble = row.querySelector('[data-cell="bubble"]');
   bubble.textContent = text;
+  if (role === 'user') {
+    chatAddBubbleImages(bubble, images, 0);
+  }
   chatEmpty.classList.add('hidden');
   chatLog.appendChild(row);
   scrollToBottom();
@@ -407,6 +420,178 @@ function handleChatAskClick(event) {
   sendMessage(text);
 }
 
+// - Image attachments -
+
+function modelSupportsImages(id) {
+  for (let model of chatModelList) {
+    if (model.id === id) {
+      return Array.isArray(model.attachment) && model.attachment.indexOf('images') !== -1;
+    }
+  }
+  return false;
+}
+
+function renderAttachStrip() {
+  chatAttachStrip.innerHTML = '';
+  for (let item of chatPendingImages) {
+    let box = document.createElement('div');
+    box.className = 'chat-attach-item';
+
+    let img = document.createElement('img');
+    img.src = item.dataUrl;
+    img.alt = item.name;
+
+    let remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'chat-attach-remove';
+    remove.dataset.id = item.id;
+    remove.setAttribute('aria-label', 'Remove image');
+    remove.innerHTML = '&times;';
+
+    box.appendChild(img);
+    box.appendChild(remove);
+    chatAttachStrip.appendChild(box);
+  }
+  chatAttachStrip.classList.toggle('hidden', chatPendingImages.length === 0);
+}
+
+function clearPendingImages() {
+  chatPendingImages = [];
+  renderAttachStrip();
+}
+
+function restorePendingImages(images) {
+  chatPendingImages = images.map(function (url, index) {
+    chatImageSeq += 1;
+    return { id: 'img' + chatImageSeq, name: 'image ' + (index + 1), dataUrl: url };
+  });
+  renderAttachStrip();
+}
+
+function updateAttachUI() {
+  let ok = chatModelList.length > 0 && modelSupportsImages(getSelectedModel());
+  chatAttachWrap.classList.toggle('hidden', !ok);
+  if (!ok && chatPendingImages.length > 0) {
+    clearPendingImages();
+  }
+}
+
+function loadImageElement(file) {
+  return new Promise(function (resolve, reject) {
+    let url = URL.createObjectURL(file);
+    let img = new Image();
+    img.onload = function () {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not read ' + (file.name || 'the image') + '.'));
+    };
+    img.src = url;
+  });
+}
+
+async function fileToDataUrl(file) {
+  let img = await loadImageElement(file);
+  let scale = Math.min(1, chatImageMaxSide / Math.max(img.naturalWidth, img.naturalHeight));
+  let canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  let context = canvas.getContext('2d');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
+async function addImageFiles(files) {
+  let allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+  for (let file of Array.prototype.slice.call(files || [])) {
+    if (chatPendingImages.length >= chatMaxImages) {
+      notifyError('You can attach up to ' + chatMaxImages + ' images.');
+      break;
+    }
+    if (allowed.indexOf(file.type) === -1) {
+      notifyError((file.name || 'That file') + ' is not a supported image (PNG, JPEG, WebP or GIF).');
+      continue;
+    }
+    try {
+      let dataUrl = await fileToDataUrl(file);
+      chatImageSeq += 1;
+      chatPendingImages.push({ id: 'img' + chatImageSeq, name: file.name || 'pasted image', dataUrl: dataUrl });
+      renderAttachStrip();
+    } catch (error) {
+      notifyError(error.message);
+    }
+  }
+}
+
+function handleAttachClick() {
+  chatFileInput.click();
+}
+
+function handleFileChosen() {
+  let files = Array.prototype.slice.call(chatFileInput.files);
+  chatFileInput.value = '';
+  addImageFiles(files);
+}
+
+function handleStripClick(event) {
+  let btn = event.target.closest('.chat-attach-remove');
+  if (!btn) {
+    return;
+  }
+  chatPendingImages = chatPendingImages.filter(function (item) {
+    return item.id !== btn.dataset.id;
+  });
+  renderAttachStrip();
+}
+
+function handleChatPaste(event) {
+  let items = event.clipboardData ? event.clipboardData.items : null;
+  if (!items) {
+    return;
+  }
+  let files = [];
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].kind === 'file' && items[i].type.indexOf('image/') === 0) {
+      let file = items[i].getAsFile();
+      if (file) {
+        files.push(file);
+      }
+    }
+  }
+  if (files.length === 0) {
+    return;
+  }
+  if (!modelSupportsImages(getSelectedModel())) {
+    notifyError('This model does not accept images.');
+    return;
+  }
+  event.preventDefault();
+  addImageFiles(files);
+}
+
+function chatAddBubbleImages(bubble, images, savedCount) {
+  if (images && images.length > 0) {
+    let box = document.createElement('div');
+    box.className = 'chat-msg-images';
+    for (let url of images) {
+      let img = document.createElement('img');
+      img.src = url;
+      img.alt = 'Attached image';
+      box.appendChild(img);
+    }
+    bubble.insertBefore(box, bubble.firstChild);
+  } else if (savedCount > 0) {
+    let note = document.createElement('div');
+    note.className = 'chat-msg-imgnote';
+    note.textContent = '[' + savedCount + (savedCount === 1 ? ' image' : ' images') + ' attached, not kept in saved history]';
+    bubble.insertBefore(note, bubble.firstChild);
+  }
+}
+
 // - Tools -
 
 function addToolChip(container, chips, info) {
@@ -455,13 +640,18 @@ function parseEvent(raw) {
   }
 }
 
-async function sendMessage(text) {
+async function sendMessage(text, images) {
+  images = images || [];
   let sessionToken = chatSessionToken;
   let charts = [];
   let ask = null;
-  chatHistory.push({ role: 'user', content: text, ts: Date.now() });
+  let userEntry = { role: 'user', content: text, ts: Date.now() };
+  if (images.length > 0) {
+    userEntry.images = images;
+  }
+  chatHistory.push(userEntry);
   chatUpdateSaveBtn();
-  appendMessage('user', text);
+  appendMessage('user', text, images);
 
   let row = appendMessage('bot', 'Thinking...');
   let bot = row.querySelector('[data-cell="bubble"]');
@@ -491,7 +681,11 @@ async function sendMessage(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: chatHistory.map(function (m) {
-          return { role: m.role, content: m.content };
+          let out = { role: m.role, content: m.content };
+          if (m.images && m.images.length > 0) {
+            out.images = m.images;
+          }
+          return out;
         }),
         model: getSelectedModel()
       }),
@@ -609,6 +803,9 @@ async function sendMessage(text) {
         if (!chatInput.value) {
           chatInput.value = text;
           autoResizeInput();
+        }
+        if (images.length > 0 && chatPendingImages.length === 0 && modelSupportsImages(getSelectedModel())) {
+          restorePendingImages(images);
         }
       }
     }
@@ -736,13 +933,25 @@ function chatMakeTitle(messages) {
   return 'New conversation';
 }
 
+function chatForStorage() {
+  return chatHistory.map(function (m) {
+    if (!m.images || m.images.length === 0) {
+      return m;
+    }
+    let copy = Object.assign({}, m);
+    copy.imageCount = m.images.length;
+    delete copy.images;
+    return copy;
+  });
+}
+
 function chatSaveConvo() {
   if (chatHistory.length === 0 || chatConvoId) {
     return;
   }
   let id = chatNewId();
   let now = Date.now();
-  if (!chatStoreSet(chatConvoPrefix + id, chatHistory)) {
+  if (!chatStoreSet(chatConvoPrefix + id, chatForStorage())) {
     return;
   }
   let list = chatReadIndex();
@@ -760,7 +969,7 @@ function chatPersistConvo() {
   if (!chatConvoId) {
     return;
   }
-  if (!chatStoreSet(chatConvoPrefix + chatConvoId, chatHistory)) {
+  if (!chatStoreSet(chatConvoPrefix + chatConvoId, chatForStorage())) {
     return;
   }
   let list = chatReadIndex();
@@ -1128,6 +1337,7 @@ function chatHandleHistClick(event) {
 function resetConversation() {
   stopStreaming();
   hideChatAsk();
+  clearPendingImages();
   chatSessionToken += 1;
   chatHistory = [];
   chatConvoId = null;
@@ -1153,6 +1363,7 @@ function chatBuildRow(message) {
   let bubble = row.querySelector('[data-cell="bubble"]');
   if (isUser) {
     bubble.textContent = message.content;
+    chatAddBubbleImages(bubble, message.images, message.imageCount || 0);
     return row;
   }
   if (message.content) {
@@ -1331,13 +1542,17 @@ function handleChatSubmit(event) {
     return;
   }
   let text = chatInput.value.trim();
-  if (!text) {
+  let images = chatPendingImages.map(function (item) {
+    return item.dataUrl;
+  });
+  if (!text && images.length === 0) {
     return;
   }
   chatInput.value = '';
   autoResizeInput();
+  clearPendingImages();
   hideChatAsk();
-  sendMessage(text);
+  sendMessage(text, images);
 }
 
 function handleChatKeydown(event) {
@@ -1595,6 +1810,10 @@ chatInput.addEventListener('input', autoResizeInput);
 chatClearBtn.addEventListener('click', requestClearChat);
 chatLog.addEventListener('click', handleChatLogClick);
 chatAsk.addEventListener('click', handleChatAskClick);
+chatAttachBtn.addEventListener('click', handleAttachClick);
+chatFileInput.addEventListener('change', handleFileChosen);
+chatAttachStrip.addEventListener('click', handleStripClick);
+chatInput.addEventListener('paste', handleChatPaste);
 chatModelSelect.addEventListener('change', handleModelChange);
 
 initMarkdown();
