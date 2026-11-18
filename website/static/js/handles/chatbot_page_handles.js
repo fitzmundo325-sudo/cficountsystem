@@ -890,6 +890,21 @@ function parseEvent(raw) {
   }
 }
 
+function chatPayloadMessages() {
+  let left = chatMaxImages;
+  let out = new Array(chatHistory.length);
+  for (let i = chatHistory.length - 1; i >= 0; i--) {
+    let m = chatHistory[i];
+    let item = { role: m.role, content: m.content };
+    if (m.images && m.images.length > 0 && left > 0) {
+      item.images = m.images.slice(-left);
+      left -= item.images.length;
+    }
+    out[i] = item;
+  }
+  return out;
+}
+
 async function sendMessage(text, images) {
   images = images || [];
   let sessionToken = chatSessionToken;
@@ -930,13 +945,7 @@ async function sendMessage(text, images) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: chatHistory.map(function (m) {
-          let out = { role: m.role, content: m.content };
-          if (m.images && m.images.length > 0) {
-            out.images = m.images;
-          }
-          return out;
-        }),
+        messages: chatPayloadMessages(),
         model: getSelectedModel()
       }),
       signal: chatController.signal

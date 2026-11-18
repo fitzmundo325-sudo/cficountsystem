@@ -53,13 +53,7 @@
   
 
 
-  #chat-attach-strip:not(.hidden) { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
-  .chat-attach-item { position: relative; width: 3.5rem; height: 3.5rem; overflow: hidden; border: 1px solid #cbd5e1; border-radius: 0.5rem; }
-  .chat-attach-item img { display: block; width: 100%; height: 100%; object-fit: cover; }
-  .chat-attach-remove { position: absolute; top: 0; right: 0; width: 1.15rem; height: 1.15rem; border: 0; border-bottom-left-radius: 0.4rem; background-color: rgba(15, 23, 42, 0.75); color: #ffffff; cursor: pointer; font-size: 0.85rem; line-height: 1; }
-  #chat-log .chat-msg-images { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.4rem; }
-  #chat-log .chat-msg-images img { max-width: 9rem; max-height: 9rem; border-radius: 0.5rem; object-fit: cover; }
-  #chat-log .chat-msg-imgnote { margin-bottom: 0.25rem; font-size: 0.75rem; opacity: 0.8; }
+  
 </style>
  
 <link rel="stylesheet" href="{{ url_for('static', filename='css/chatbot_extra.css') }}" >
@@ -196,7 +190,7 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
       </div>
       <div id="chat-attach-strip" class="hidden"></div>
       <div class="flex items-end gap-2">
-        <div id="chat-attach-wrap" class="hidden shrink-0">
+        <div id="chat-attach-wrap" class="hidden shrink-0 fancy_button attactment_button">
           <button id="chat-attach-btn" type="button" title="Attach an image" aria-label="Attach an image" class="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"><span class="fa fa-paperclip"></span></button>
           <input id="chat-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
         </div>
