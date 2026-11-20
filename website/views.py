@@ -14512,6 +14512,14 @@ def store_data_v2_page():
     return render_template("store_manager/store_data_v2.html", user=current_user, page='clusters')
 
 
+       
+#v2 of Daily Report
+@views.route('/store-manager/daily_report_v2', methods=['GET'])
+@login_required
+def daily_report_v2_page():
+    return render_template("store_manager/daily_report_v2.html", user=current_user, page='daily_report_v2')
+
+
 
 
 

@@ -7998,6 +7998,211 @@ def _resolve_category_fast(product_name, cache, similarity_threshold=0.90):
 
 
 # ================================
+# Store Manager Section
+# ================================
+
+# Daily Report ===================
+DAILY_REPORT_FORM_FIELDS = [
+    'pos_gross_sales', 'pos_net_sales', 'pos_tc',
+    'ci_regular_gross_sales', 'ci_regular_net_sales', 'ci_tc',
+    'ci_number', 'ci_sales_discount',
+    'boothselling_sales', 'boothselling_tc',
+    'bulk_order_sales', 'bulk_order_tc',
+    'reseller_sales', 'reseller_tc',
+    'tieup_sales', 'tieup_tc',
+    'gow_sales', 'gow_tc',
+    'ambulant_sales', 'ambulant_tc',
+    'extended_hours_sales', 'extended_hours_tc',
+    'gds_sales', 'gds_tc',
+    'grab_sales', 'grab_tc',
+    'foodpanda_sales', 'foodpanda_tc',
+    'paymaya_sales', 'paymaya_tc',
+    'gcash_sales', 'gcash_tc',
+    'ldts_gc', 'ldts_rolls', 'ldts_premium',
+    'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium',
+    'spoilage_gc', 'spoilage_rolls', 'spoilage_premium', 'spoilage_others',
+    'senior_pwd_discount', 'promo_ldts_discount', 'bulk_orders_discount',
+    'total_net_spoilage', 'spoilage_percentage', 'mtd_percentage',
+]
+
+
+def _daily_report_param(name):
+    value = str(request.form.get(name) or request.args.get(name) or '').strip()
+    if value.lower() in ('undefined', 'null', 'none'):
+        return ''
+    return value
+
+
+def _daily_report_json_value(value):
+    if value is None:
+        return ''
+    if isinstance(value, (int, float, str)):
+        return value
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return str(value)
+
+
+
+def _parse_iso_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    except (ValueError, TypeError):
+        return None
+        
+
+
+
+def _build_missing_report_dates(store_id, month_start, cutoff_date):
+    if not store_id or not month_start or not cutoff_date or cutoff_date < month_start:
+        return []
+
+    first_report_date = (
+        DailyReport.query
+        .filter(DailyReport.store_id == store_id)
+        .with_entities(func.min(DailyReport.report_date))
+        .scalar()
+    )
+    if not first_report_date or first_report_date > cutoff_date:
+        return []
+
+    start_date = max(month_start, first_report_date)
+    existing_dates = {
+        row.report_date for row in DailyReport.query.filter(
+            DailyReport.store_id == store_id,
+            DailyReport.report_date >= start_date,
+            DailyReport.report_date <= cutoff_date,
+        ).all()
+        if row.report_date
+    }
+
+    missing_dates = []
+    cursor = start_date
+    while cursor <= cutoff_date:
+        if cursor not in existing_dates:
+            missing_dates.append({
+                'iso': cursor.strftime('%Y-%m-%d'),
+                'label': cursor.strftime('%b %d, %Y'),
+            })
+        cursor += timedelta(days=1)
+    return missing_dates
+       
+
+@api_handles.route('/daily_report', methods=['GET', 'POST'])
+@login_required
+def daily_report_data():
+    if current_user.role != 'Store Manager':
+        return {'type': 'error', 'message': 'Access denied. Only Store Managers can access this page.'}
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        return {'type': 'error', 'message': 'You are not assigned to any store yet.'}
+
+    recent_reports = (
+        DailyReport.query.filter_by(store_id=store.id)
+        .order_by(DailyReport.report_date.desc())
+        .limit(10)
+        .all()
+    )
+
+    date_param = _daily_report_param('date')
+    explicit_date_in_query = bool(date_param)
+    lock_report_date = _daily_report_param('lock_date') == '1'
+
+    today_date = date.today()
+    selected_date = (
+        _parse_iso_date(date_param)
+        or _parse_iso_date(session.get('login_selected_date'))
+        or today_date
+    )
+    if selected_date > today_date:
+        selected_date = today_date
+
+    if explicit_date_in_query:
+        session['login_selected_date'] = selected_date.strftime('%Y-%m-%d')
+
+    missing_dates = []
+    if not explicit_date_in_query:
+        month_start = selected_date.replace(day=1)
+        cutoff_date = min(selected_date, today_date - timedelta(days=1))
+        missing_dates = _build_missing_report_dates(store.id, month_start, cutoff_date)
+
+    selected_report = DailyReport.query.filter_by(store_id=store.id, report_date=selected_date).first()
+
+    initial_form_values = {}
+    if selected_report:
+        for field_name in DAILY_REPORT_FORM_FIELDS:
+            initial_form_values[field_name] = _daily_report_json_value(getattr(selected_report, field_name, ''))
+
+    pos_sales_autofill = {
+        'source': '',
+        'label': '',
+        'rows_count': 0,
+        'pos_gross_sales': 0.0,
+        'pos_net_sales': 0.0,
+    }
+    pos_staging = _get_pos_sold_staging(store.id, selected_date)
+    pos_sold_items_for_autofill = _get_staged_pos_sold_items(pos_staging)
+    if pos_sold_items_for_autofill:
+        pos_sales_autofill.update(_build_pos_sales_autofill_totals(pos_sold_items_for_autofill))
+        pos_sales_autofill['source'] = 'staged'
+        pos_sales_autofill['label'] = 'Saved POS Sold data'
+    elif selected_report:
+        saved_pos_items = (
+            PosSold.query.filter_by(daily_report_id=selected_report.id)
+            .order_by(PosSold.id.asc())
+            .all()
+        )
+        if saved_pos_items:
+            pos_sales_autofill.update(_build_pos_sales_autofill_totals(saved_pos_items))
+            pos_sales_autofill['source'] = 'saved'
+            pos_sales_autofill['label'] = 'Submitted POS sold data'
+
+    pos_fields_blank = (
+        not selected_report
+        or (
+            not float(getattr(selected_report, 'pos_gross_sales', 0) or 0)
+            and not float(getattr(selected_report, 'pos_net_sales', 0) or 0)
+        )
+    )
+    if pos_sales_autofill['source'] and pos_fields_blank:
+        initial_form_values['pos_gross_sales'] = pos_sales_autofill['pos_gross_sales']
+        initial_form_values['pos_net_sales'] = pos_sales_autofill['pos_net_sales']
+
+    recent_data = [
+        {
+            'report_date': report.report_date.strftime('%Y-%m-%d') if report.report_date else '',
+            'date_label': report.report_date.strftime('%b %d, %Y') if report.report_date else '-',
+            'status': report.status or '',
+            'total_net_sales': float((report.pos_net_sales or 0) + (report.ci_regular_net_sales or 0)),
+            'total_tc': int((report.pos_tc or 0) + (report.ci_tc or 0)),
+            'submitted_at_label': report.submitted_at.strftime('%b %d, %Y %I:%M %p') if report.submitted_at else '-',
+        }
+        for report in recent_reports
+    ]
+
+    return {
+        'type': 'success',
+        'store': {'id': store.id, 'name': store.name},
+        'selected_report_date': selected_date.strftime('%Y-%m-%d'),
+        'today': today_date.strftime('%Y-%m-%d'),
+        'lock_report_date': lock_report_date,
+        'missing_dates': missing_dates,
+        'next_missing_date': missing_dates[0]['iso'] if missing_dates else None,
+        'initial_form_values': initial_form_values,
+        'pos_sales_autofill': pos_sales_autofill,
+        'recent_reports': recent_data,
+    }
+
+
+# ================================
+# Store Manager Section End
+# ================================
+
+# ================================
 # Other Section
 # ================================
 def is_admin(silent=False):

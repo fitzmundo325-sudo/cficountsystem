@@ -1,0 +1,335 @@
+{% extends "base_headless.html" %}
+{% block title %}Daily Report{% endblock %}
+
+{% block content %}
+
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 min-h-20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div class="flex items-center gap-3 sm:gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Daily Report</span>
+    </nav>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-3 sm:justify-end">
+    <a id="pos-sold-link" href="{{ url_for('views.store_manager_pos_sold') }}" class="inline-flex items-center px-3 py-2 text-sm font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors">
+      POS Sold
+    </a>
+    <label for="report_date" class="text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
+      Report Date
+    </label>
+    <input
+      type="date"
+      id="report_date"
+      name="report_date"
+      form="daily-report-form"
+      required
+      class="w-40 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none shadow-sm"
+    >
+    <div class="text-sm font-medium text-slate-600">
+      <span id="header-store-name" class="text-slate-900">Loading...</span>
+    </div>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+
+  <section class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Daily Report</h1>
+      <p class="mt-1 text-slate-600">Submit your daily store report for <span id="page-store-name">your store</span></p>
+    </div>
+  </section>
+
+  <div class="relative overflow-hidden rounded-none border border-slate-200 bg-white shadow-lg shadow-slate-200/70">
+    <form id="daily-report-form" action="/store-manager/daily-report/submit" method="POST" class="space-y-0 bg-gradient-to-b from-slate-50/80 to-white">
+
+      <div class="rounded-none border border-slate-200 overflow-hidden bg-white shadow-sm">
+        <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-sky-50 to-cyan-50 border-b border-slate-200">
+          <h3 class="text-sm md:text-base font-bold text-slate-900">Sales Summary</h3>
+          <p class="text-xs text-slate-500 mt-0.5">Use these fields for total POS and CI performance.</p>
+        </div>
+        <div class="p-4 md:p-5 space-y-5">
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">POS Sales</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">POS Gross Sales</label>
+                <input type="number" step="0.01" name="pos_gross_sales" id="pos_gross_sales" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">POS Net Sales</label>
+                <input type="number" step="0.01" name="pos_net_sales" id="pos_net_sales" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">TC (Transaction Count)</label>
+                <input type="number" name="pos_tc" id="pos_tc" placeholder="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+          </div>
+
+          <div class="h-px bg-slate-200"></div>
+
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">CI Regular Sales</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">CI Regular Gross Sales</label>
+                <input type="number" step="0.01" name="ci_regular_gross_sales" id="ci_regular_gross_sales" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">CI Regular Net Sales</label>
+                <input type="number" step="0.01" name="ci_regular_net_sales" id="ci_regular_net_sales" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">CI TC</label>
+                <input type="number" name="ci_tc" id="ci_tc" placeholder="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">CI Number</label>
+                <input type="text" name="ci_number" placeholder="--" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-700 mb-1">CI Sales Discount</label>
+                <input type="number" step="0.01" name="ci_sales_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-none border border-slate-200 overflow-hidden bg-white shadow-sm">
+        <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-indigo-50 to-sky-50 border-b border-slate-200">
+          <h3 class="text-sm md:text-base font-bold text-slate-900">Sales Channels</h3>
+          <p class="text-xs text-slate-500 mt-0.5">Breakdown of SGA and aggregator sales that are already in net sales.</p>
+        </div>
+        <div class="p-4 md:p-5 space-y-5">
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">SGA (Should be in Net Sales)</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Boothselling</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="boothselling_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="boothselling_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Bulk Order</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="bulk_order_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="bulk_order_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Reseller</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="reseller_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="reseller_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Tie-up</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="tieup_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="tieup_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Ambulant Sales</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="ambulant_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="ambulant_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Extended Hours</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="extended_hours_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="extended_hours_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="h-px bg-slate-200"></div>
+
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Aggregators (Should be in Net Sales)</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">GDS</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="gds_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="gds_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Grab</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="grab_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="grab_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Foodpanda</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="foodpanda_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="foodpanda_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Paymaya</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="paymaya_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="paymaya_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-2 shadow-sm">
+                <label class="block text-xs font-semibold text-slate-700">Gcash</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <input type="number" step="0.01" name="gcash_sales" placeholder="Sales" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                  <input type="number" name="gcash_tc" placeholder="TC" class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-none border border-slate-200 overflow-hidden bg-white shadow-sm">
+        <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-slate-200">
+          <h3 class="text-sm md:text-base font-bold text-slate-900">Cost Monitoring</h3>
+          <p class="text-xs text-slate-500 mt-0.5">Enter discount amounts for daily monitoring.</p>
+        </div>
+        <div class="p-4 md:p-5">
+          <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Discount Monitoring</h4>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-700 mb-1">Senior / PWD</label>
+              <input type="number" step="0.01" min="0" name="senior_pwd_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-700 mb-1">Promo (LDTS)</label>
+              <input type="number" step="0.01" min="0" name="promo_ldts_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-700 mb-1">Bulk Order</label>
+              <input type="number" step="0.01" min="0" name="bulk_orders_discount" placeholder="0.00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 outline-none">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-slate-200 px-4 md:px-5 pt-4 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <p class="text-xs text-slate-500">Review values before submitting. Empty fields are treated as blank entries.</p>
+        <div class="flex items-center justify-end gap-3">
+          <a href="/" class="px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-xl transition-all">
+            Cancel
+          </a>
+          <button id="submit-daily-report-btn" type="submit" class="px-5 py-2.5 text-sm font-medium bg-sky-600 text-white rounded-xl hover:bg-sky-700 transition-all shadow-md shadow-sky-600/25 disabled:opacity-60">
+            Submit Report
+          </button>
+        </div>
+      </div>
+
+    </form>
+  </div>
+
+  <div id="recent-reports-section" class="hidden bg-white rounded-none shadow-sm border border-slate-200 overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200">
+      <h2 class="text-lg font-bold text-slate-900">Recent Reports</h2>
+      <p class="text-sm text-slate-600">Your last 10 submitted reports</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-gradient-to-r from-slate-100 to-slate-50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase border-r border-slate-200">Date</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase border-r border-slate-200">Status</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase border-r border-slate-200">Total Sales</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase border-r border-slate-200">Total TC</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Submitted At</th>
+          </tr>
+        </thead>
+        <tbody id="recent-reports-body" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<template id="tmpl-recent-row">
+  <tr class="odd:bg-white even:bg-slate-50 hover:bg-slate-100">
+    <td data-cell="date" class="px-4 py-3 text-sm font-medium text-slate-900 border-r border-slate-200"></td>
+    <td class="px-4 py-3 border-r border-slate-200">
+      <span data-status="Pending" class="hidden inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-amber-100 text-amber-700">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        Pending
+      </span>
+      <span data-status="Approved" class="hidden inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-emerald-100 text-emerald-700">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1"><polyline points="20 6 9 17 4 12"/></svg>
+        Approved
+      </span>
+      <span data-status="Rejected" class="hidden inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-rose-100 text-rose-700">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        Rejected
+      </span>
+    </td>
+    <td data-cell="total-sales" class="px-4 py-3 text-sm text-slate-600 border-r border-slate-200"></td>
+    <td data-cell="total-tc" class="px-4 py-3 text-sm text-slate-600 border-r border-slate-200"></td>
+    <td data-cell="submitted-at" class="px-4 py-3 text-sm text-slate-500"></td>
+  </tr>
+</template>
+
+<template id="tmpl-missing-row">
+  <div class="px-3 py-2 flex items-center justify-between">
+    <span data-cell="label" class="text-sm font-semibold text-red-700"></span>
+    <span data-cell="iso" class="text-xs text-red-500"></span>
+  </div>
+</template>
+
+<div id="missing-dates-modal" class="fixed inset-0 z-50 hidden">
+  <div id="missing-dates-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+    <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200">
+        <h3 class="text-lg font-bold text-slate-900">Missing Report Dates</h3>
+        <p id="missing-dates-count" class="text-sm text-red-600 mt-1"></p>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to auto-select the oldest missing Daily Report date and lock the report date field.</p>
+        <div id="missing-dates-list" class="max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100"></div>
+      </div>
+      <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
+        <button id="missing-dates-go" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-slate-700 hover:bg-slate-800 rounded-lg transition-colors shadow-sm">
+          Go
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let DAILY_REPORT_ROUTES = {
+    data: '/apis/daily_report',
+    page: {{ url_for('views.v2_base_2', m='daily_report')|tojson }},
+    posSold: {{ url_for('views.store_manager_pos_sold')|tojson }},
+    home: {{ url_for('views.home')|tojson }}
+  };
+</script>
+<script defer src="{{ url_for('static', filename='js/handles/daily_report_handles.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+
+{% endblock %}
