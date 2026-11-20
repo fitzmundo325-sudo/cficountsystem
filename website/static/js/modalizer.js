@@ -1,4 +1,4 @@
-// Modalizer JS by Atomtech v1.3.1
+// Modalizer JS by Atomtech v1.4
 
 // left: 37, up: 38, right: 39, down: 40,
 // spacebar: 32, pageup: 33, pagedown: 34, end: 35, home: 36
@@ -52,13 +52,14 @@ function enableScroll(elm) {
 }
 
 var opened_modals = [];
-
+let ALLOW_PROGRESS_SPY = undefined;
 
 function open_modal(link, custom_class=undefined, targetElm=undefined, dialog=false,onclose=undefined, prevent_reload = false){
 	if (window.self !== window.top) {
 		return console.warn("Modalizer not allowed inside iframe window");
 	}
 	let modal_iframe_con
+	
 	
 	
 	if(dialog){
@@ -94,6 +95,28 @@ function open_modal(link, custom_class=undefined, targetElm=undefined, dialog=fa
 	
 	let extra = "";
 	
+	if(ALLOW_PROGRESS_SPY){
+		modal_iframe.addEventListener("load", () => {
+		let win = modal_iframe.contentWindow;
+
+		win.addEventListener("pageswap", () => {
+			console.log("Page changed");
+			console.log(win);
+			SPY.showLoader();
+			__PROGRESS_SPY_LOAD(true);
+		});
+		
+		win.addEventListener("close", () => {
+			SPY.finishLoader();
+			__PROGRESS_SPY_LOAD(true);
+		});
+
+		// the new page has finished loading, finish the loader here
+		});
+	}
+	
+
+		
 	
 	let close_button = document.createElement("div");
 		close_button.classList.add("close_modal_rev");
@@ -166,7 +189,7 @@ function open_modal(link, custom_class=undefined, targetElm=undefined, dialog=fa
 	let pdata = {'id': modal_iframe_con.getAttribute('id'), time: 10};
 	opened_modal.push(pdata);
 
-	
+	SPY.showLoader();
 	
 	//adds onremove Trigger if a function is passed
 	
@@ -174,6 +197,12 @@ function open_modal(link, custom_class=undefined, targetElm=undefined, dialog=fa
 			modal_iframe_con.addEventListener("beforeRemove", () => {
 				//console.log("On remove trigger!");
 				onclose();
+				setTimeout(SPY.finishLoader, 500);
+		});
+	}else{
+		modal_iframe_con.addEventListener("beforeRemove", () => {
+				//console.log("On remove trigger!");
+				setTimeout(SPY.finishLoader, 400);
 		});
 	}
 	
@@ -331,6 +360,13 @@ window.addEventListener('message', (event) => {
 	}else if(message.startsWith('OK')){
 		//console.log(originatingIframe, "Status 200");
 		__MONITOR_UNLOADED_MODALFRAME(originatingIframe);
+				
+		try{
+			SPY.updateProgress(100);
+			setTimeout(SPY.finishLoader, 400);
+		}catch(e){
+			//--
+		}
 	};
 	
 	if(message.startsWith('refreshEvent')){
@@ -353,6 +389,7 @@ function closeModal(elmsrc) {
 	}	
 	let close_link = (elmsrc.parentNode.getElementsByClassName("close_modal_rev")[0]);
 	close_modalizer(close_link);
+	SPY.finishLoader();
 }
 
 function goToParent(url) {
@@ -370,6 +407,20 @@ if(typeof(zxf) == 'undefined'){
 }
 
 
+//Auto click a Button/Link when ?m=page is found on the url Link
+try {
+    if (getparam("m")) {
+        _("_" + getparam("m").toLowerCase()).click();
+    }
+} catch (e) {
+    console.warn("'m' param was present, but failed to call function-click on an element with id: " + "_" + getparam("m").toLowerCase());
+
+    // Remove the 'm' param from the URL without reloading the page
+    const url = new URL(window.location.href);
+    url.searchParams.delete("m");
+    window.history.replaceState(null, "", url.toString());
+}
+
 
 //Auto close if modal failed to handshake
 function __MONITOR_UNLOADED_MODALFRAME(elm=undefined){
@@ -378,6 +429,7 @@ function __MONITOR_UNLOADED_MODALFRAME(elm=undefined){
 		if(elm != undefined){
 			let responded = (getIndexById(opened_modal, elm.parentNode.getAttribute("id")));
 			opened_modal.splice(responded,1);
+
 		}
 		
 		for(each of opened_modal){
@@ -417,23 +469,6 @@ try{
 }
 
 
-
-//Auto click a Button/Link when ?m=page is found on the url Link
-try {
-    if (getparam("m")) {
-        _("_" + getparam("m").toLowerCase()).click();
-    }
-} catch (e) {
-    console.warn("'m' param was present, but failed to call function-click on an element with id: " + "_" + getparam("m").toLowerCase());
-
-    // Remove the 'm' param from the URL without reloading the page
-    const url = new URL(window.location.href);
-    url.searchParams.delete("m");
-    window.history.replaceState(null, "", url.toString());
-}
-
-
-
 // Override default refresh behaviors (F5, Ctrl+R)
 document.addEventListener('keydown', function(e) {
     // F5 or Ctrl+R
@@ -454,3 +489,73 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
+
+
+//Loader Spy Section
+
+
+let SPY = {
+	started: false,
+	
+	showLoader: function(){
+		if(!_("load_spy")){
+			return console.warn("SPY PROGRESS Elm. not found, aborted");
+		}
+		
+		let elm = _("load_spy");
+			elm.style.display = "flex";
+			
+		let bar = elm.children[0];
+			bar.style.width = "5%";
+			
+		this.started = true;
+	},
+	
+	updateProgress: function(prog){
+		if(this.started == false && ALLOW_PROGRESS_SPY){
+			return console.error("SPY PROGRESS Elm not started yet.");
+		}
+		
+		let elm = _("load_spy");
+			// elm.style.display = "flex";
+			
+		let bar = elm.children[0];
+			bar.style.width = parseInt(prog)+"%";
+		
+	},
+	
+	finishLoader: function(){
+		let elm = _("load_spy");
+		elm.style.removeProperty("display");
+
+		this.started = false;
+	},
+		
+	
+}
+
+
+
+let __PROGRESS_HIDDEN__ = 0;
+function __PROGRESS_SPY_LOAD(resets=false){
+	if(resets){
+		__PROGRESS_HIDDEN__ = 0;
+	}
+
+	// console.log(__PROGRESS_HIDDEN__);
+	
+	if(__PROGRESS_HIDDEN__ >= 95){
+		__PROGRESS_HIDDEN__ = __PROGRESS_HIDDEN__;
+	}else{
+		__PROGRESS_HIDDEN__ = __PROGRESS_HIDDEN__+5;
+	}
+	
+	
+	SPY.updateProgress(__PROGRESS_HIDDEN__);
+	if(!SPY.started){
+		__PROGRESS_HIDDEN__ = 0;
+		SPY.finishLoader();
+		return;
+	}
+	setTimeout(__PROGRESS_SPY_LOAD, 200);
+}

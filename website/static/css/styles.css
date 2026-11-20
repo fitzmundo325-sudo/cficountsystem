@@ -1090,6 +1090,44 @@ button:has(> .loading_overlay_ui) {
 }
 
 
+/* Modalizer Spy Progress bar Start*/
+#load_spy{
+	z-index:9999;
+	position:fixed;
+	top:0;
+	left:0;
+	right:0;
+	height:5px;
+	display:flex;
+	align-items:left;
+	background:var(--primary_background_faded);
+	display:none;
+}
+
+#load_spy > div{
+	width:50%;
+	border-radius:0 1px 2px 0;
+	background-color:var(--secondary_color);
+	background-image:linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.8) 50%, transparent 100%);
+	background-size:40% 100%;
+	background-repeat:no-repeat;
+	background-position:-100% 0;
+	animation:load_spy_shimmer 1.4s ease-in-out infinite;
+	-webkit-transition:0.5s;
+	transition:0.5s;
+}
+
+@keyframes load_spy_shimmer{
+	from{ background-position:-100% 0; }
+	to{ background-position:200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce){
+	#load_spy > div{ animation:none; }
+}
+
+/* Modalizer Spy Progress bar End*/
+
 @media (max-width: 1023px) {
 	
 }
