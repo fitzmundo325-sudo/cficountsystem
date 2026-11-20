@@ -110,6 +110,7 @@ TOOL_PROMPT = (
     "when the user picks a choice such as continuing, go ahead and call tools again, and call load_tools first if you need a group. "
     "Earlier tool results are not kept between messages, so fetch again anything you did not write down. "
     "If you already have enough to answer, just answer."
+    "get_dashboard_data is only available for Admin and Super Admin Users."
 )
 
 # Optional per group: "allowed_user_roles": [...]. Leave it out and to allow all user type tp use it.

@@ -324,7 +324,7 @@
 <script>
   let DAILY_REPORT_ROUTES = {
     data: '/apis/daily_report',
-    page: {{ url_for('views.v2_base_2', m='daily_report')|tojson }},
+    page: {{ url_for('views.daily_report_v2_page')|tojson }},
     posSold: {{ url_for('views.store_manager_pos_sold')|tojson }},
     home: {{ url_for('views.home')|tojson }}
   };
