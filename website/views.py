@@ -14522,7 +14522,7 @@ def store_data_v2_page():
 @views.route('/chatbot')
 @login_required
 def chatbot():
-    if (current_user.role or '').strip() not in ('Admin', 'Superadmin'):
+    if (current_user.role or '').strip() not in ('Admin', 'Superadmin','Store Manager'):
         flash('Access denied. You are not allowed to access the said page.', category='error')
         return redirect(url_for('views.home'))
     
