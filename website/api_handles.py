@@ -26,6 +26,9 @@ from .models import User, ProductMaster, ProductAlias, ProductPriceChangeLog, Cl
 from .views import (
     _resolve_pos_sold_master_id_batch,
     _resolve_bitbit_6s_pos_sold_rule,
+    _resolve_store_for_store_scope_user,
+    _get_pos_sold_draft,
+    _is_operational_day_finalized
 )
 
 from .admin import (
@@ -8195,6 +8198,161 @@ def daily_report_data():
         'initial_form_values': initial_form_values,
         'pos_sales_autofill': pos_sales_autofill,
         'recent_reports': recent_data,
+    }
+
+
+# Store - Manager POS SOLD
+def _pos_sold_number(value):
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return int(number) if number.is_integer() else number
+
+
+def _pos_sold_item_dict(item):
+    if isinstance(item, dict):
+        getter = item.get
+    else:
+        def getter(key, default=None):
+            return getattr(item, key, default)
+    return {
+        'product_name': str(getter('product_name') or ''),
+        'quantity': _pos_sold_number(getter('quantity')),
+        'gross_sales': float(getter('gross_sales') or 0),
+        'discount': float(getter('discount') or 0),
+        'net_sales': float(getter('net_sales') or 0),
+    }
+
+
+@api_handles.route('/store_manager_pos_sold', methods=['GET', 'POST'])
+@login_required
+def store_manager_pos_sold_data():
+    role = (current_user.role or '').strip()
+    if role not in ('Store Manager', 'Inventory Staff'):
+        return {'type': 'error', 'message': 'Access denied. Only Store Manager or Inventory Staff can access this page.'}
+
+    store = _resolve_store_for_store_scope_user()
+    if not store:
+        return {'type': 'error', 'message': 'You are not assigned to any store yet.'}
+
+    today_date = date.today()
+    date_param = _daily_report_param('date')
+    explicit_date_in_query = bool(date_param)
+    selected_date = _parse_iso_date(date_param) or today_date
+    if selected_date > today_date:
+        selected_date = today_date
+    selected_report_date = selected_date.strftime('%Y-%m-%d')
+
+    missing_dates = []
+    if not explicit_date_in_query:
+        month_start = selected_date.replace(day=1)
+        cutoff_date = min(selected_date, today_date - timedelta(days=1))
+        missing_dates = _build_missing_report_dates(store.id, month_start, cutoff_date)
+
+    pos_scan_success = _daily_report_param('pos_scan_success') == '1'
+    try:
+        pos_scan_rows = int(_daily_report_param('pos_scan_rows') or 0)
+    except (TypeError, ValueError):
+        pos_scan_rows = 0
+    guide_mode = _daily_report_param('guide') == '1'
+    show_pos_flow_guide = role == 'Store Manager' and guide_mode
+
+    selected_report = DailyReport.query.filter_by(store_id=store.id, report_date=selected_date).first()
+    draft_pos_sold_items = _get_pos_sold_draft(store.id, selected_date)
+    pos_staging = _get_pos_sold_staging(store.id, selected_date)
+    staged_pos_sold_items = _get_staged_pos_sold_items(pos_staging)
+
+    pos_sold_items = draft_pos_sold_items if draft_pos_sold_items else []
+    pos_sold_source = 'draft' if draft_pos_sold_items else 'none'
+    pos_sold_locked = bool(pos_staging)
+    current_z_reading_image_link = ''
+    current_z_reading_image_preview_url = ''
+    saved_pos_sold_items = []
+
+    if pos_staging:
+        pos_sold_items = staged_pos_sold_items
+        pos_sold_source = 'staged'
+        current_z_reading_image_link = str(pos_staging.z_reading_image_path or '').strip()
+        current_z_reading_image_preview_url = _build_drive_image_preview_url(current_z_reading_image_link)
+
+    if selected_report:
+        saved_pos_sold_items = (
+            PosSold.query.filter_by(daily_report_id=selected_report.id)
+            .order_by(PosSold.id.asc())
+            .all()
+        )
+        pos_sold_locked = bool(pos_sold_locked or saved_pos_sold_items)
+        for saved_item in saved_pos_sold_items:
+            candidate_link = str(getattr(saved_item, 'z_reading_image_path', '') or '').strip()
+            if candidate_link:
+                current_z_reading_image_link = candidate_link
+                current_z_reading_image_preview_url = _build_drive_image_preview_url(candidate_link)
+                break
+        if saved_pos_sold_items:
+            pos_sold_items = saved_pos_sold_items
+            pos_sold_source = 'saved'
+
+    if selected_report and not saved_pos_sold_items and not pos_staging and not draft_pos_sold_items:
+        selected_report = None
+    if selected_report and pos_sold_source == 'draft' and not pos_staging:
+        selected_report = None
+
+    item_rows = [_pos_sold_item_dict(item) for item in (pos_sold_items or [])]
+    motif_charge_payload = _build_motif_charge_payload_from_pos_items(item_rows)
+
+    motif_product_options = []
+    if role == 'Store Manager' and motif_charge_payload:
+        motif_product_options = [
+            {
+                'id': int(product.id),
+                'code': str(product.code or ''),
+                'description': product.description,
+                'price': float(product.sp_p or product.sp_np or 0.0),
+            }
+            for product in ProductMaster.query.order_by(ProductMaster.description.asc()).all()
+            if (
+                (product.description or '').strip()
+                and not (
+                    'additional charge' in (product.description or '').strip().lower()
+                    and 'motif' in (product.description or '').strip().lower()
+                )
+            )
+        ]
+
+    export_url = ''
+    if role == 'Inventory Staff':
+        export_url = url_for(
+            'views.store_manager_data_export',
+            type='pos-sold',
+            store_id=store.id,
+            date=selected_report_date,
+        )
+
+    return {
+        'type': 'success',
+        'role': role,
+        'store': {'id': store.id, 'name': store.name},
+        'today': today_date.strftime('%Y-%m-%d'),
+        'selected_report_date': selected_report_date,
+        'report_status': (selected_report.status or '') if selected_report else '',
+        'pos_sold_items': item_rows,
+        'pos_sold_source': pos_sold_source,
+        'pos_sold_locked': pos_sold_locked,
+        'pos_sold_day_finalized': bool(_is_operational_day_finalized(store.id, selected_date)),
+        'missing_dates': missing_dates,
+        'next_missing_date': missing_dates[0]['iso'] if missing_dates else None,
+        'guide_mode': guide_mode,
+        'show_pos_flow_guide': show_pos_flow_guide,
+        'pos_scan_success': pos_scan_success,
+        'pos_scan_rows': pos_scan_rows,
+        'z_reading': {
+            'link': current_z_reading_image_link,
+            'preview_url': current_z_reading_image_preview_url,
+        },
+        'motif_charge_payload': motif_charge_payload,
+        'motif_product_options': motif_product_options,
+        'export_url': export_url,
     }
 
 

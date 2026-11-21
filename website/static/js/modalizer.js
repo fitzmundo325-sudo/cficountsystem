@@ -190,6 +190,7 @@ function open_modal(link, custom_class=undefined, targetElm=undefined, dialog=fa
 	opened_modal.push(pdata);
 
 	SPY.showLoader();
+	__PROGRESS_SPY_LOAD(true);
 	
 	//adds onremove Trigger if a function is passed
 	
