@@ -67,6 +67,12 @@ MAX_ORACLE_PRODUCTS = 80
 PEEK_ORACLE_PRODUCTS = 25
 MAX_ORACLE_HISTORY = 50
 
+MAX_EXCEL_SHEETS = 5
+MAX_EXCEL_ROWS = 500
+EXCEL_FORMATS = ("text", "integer", "number", "currency", "percent")
+EXCEL_INVALID_SHEET_CHARS = re.compile(r"[\\/*?:\[\]]")
+EXCEL_INVALID_FILE_CHARS = re.compile(r"[^A-Za-z0-9._ -]+")
+
 
 LIMITED_MESSAGE_MAX = 20
 HOURS_RATE_RESET = 6
@@ -222,6 +228,18 @@ TOOL_GROUPS = {
             "Cluster Manager",
             "Store Manager",
         ],
+    },
+    
+    "excel_export": {
+        "summary": "generate downloadable, styled multi-sheet Excel (.xlsx) files from numbers already retrieved",
+        "guide": (
+            "Call export_excel only after retrieving real data from tools. "
+            "Pass a clean filename, a title, and 1 to 5 sheets, each with columns (header, key, optional format) and rows. "
+            "Set show_totals to true on a sheet to automatically append a native Excel =SUM(...) row for numeric/currency columns. "
+            "Export cards appear below the current chat message; always include the returned `anchor_markdown` link in your reply "
+            "(for example: `[Download Sales Report.xlsx](#chat-excel-a1b2c3d4)`) so the user can jump straight to the download button."
+        ),
+        "tools": ["export_excel"],
     },
     
 }
@@ -2697,6 +2715,143 @@ def _tool_render_chart(args, ctx):
     }
     
 
+# Excel Export Toolset ===========
+
+def _sanitize_excel_filename(raw):
+    name = (str(raw or "iCount_Export")).strip()
+    if name.lower().endswith(".xlsx"):
+        name = name[:-5]
+    name = EXCEL_INVALID_FILE_CHARS.sub("_", name).strip(" ._")
+    name = re.sub(r"\s+", "_", name)[:80]
+    return f"{name or 'iCount_Export'}.xlsx"
+
+
+def _sanitize_sheet_name(raw, fallback, used):
+    base = EXCEL_INVALID_SHEET_CHARS.sub(" ", str(raw or "")).strip()[:31] or fallback
+    candidate = base
+    suffix = 2
+    while candidate.lower() in used:
+        tag = f" ({suffix})"
+        candidate = f"{base[:31 - len(tag)]}{tag}"
+        suffix += 1
+    used.add(candidate.lower())
+    return candidate
+
+
+def _coerce_excel_cell(value, fmt):
+    if value is None or value == "":
+        return ""
+    if fmt in ("integer", "number", "currency", "percent"):
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(round(value)) if fmt == "integer" else float(value)
+        cleaned = re.sub(r"[,₱$%\s]", "", str(value).strip())
+        try:
+            num = float(cleaned)
+            if fmt == "percent" and "%" in str(value):
+                num = num / 100.0
+            return int(round(num)) if fmt == "integer" else num
+        except ValueError:
+            return str(value)
+    return value if isinstance(value, (int, float, bool)) else str(value)
+
+
+def _tool_export_excel(args, ctx):
+    raw_sheets = args.get("sheets")
+    if not isinstance(raw_sheets, list) or not raw_sheets:
+        return _tool_error("sheets must be a non-empty list of worksheet definitions.")
+
+    filename = _sanitize_excel_filename(args.get("filename") or args.get("title"))
+    title = (str(args.get("title") or filename[:-5]).strip())[:140]
+    export_id = f"chat-excel-{uuid.uuid4().hex[:8]}"
+
+    cleaned_sheets = []
+    used_names = set()
+    total_rows = 0
+
+    for s_idx, raw_sheet in enumerate(raw_sheets[:MAX_EXCEL_SHEETS], start=1):
+        if not isinstance(raw_sheet, dict):
+            continue
+        sheet_name = _sanitize_sheet_name(raw_sheet.get("name"), f"Sheet {s_idx}", used_names)
+        subtitle = str(raw_sheet.get("subtitle") or "").strip()[:200]
+        show_totals = bool(raw_sheet.get("show_totals", False))
+
+        raw_cols = raw_sheet.get("columns") or []
+        columns = []
+        for c_idx, col in enumerate(raw_cols):
+            if isinstance(col, str) and col.strip():
+                columns.append({"header": col.strip()[:80], "key": col.strip(), "format": "text"})
+            elif isinstance(col, dict):
+                header = str(col.get("header") or col.get("label") or col.get("key") or f"Col {c_idx + 1}").strip()[:80]
+                key = str(col.get("key") or header).strip()
+                fmt = str(col.get("format") or "text").strip().lower()
+                if fmt not in EXCEL_FORMATS:
+                    fmt = "text"
+                columns.append({"header": header, "key": key, "format": fmt})
+
+        raw_rows = raw_sheet.get("rows") or []
+        if not isinstance(raw_rows, list):
+            raw_rows = []
+
+        # Infer columns from first dict row if columns were omitted
+        if not columns and raw_rows and isinstance(raw_rows[0], dict):
+            for k in raw_rows[0].keys():
+                columns.append({"header": str(k)[:80], "key": str(k), "format": "text"})
+
+        if not columns:
+            continue
+
+        cleaned_rows = []
+        for row in raw_rows[:MAX_EXCEL_ROWS]:
+            if isinstance(row, dict):
+                vals = []
+                for col in columns:
+                    val = row.get(col["key"])
+                    if val is None and col["header"] in row:
+                        val = row.get(col["header"])
+                    vals.append(_coerce_excel_cell(val, col["format"]))
+                cleaned_rows.append(vals)
+            elif isinstance(row, (list, tuple)):
+                vals = [
+                    _coerce_excel_cell(row[i] if i < len(row) else "", col["format"])
+                    for i, col in enumerate(columns)
+                ]
+                cleaned_rows.append(vals)
+
+        total_rows += len(cleaned_rows)
+        cleaned_sheets.append({
+            "name": sheet_name,
+            "subtitle": subtitle,
+            "show_totals": show_totals,
+            "columns": columns,
+            "rows": cleaned_rows,
+        })
+
+    if not cleaned_sheets:
+        return _tool_error("No valid sheets with columns were provided.")
+
+    export_payload = {
+        "export_id": export_id,
+        "filename": filename,
+        "title": title,
+        "sheet_count": len(cleaned_sheets),
+        "total_rows": total_rows,
+        "sheets": cleaned_sheets,
+    }
+    anchor_md = f"[Download {filename}](#{export_id})"
+    return {
+        "type": "success",
+        "export_id": export_id,
+        "filename": filename,
+        "anchor_markdown": anchor_md,
+        "message": (
+            f"Prepared Excel workbook '{filename}' ({len(cleaned_sheets)} sheet(s), {total_rows} row(s)). "
+            f"Link to this download in your reply using: {anchor_md}"
+        ),
+        "excel_export": export_payload,
+    }
+
 
 def _clean_choices(raw):
     if isinstance(raw, str):
@@ -3519,6 +3674,73 @@ TOOL_SPECS = [
             },
         },
     },
+    
+    
+    # Export to Excel Tool Spec ================
+    {
+        "type": "function",
+        "function": {
+            "name": "export_excel",
+            "description": (
+                "Generate a downloadable, formatted Excel (.xlsx) workbook with one or more sheets from retrieved data. "
+                "Supports currency, integer, number, percent (pass decimal e.g. 0.15 for 15%), and text formats, "
+                "plus automatic =SUM(...) total rows."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "File name without or with .xlsx extension (e.g. 'Burgos_Weekly_Order_2026-11-21.xlsx').",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Workbook title displayed on the download card and sheet header.",
+                    },
+                    "sheets": {
+                        "type": "array",
+                        "description": "1 to 5 worksheets to include in the workbook.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Worksheet tab name (max 31 characters)."},
+                                "subtitle": {"type": "string", "description": "Optional subtitle (e.g. store name and date range)."},
+                                "show_totals": {
+                                    "type": "boolean",
+                                    "description": "True to append a Total row with Excel =SUM(...) formulas for integer, number, and currency columns.",
+                                },
+                                "columns": {
+                                    "type": "array",
+                                    "description": "Column definitions for the sheet.",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "header": {"type": "string", "description": "Column header text."},
+                                            "key": {"type": "string", "description": "Key name if rows are objects."},
+                                            "format": {
+                                                "type": "string",
+                                                "enum": list(EXCEL_FORMATS),
+                                                "description": "Cell format: text, integer, number, currency (₱), or percent (0.15 = 15%).",
+                                            },
+                                        },
+                                        "required": ["header"],
+                                    },
+                                },
+                                "rows": {
+                                    "type": "array",
+                                    "description": "Data rows (each row is an array matching column order, or an object matching column keys).",
+                                    "items": {},
+                                },
+                            },
+                            "required": ["name", "columns", "rows"],
+                        },
+                    },
+                },
+                "required": ["filename", "sheets"],
+            },
+        },
+    },
+    
 ]
 
 CORE_TOOLS = ("get_dashboard_data", "load_tools", "ask_user")
@@ -3620,6 +3842,9 @@ TOOL_FUNCS = {
     "get_oracle_order_suggestions": _tool_get_oracle_order_suggestions,
     "get_oracle_data": _tool_get_oracle_data,
     "get_oracle_daily_averages": _tool_get_oracle_daily_averages,
+    
+    # Export to Excel
+    "export_excel": _tool_export_excel,
 }
 
 
@@ -3779,6 +4004,13 @@ def _describe_call(name, args):
         span = f" for {tdate}" if tdate else ""
         return f"Calculating {horizon} Oracle order suggestions: {target}{span}"
         
+        
+        
+    # Export to Excel ==============
+        
+    if name == "export_excel":
+        fname = args.get("filename") or args.get("title") or "Excel file"
+        return f"Preparing Excel export: {fname}"
     return f"Running {name}"
 
 def _run_tool(name, args, args_error, ctx):
@@ -4011,6 +4243,10 @@ def _generate(headers, model, system_prompt, messages, use_tools, ctx):
             yield _sse({"tool_done": {"id": call["id"], "ok": ok}})
             if ok and "chart" in output:
                 yield _sse({"chart": output["chart"]})
+                
+            if ok and "excel_export" in output:
+                yield _sse({"excel_export": output["excel_export"]})
+                
             if ok and "ask" in output:
                 if not wrote_text:
                     yield _sse({"delta": output["ask"]["reason"]})

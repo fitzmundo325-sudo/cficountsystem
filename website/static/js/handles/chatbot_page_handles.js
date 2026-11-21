@@ -600,7 +600,31 @@ async function handleChatLogClick(event) {
     }
     return;
   }
-
+	
+	let excelBtn = event.target.closest('.chat-excel-download-btn');
+	  if (excelBtn) {
+		let card = excelBtn.closest('.chat-export-card');
+		if (card && card._excelSpec) {
+		  let origText = excelBtn.textContent;
+		  excelBtn.disabled = true;
+		  excelBtn.textContent = 'Generating...';
+		  try {
+			await downloadExcelFromSpec(card._excelSpec);
+			excelBtn.textContent = 'Downloaded ✓';
+			setTimeout(function () {
+			  excelBtn.textContent = origText;
+			  excelBtn.disabled = false;
+			}, 1600);
+		  } catch (error) {
+			excelBtn.textContent = origText;
+			excelBtn.disabled = false;
+			notifyError('Could not generate the Excel file: ' + error.message);
+		  }
+		}
+		return;
+	  }
+		
+	
   let fsBtn = event.target.closest('.chat-chart-fs-btn');
   if (fsBtn) {
     toggleChartFullscreen(fsBtn.closest('.chat-chart-card'));
@@ -909,6 +933,7 @@ async function sendMessage(text, images) {
   images = images || [];
   let sessionToken = chatSessionToken;
   let charts = [];
+  let exportsList = [];
   let ask = null;
   let userEntry = { role: 'user', content: text, ts: Date.now() };
   if (images.length > 0) {
@@ -927,6 +952,7 @@ async function sendMessage(text, images) {
   };
   let toolBox = row.querySelector('[data-cell="tools"]');
   let chartBox = row.querySelector('[data-cell="charts"]');
+  let exportBox = row.querySelector('[data-cell="exports"]');
 
   let toolChips = {};
   bot.classList.add('chat-thinking');
@@ -1005,7 +1031,16 @@ async function sendMessage(text, images) {
             scrollToBottom();
           }
         }
-
+		
+		if (payload.excel_export) {
+		  let stickExport = isNearBottom();
+		  exportsList.push(payload.excel_export);
+		  renderChatExport(exportBox, payload.excel_export);
+		  if (stickExport) {
+			scrollToBottom();
+		  }
+		}
+		
         if (payload.reasoning) {
           if (!thinkingShown) {
             thinkingShown = true;
@@ -1038,12 +1073,12 @@ async function sendMessage(text, images) {
         }
       }
     }
-    if (!reply && (!chartBox || chartBox.children.length === 0)) {
-      revealBubble(bot);
-      bot.textContent = '(no response)';
-    } else if (!reply) {
-      bot.classList.add('hidden');
-    }
+		if (!reply && (!chartBox || chartBox.children.length === 0) && (!exportBox || exportBox.children.length === 0)) {
+		  revealBubble(bot);
+		  bot.textContent = '(no response)';
+		} else if (!reply) {
+		  bot.classList.add('hidden');
+		}
   } catch (error) {
     revealBubble(bot);
     if (error.name === 'AbortError') {
@@ -1087,11 +1122,15 @@ async function sendMessage(text, images) {
     chatInput.focus();
   }
 
-  if (reply) {
-    if (sessionToken === chatSessionToken) {
-      chatHistory.push({ role: 'assistant', content: reply, ts: Date.now(), charts: charts });
-    }
-  }
+	if (reply || charts.length > 0 || exportsList.length > 0) {
+	  if (sessionToken === chatSessionToken) {
+		let botEntry = { role: 'assistant', content: reply, ts: Date.now(), charts: charts };
+		if (exportsList.length > 0) {
+		  botEntry.exports = exportsList;
+		}
+		chatHistory.push(botEntry);
+	  }
+	}
 
   if (sessionToken === chatSessionToken) {
     chatPersistConvo();
@@ -1643,6 +1682,13 @@ function chatBuildRow(message) {
   if (Array.isArray(message.charts) && message.charts.length > 0) {
     row.chartSpecs = message.charts;
   }
+  
+  if (Array.isArray(message.exports) && message.exports.length > 0) {
+    let exportBox = row.querySelector('[data-cell="exports"]');
+    for (let spec of message.exports) {
+      renderChatExport(exportBox, spec);
+    }
+  }
   return row;
 }
 
@@ -2012,6 +2058,240 @@ document.addEventListener('keydown', function (event) {
     }
   }
 });
+
+
+// - ExcelJS Export Tools -
+
+function excelColLetter(colNumber) {
+  let letter = '';
+  let n = colNumber;
+  while (n > 0) {
+    let rem = (n - 1) % 26;
+    letter = String.fromCharCode(65 + rem) + letter;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letter;
+}
+
+function applyExcelCellFormat(cell, format) {
+  if (format === 'currency') {
+    cell.numFmt = '"₱"#,##0.00';
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  } else if (format === 'number') {
+    cell.numFmt = '#,##0.00';
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  } else if (format === 'integer') {
+    cell.numFmt = '#,##0';
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  } else if (format === 'percent') {
+    cell.numFmt = '0.00%';
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  } else {
+    cell.alignment = { horizontal: 'left', vertical: 'middle' };
+  }
+}
+
+async function downloadExcelFromSpec(spec) {
+  if (typeof ExcelJS === 'undefined') {
+    notifyError('ExcelJS library failed to load. Please refresh the page.');
+    return;
+  }
+  let workbook = new ExcelJS.Workbook();
+  workbook.creator = 'iCount Chatbot';
+  workbook.created = new Date();
+
+  let thinBorder = {
+    top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+  };
+
+  for (let sheetSpec of spec.sheets || []) {
+    let columns = sheetSpec.columns || [];
+    let rows = sheetSpec.rows || [];
+    if (!columns.length) {
+      continue;
+    }
+
+    let ws = workbook.addWorksheet(sheetSpec.name || 'Sheet');
+    let colCount = columns.length;
+    let lastColLetter = excelColLetter(colCount);
+    let currentRow = 1;
+
+    // Sheet Title Banner
+    let bannerText = spec.title || sheetSpec.name || 'Export';
+    ws.mergeCells('A1:' + lastColLetter + '1');
+    let titleCell = ws.getCell('A1');
+    titleCell.value = bannerText;
+    titleCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF0F172A' } };
+    titleCell.alignment = { horizontal: 'left', vertical: 'middle' };
+    ws.getRow(1).height = 24;
+    currentRow += 1;
+
+    // Optional Subtitle
+    if (sheetSpec.subtitle) {
+      ws.mergeCells('A2:' + lastColLetter + '2');
+      let subCell = ws.getCell('A2');
+      subCell.value = sheetSpec.subtitle;
+      subCell.font = { name: 'Calibri', size: 10, italic: true, color: { argb: 'FF475569' } };
+      subCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      ws.getRow(2).height = 18;
+      currentRow += 1;
+    }
+
+    // Blank spacer row before table headers
+    currentRow += 1;
+    let headerRowNum = currentRow;
+
+    // Table Header Row
+    let headerRow = ws.getRow(headerRowNum);
+    headerRow.height = 22;
+    columns.forEach(function (col, idx) {
+      let cell = headerRow.getCell(idx + 1);
+      cell.value = col.header || ('Column ' + (idx + 1));
+      cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      cell.alignment = { horizontal: col.format && col.format !== 'text' ? 'right' : 'left', vertical: 'middle' };
+      cell.border = thinBorder;
+    });
+
+    // Freeze header row & add auto-filter
+    ws.views = [{ state: 'frozen', ySplit: headerRowNum }];
+    ws.autoFilter = {
+      from: { row: headerRowNum, column: 1 },
+      to: { row: headerRowNum, column: colCount }
+    };
+
+    // Data Rows
+    let dataStartRow = headerRowNum + 1;
+    rows.forEach(function (rowVals, rIdx) {
+      let excelRow = ws.getRow(dataStartRow + rIdx);
+      excelRow.height = 19;
+      let isZebra = rIdx % 2 === 1;
+
+      columns.forEach(function (col, cIdx) {
+        let cell = excelRow.getCell(cIdx + 1);
+        cell.value = rowVals[cIdx] !== undefined ? rowVals[cIdx] : '';
+        cell.font = { name: 'Calibri', size: 10, color: { argb: 'FF1E293B' } };
+        applyExcelCellFormat(cell, col.format);
+        cell.border = thinBorder;
+        if (isZebra) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+        }
+      });
+    });
+
+    let dataEndRow = dataStartRow + rows.length - 1;
+
+    // Optional Native Excel =SUM(...) Totals Row
+    if (sheetSpec.show_totals && rows.length > 0) {
+      let totalRow = ws.getRow(dataEndRow + 1);
+      totalRow.height = 22;
+      columns.forEach(function (col, cIdx) {
+        let cell = totalRow.getCell(cIdx + 1);
+        let colLetter = excelColLetter(cIdx + 1);
+        if (cIdx === 0) {
+          cell.value = 'TOTAL';
+          cell.alignment = { horizontal: 'left', vertical: 'middle' };
+        } else if (col.format === 'integer' || col.format === 'number' || col.format === 'currency') {
+          cell.value = { formula: 'SUM(' + colLetter + dataStartRow + ':' + colLetter + dataEndRow + ')' };
+          applyExcelCellFormat(cell, col.format);
+        } else {
+          cell.value = '';
+        }
+        cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF0F172A' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+        cell.border = {
+          top: { style: 'medium', color: { argb: 'FF64748B' } },
+          bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+          left: thinBorder.left,
+          right: thinBorder.right
+        };
+      });
+    }
+
+    // Auto-fit column widths
+    for (let cIdx = 0; cIdx < colCount; cIdx++) {
+      let maxLen = String(columns[cIdx].header || '').length;
+      for (let rIdx = 0; rIdx < rows.length; rIdx++) {
+        let rawVal = rows[rIdx][cIdx];
+        let textLen = rawVal === null || rawVal === undefined ? 0 : String(rawVal).length;
+        if (columns[cIdx].format === 'currency') {
+          textLen += 5;
+        }
+        if (textLen > maxLen) {
+          maxLen = textLen;
+        }
+      }
+      ws.getColumn(cIdx + 1).width = Math.min(45, Math.max(12, maxLen + 4));
+    }
+  }
+
+  let buffer = await workbook.xlsx.writeBuffer();
+  let blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  let url = URL.createObjectURL(blob);
+  let link = document.createElement('a');
+  link.href = url;
+  link.download = spec.filename || 'iCount_Export.xlsx';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(function () {
+    URL.revokeObjectURL(url);
+  }, 1500);
+}
+
+function renderChatExport(container, spec) {
+	  if (!container || !spec) {
+		return;
+	  }
+	let card = document.createElement('div');
+		card.id = spec.export_id || ('chat-excel-' + Date.now());
+		card.className = 'chat-export-card flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition-shadow';
+		card._excelSpec = spec;
+
+	let info = document.createElement('div');
+		info.className = 'flex items-center gap-3 min-w-0';
+
+	let badge = document.createElement('div');
+		badge.className = 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-xs font-black text-emerald-700 border border-emerald-200';
+		badge.textContent = 'XLSX';
+
+	let textWrap = document.createElement('div');
+		textWrap.className = 'min-w-0';
+
+	let titleEl = document.createElement('div');
+		titleEl.className = 'truncate text-sm font-semibold text-slate-800';
+		titleEl.textContent = spec.filename || 'iCount_Export.xlsx';
+
+	let sheets = spec.sheet_count || (spec.sheets ? spec.sheets.length : 1);
+	let rows = spec.total_rows || 0;
+	let metaEl = document.createElement('div');
+	metaEl.className = 'text-xs text-slate-500';
+	metaEl.textContent = sheets + (sheets === 1 ? ' sheet' : ' sheets') + ' · ' + rows + (rows === 1 ? ' row' : ' rows');
+
+	textWrap.appendChild(titleEl);
+	textWrap.appendChild(metaEl);
+	info.appendChild(badge);
+	info.appendChild(textWrap);
+
+	let btn = document.createElement('button');
+		btn.type = 'button';
+		btn.className = 'chat-excel-download-btn fancy_button inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700';
+		btn.textContent = 'Download .xlsx';
+
+	card.appendChild(info);
+	card.appendChild(btn);
+
+	container.classList.remove('hidden');
+	container.classList.add('flex');
+	container.appendChild(card);
+}
+
+
 
 // Chat Statistics ============================
 function getCurrentStats() {

@@ -24,6 +24,19 @@ function preventDefaultForScrollKeys(e) {
   }
 }
 
+
+
+if(typeof(getparam) == 'undefined'){
+	var getparam = function(h){     
+		get_param = window.location.href
+
+		var url = new URL(get_param)
+		var param_value = url.searchParams.get(h);
+		return param_value;
+	}
+}
+
+
 // modern Chrome requires { passive: false } when adding event
 var supportsPassive = false;
 try {
