@@ -1044,7 +1044,7 @@ async function sendMessage(text, images) {
   chatUpdateSaveBtn();
   appendMessage('user', text, images);
 
-  let row = appendMessage('bot', 'Thinking...');
+  let row = appendMessage('bot', 'Processing...');
   let bot = row.querySelector('[data-cell="bubble"]');
   let thinking = {
     details: row.querySelector('[data-cell="thinking"]'),
