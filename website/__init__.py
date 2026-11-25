@@ -516,7 +516,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
-        _ensure_oracle_order_review_columns()
+        # _ensure_oracle_order_review_columns()
         _ensure_api_usage_model()
         _ensure_product_master_columns()
         if not configured_secret_key:
@@ -526,23 +526,27 @@ def create_app():
                 db.session.add(stored_secret)
                 db.session.commit()
             app.config['SECRET_KEY'] = stored_secret.secret_value
-        _ensure_user_assigned_store_column()
-        _ensure_approved_oracle_approved_by()
-        _ensure_user_presence_column()
-        _backfill_inventory_staff_store_assignments()
-        _ensure_product_master_sp_np_column()
-        _ensure_rso_delivery_columns()
-        _ensure_motif_charge_product()
-        _ensure_maintenance_mode_table()
-        _ensure_taf_transfer_columns()
-        _ensure_taf_transfer_item_columns()
-        _ensure_daily_ending_inventory_columns()
-        _ensure_daily_ending_inventory_item_columns()
-        _ensure_daily_ending_inventory_adjustment_columns()
-        _drop_daily_ending_inventory_discount_columns()
-        _drop_daily_forecasting_tables()
-        _backfill_store_group_values()
-        _backfill_beginning_finalized_flags()
+        
+        # To-Be: removed soon, zombie codes that runs for only one time no longer needed.  
+        # ==================================================================
+        
+        # _ensure_user_assigned_store_column()
+        # _ensure_approved_oracle_approved_by()
+        # _ensure_user_presence_column()
+        # _backfill_inventory_staff_store_assignments()
+        # _ensure_product_master_sp_np_column()
+        # _ensure_rso_delivery_columns()
+        # _ensure_motif_charge_product()
+        # _ensure_maintenance_mode_table()
+        # _ensure_taf_transfer_columns()
+        # _ensure_taf_transfer_item_columns()
+        # _ensure_daily_ending_inventory_columns()
+        # _ensure_daily_ending_inventory_item_columns()
+        # _ensure_daily_ending_inventory_adjustment_columns()
+        # _drop_daily_ending_inventory_discount_columns()
+        # _drop_daily_forecasting_tables()
+        # _backfill_store_group_values()
+        # _backfill_beginning_finalized_flags()
 
         print("Created database!")
 
