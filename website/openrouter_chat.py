@@ -89,13 +89,13 @@ MODEL_BUCKET = [
     
     {"id": "nvidia/nemotron-3.5-lightning:free", "label": "NVIDIA: Nemotron 3.5 Lightning (free)", "tools": True},
     
-    {"id": "cohere/north-mini-code:free", "label": "North Mini Code(free)", "tools": True},   
+    {"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "label": "NVIDIA: Nemotron 3 Nano Omni (free)", "tools": True, "attachment": ['images']},   
     
     {"id": "particle-ai/particle-1:free", "label": "Particle AI: Particle-1 (free)", "tools":True, "attachment": ['images']},   
     
     {"id": "inclusionai/ling-3.2-flash:free", "label": "inclusionAI: Ling 3.2 Flash (free)", "tools":True, "attachment": ['images']},   
     
-    {"id": "apodex/apodex-1.1-mini:free", "label": "Apodex: Apodex 1.1 Mini (free)", "tools":True},
+    # {"id": "apodex/apodex-1.1-mini:free", "label": "Apodex: Apodex 1.1 Mini (free)", "tools":True},
 ]
 
 TOOL_PROMPT = (
