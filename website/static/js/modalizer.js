@@ -37,6 +37,7 @@ if(typeof(getparam) == 'undefined'){
 }
 
 
+
 // modern Chrome requires { passive: false } when adding event
 var supportsPassive = false;
 try {
@@ -113,8 +114,8 @@ function open_modal(link, custom_class=undefined, targetElm=undefined, dialog=fa
 		let win = modal_iframe.contentWindow;
 
 		win.addEventListener("pageswap", () => {
-			console.log("Page changed");
-			console.log(win);
+			// console.log("Page changed");
+			// console.log(win);
 			SPY.showLoader();
 			__PROGRESS_SPY_LOAD(true);
 		});
@@ -527,7 +528,7 @@ let SPY = {
 	
 	updateProgress: function(prog){
 		if(this.started == false && ALLOW_PROGRESS_SPY){
-			return console.error("SPY PROGRESS Elm not started yet.");
+			return; // console.error("SPY PROGRESS Elm not started yet.");
 		}
 		
 		let elm = _("load_spy");
@@ -558,7 +559,7 @@ function __PROGRESS_SPY_LOAD(resets=false){
 
 	// console.log(__PROGRESS_HIDDEN__);
 	
-	if(__PROGRESS_HIDDEN__ >= 95){
+	if(__PROGRESS_HIDDEN__ >= 99){
 		__PROGRESS_HIDDEN__ = __PROGRESS_HIDDEN__;
 	}else{
 		__PROGRESS_HIDDEN__ = __PROGRESS_HIDDEN__+5;
