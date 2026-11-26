@@ -1,0 +1,189 @@
+/* Native Excel-style spreadsheet grid for InvenSync */
+#main-content table,
+#fullscreen-modal table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+#main-content table thead th,
+#main-content table tbody tr[data-product-id] td,
+#fullscreen-modal table thead th,
+#fullscreen-modal table tbody tr[data-product-id] td {
+  border-right: 1px solid #cbd5e1;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+#main-content table thead th:last-child,
+#main-content table tbody tr[data-product-id] td:last-child,
+#fullscreen-modal table thead th:last-child,
+#fullscreen-modal table tbody tr[data-product-id] td:last-child {
+  border-right: none;
+}
+
+#main-content tbody tr[data-product-id]:hover,
+#fullscreen-modal tbody tr[data-product-id]:hover {
+  background-color: transparent !important;
+}
+
+#main-content tbody tr[data-product-id] td[data-field],
+#fullscreen-modal tbody tr[data-product-id] td[data-field] {
+  padding: 0 !important;
+  position: relative;
+  vertical-align: middle;
+  cursor: cell;
+  user-select: none;
+  transition: background-color 0.08s ease;
+}
+
+#main-content tbody tr[data-product-id] td:first-child,
+#fullscreen-modal tbody tr[data-product-id] td:first-child {
+  vertical-align: middle;
+  cursor: cell;
+  user-select: none;
+  transition: background-color 0.08s ease;
+}
+
+#main-content thead tr:nth-child(3) th,
+#fullscreen-modal thead tr:nth-child(3) th,
+#main-content thead tr:first-child th:first-child,
+#fullscreen-modal thead tr:first-child th:first-child {
+  cursor: pointer;
+  user-select: none;
+}
+
+#main-content thead tr:nth-child(3) th.excel-col-header-selected,
+#fullscreen-modal thead tr:nth-child(3) th.excel-col-header-selected,
+#main-content thead tr:first-child th:first-child.excel-col-header-selected,
+#fullscreen-modal thead tr:first-child th:first-child.excel-col-header-selected {
+  background-color: #bbf7d0 !important;
+  color: #064e3b !important;
+  box-shadow: inset 0 -3px 0 #107c41;
+}
+
+#main-content tbody tr[data-product-id] td[data-field]:not([data-field="wastage_amount"]):not([data-field="total_ending_qty"]):not([data-field="total_peso_srp"]):not([data-field="theo_ending_qty"]):not([data-field="variance_qty"]):not([data-field="variance_peso"]),
+#fullscreen-modal tbody tr[data-product-id] td[data-field]:not([data-field="wastage_amount"]):not([data-field="total_ending_qty"]):not([data-field="total_peso_srp"]):not([data-field="theo_ending_qty"]):not([data-field="variance_qty"]):not([data-field="variance_peso"]) {
+  height: 36px;
+}
+
+#main-content tbody tr[data-product-id] td[data-field] input[type="number"],
+#main-content tbody tr[data-product-id] td[data-field] input[type="text"],
+#fullscreen-modal tbody tr[data-product-id] td[data-field] input[type="number"],
+#fullscreen-modal tbody tr[data-product-id] td[data-field] input[type="text"] {
+  width: 100% !important;
+  min-width: 56px;
+  height: 36px;
+  padding: 4px 6px !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  font-size: 13px;
+  line-height: 1.25;
+  cursor: cell;
+  caret-color: transparent;
+  user-select: none;
+}
+
+#main-content tbody tr[data-product-id] td[data-field="remarks"] input[type="text"],
+#fullscreen-modal tbody tr[data-product-id] td[data-field="remarks"] input[type="text"] {
+  min-width: 120px;
+  text-align: left;
+  padding: 4px 8px !important;
+}
+
+#main-content tbody tr[data-product-id] td[data-field] input[readonly],
+#main-content tbody tr[data-product-id] td[data-field] input:disabled,
+#fullscreen-modal tbody tr[data-product-id] td[data-field] input[readonly],
+#fullscreen-modal tbody tr[data-product-id] td[data-field] input:disabled {
+  cursor: not-allowed !important;
+  opacity: 0.85;
+}
+
+#main-content tbody tr[data-product-id] td[data-field].excel-cell-readonly,
+#fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-readonly {
+  cursor: not-allowed !important;
+  background-color: rgba(248, 250, 252, 0.85);
+}
+
+#main-content tbody tr[data-product-id] td[data-field].excel-cell-selected,
+#fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-selected,
+#main-content tbody tr[data-product-id] td:first-child.excel-cell-selected,
+#fullscreen-modal tbody tr[data-product-id] td:first-child.excel-cell-selected {
+  background-color: #dcfce7 !important;
+  box-shadow: inset 0 0 0 1px rgba(16, 124, 65, 0.18);
+}
+
+#main-content tbody tr[data-product-id] td[data-field].excel-cell-copied,
+#fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-copied,
+#main-content tbody tr[data-product-id] td:first-child.excel-cell-copied,
+#fullscreen-modal tbody tr[data-product-id] td:first-child.excel-cell-copied {
+  outline: 1.5px dashed #107c41 !important;
+  outline-offset: -2px;
+}
+
+#main-content tbody tr[data-product-id] td[data-field].excel-cell-active,
+#fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-active,
+#main-content tbody tr[data-product-id] td:first-child.excel-cell-active,
+#fullscreen-modal tbody tr[data-product-id] td:first-child.excel-cell-active {
+  outline: 2px solid #107c41 !important;
+  outline-offset: -2px;
+  background-color: #ffffff !important;
+  z-index: 6;
+}
+
+#main-content tbody tr[data-product-id] td[data-field].excel-cell-fill-preview,
+#fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-fill-preview {
+  outline: 1.5px dashed #107c41 !important;
+  outline-offset: -2px;
+  background-color: rgba(16, 124, 65, 0.08) !important;
+}
+
+#main-content tbody tr[data-product-id] td[data-field].excel-cell-editing,
+#fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-editing {
+  outline: 2px solid #107c41 !important;
+  outline-offset: -2px;
+  background-color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
+  z-index: 9;
+}
+
+#main-content tbody tr[data-product-id] td[data-field].excel-cell-editing input,
+#fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-editing input {
+  cursor: text !important;
+  caret-color: #0f172a !important;
+  user-select: text !important;
+}
+
+.excel-fill-handle {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  background-color: #107c41;
+  border: 1px solid #ffffff;
+  cursor: crosshair;
+  z-index: 10;
+}
+
+html.admin-dark #main-content tbody tr[data-product-id] td[data-field].excel-cell-readonly,
+html.admin-dark #fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-readonly {
+  background-color: rgba(30, 41, 59, 0.55);
+}
+html.admin-dark #main-content tbody tr[data-product-id] td[data-field].excel-cell-active,
+html.admin-dark #main-content tbody tr[data-product-id] td[data-field].excel-cell-editing,
+html.admin-dark #fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-active,
+html.admin-dark #fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-editing {
+  background-color: #0f172a !important;
+  outline-color: #22c55e !important;
+}
+html.admin-dark #main-content tbody tr[data-product-id] td[data-field].excel-cell-editing input,
+html.admin-dark #fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-editing input {
+  caret-color: #f8fafc !important;
+  color: #f8fafc !important;
+}
+html.admin-dark .excel-fill-handle {
+  background-color: #22c55e;
+}

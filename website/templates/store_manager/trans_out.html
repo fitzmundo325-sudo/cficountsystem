@@ -78,12 +78,32 @@
                 </span>
               </td>
               <td class="px-4 py-2 text-center">
-                <a href="{{ url_for('views.store_manager_outgoing_transfer_view', transfer_id=transfer.id) }}" class="transfer-action-guide-target inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors" title="View TAF" aria-label="View TAF">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                  </svg>
-                </a>
+                <div class="inline-flex items-center justify-center gap-1.5">
+                  <a href="{{ url_for('views.store_manager_outgoing_transfer_view', transfer_id=transfer.id) }}" class="transfer-action-guide-target inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors" title="View TAF" aria-label="View TAF">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                  </a>
+                  {% if user and user.role == 'Store Manager' %}
+                    {% set lock_reason = edit_lock_reason_by_transfer.get(transfer.id) %}
+                    {% if lock_reason is none %}
+                    <a href="{{ url_for('views.store_manager_edit_outgoing_transfer', transfer_id=transfer.id) }}" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors" title="Edit Trans-Out" aria-label="Edit Trans-Out">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 20h9"></path>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+                      </svg>
+                    </a>
+                    {% else %}
+                    <span class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed" title="{{ lock_reason }}" aria-label="{{ lock_reason }}">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                      </svg>
+                    </span>
+                    {% endif %}
+                  {% endif %}
+                </div>
               </td>
             </tr>
             {% endfor %}

@@ -328,6 +328,8 @@ class TafTransfer(db.Model):
     submitted_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     validated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     validated_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    receiver_live_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    receiver_live_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=func.now())
 
     store = db.relationship('Store', backref='taf_transfers')

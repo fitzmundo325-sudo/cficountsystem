@@ -101,7 +101,8 @@
   /* Subtle inventory column dividers */
   #main-content table thead th,
   #main-content table tbody tr[data-product-id] td {
-    border-right: 1px solid rgba(203, 213, 225, 0.55);
+    border-right: 1px solid #cbd5e1;
+    border-bottom: 1px solid #cbd5e1;
   }
 
   #main-content table thead th:last-child,
@@ -109,234 +110,8 @@
     border-right: none;
   }
 
-  /* Keep sticky inventory cells below the mobile navigation drawer/backdrop. */
-  @media (max-width: 1023px) {
-    body.mobile-sidebar-open .inventory-scroll-container thead th,
-    body.mobile-sidebar-open .inventory-scroll-container td.sticky {
-      z-index: 1 !important;
-    }
-  }
-
-  /* Modal pop-in animation */
-  @keyframes bounceIn {
-    0% { opacity: 0; transform: scale(0.7); }
-    50% { transform: scale(1.03); }
-    100% { opacity: 1; transform: scale(1); }
-  }
-  .animate-bounce-in {
-    animation: bounceIn 0.4s ease-out;
-  }
-
-  .beginning-spotlight-panel {
-    position: fixed;
-    z-index: 9998;
-    background: rgba(15, 23, 42, 0.72);
-    pointer-events: auto;
-  }
-
-  .beginning-spotlight-target {
-    position: relative;
-    z-index: 9999;
-    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35), 0 0 24px rgba(14, 165, 233, 0.5);
-  }
-
-  thead th.beginning-spotlight-target {
-    position: sticky;
-  }
-
-  .beginning-spotlight-label {
-    position: fixed;
-    z-index: 10000;
-    max-width: min(360px, calc(100vw - 32px));
-    background: #0f172a;
-    color: #ffffff;
-    padding: 18px 20px;
-    border-radius: 14px;
-    border: 1px solid rgba(148, 163, 184, 0.32);
-    font-size: 17px;
-    font-weight: 700;
-    line-height: 1.35;
-    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
-    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
-    pointer-events: auto;
-  }
-
-  .beginning-spotlight-label button {
-    margin-top: 14px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    background: #ffffff;
-    color: #0f172a;
-    padding: 10px 24px;
-    font-size: 14px;
-    font-weight: 800;
-    text-shadow: none;
-    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
-    transition: background-color 0.15s ease, transform 0.15s ease;
-  }
-
-  .beginning-spotlight-label button:hover {
-    background: #f8fafc;
-    transform: translateY(-1px);
-  }
-
-  .motif-tour-panel {
-    position: fixed;
-    z-index: 10030;
-    background: rgba(15, 23, 42, 0.72);
-    pointer-events: auto;
-  }
-
-  .motif-button-badge {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    transform: translate(50%, -50%);
-    width: 14px;
-    height: 14px;
-    min-width: 14px;
-    padding: 0;
-    border-radius: 9999px;
-    background: #ef4444;
-    border: 2px solid #0f172a;
-    box-sizing: border-box;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    line-height: 1;
-    color: #ffffff;
-    font-weight: 700;
-    animation: motifBadgePulse 1.8s ease-in-out infinite;
-  }
-
-  .motif-button-badge.motif-button-badge--count {
-    width: auto;
-    min-width: 20px;
-    height: 20px;
-    padding: 0 6px;
-  }
-
-  @keyframes motifBadgePulse {
-    0%, 100% {
-      transform: translate(50%, -50%) scale(1);
-      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
-    }
-    50% {
-      transform: translate(50%, -50%) scale(1.15);
-      box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
-    }
-  }
-
-  .motif-tour-target {
-    position: relative;
-    z-index: 10031 !important;
-    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.45), 0 0 24px rgba(14, 165, 233, 0.6);
-  }
-
-  .motif-tour-label {
-    position: fixed;
-    z-index: 10032;
-    max-width: min(360px, calc(100vw - 32px));
-    background: #0f172a;
-    color: #ffffff;
-    padding: 18px 20px;
-    border-radius: 14px;
-    border: 1px solid rgba(148, 163, 184, 0.32);
-    font-size: 17px;
-    font-weight: 700;
-    line-height: 1.35;
-    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
-    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.95);
-    pointer-events: auto;
-  }
-
-  .motif-tour-label button {
-    margin-top: 14px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    background: #ffffff;
-    color: #0f172a;
-    padding: 10px 24px;
-    font-size: 14px;
-    font-weight: 800;
-    text-shadow: none;
-    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
-    transition: background-color 0.15s ease, transform 0.15s ease;
-  }
-
-  .motif-tour-label button:hover {
-    background: #f8fafc;
-    transform: translateY(-1px);
-  }
-
-  /* Keep a visible horizontal control outside the wide inventory table. */
-  .invensync-horizontal-scrollbar {
-    position: sticky;
-    bottom: 12px;
-    z-index: 60;
-    display: none;
-    margin: 8px 10px 12px;
-    padding: 4px 0;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    border: 1px solid #cbd5e1;
-    border-radius: 999px;
-    background: rgba(248, 250, 252, 0.96);
-    box-shadow: 0 5px 14px rgba(15, 23, 42, 0.12);
-    scrollbar-width: auto !important;
-    -ms-overflow-style: auto !important;
-  }
-
-  .invensync-horizontal-scrollbar.is-active {
-    display: block;
-  }
-
-  .invensync-horizontal-scrollbar__track {
-    height: 8px;
-    min-width: 100%;
-  }
-
-  .invensync-horizontal-scrollbar::-webkit-scrollbar {
-    display: block !important;
-    width: 12px !important;
-    height: 12px !important;
-  }
-
-  .invensync-horizontal-scrollbar::-webkit-scrollbar-track {
-    background: #e2e8f0;
-    border-radius: 999px;
-  }
-
-  .invensync-horizontal-scrollbar::-webkit-scrollbar-thumb {
-    background: #64748b;
-    border: 2px solid #e2e8f0;
-    border-radius: 999px;
-  }
-
-  .invensync-horizontal-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: #475569;
-  }
-
-  html.admin-dark .invensync-horizontal-scrollbar {
-    border-color: #475569;
-    background: rgba(30, 41, 59, 0.96);
-  }
-
-  html.admin-dark .invensync-horizontal-scrollbar::-webkit-scrollbar-track {
-    background: #334155;
-  }
-
-  html.admin-dark .invensync-horizontal-scrollbar::-webkit-scrollbar-thumb {
-    background: #94a3b8;
-    border-color: #334155;
-  }
-
 </style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/invensync_excel_grid.css') }}?v=20261126-11">
 
 <!-- Top Header -->
 <header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-2 min-h-14 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -655,7 +430,18 @@
 
   <!-- Products Table -->
   <div id="main-content" class="bg-white rounded-xl border border-slate-200 shadow-sm">
-    <div class="relative border border-slate-200 rounded-xl">
+    <!-- Excel-style Formula & Selection Bar -->
+    <div id="excel-formula-bar" class="flex flex-wrap items-center gap-2 px-3 py-1.5 bg-slate-50 border-b border-slate-200 rounded-t-xl text-xs">
+      <div class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-300 rounded font-semibold text-slate-700 min-w-[140px] max-w-[260px] truncate" id="excel-name-box" title="Active Cell">
+        Click any cell
+      </div>
+      <span class="font-serif italic font-bold text-emerald-700 px-1 select-none">fx</span>
+      <input type="text" id="excel-formula-input" placeholder="Select a cell to view or edit..." readonly
+        class="flex-1 min-w-[160px] px-2.5 py-1 bg-white border border-slate-300 rounded text-xs text-slate-800 outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-500">
+      <div id="excel-range-summary" class="hidden items-center gap-3 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded text-emerald-800 font-medium"></div>
+      <span class="hidden sm:inline-block text-[11px] text-slate-400 select-none">Arrows / Tab / Enter &middot; Type to edit &middot; Ctrl+C / Ctrl+V</span>
+    </div>
+    <div class="relative border border-slate-200 border-t-0 rounded-b-xl">
       <div class="inventory-scroll-container overflow-x-auto overflow-y-visible">
       <table class="w-full text-sm">
         <thead class="bg-slate-100 text-black">
@@ -1133,7 +919,11 @@
 <script>
 const inventoryId = {{ inventory.id }};
 let inventoryInitialSnapshot = '';
-const inventoryDraftKey = `invensyncInventoryDraft:${inventoryId}`;
+try {
+  localStorage.removeItem('invensyncInventoryDraft:undefined');
+  localStorage.removeItem('invensyncInventoryDraft:null');
+} catch (_) {}
+const inventoryDraftKey = `invensyncInventoryDraft:{{ current_user.id }}:{{ store.id }}:{{ selected_date }}:${inventoryId || 'new'}`;
 const motifChargePayload = {{ motif_charge_payload|default(none)|tojson }};
 const motifProductOptions = {{ motif_product_options|default([])|tojson }};
 const adjProductOptions = {{ adj_product_options|default([])|tojson }};
@@ -4752,6 +4542,8 @@ function closeInvensyncExportModal() {
 })();
 </script>
 {% endif %}
+
+<script defer src="{{ url_for('static', filename='js/invensync_excel_grid.js') }}?v=20261126-10"></script>
 
 {% endblock %}
 

@@ -7565,6 +7565,45 @@ def _sync_taf_csi_inventory_for_store_date(store, transaction_date, affected_pro
     db.session.flush()
 
 
+def _sync_taf_trans_out_inventory_for_store_date(store, transaction_date, affected_product_ids=None):
+    """Reconcile InvenSync trans_out_qty for a store/date from outgoing TAFs."""
+    if not store or not transaction_date:
+        return
+
+    inventory = DailyEndingInventory.query.filter_by(
+        store_id=store.id,
+        inventory_date=transaction_date,
+    ).first()
+    if not inventory:
+        return
+
+    trans_out_map = _build_taf_trans_out_quantity_by_master_id(store, transaction_date)
+
+    items = inventory.items
+    if affected_product_ids is not None:
+        affected = {int(pid) for pid in affected_product_ids if pid}
+        items = [item for item in items if item.product_master_id in affected]
+
+    for inv_item in items:
+        if not inv_item.product_master_id:
+            continue
+        inv_item.trans_out_qty = int(trans_out_map.get(inv_item.product_master_id, 0) or 0)
+        _recalculate_inventory_item(inv_item)
+
+    existing_pm_ids = {item.product_master_id for item in inventory.items if item.product_master_id}
+    for pm_id, qty in trans_out_map.items():
+        if pm_id not in existing_pm_ids and qty > 0:
+            if affected_product_ids is not None and pm_id not in {int(pid) for pid in affected_product_ids if pid}:
+                continue
+            product = ProductMaster.query.get(pm_id)
+            if product:
+                inv_item = _find_or_create_inventory_item(inventory, pm_id, product.description)
+                inv_item.trans_out_qty = int(qty or 0)
+                _recalculate_inventory_item(inv_item)
+
+    db.session.flush()
+
+
 def _sync_taf_trans_in_inventory_for_store_date(store, target_date):
     """Reconcile InvenSync trans_in_qty for a store/date from confirmed TAFs."""
     if not store or not target_date:
@@ -8837,6 +8876,8 @@ def store_manager_incoming_transfer_view(transfer_id):
                 pass
 
         transfer.received_date = received_date
+        transfer.receiver_live_user_id = None
+        transfer.receiver_live_at = None
 
         # Update invensync Trans-In quantity when receiving is confirmed
         _update_inventory_trans_in_on_receive(transfer, transfer_items, received_date=received_date)
@@ -8861,6 +8902,16 @@ def store_manager_incoming_transfer_view(transfer_id):
         flash('Incoming transfer updated successfully.', category='success')
         return redirect(url_for('views.store_manager_incoming_transfer_view', transfer_id=transfer.id))
 
+    if (
+        request.method == 'GET'
+        and is_incoming_for_current_store
+        and can_receive_action
+        and str(getattr(transfer, 'status', '') or 'Pending').strip() == 'Pending'
+    ):
+        transfer.receiver_live_user_id = current_user.id
+        transfer.receiver_live_at = datetime.utcnow()
+        db.session.commit()
+
     return render_template(
         'store_manager/trans_view.html',
         user=current_user,
@@ -8869,6 +8920,77 @@ def store_manager_incoming_transfer_view(transfer_id):
         transfer_items=transfer_items,
         can_edit_receive=can_receive_action,
     )
+
+
+def _is_transfer_live_open_by_receiver(transfer, ttl_seconds=45):
+    """Return True when the receiving store currently has the transfer open."""
+    if not transfer or not getattr(transfer, 'receiver_live_user_id', None):
+        return False
+    live_at = getattr(transfer, 'receiver_live_at', None)
+    if not live_at:
+        return False
+    live_at_naive = live_at.replace(tzinfo=None) if getattr(live_at, 'tzinfo', None) else live_at
+    return (datetime.utcnow() - live_at_naive).total_seconds() <= ttl_seconds
+
+
+def _get_trans_out_edit_lock_reason(transfer, store):
+    """Return None if Store Manager can edit this Trans-Out, else a clear lock reason."""
+    if not transfer or not store:
+        return 'Transfer record not found.'
+    if int(getattr(transfer, 'store_id', 0) or 0) != int(store.id):
+        return 'You can only edit outgoing transfers from your store.'
+
+    tx_type = str(getattr(transfer, 'transaction_type', '') or '').strip().lower()
+    if tx_type not in ('product transfer', 'egi plant transfer', 'supplies transfer'):
+        return 'Only Product Transfer and EGI Plant Transfer forms can be edited here.'
+
+    if tx_type == 'product transfer':
+        status = str(getattr(transfer, 'status', '') or 'Pending').strip()
+        if status != 'Pending':
+            return 'This transfer has already been received and can no longer be edited.'
+        if _is_transfer_live_open_by_receiver(transfer):
+            return 'Cannot edit while the receiver currently has this form open.'
+
+    if _is_operational_day_finalized(store.id, transfer.transaction_date):
+        return 'Cannot edit because InvenSync End of Day is already finalized for this date.'
+
+    return None
+
+
+@views.route('/store-manager/trans/<int:transfer_id>/receiver-heartbeat', methods=['POST'])
+@login_required
+def store_manager_incoming_transfer_heartbeat(transfer_id):
+    role = (current_user.role or '').strip()
+    if role != 'Store Manager':
+        return jsonify({'ok': False}), 403
+    store = _resolve_store_for_store_scope_user()
+    transfer = TafTransfer.query.get(transfer_id)
+    if not store or not transfer:
+        return jsonify({'ok': False}), 404
+    dest_store = _resolve_transfer_destination_store(transfer, [store])
+    if not dest_store or int(getattr(transfer, 'store_id', 0) or 0) == int(dest_store.id):
+        return jsonify({'ok': False}), 403
+    if str(getattr(transfer, 'status', '') or 'Pending').strip() != 'Pending':
+        transfer.receiver_live_user_id = None
+        transfer.receiver_live_at = None
+        db.session.commit()
+        return jsonify({'ok': False, 'finalized': True})
+
+    transfer.receiver_live_user_id = current_user.id
+    transfer.receiver_live_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@views.route('/store-manager/trans/<int:transfer_id>/receiver-leave', methods=['POST'])
+@login_required
+def store_manager_incoming_transfer_leave(transfer_id):
+    transfer = TafTransfer.query.get(transfer_id)
+    if transfer and getattr(transfer, 'receiver_live_user_id', None) == current_user.id:
+        transfer.receiver_live_user_id = None
+        transfer.receiver_live_at = None
+        db.session.commit()
+    return jsonify({'ok': True})
 
 
 def _can_store_manager_edit_wastage_transfer(transfer, store):
@@ -9106,12 +9228,20 @@ def store_manager_outgoing_transfers():
             )
         }
 
+    edit_lock_reason_by_transfer = {}
+    if role == 'Store Manager':
+        edit_lock_reason_by_transfer = {
+            transfer.id: _get_trans_out_edit_lock_reason(transfer, store)
+            for transfer in outgoing_transfers
+        }
+
     return render_template(
         'store_manager/trans_out.html',
         user=current_user,
         store=store,
         outgoing_transfers=outgoing_transfers,
         item_count_by_transfer=item_count_by_transfer,
+        edit_lock_reason_by_transfer=edit_lock_reason_by_transfer,
     )
 
 
@@ -9154,6 +9284,12 @@ def store_manager_outgoing_transfer_view(transfer_id):
         .all()
     )
 
+    outgoing_edit_lock_reason = (
+        _get_trans_out_edit_lock_reason(transfer, store)
+        if role == 'Store Manager'
+        else 'Only Store Managers can edit outgoing transfers.'
+    )
+
     return render_template(
         'store_manager/trans_view.html',
         user=current_user,
@@ -9162,6 +9298,154 @@ def store_manager_outgoing_transfer_view(transfer_id):
         transfer_items=transfer_items,
         can_edit_receive=False,
         trans_view_mode='outgoing',
+        can_edit_outgoing=(role == 'Store Manager' and outgoing_edit_lock_reason is None),
+        outgoing_edit_lock_reason=outgoing_edit_lock_reason,
+    )
+
+
+@views.route('/store-manager/trans-out/<int:transfer_id>/edit', methods=['GET', 'POST'])
+@login_required
+def store_manager_edit_outgoing_transfer(transfer_id):
+    if (current_user.role or '').strip() != 'Store Manager':
+        flash('Access denied. Only Store Managers can edit outgoing transfers.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    transfer = TafTransfer.query.filter_by(id=transfer_id).first()
+    if not transfer:
+        flash('Transfer record not found.', category='error')
+        return redirect(url_for('views.store_manager_outgoing_transfers'))
+
+    lock_reason = _get_trans_out_edit_lock_reason(transfer, store)
+    if lock_reason:
+        flash(lock_reason, category='error')
+        return redirect(url_for('views.store_manager_outgoing_transfer_view', transfer_id=transfer.id))
+
+    tx_type_lower = str(getattr(transfer, 'transaction_type', '') or '').strip().lower()
+    is_egi_plant = tx_type_lower in ('egi plant transfer', 'supplies transfer')
+
+    if request.method == 'POST':
+        try:
+            prepared_by_name = str(request.form.get('prepared_by_name', '') or '').strip()
+            if not prepared_by_name:
+                raise ValueError('Prepared By is required.')
+
+            transfer_to = str(transfer.transfer_to or '').strip()
+            if not is_egi_plant:
+                requested_to = str(request.form.get('transfer_to', '') or '').strip()
+                if not requested_to:
+                    raise ValueError('Transfer To store is required.')
+                dest_store = Store.query.filter(func.lower(func.trim(Store.name)) == requested_to.lower()).first()
+                if not dest_store:
+                    raise ValueError('Please select a valid destination store.')
+                if int(dest_store.id) == int(store.id):
+                    raise ValueError('Transfer To store cannot be the same as your store.')
+                transfer_to = dest_store.name
+
+            item_names = request.form.getlist('item_name[]')
+            unit_costs = request.form.getlist('unit_cost[]')
+            quantities = request.form.getlist('qty[]')
+            remarks_list = request.form.getlist('remarks[]')
+
+            parsed_items = _build_edited_transfer_items(item_names, unit_costs, quantities, remarks_list)
+            if not parsed_items:
+                raise ValueError('Please add at least one item before saving.')
+
+            grand_total = float(sum(item['line_total'] for item in parsed_items))
+            affected_product_ids = []
+            for item in transfer.items:
+                master_id = _resolve_product_master_id(item.item_name)
+                if master_id:
+                    affected_product_ids.append(master_id)
+
+            TafTransferItem.query.filter_by(transfer_id=transfer.id).delete(synchronize_session=False)
+            for item in parsed_items:
+                master_id = _resolve_product_master_id(item['item_name'])
+                if master_id:
+                    affected_product_ids.append(master_id)
+                db.session.add(
+                    TafTransferItem(
+                        transfer_id=transfer.id,
+                        item_name=item['item_name'],
+                        unit_cost=item['unit_cost'],
+                        quantity=item['quantity'],
+                        received_quantity=item['quantity'] if is_egi_plant else None,
+                        short_over_qty=0,
+                        line_total=item['line_total'],
+                        remarks=item['remarks'],
+                    )
+                )
+
+            transfer.transfer_to = transfer_to
+            transfer.prepared_by_name = prepared_by_name
+            transfer.grand_total = grand_total
+            db.session.flush()
+            _sync_taf_trans_out_inventory_for_store_date(store, transfer.transaction_date, affected_product_ids)
+
+            log_audit_event(
+                action='taf.trans_out.edit',
+                entity_type='TafTransfer',
+                entity_id=transfer.id,
+                reason='Store manager edited outgoing transfer before receiver open/EOD.',
+                details={
+                    'store_id': store.id,
+                    'control_no': transfer.control_no,
+                    'transaction_type': transfer.transaction_type,
+                    'transaction_date': transfer.transaction_date.strftime('%Y-%m-%d'),
+                    'transfer_to': transfer_to,
+                    'item_count': len(parsed_items),
+                    'grand_total': round(grand_total, 2),
+                },
+            )
+            db.session.commit()
+            flash('Outgoing transfer updated successfully.', category='success')
+            return redirect(url_for('views.store_manager_outgoing_transfer_view', transfer_id=transfer.id))
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), category='error')
+        except Exception as exc:
+            db.session.rollback()
+            flash(f'Error updating outgoing transfer: {str(exc)}', category='error')
+
+    transfer_items = (
+        TafTransferItem.query
+        .filter(TafTransferItem.transfer_id == transfer.id)
+        .order_by(TafTransferItem.id.asc())
+        .all()
+    )
+    product_rows = (
+        ProductMaster.query
+        .with_entities(ProductMaster.description, ProductMaster.tp)
+        .order_by(ProductMaster.description.asc())
+        .all()
+    )
+    product_names = []
+    product_price_map = {}
+    for row in product_rows:
+        product_name = str(getattr(row, 'description', '') or '').strip()
+        if not product_name:
+            continue
+        product_names.append(product_name)
+        tp_value = getattr(row, 'tp', None)
+        if tp_value is not None:
+            product_price_map[product_name] = float(tp_value)
+
+    other_stores = Store.query.filter(Store.id != store.id).order_by(Store.name.asc()).all()
+
+    return render_template(
+        'store_manager/trans_out_edit.html',
+        user=current_user,
+        store=store,
+        transfer=transfer,
+        transfer_items=transfer_items,
+        is_egi_plant=is_egi_plant,
+        other_stores=other_stores,
+        product_names=product_names,
+        product_price_map=product_price_map,
     )
 
 
@@ -11162,9 +11446,12 @@ def store_manager_delete_oracle_order(order_id):
         return {'ok': False, 'error': 'Order not found'}, 404
     created_at = order.created_at.replace(tzinfo=None) if order.created_at else datetime.utcnow()
     if datetime.utcnow() - created_at >= timedelta(days=1):
-        return {'ok': False, 'error': 'Orders can only be deleted within 1 day of submission'}, 403
+        action_verb = 'edited' if request.method == 'PATCH' else 'deleted'
+        return {'ok': False, 'error': f'Orders can only be {action_verb} within 1 day of submission'}, 403
 
     if request.method == 'PATCH':
+        if str(getattr(order, 'status', '') or '').lower() == 'rejected':
+            return {'ok': False, 'error': 'Rejected orders cannot be edited'}, 403
         data = request.get_json(silent=True) or {}
         try:
             quantity = int(data.get('quantity'))
@@ -11239,7 +11526,7 @@ def cluster_manager_decide_oracle_order(order_id):
     })
 
 
-@views.route('/store-manager/oracle/order-date/<order_date>', methods=['DELETE'])
+@views.route('/store-manager/oracle/order-date/<order_date>', methods=['DELETE', 'PATCH'])
 @login_required
 def store_manager_delete_oracle_order_date(order_date):
     if current_user.role != 'Store Manager':
@@ -11254,7 +11541,69 @@ def store_manager_delete_oracle_order_date(order_date):
         return {'ok': False, 'error': 'Order not found'}, 404
     now = datetime.utcnow()
     if any(now - (order.created_at.replace(tzinfo=None) if order.created_at else now) >= timedelta(days=1) for order in orders):
-        return {'ok': False, 'error': 'Orders can only be deleted within 1 day of submission'}, 403
+        action_verb = 'edited' if request.method == 'PATCH' else 'deleted'
+        return {'ok': False, 'error': f'Orders can only be {action_verb} within 1 day of submission'}, 403
+
+    if request.method == 'PATCH':
+        data = request.get_json(silent=True) or {}
+        incoming_items = data.get('orders') or []
+        if not incoming_items:
+            return {'ok': False, 'error': 'No order quantities were provided'}, 400
+        existing_by_key = {(int(o.product_id), o.delivery_date): o for o in orders}
+        updated_count = 0
+        approved_count = 0
+        pending_count = 0
+        try:
+            for item in incoming_items:
+                product_id = int(item['productId'])
+                delivery_date = datetime.strptime(item['deliveryDate'], '%Y-%m-%d').date()
+                quantity = int(item['quantity'])
+                if quantity < 0 or delivery_date < selected_date:
+                    continue
+                existing = existing_by_key.get((product_id, delivery_date))
+                if existing:
+                    if str(getattr(existing, 'status', '') or '').lower() == 'rejected':
+                        continue
+                    min_s = int(existing.min_suggested_qty or 0)
+                    max_s = int(existing.max_suggested_qty or 0)
+                    status = 'approved' if quantity == 0 or min_s <= quantity <= max_s else 'pending'
+                    existing.quantity = quantity
+                    existing.status = status
+                    existing.approved_at = now if status == 'approved' else None
+                    updated_count += 1
+                    if status == 'approved':
+                        approved_count += 1
+                    else:
+                        pending_count += 1
+                elif quantity > 0:
+                    suggested = int(item.get('suggested', 0))
+                    min_s = int(item.get('minSuggested', 0))
+                    max_s = int(item.get('maxSuggested', 0))
+                    status = 'approved' if min_s <= quantity <= max_s else 'pending'
+                    db.session.add(OracleOrder(
+                        store_id=store.id,
+                        product_id=product_id,
+                        order_date=selected_date,
+                        delivery_date=delivery_date,
+                        quantity=quantity,
+                        suggested_qty=suggested,
+                        min_suggested_qty=min_s,
+                        max_suggested_qty=max_s,
+                        status=status,
+                        created_by=current_user.id,
+                        approved_at=now if status == 'approved' else None,
+                    ))
+                    updated_count += 1
+                    if status == 'approved':
+                        approved_count += 1
+                    else:
+                        pending_count += 1
+            db.session.commit()
+        except (KeyError, TypeError, ValueError):
+            db.session.rollback()
+            return {'ok': False, 'error': 'Invalid Oracle order update data'}, 400
+        return {'ok': True, 'updated': updated_count, 'approved': approved_count, 'pending': pending_count}
+
     deleted = [{'productId': order.product_id, 'deliveryDate': order.delivery_date.isoformat(), 'quantity': order.quantity} for order in orders]
     for order in orders:
         db.session.delete(order)
@@ -12154,12 +12503,21 @@ def save_daily_ending_inventory():
             store_id=inventory.store_id,
             report_date=inventory.inventory_date,
         ).first()
-        if motif_breakdown is not None and report:
-            pos_items = PosSold.query.filter_by(daily_report_id=report.id).all()
-            motif_rows = _validate_saved_motif_rows(pos_items, motif_breakdown)
-            if motif_rows:
+        if motif_breakdown is not None:
+            if report:
+                pos_items = PosSold.query.filter_by(daily_report_id=report.id).all()
+                motif_rows = _validate_saved_motif_rows(pos_items, motif_breakdown)
                 report.pos_motif_breakdown_json = json.dumps(motif_rows)
-                motif_quantities = _build_complete_pos_quantities(pos_items, motif_rows)
+                if motif_rows:
+                    motif_quantities = _build_complete_pos_quantities(pos_items, motif_rows)
+            else:
+                pos_staging = _get_pos_sold_staging(inventory.store_id, inventory.inventory_date)
+                if pos_staging:
+                    staged_items = _get_staged_pos_sold_items(pos_staging)
+                    motif_rows = _validate_saved_motif_rows(staged_items, motif_breakdown)
+                    pos_staging.motif_breakdown_json = json.dumps(motif_rows)
+                    if motif_rows:
+                        motif_quantities = _build_complete_pos_quantities(staged_items, motif_rows)
         config, global_config_data = _get_or_create_global_invensync_config()
         effective_config_data = _get_effective_invensync_config(global_config_data, inventory.store_id)
         admin_unlock_scope = _get_invensync_admin_unlock(global_config_data, inventory.store_id, inventory.inventory_date)

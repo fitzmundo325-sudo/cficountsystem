@@ -46,6 +46,7 @@ let PENDING_ORDER_REVIEW = null;
 let weeklyFinalQtys = {};
 let weeklyProductRows = [''];
 let orderMode = CLUSTER_VIEW ? 'single' : 'weekly';
+let editingOrderDate = null;
 let activeCategory = 'all';
 let productSearchQuery = '';
 let HISTORY_GROUPS = [];
@@ -1203,12 +1204,22 @@ async function submitWeeklyOrder() {
     return;
   }
   try {
-    let response = await fetch('/store-manager/oracle/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orders: submittedOrders }) });
+    const isEditing = Boolean(editingOrderDate);
+    const url = isEditing
+      ? `/store-manager/oracle/order-date/${encodeURIComponent(editingOrderDate)}`
+      : '/store-manager/oracle/submit';
+    const method = isEditing ? 'PATCH' : 'POST';
+    let response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orders: submittedOrders }) });
     let result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || 'Unable to save weekly Oracle order');
     weeklyFinalQtys = {};
     saveWeeklyMemory();
-    showToast(`${result.saved || submittedOrders.length} daily orders submitted${result.pending ? `; ${result.pending} require approval` : ''}.`, result.pending ? 'info' : 'success');
+    if (isEditing) {
+      exitOracleEditMode(false);
+      showToast(`Order updated (${result.updated || submittedOrders.length} items${result.pending ? `; ${result.pending} require approval` : ''}).`, result.pending ? 'info' : 'success');
+    } else {
+      showToast(`${result.saved || submittedOrders.length} daily orders submitted${result.pending ? `; ${result.pending} require approval` : ''}.`, result.pending ? 'info' : 'success');
+    }
     renderWeeklyOrderTable();
     setTimeout(reloadPage, 900);
   } catch (error) {
@@ -1351,6 +1362,15 @@ function buildHistoryWeek(g) {
   setCell(week, 'subtitle', `${dates.length} delivery days · ${products.length} products · ${[...g.managers].join(', ') || '—'}${approvalSummary}`);
   setCell(week, 'final_total', g.finalTotal.toLocaleString());
   setCell(week, 'total_cost', '₱' + g.totalCost.toLocaleString());
+  let editBtn = getCell(week, 'edit_btn');
+  if (editBtn) {
+    editBtn.dataset.orderDate = g.date;
+    editBtn.addEventListener('click', () => {
+      const idx = HISTORY_GROUPS.findIndex(item => item.date === g.date);
+      closeHistoryModal();
+      if (idx !== -1) onHistoryEditClick({ currentTarget: { dataset: { index: idx } } });
+    });
+  }
   let deleteBtn = getCell(week, 'delete_btn');
   deleteBtn.dataset.orderDate = g.date;
   deleteBtn.addEventListener('click', onDeleteOrderDateClick);
@@ -1382,18 +1402,22 @@ function buildHistoryWeek(g) {
       finalEl.dataset.quantity = item.final;
       finalEl.dataset.orderId = item.orderId;
       const approvalStatus = getCell(td, 'approval_status');
-      if (item.status === 'pending') {
-        approvalStatus.textContent = 'Waiting for approval';
-        approvalStatus.classList.remove('hidden');
-        finalEl.classList.add('cursor-not-allowed', 'text-amber-700', 'bg-amber-50');
-        finalEl.title = 'Waiting for Cluster Manager approval';
-      } else if (item.status === 'rejected') {
+      if (item.status === 'rejected') {
         approvalStatus.textContent = 'Rejected';
         approvalStatus.classList.remove('hidden');
-        finalEl.classList.add('text-rose-700', 'bg-rose-50');
-        finalEl.title = 'This order was rejected';
+        finalEl.classList.remove('cursor-pointer', 'hover:ring-2', 'hover:ring-sky-300');
+        finalEl.classList.add('cursor-not-allowed', 'text-rose-700', 'bg-rose-50');
+        finalEl.title = 'Rejected orders cannot be edited';
       } else {
-        finalEl.addEventListener('dblclick', onHistoryFinalDblClick);
+        if (item.status === 'pending') {
+          approvalStatus.textContent = 'Waiting for approval';
+          approvalStatus.classList.remove('hidden');
+          finalEl.classList.add('text-amber-700', 'bg-amber-50');
+          finalEl.title = 'Click to edit quantity (Waiting for approval)';
+        } else {
+          finalEl.title = 'Click to edit quantity';
+        }
+        finalEl.addEventListener('click', onHistoryFinalDblClick);
       }
       insertBeforeCell(row, td, 'week_total');
     });
@@ -1437,6 +1461,11 @@ function renderHistory() {
     let viewBtn = getCell(card, 'view_btn');
     viewBtn.dataset.index = index;
     viewBtn.addEventListener('click', onHistoryViewClick);
+    let editBtn = getCell(card, 'edit_btn');
+    if (editBtn) {
+      editBtn.dataset.index = index;
+      editBtn.addEventListener('click', onHistoryEditClick);
+    }
     let deleteBtn = getCell(card, 'delete_btn');
     deleteBtn.dataset.orderDate = g.date;
     deleteBtn.addEventListener('click', onDeleteOrderDateClick);
@@ -1446,6 +1475,78 @@ function renderHistory() {
 
 function onHistoryViewClick(event) {
   showHistoryWeek(Number(event.currentTarget.dataset.index));
+}
+
+function exitOracleEditMode(switchToHistory) {
+  editingOrderDate = null;
+  const banner = document.getElementById('oracle-edit-banner');
+  if (banner) banner.classList.add('hidden');
+  const submitBtn = document.getElementById('btn-submit-order');
+  if (submitBtn) submitBtn.innerHTML = '<i class="bi bi-check2-circle"></i> Submit Weekly Plan';
+  if (switchToHistory) {
+    weeklyFinalQtys = {};
+    saveWeeklyMemory();
+    document.getElementById('tab-history')?.click();
+  }
+}
+
+function onHistoryEditClick(event) {
+  const index = Number(event.currentTarget.dataset.index);
+  const g = HISTORY_GROUPS[index];
+  if (!g || !g.items || !g.items.length) return;
+
+  const delivDates = [...g.deliveryDates].filter(Boolean).sort();
+  if (!delivDates.length) return;
+
+  // Switch to Order Form tab first so renderOrderForm() doesn't overwrite our pre-filled values
+  navigate('order-form');
+
+  editingOrderDate = g.date;
+  orderMode = 'weekly';
+  weeklyFinalQtys = {};
+  const productSet = new Set();
+  g.items.forEach(item => {
+    const pid = String(item.productId);
+    productSet.add(pid);
+    if (item.delivDate) {
+      weeklyFinalQtys[`${pid}|${item.delivDate}`] = Number(item.finalOrder || 0);
+    }
+  });
+  weeklyProductRows = productSet.size ? [...productSet] : [''];
+
+  const odInput = document.getElementById('order-date');
+  const ddInput = document.getElementById('delivery-date');
+  const deInput = document.getElementById('delivery-end-date');
+  if (odInput) odInput.value = g.date;
+  if (ddInput) {
+    ddInput.min = minDeliv(g.date);
+    ddInput.value = delivDates[0];
+  }
+  if (deInput) {
+    deInput.min = delivDates[0];
+    deInput.max = maxPlanEnd(delivDates[0]);
+    deInput.value = delivDates[delivDates.length - 1];
+  }
+
+  const banner = document.getElementById('oracle-edit-banner');
+  const bannerText = document.getElementById('oracle-edit-banner-text');
+  if (banner && bannerText) {
+    bannerText.textContent = `Editing Order Week · ${g.date} (${delivDates[0]} to ${delivDates[delivDates.length - 1]})`;
+    banner.classList.remove('hidden');
+  }
+  const submitBtn = document.getElementById('btn-submit-order');
+  if (submitBtn) submitBtn.innerHTML = '<i class="bi bi-check2-circle"></i> Save Order Changes';
+
+  const cancelBtn = document.getElementById('btn-cancel-oracle-edit');
+  if (cancelBtn && !cancelBtn.dataset.bound) {
+    cancelBtn.dataset.bound = '1';
+    cancelBtn.addEventListener('click', () => exitOracleEditMode(true));
+  }
+
+  updateDelivDay();
+  updateMultiplier();
+  setOrderMode('weekly');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function showHistoryWeek(index) {
@@ -1487,13 +1588,63 @@ async function editHistoryQty(cell, orderId) {
   async function save() {
     if (saved) return;
     let quantity = Math.max(0, parseInt(cell.textContent.trim()) || 0);
+    if (quantity === Number(current || 0)) {
+      saved = true;
+      cell.textContent = current;
+      cell.contentEditable = 'false';
+      cell.classList.remove('ring-2', 'ring-sky-400');
+      return;
+    }
     saved = true;
     try {
       let response = await fetch(`/store-manager/oracle/order/${encodeURIComponent(String(orderId).replace(/^ORD-/, ''))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quantity }) });
       let result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.error || 'Unable to update quantity');
-      showToast('Quantity updated', 'success');
-      setTimeout(reloadPage, 350);
+
+      cell.dataset.quantity = String(quantity);
+      cell.textContent = String(quantity);
+      cell.contentEditable = 'false';
+      cell.classList.remove('ring-2', 'ring-sky-400');
+
+      const numericId = String(orderId).replace(/^ORD-/, '');
+      DB.orderHistory.forEach(order => {
+        if (String(order.id).replace(/^ORD-/, '') === numericId) {
+          order.finalOrder = quantity;
+          order.status = result.status || order.status;
+          order.totalCost = quantity * Number(order.unitCost || 0);
+        }
+      });
+      DB.pendingApprovals = DB.orderHistory.filter(order => String(order.status || '').toLowerCase() === 'pending');
+
+      const td = cell.closest('td');
+      const approvalStatus = td ? getCell(td, 'approval_status') : null;
+      if (approvalStatus) {
+        if (result.status === 'pending') {
+          approvalStatus.textContent = 'Waiting for approval';
+          approvalStatus.classList.remove('hidden');
+          cell.classList.add('text-amber-700', 'bg-amber-50');
+        } else {
+          approvalStatus.textContent = '';
+          approvalStatus.classList.add('hidden');
+          cell.classList.remove('text-amber-700', 'bg-amber-50');
+        }
+      }
+
+      const row = cell.closest('tr');
+      if (row) {
+        const rowSum = Array.from(row.querySelectorAll('[data-cell="final"][data-order-id]'))
+          .reduce((s, el) => s + (Number(el.dataset.quantity || 0)), 0);
+        setCell(row, 'week_total', rowSum);
+      }
+
+      const detailPanel = document.getElementById('history-detail-panel');
+      const openWeekTitle = detailPanel ? getCell(detailPanel, 'title')?.textContent : '';
+      renderHistory();
+      if (openWeekTitle && detailPanel) {
+        const matchIdx = HISTORY_GROUPS.findIndex(g => ('Order week · ' + g.date) === openWeekTitle);
+        if (matchIdx !== -1) showHistoryWeek(matchIdx);
+      }
+      showToast('Order quantity updated', 'success');
     } catch (error) {
       saved = false;
       cell.textContent = current;

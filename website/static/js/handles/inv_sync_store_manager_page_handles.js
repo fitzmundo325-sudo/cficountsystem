@@ -601,7 +601,7 @@ loadInvenSyncDetailData();
 
 let inventoryId;
 let inventoryInitialSnapshot = '';
-let inventoryDraftKey = `invensyncInventoryDraft:${inventoryId}`;
+let inventoryDraftKey = '';
 let motifChargePayload;
 let motifProductOptions;
 let adjProductOptions;
@@ -640,6 +640,11 @@ let isViewOnlyRole;
 
 function initScriptState(data) {
   inventoryId = data.inventory.id;
+  try {
+    localStorage.removeItem('invensyncInventoryDraft:undefined');
+    localStorage.removeItem('invensyncInventoryDraft:null');
+  } catch (_) {}
+  inventoryDraftKey = `invensyncInventoryDraft:${currentUserRole || 'user'}:${data.store.id}:${data.selected_date}:${inventoryId || 'new'}`;
   motifChargePayload = data.motif_charge_payload || null;
   motifProductOptions = data.motif_product_options || [];
   adjProductOptions = data.adj_product_options || [];
@@ -1343,12 +1348,13 @@ function applyMotifTagsToSoldColumn() {
   document.querySelectorAll('#main-content tbody tr[data-product-id]').forEach(row => {
     let badgeStack = row.querySelector('td[data-field="quantity_sold"] .inline-flex');
     let soldInput = row.querySelector('.sold-input');
-    if (!badgeStack) return;
-    badgeStack.querySelectorAll('.motif-sold-badge').forEach(badge => badge.remove());
-    let posBadge = badgeStack.querySelector('.pos-review-badge');
-    let hasBitbitBadge = Boolean(badgeStack.querySelector('.bitbit-sold-badge'));
-    if (posBadge && !hasBitbitBadge) {
-      posBadge.classList.add('hidden');
+    if (badgeStack) {
+      badgeStack.querySelectorAll('.motif-sold-badge').forEach(badge => badge.remove());
+      let posBadge = badgeStack.querySelector('.pos-review-badge');
+      let hasBitbitBadge = Boolean(badgeStack.querySelector('.bitbit-sold-badge'));
+      if (posBadge && !hasBitbitBadge) {
+        posBadge.classList.add('hidden');
+      }
     }
     if (soldInput) {
       if (soldInput.dataset.motifBaseSold === undefined) {
@@ -1367,13 +1373,16 @@ function applyMotifTagsToSoldColumn() {
       if (typeof updateInventoryRow === 'function') updateInventoryRow(soldInput);
     }
 
-    let badge = document.createElement('span');
-    badge.className = 'motif-sold-badge border border-emerald-200 bg-emerald-100 text-emerald-700 text-[8px] px-1 py-0.5 rounded whitespace-nowrap font-semibold leading-none cursor-default select-none transition-transform duration-150 ease-out hover:scale-110 hover:shadow-sm';
-    badge.textContent = `MOTIF ${motifQuantity}`;
-    badge.title = buildMotifTagTitle(matchedMotifRow, motifRows);
-    badgeStack.appendChild(badge);
-    if (posBadge) {
-      posBadge.classList.remove('hidden');
+    if (badgeStack) {
+      let badge = document.createElement('span');
+      badge.className = 'motif-sold-badge border border-emerald-200 bg-emerald-100 text-emerald-700 text-[8px] px-1 py-0.5 rounded whitespace-nowrap font-semibold leading-none cursor-default select-none transition-transform duration-150 ease-out hover:scale-110 hover:shadow-sm';
+      badge.textContent = `MOTIF ${motifQuantity}`;
+      badge.title = buildMotifTagTitle(matchedMotifRow, motifRows);
+      badgeStack.appendChild(badge);
+      let posBadge = badgeStack.querySelector('.pos-review-badge');
+      if (posBadge) {
+        posBadge.classList.remove('hidden');
+      }
     }
   });
 }
@@ -1668,6 +1677,7 @@ function saveMotifBreakdown() {
   }));
   applyMotifTagsToSoldColumn();
   updateMotifBreakdownBadge();
+  if (typeof setSaveButtonEnabled === 'function') setSaveButtonEnabled(true);
   notify('Motif breakdown saved for this store/date.', 'success');
   closeMotifBreakdownModal();
 }
@@ -2735,6 +2745,7 @@ function captureInventorySnapshot() {
 }
 
 function saveInventoryDraft() {
+  if (!inventoryDraftKey) return;
   try {
     let draft = getInventoryEditableFields().map(field => ({
       row: field.closest('tr')?.dataset.productId || '',
@@ -2748,6 +2759,7 @@ function saveInventoryDraft() {
 }
 
 function restoreInventoryDraft() {
+  if (!inventoryDraftKey) return;
   let draft = null;
   try {
     draft = JSON.parse(localStorage.getItem(inventoryDraftKey) || 'null');

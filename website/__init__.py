@@ -233,6 +233,20 @@ def _ensure_maintenance_mode_table():
         MaintenanceMode.__table__.create(db.engine, checkfirst=True)
 
 
+def _ensure_taf_transfer_live_lock_columns():
+    from sqlalchemy import inspect
+
+    inspector = inspect(db.engine)
+    if 'taf_transfer' not in inspector.get_table_names():
+        return
+    existing_columns = {col['name'] for col in inspector.get_columns('taf_transfer')}
+    with db.engine.begin() as conn:
+        if 'receiver_live_user_id' not in existing_columns:
+            conn.execute(text("ALTER TABLE taf_transfer ADD COLUMN receiver_live_user_id INTEGER"))
+        if 'receiver_live_at' not in existing_columns:
+            conn.execute(text("ALTER TABLE taf_transfer ADD COLUMN receiver_live_at DATETIME"))
+
+
 def _ensure_taf_transfer_columns():
     with db.engine.connect() as conn:
         existing_columns = {
@@ -574,6 +588,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _ensure_taf_transfer_live_lock_columns()
         # _ensure_oracle_order_review_columns()
         # _ensure_api_usage_model()
         # _ensure_product_master_columns()

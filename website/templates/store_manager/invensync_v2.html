@@ -158,6 +158,7 @@
 </style>
 
 <link rel="stylesheet" href="{{ url_for('static', filename='css/skeleton_style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/invensync_excel_grid.css') }}?v=20261126-11">
 
 
 <script>
@@ -380,7 +381,18 @@ window.INVENSYNC_URLS = {
 
   <!-- Products Table -->
   <div id="main-content" class="bg-white rounded-xl border border-slate-200 shadow-sm">
-    <div class="relative border border-slate-200 rounded-xl">
+    <!-- Excel-style Formula & Selection Bar -->
+    <div id="excel-formula-bar" class="flex flex-wrap items-center gap-2 px-3 py-1.5 bg-slate-50 border-b border-slate-200 rounded-t-xl text-xs">
+      <div class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-300 rounded font-semibold text-slate-700 min-w-[140px] max-w-[260px] truncate" id="excel-name-box" title="Active Cell">
+        Click any cell
+      </div>
+      <span class="font-serif italic font-bold text-emerald-700 px-1 select-none">fx</span>
+      <input type="text" id="excel-formula-input" placeholder="Select a cell to view or edit..." readonly
+        class="flex-1 min-w-[160px] px-2.5 py-1 bg-white border border-slate-300 rounded text-xs text-slate-800 outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-500">
+      <div id="excel-range-summary" class="hidden items-center gap-3 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded text-emerald-800 font-medium"></div>
+      <span class="hidden sm:inline-block text-[11px] text-slate-400 select-none">Arrows / Tab / Enter &middot; Type to edit &middot; Ctrl+C / Ctrl+V</span>
+    </div>
+    <div class="relative border border-slate-200 border-t-0 rounded-b-xl">
       <div class="inventory-scroll-container overflow-x-auto overflow-y-visible">
         <table class="w-full text-sm">
           <thead class="bg-slate-100 text-black" id="invensyncTableHead"></thead>
@@ -667,8 +679,9 @@ window.INVENSYNC_URLS = {
 	showPageSkeleton(); 
 </script>
 
-<script defer src="{{ url_for('static', filename='js/handles/inv_sync_store_manager_page_handles.js') }}?v=invensync-scrollbar-20261010-7"></script>
+<script defer src="{{ url_for('static', filename='js/handles/inv_sync_store_manager_page_handles.js') }}?v=invensync-scrollbar-20261126-2"></script>
 
 <script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/invensync_excel_grid.js') }}?v=20261126-10"></script>
 
 {% endblock %}

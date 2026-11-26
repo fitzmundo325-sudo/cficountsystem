@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Edit Trans-Out - {{ store.name }}{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span>Store Manager</span>
+      <span class="mx-2">/</span>
+      <a href="{{ url_for('views.store_manager_outgoing_transfers') }}" class="hover:text-slate-700">Trans-Out</a>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Edit {{ transfer.control_no }}</span>
+    </nav>
+  </div>
+  <div class="text-sm font-medium text-slate-600">
+    <span class="text-slate-900">{{ store.name }}</span>
+  </div>
+</header>
+
+<div class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-7xl w-full mx-auto space-y-6">
+  <section class="rounded-none border border-slate-200 bg-white shadow-sm">
+    <div class="px-4 md:px-5 py-3 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
+      <div>
+        <h3 class="text-sm md:text-base font-bold text-slate-900">Edit Outgoing Transfer (TAF)</h3>
+        <p class="text-xs text-slate-600 mt-0.5">Editable while receiver does not have the form open and InvenSync End of Day is not yet finalized.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <a href="{{ url_for('views.store_manager_outgoing_transfer_view', transfer_id=transfer.id) }}" class="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">
+          Cancel
+        </a>
+      </div>
+    </div>
+
+    <form id="edit-trans-out-form" method="post" class="p-4 md:p-5 space-y-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="text-sm font-semibold text-slate-700">Date:</label>
+          <input type="text" value="{{ transfer.transaction_date.strftime('%Y-%m-%d') if transfer.transaction_date else '' }}" readonly class="w-[180px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 cursor-not-allowed">
+        </div>
+        <div class="flex flex-wrap items-center gap-2 md:justify-end">
+          <label class="text-sm font-semibold text-slate-700">Control No:</label>
+          <input type="text" value="{{ transfer.control_no }}" readonly class="w-[230px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 cursor-not-allowed">
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-700 mb-1">Transaction Type</label>
+          <input type="text" value="{{ 'EGI Plant Transfer' if is_egi_plant else transfer.transaction_type }}" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 cursor-not-allowed">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-700 mb-1">Transfer From</label>
+          <input type="text" value="{{ transfer.transfer_from }}" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 cursor-not-allowed">
+        </div>
+
+        <div>
+          <label for="transfer_to" class="block text-xs font-medium text-slate-700 mb-1">Transfer To</label>
+          {% if is_egi_plant %}
+          <input type="text" id="transfer_to" name="transfer_to" value="{{ transfer.transfer_to }}" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 cursor-not-allowed">
+          {% else %}
+          <select id="transfer_to" name="transfer_to" required class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 outline-none focus:ring-2 focus:ring-amber-300">
+            <option value="">Select destination store</option>
+            {% for s in other_stores %}
+            <option value="{{ s.name }}" {% if s.name == transfer.transfer_to %}selected{% endif %}>{{ s.name }}</option>
+            {% endfor %}
+          </select>
+          {% endif %}
+        </div>
+
+        <div>
+          <label for="prepared_by_name" class="block text-xs font-medium text-slate-700 mb-1">Prepared By</label>
+          <input type="text" id="prepared_by_name" name="prepared_by_name" value="{{ transfer.prepared_by_name or '' }}" required class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 outline-none focus:ring-2 focus:ring-amber-300">
+        </div>
+      </div>
+
+      <datalist id="trans-out-product-list">
+        {% for pname in product_names %}
+        <option value="{{ pname }}"></option>
+        {% endfor %}
+      </datalist>
+
+      <div class="rounded-lg border border-slate-200 overflow-hidden">
+        <div class="bg-slate-100 px-3 py-2 flex items-center justify-between">
+          <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Items</p>
+          <button type="button" id="add-trans-out-row-btn" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors">
+            + Add Row
+          </button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-white">
+              <tr>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Item Name</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase w-28">Unit Cost</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase w-24">Qty</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-500 uppercase w-28">Total</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Remarks</th>
+                <th class="px-3 py-2 text-center text-xs font-semibold text-slate-500 uppercase w-16">Remove</th>
+              </tr>
+            </thead>
+            <tbody id="trans-out-edit-tbody" class="divide-y divide-slate-100 bg-white">
+              {% for item in transfer_items %}
+              <tr class="trans-out-edit-row odd:bg-white even:bg-slate-50">
+                <td class="px-3 py-2">
+                  <input type="text" name="item_name[]" list="trans-out-product-list" value="{{ item.item_name }}" required class="item-name-input w-full min-w-[200px] px-2.5 py-1.5 text-sm bg-white border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-amber-300">
+                </td>
+                <td class="px-3 py-2">
+                  <input type="number" step="0.01" min="0" name="unit_cost[]" value="{{ '%.2f'|format(item.unit_cost or 0) }}" required class="unit-cost-input w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-amber-300">
+                </td>
+                <td class="px-3 py-2">
+                  <input type="number" step="1" min="1" name="qty[]" value="{{ item.quantity or 1 }}" required class="qty-input w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-amber-300">
+                </td>
+                <td class="px-3 py-2 text-right text-sm font-semibold text-slate-900 line-total-cell">
+                  {{ '%.2f'|format(item.line_total or 0) }}
+                </td>
+                <td class="px-3 py-2">
+                  <input type="text" name="remarks[]" value="{{ item.remarks or '' }}" class="w-full min-w-[140px] px-2.5 py-1.5 text-sm bg-white border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-amber-300" placeholder="Optional">
+                </td>
+                <td class="px-3 py-2 text-center">
+                  <button type="button" class="remove-row-btn inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors" title="Remove row">&times;</button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+            <tfoot class="bg-slate-50">
+              <tr>
+                <td colspan="3" class="px-3 py-2 text-right text-sm font-semibold text-slate-700">Grand Total</td>
+                <td id="trans-out-grand-total" class="px-3 py-2 text-right text-sm font-bold text-slate-900">{{ '%.2f'|format(transfer.grand_total or 0) }}</td>
+                <td colspan="2"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <a href="{{ url_for('views.store_manager_outgoing_transfer_view', transfer_id=transfer.id) }}" class="px-4 py-2 text-sm font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+          Cancel
+        </a>
+        <button type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition-colors shadow-sm">
+          Save Changes
+        </button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<script>
+(function() {
+  const priceMap = {{ product_price_map|tojson }};
+  const tbody = document.getElementById('trans-out-edit-tbody');
+  const addRowBtn = document.getElementById('add-trans-out-row-btn');
+  const grandTotalEl = document.getElementById('trans-out-grand-total');
+
+  function recalcTotals() {
+    let grand = 0;
+    tbody.querySelectorAll('.trans-out-edit-row').forEach(row => {
+      const cost = parseFloat(row.querySelector('.unit-cost-input')?.value || '0') || 0;
+      const qty = parseInt(row.querySelector('.qty-input')?.value || '0', 10) || 0;
+      const lineTotal = cost * qty;
+      grand += lineTotal;
+      const cell = row.querySelector('.line-total-cell');
+      if (cell) cell.textContent = lineTotal.toFixed(2);
+    });
+    if (grandTotalEl) grandTotalEl.textContent = grand.toFixed(2);
+  }
+
+  function bindRow(row) {
+    const itemInput = row.querySelector('.item-name-input');
+    const costInput = row.querySelector('.unit-cost-input');
+    const qtyInput = row.querySelector('.qty-input');
+    const removeBtn = row.querySelector('.remove-row-btn');
+
+    if (itemInput && costInput) {
+      itemInput.addEventListener('change', () => {
+        const val = itemInput.value.trim();
+        if (Object.prototype.hasOwnProperty.call(priceMap, val)) {
+          costInput.value = Number(priceMap[val]).toFixed(2);
+          recalcTotals();
+        }
+      });
+    }
+    if (costInput) costInput.addEventListener('input', recalcTotals);
+    if (qtyInput) qtyInput.addEventListener('input', recalcTotals);
+    if (removeBtn) {
+      removeBtn.addEventListener('click', () => {
+        if (tbody.querySelectorAll('.trans-out-edit-row').length <= 1) {
+          alert('At least one item row is required.');
+          return;
+        }
+        row.remove();
+        recalcTotals();
+      });
+    }
+  }
+
+  tbody.querySelectorAll('.trans-out-edit-row').forEach(bindRow);
+
+  if (addRowBtn) {
+    addRowBtn.addEventListener('click', () => {
+      const tr = document.createElement('tr');
+      tr.className = 'trans-out-edit-row odd:bg-white even:bg-slate-50';
+      tr.innerHTML = `
+        <td class="px-3 py-2">
+          <input type="text" name="item_name[]" list="trans-out-product-list" required class="item-name-input w-full min-w-[200px] px-2.5 py-1.5 text-sm bg-white border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-amber-300">
+        </td>
+        <td class="px-3 py-2">
+          <input type="number" step="0.01" min="0" name="unit_cost[]" value="0.00" required class="unit-cost-input w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-amber-300">
+        </td>
+        <td class="px-3 py-2">
+          <input type="number" step="1" min="1" name="qty[]" value="1" required class="qty-input w-full px-2.5 py-1.5 text-sm text-right bg-white border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-amber-300">
+        </td>
+        <td class="px-3 py-2 text-right text-sm font-semibold text-slate-900 line-total-cell">0.00</td>
+        <td class="px-3 py-2">
+          <input type="text" name="remarks[]" class="w-full min-w-[140px] px-2.5 py-1.5 text-sm bg-white border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-amber-300" placeholder="Optional">
+        </td>
+        <td class="px-3 py-2 text-center">
+          <button type="button" class="remove-row-btn inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors" title="Remove row">&times;</button>
+        </td>`;
+      tbody.appendChild(tr);
+      bindRow(tr);
+      recalcTotals();
+    });
+  }
+
+  recalcTotals();
+})();
+</script>
+{% endblock %}

@@ -55,6 +55,11 @@
         <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold {% if transfer_status == 'Pending' %}bg-amber-100 text-amber-700{% elif transfer_status == 'Received' %}bg-emerald-100 text-emerald-700{% elif transfer_status in ['Received - Short', 'Received - Over', 'Received - Short/Over'] %}bg-rose-100 text-rose-700{% else %}bg-slate-100 text-slate-700{% endif %}">
           {{ transfer_status }}
         </span>
+        {% if is_outgoing_view and can_edit_outgoing %}
+        <a href="{{ url_for('views.store_manager_edit_outgoing_transfer', transfer_id=transfer.id) }}" class="px-3 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors shadow-sm">
+          Edit Trans-Out
+        </a>
+        {% endif %}
         <a href="{{ url_for(trans_list_endpoint) }}" class="px-3 py-1.5 text-xs font-semibold bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors shadow-md shadow-cyan-600/25">
           Back to {{ trans_list_label }}
         </a>
@@ -242,6 +247,8 @@
           <div>
             {% if not is_pending %}
             <p class="mt-1 text-xs text-slate-500">Finalized transfer. Editing is disabled.</p>
+            {% elif is_outgoing_view and not can_edit_outgoing and outgoing_edit_lock_reason %}
+            <p class="mt-1 text-xs text-amber-700">{{ outgoing_edit_lock_reason }}</p>
             {% endif %}
           </div>
           {% if is_pending and can_edit_receive %}
@@ -325,6 +332,29 @@
         },
       });
     });
+
+    {% if not is_outgoing_view and not is_wastage_view and is_pending and can_edit_receive %}
+    const heartbeatUrl = "{{ url_for('views.store_manager_incoming_transfer_heartbeat', transfer_id=transfer.id) }}";
+    const leaveUrl = "{{ url_for('views.store_manager_incoming_transfer_leave', transfer_id=transfer.id) }}";
+    const sendHeartbeat = () => {
+      if (hasConfirmedReceive || document.visibilityState === 'hidden') return;
+      fetch(heartbeatUrl, { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    };
+    const heartbeatTimer = setInterval(sendHeartbeat, 15000);
+    window.addEventListener('focus', sendHeartbeat);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') sendHeartbeat();
+    });
+    const notifyLeave = () => {
+      clearInterval(heartbeatTimer);
+      if (hasConfirmedReceive) return;
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(leaveUrl, '');
+      }
+    };
+    window.addEventListener('pagehide', notifyLeave);
+    window.addEventListener('beforeunload', notifyLeave);
+    {% endif %}
   })();
 </script>
 {% endblock %}

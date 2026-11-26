@@ -392,6 +392,16 @@
     </div>
 
     <!-- Date/Manager row -->
+    <div id="oracle-edit-banner" class="hidden mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 shadow-sm">
+      <div class="flex items-center gap-2 text-sm font-semibold">
+        <i class="bi bi-pencil-square text-amber-700"></i>
+        <span id="oracle-edit-banner-text">Editing Order Week</span>
+      </div>
+      <button type="button" id="btn-cancel-oracle-edit" class="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100">
+        Cancel Edit
+      </button>
+    </div>
+
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-4">
       <div id="oracle-date-fields" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
         <div><label class="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Order Date</label><input
@@ -780,6 +790,7 @@
         </div>
         <div class="flex items-center gap-2">
           <button type="button" data-cell="view_btn" class="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100"><i class="bi bi-eye"></i> View</button>
+          <button type="button" data-cell="edit_btn" class="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-900 hover:bg-amber-300"><i class="bi bi-pencil-square"></i> Edit</button>
           <button type="button" data-cell="delete_btn" class="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-700"><i class="bi bi-trash3"></i> Delete</button>
         </div>
       </div>
@@ -795,7 +806,8 @@
   <div class="mx-auto my-4 max-w-6xl overflow-hidden rounded-xl border border-slate-800 bg-white shadow-2xl">
     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
       <h2 class="text-base font-bold text-slate-900" data-cell="title"></h2>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-[11px] font-semibold text-amber-800"><i class="bi bi-pencil-square mr-1"></i>Click any Final qty to edit</span>
         <button type="button" data-cell="export_btn" class="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"><i class="bi bi-file-earmark-excel"></i> Export Excel</button>
         <button type="button" data-cell="close_btn" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">Close</button>
       </div>
@@ -813,6 +825,7 @@
       </div>
       <div class="flex items-center gap-2">
         <span class="text-xs text-slate-300">Final: <strong class="text-white" data-cell="final_total"></strong> · <span data-cell="total_cost"></span></span>
+        <button type="button" data-cell="edit_btn" class="rounded-lg bg-amber-400 px-2.5 py-1.5 text-xs font-bold text-slate-900 hover:bg-amber-300"><i class="bi bi-pencil-square"></i> Edit</button>
         <button type="button" data-cell="delete_btn" class="rounded-lg border border-white/30 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-white/10"><i class="bi bi-trash3"></i> Delete</button>
       </div>
     </div>
@@ -860,7 +873,7 @@
       <strong class="text-emerald-600" data-cell="suggested"></strong>
       <span class="text-slate-400" data-cell="max"></span>
     </div>
-    <div class="history-final input-final weekly-final-input" title="Double-click to edit" data-cell="final"></div>
+    <div class="history-final input-final weekly-final-input cursor-pointer hover:ring-2 hover:ring-sky-300" title="Click to edit quantity" data-cell="final"></div>
     <div class="mt-1 text-[9px] font-semibold text-amber-700 hidden" data-cell="approval_status"></div>
   </td>
 </template>
@@ -988,6 +1001,6 @@
 {% endblock %}
 
 {% block extra_js %}
-	<script defer src="{{ url_for('static', filename='js/handles/oracle_handles.js', v='oracle-history-pending-20261024') }}"></script>
+	<script defer src="{{ url_for('static', filename='js/handles/oracle_handles.js', v='oracle-edit-order-20261126-4') }}"></script>
 {% endblock %}
 	
