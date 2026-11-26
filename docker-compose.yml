@@ -3,6 +3,9 @@ services:
     build: .
     image: cfi-icount
     container_name: cfi-icount
+    networks:
+      - appnet
+
     ports:
       - "5002:5002"
     env_file:
@@ -12,3 +15,8 @@ services:
       - ./uploads:/app/uploads
       - ./certs:/app/certs:ro
     restart: unless-stopped
+
+
+networks:
+  appnet:
+    external: true
