@@ -3,6 +3,8 @@ import json
 import traceback
 import uuid
 import secrets
+import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from re import A
@@ -10,14 +12,21 @@ from flask import Flask, redirect, render_template, request, session, url_for, f
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, current_user, logout_user
 from flask_caching import Cache
-from sqlalchemy import text, func, inspect
+from sqlalchemy import text, func, inspect, create_engine
 from werkzeug.exceptions import HTTPException
+
+from urllib.parse import quote_plus
 
 db = SQLAlchemy()
 cache = Cache()
 
 DB_NAME = "database.db"
 
+ALLOW_SQLITE_FAILOVER = True
+DB_CONNECT_RETRIES = 2
+DB_RETRY_DELAY = 1
+
+log = logging.getLogger(__name__)
 
 def _load_local_env():
     env_path = Path(__file__).resolve().parent.parent / '.env'
@@ -448,12 +457,61 @@ def _drop_daily_forecasting_tables():
         conn.execute(text("DROP TABLE IF EXISTS daily_forecasting"))
         conn.commit()
 
+def get_mysql_uri():
+    host = os.environ.get('CM_MYSQL_HOST')
+    if not host:
+        return None
+    user = quote_plus(os.environ.get('CM_MYSQL_USER', 'server'))
+    password = quote_plus(os.environ.get('CM_MYSQL_PASSWORD', ''))
+    port = os.environ.get('CM_MYSQL_PORT', '3306')
+    name = os.environ.get('CM_MYSQL_DB', 'cfi_icount')
+    return f'mysql+pymysql://{user}:{password}@{host}:{port}/{name}?charset=utf8mb4'
+
+
+def get_sqlite_uri():
+    db_name = os.environ.get('CM_APP_DB_NAME', DB_NAME)
+    return f'sqlite:///{db_name}'
+
+
+def mysql_is_reachable(uri):
+    for attempt in range(1, DB_CONNECT_RETRIES + 1):
+        engine = create_engine(uri, connect_args={'connect_timeout': 5})
+        try:
+            with engine.connect() as conn:
+                conn.execute(text('SELECT 1'))
+            return True
+        except Exception as exc:
+            log.warning('MySQL check %d/%d failed: %s', attempt, DB_CONNECT_RETRIES, exc)
+            time.sleep(DB_RETRY_DELAY)
+        finally:
+            engine.dispose()
+    return False
+
+
+def resolve_database():
+    mysql_uri = get_mysql_uri()
+    if mysql_uri is None:
+        return get_sqlite_uri(), 'sqlite'
+    if mysql_is_reachable(mysql_uri):
+        return mysql_uri, 'mysql'
+    if ALLOW_SQLITE_FAILOVER:
+        log.error('MySQL unreachable, FALLING BACK TO SQLITE. Data written now will not reach MySQL.')
+        return get_sqlite_uri(), 'sqlite'
+    raise RuntimeError('MySQL is unreachable and SQLite failover is disabled.')
+
 
 def create_app():
     _load_local_env()
     app = Flask(__name__)
-    db_name = os.environ.get('CM_APP_DB_NAME', DB_NAME)
-    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_name}'
+    uri, backend = resolve_database()
+    app.config['SQLALCHEMY_DATABASE_URI'] = uri
+    app.config['DB_BACKEND'] = backend
+    if backend == 'mysql':
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+            'pool_pre_ping': True,
+            'pool_recycle': 280,
+        }
+        
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     configured_secret_key = os.environ.get('CM_SECRET_KEY')
     secret_key = configured_secret_key
@@ -516,9 +574,9 @@ def create_app():
 
     with app.app_context():
         db.create_all()
-        _ensure_oracle_order_review_columns()
-        _ensure_api_usage_model()
-        _ensure_product_master_columns()
+        # _ensure_oracle_order_review_columns()
+        # _ensure_api_usage_model()
+        # _ensure_product_master_columns()
         if not configured_secret_key:
             stored_secret = SystemSecret.query.order_by(SystemSecret.id.asc()).first()
             if not stored_secret:
@@ -526,23 +584,27 @@ def create_app():
                 db.session.add(stored_secret)
                 db.session.commit()
             app.config['SECRET_KEY'] = stored_secret.secret_value
-        _ensure_user_assigned_store_column()
-        _ensure_approved_oracle_approved_by()
-        _ensure_user_presence_column()
-        _backfill_inventory_staff_store_assignments()
-        _ensure_product_master_sp_np_column()
-        _ensure_rso_delivery_columns()
-        _ensure_motif_charge_product()
-        _ensure_maintenance_mode_table()
-        _ensure_taf_transfer_columns()
-        _ensure_taf_transfer_item_columns()
-        _ensure_daily_ending_inventory_columns()
-        _ensure_daily_ending_inventory_item_columns()
-        _ensure_daily_ending_inventory_adjustment_columns()
-        _drop_daily_ending_inventory_discount_columns()
-        _drop_daily_forecasting_tables()
-        _backfill_store_group_values()
-        _backfill_beginning_finalized_flags()
+        
+        # To-Be: removed soon, zombie codes that runs for only one time no longer needed.  
+        # ==================================================================
+        
+        # _ensure_user_assigned_store_column()
+        # _ensure_approved_oracle_approved_by()
+        # _ensure_user_presence_column()
+        # _backfill_inventory_staff_store_assignments()
+        # _ensure_product_master_sp_np_column()
+        # _ensure_rso_delivery_columns()
+        # _ensure_motif_charge_product()
+        # _ensure_maintenance_mode_table()
+        # _ensure_taf_transfer_columns()
+        # _ensure_taf_transfer_item_columns()
+        # _ensure_daily_ending_inventory_columns()
+        # _ensure_daily_ending_inventory_item_columns()
+        # _ensure_daily_ending_inventory_adjustment_columns()
+        # _drop_daily_ending_inventory_discount_columns()
+        # _drop_daily_forecasting_tables()
+        # _backfill_store_group_values()
+        # _backfill_beginning_finalized_flags()
 
         print("Created database!")
 

@@ -34,6 +34,7 @@ let chatConvoPrefix = 'chatConvo:';
 let chatPageSize = 10;
 let chatConvoId = null;
 let chatSessionToken = 0;
+let chatOpenSeq = 0;
 let chatRenderedStart = 0;
 let chatLoadingOlder = false;
 let chatOlderLoader = null;
@@ -55,11 +56,12 @@ let chatPurifyConfig = {
   FORBID_ATTR: ['style']
 };
 
-// - IndexedDB Image Storage -
+// - IndexedDB Storage (Images & Excel Exports) -
 
 let chatIdbName = 'iCountChatDB';
-let chatIdbVersion = 1;
-let chatIdbStore = 'images';
+let chatIdbVersion = 2;
+let chatIdbImageStore = 'images';
+let chatIdbExportStore = 'exports';
 let chatIdbPendingKey = '__pending__';
 let chatIdbPromise = null;
 
@@ -75,9 +77,13 @@ function chatOpenIdb() {
     let req = indexedDB.open(chatIdbName, chatIdbVersion);
     req.onupgradeneeded = function (event) {
       let db = event.target.result;
-      if (!db.objectStoreNames.contains(chatIdbStore)) {
-        let store = db.createObjectStore(chatIdbStore, { keyPath: 'id' });
-        store.createIndex('convoId', 'convoId', { unique: false });
+      if (!db.objectStoreNames.contains(chatIdbImageStore)) {
+        let imgStore = db.createObjectStore(chatIdbImageStore, { keyPath: 'id' });
+        imgStore.createIndex('convoId', 'convoId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(chatIdbExportStore)) {
+        let expStore = db.createObjectStore(chatIdbExportStore, { keyPath: 'id' });
+        expStore.createIndex('convoId', 'convoId', { unique: false });
       }
     };
     req.onsuccess = function (event) {
@@ -89,6 +95,54 @@ function chatOpenIdb() {
     };
   });
   return chatIdbPromise;
+}
+
+async function chatIdbDeleteByConvo(storeName, convoId) {
+  if (!convoId) {
+    return;
+  }
+  try {
+    let db = await chatOpenIdb();
+    await new Promise(function (resolve, reject) {
+      let tx = db.transaction(storeName, 'readwrite');
+      let store = tx.objectStore(storeName);
+      let index = store.index('convoId');
+      let req = index.openKeyCursor(IDBKeyRange.only(convoId));
+      req.onsuccess = function (event) {
+        let cursor = event.target.result;
+        if (cursor) {
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        }
+      };
+      tx.oncomplete = function () {
+        resolve();
+      };
+      tx.onerror = function () {
+        reject(tx.error);
+      };
+    });
+  } catch (error) {
+    console.warn('Could not delete ' + storeName + ' for conversation from IndexedDB:', error);
+  }
+}
+
+async function chatIdbClearStore(storeName) {
+  try {
+    let db = await chatOpenIdb();
+    await new Promise(function (resolve, reject) {
+      let tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).clear();
+      tx.oncomplete = function () {
+        resolve();
+      };
+      tx.onerror = function () {
+        reject(tx.error);
+      };
+    });
+  } catch (error) {
+    console.warn('Could not clear IndexedDB store ' + storeName + ':', error);
+  }
 }
 
 async function chatIdbSaveConvoImages(convoId, messages) {
@@ -103,7 +157,7 @@ async function chatIdbSaveConvoImages(convoId, messages) {
     }
     if (!Array.isArray(m.imageIds) || m.imageIds.length !== m.images.length) {
       m.imageIds = m.images.map(function (_, idx) {
-        return convoId + ':' + (m.ts || Date.now()) + ':' + i + ':' + idx;
+        return convoId + ':img:' + (m.ts || Date.now()) + ':' + i + ':' + idx;
       });
     }
     for (let j = 0; j < m.images.length; j++) {
@@ -121,8 +175,8 @@ async function chatIdbSaveConvoImages(convoId, messages) {
   try {
     let db = await chatOpenIdb();
     await new Promise(function (resolve, reject) {
-      let tx = db.transaction(chatIdbStore, 'readwrite');
-      let store = tx.objectStore(chatIdbStore);
+      let tx = db.transaction(chatIdbImageStore, 'readwrite');
+      let store = tx.objectStore(chatIdbImageStore);
       for (let rec of records) {
         store.put(rec);
       }
@@ -151,8 +205,8 @@ async function chatIdbLoadConvoImages(convoId, messages) {
   try {
     let db = await chatOpenIdb();
     let byId = await new Promise(function (resolve, reject) {
-      let tx = db.transaction(chatIdbStore, 'readonly');
-      let store = tx.objectStore(chatIdbStore);
+      let tx = db.transaction(chatIdbImageStore, 'readonly');
+      let store = tx.objectStore(chatIdbImageStore);
       let index = store.index('convoId');
       let req = index.getAll(IDBKeyRange.only(convoId));
       req.onsuccess = function () {
@@ -187,24 +241,42 @@ async function chatIdbLoadConvoImages(convoId, messages) {
   }
 }
 
-async function chatIdbDeleteConvoImages(convoId) {
-  if (!convoId) {
+async function chatIdbSaveConvoExports(convoId, messages) {
+  if (!convoId || !Array.isArray(messages)) {
+    return;
+  }
+  let records = [];
+  for (let i = 0; i < messages.length; i++) {
+    let m = messages[i];
+    if (!m || !Array.isArray(m.exports) || m.exports.length === 0) {
+      continue;
+    }
+    if (!Array.isArray(m.exportIds) || m.exportIds.length !== m.exports.length) {
+      m.exportIds = m.exports.map(function (spec, idx) {
+        let suffix = (spec && spec.export_id) ? spec.export_id : (i + ':' + idx);
+        return convoId + ':exp:' + (m.ts || Date.now()) + ':' + suffix;
+      });
+    }
+    for (let j = 0; j < m.exports.length; j++) {
+      records.push({
+        id: m.exportIds[j],
+        convoId: convoId,
+        spec: m.exports[j],
+        updatedAt: Date.now()
+      });
+    }
+  }
+  if (records.length === 0) {
     return;
   }
   try {
     let db = await chatOpenIdb();
     await new Promise(function (resolve, reject) {
-      let tx = db.transaction(chatIdbStore, 'readwrite');
-      let store = tx.objectStore(chatIdbStore);
-      let index = store.index('convoId');
-      let req = index.openKeyCursor(IDBKeyRange.only(convoId));
-      req.onsuccess = function (event) {
-        let cursor = event.target.result;
-        if (cursor) {
-          store.delete(cursor.primaryKey);
-          cursor.continue();
-        }
-      };
+      let tx = db.transaction(chatIdbExportStore, 'readwrite');
+      let store = tx.objectStore(chatIdbExportStore);
+      for (let rec of records) {
+        store.put(rec);
+      }
       tx.oncomplete = function () {
         resolve();
       };
@@ -213,34 +285,79 @@ async function chatIdbDeleteConvoImages(convoId) {
       };
     });
   } catch (error) {
-    console.warn('Could not delete conversation images from IndexedDB:', error);
+    console.warn('Could not save exports to IndexedDB:', error);
   }
 }
 
-async function chatIdbClearAllImages() {
+async function chatIdbLoadConvoExports(convoId, messages) {
+  if (!convoId || !Array.isArray(messages)) {
+    return;
+  }
+  let needsHydration = messages.some(function (m) {
+    return m && Array.isArray(m.exportIds) && m.exportIds.length > 0 && (!m.exports || m.exports.length === 0);
+  });
+  if (!needsHydration) {
+    return;
+  }
   try {
     let db = await chatOpenIdb();
-    await new Promise(function (resolve, reject) {
-      let tx = db.transaction(chatIdbStore, 'readwrite');
-      tx.objectStore(chatIdbStore).clear();
-      tx.oncomplete = function () {
-        resolve();
+    let byId = await new Promise(function (resolve, reject) {
+      let tx = db.transaction(chatIdbExportStore, 'readonly');
+      let store = tx.objectStore(chatIdbExportStore);
+      let index = store.index('convoId');
+      let req = index.getAll(IDBKeyRange.only(convoId));
+      req.onsuccess = function () {
+        let map = {};
+        for (let rec of req.result || []) {
+          if (rec && rec.id && rec.spec) {
+            map[rec.id] = rec.spec;
+          }
+        }
+        resolve(map);
       };
-      tx.onerror = function () {
-        reject(tx.error);
+      req.onerror = function () {
+        reject(req.error);
       };
     });
+
+    for (let m of messages) {
+      if (m && Array.isArray(m.exportIds) && m.exportIds.length > 0) {
+        let loaded = [];
+        for (let expId of m.exportIds) {
+          if (byId[expId]) {
+            loaded.push(byId[expId]);
+          }
+        }
+        if (loaded.length > 0) {
+          m.exports = loaded;
+        }
+      }
+    }
   } catch (error) {
-    console.warn('Could not clear IndexedDB images:', error);
+    console.warn('Could not load exports from IndexedDB:', error);
   }
+}
+
+async function chatIdbDeleteConvoAssets(convoId) {
+  await Promise.all([
+    chatIdbDeleteByConvo(chatIdbImageStore, convoId),
+    chatIdbDeleteByConvo(chatIdbExportStore, convoId)
+  ]);
+}
+
+async function chatIdbClearAllAssets() {
+  await Promise.all([
+    chatIdbClearStore(chatIdbImageStore),
+    chatIdbClearStore(chatIdbExportStore)
+  ]);
 }
 
 async function chatIdbSavePendingImages() {
   try {
     let db = await chatOpenIdb();
     await new Promise(function (resolve, reject) {
-      let tx = db.transaction(chatIdbStore, 'readwrite');
-      let store = tx.objectStore(chatIdbStore);
+      let tx = db.transaction(chatIdbImageStore, 'readwrite');
+      let store = tx.objectStore(chatIdbImageStore);
       let index = store.index('convoId');
       let req = index.openKeyCursor(IDBKeyRange.only(chatIdbPendingKey));
       req.onsuccess = function (event) {
@@ -280,8 +397,8 @@ async function chatIdbLoadPendingImages() {
   try {
     let db = await chatOpenIdb();
     let records = await new Promise(function (resolve, reject) {
-      let tx = db.transaction(chatIdbStore, 'readonly');
-      let index = tx.objectStore(chatIdbStore).index('convoId');
+      let tx = db.transaction(chatIdbImageStore, 'readonly');
+      let index = tx.objectStore(chatIdbImageStore).index('convoId');
       let req = index.getAll(IDBKeyRange.only(chatIdbPendingKey));
       req.onsuccess = function () {
         resolve(req.result || []);
@@ -601,6 +718,29 @@ async function handleChatLogClick(event) {
     return;
   }
 
+  let excelBtn = event.target.closest('.chat-excel-download-btn');
+  if (excelBtn) {
+    let card = excelBtn.closest('.chat-export-card');
+    if (card && card._excelSpec) {
+      let origText = excelBtn.textContent;
+      excelBtn.disabled = true;
+      excelBtn.textContent = 'Generating...';
+      try {
+        await downloadExcelFromSpec(card._excelSpec);
+        excelBtn.textContent = 'Downloaded \u2713';
+        setTimeout(function () {
+          excelBtn.textContent = origText;
+          excelBtn.disabled = false;
+        }, 1600);
+      } catch (error) {
+        excelBtn.textContent = origText;
+        excelBtn.disabled = false;
+        notifyError('Could not generate the Excel file: ' + error.message);
+      }
+    }
+    return;
+  }
+
   let fsBtn = event.target.closest('.chat-chart-fs-btn');
   if (fsBtn) {
     toggleChartFullscreen(fsBtn.closest('.chat-chart-card'));
@@ -890,25 +1030,11 @@ function parseEvent(raw) {
   }
 }
 
-function chatPayloadMessages() {
-  let left = chatMaxImages;
-  let out = new Array(chatHistory.length);
-  for (let i = chatHistory.length - 1; i >= 0; i--) {
-    let m = chatHistory[i];
-    let item = { role: m.role, content: m.content };
-    if (m.images && m.images.length > 0 && left > 0) {
-      item.images = m.images.slice(-left);
-      left -= item.images.length;
-    }
-    out[i] = item;
-  }
-  return out;
-}
-
 async function sendMessage(text, images) {
   images = images || [];
   let sessionToken = chatSessionToken;
   let charts = [];
+  let exportsList = [];
   let ask = null;
   let userEntry = { role: 'user', content: text, ts: Date.now() };
   if (images.length > 0) {
@@ -918,7 +1044,7 @@ async function sendMessage(text, images) {
   chatUpdateSaveBtn();
   appendMessage('user', text, images);
 
-  let row = appendMessage('bot', 'Thinking...');
+  let row = appendMessage('bot', 'Processing...');
   let bot = row.querySelector('[data-cell="bubble"]');
   let thinking = {
     details: row.querySelector('[data-cell="thinking"]'),
@@ -927,6 +1053,7 @@ async function sendMessage(text, images) {
   };
   let toolBox = row.querySelector('[data-cell="tools"]');
   let chartBox = row.querySelector('[data-cell="charts"]');
+  let exportBox = row.querySelector('[data-cell="exports"]') || chartBox;
 
   let toolChips = {};
   bot.classList.add('chat-thinking');
@@ -945,7 +1072,13 @@ async function sendMessage(text, images) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: chatPayloadMessages(),
+        messages: chatHistory.map(function (m) {
+          let out = { role: m.role, content: m.content };
+          if (m.images && m.images.length > 0) {
+            out.images = m.images;
+          }
+          return out;
+        }),
         model: getSelectedModel()
       }),
       signal: chatController.signal
@@ -996,7 +1129,6 @@ async function sendMessage(text, images) {
         if (payload.ask) {
           ask = payload.ask;
         }
-
         if (payload.chart) {
           let stickChart = isNearBottom();
           charts.push(payload.chart);
@@ -1005,7 +1137,14 @@ async function sendMessage(text, images) {
             scrollToBottom();
           }
         }
-
+        if (payload.excel_export) {
+          let stickExport = isNearBottom();
+          exportsList.push(payload.excel_export);
+          renderChatExport(exportBox, payload.excel_export);
+          if (stickExport) {
+            scrollToBottom();
+          }
+        }
         if (payload.reasoning) {
           if (!thinkingShown) {
             thinkingShown = true;
@@ -1038,7 +1177,10 @@ async function sendMessage(text, images) {
         }
       }
     }
-    if (!reply && (!chartBox || chartBox.children.length === 0)) {
+
+    let hasCharts = chartBox && chartBox.children.length > 0;
+    let hasExports = exportBox && exportBox.children.length > 0;
+    if (!reply && !hasCharts && !hasExports) {
       revealBubble(bot);
       bot.textContent = '(no response)';
     } else if (!reply) {
@@ -1087,9 +1229,13 @@ async function sendMessage(text, images) {
     chatInput.focus();
   }
 
-  if (reply) {
+  if (reply || charts.length > 0 || exportsList.length > 0) {
     if (sessionToken === chatSessionToken) {
-      chatHistory.push({ role: 'assistant', content: reply, ts: Date.now(), charts: charts });
+      let botEntry = { role: 'assistant', content: reply, ts: Date.now(), charts: charts };
+      if (exportsList.length > 0) {
+        botEntry.exports = exportsList;
+      }
+      chatHistory.push(botEntry);
     }
   }
 
@@ -1192,21 +1338,42 @@ function chatMakeTitle(messages) {
 }
 
 function chatForStorage(convoId) {
+  let prefix = convoId || 'convo';
   return chatHistory.map(function (m, msgIndex) {
-    if ((!m.images || m.images.length === 0) && (!m.imageIds || m.imageIds.length === 0)) {
+    let hasImages = Array.isArray(m.images) && m.images.length > 0;
+    let hasImageIds = Array.isArray(m.imageIds) && m.imageIds.length > 0;
+    let hasExports = Array.isArray(m.exports) && m.exports.length > 0;
+    let hasExportIds = Array.isArray(m.exportIds) && m.exportIds.length > 0;
+
+    if (!hasImages && !hasImageIds && !hasExports && !hasExportIds) {
       return m;
     }
+
     let copy = Object.assign({}, m);
-    if (m.images && m.images.length > 0) {
+
+    if (hasImages) {
       if (!Array.isArray(m.imageIds) || m.imageIds.length !== m.images.length) {
         m.imageIds = m.images.map(function (_, imgIndex) {
-          return (convoId || 'convo') + ':' + (m.ts || Date.now()) + ':' + msgIndex + ':' + imgIndex;
+          return prefix + ':img:' + (m.ts || Date.now()) + ':' + msgIndex + ':' + imgIndex;
         });
       }
       copy.imageIds = m.imageIds.slice();
       copy.imageCount = m.images.length;
     }
     delete copy.images;
+
+    if (hasExports) {
+      if (!Array.isArray(m.exportIds) || m.exportIds.length !== m.exports.length) {
+        m.exportIds = m.exports.map(function (spec, expIndex) {
+          let suffix = (spec && spec.export_id) ? spec.export_id : (msgIndex + ':' + expIndex);
+          return prefix + ':exp:' + (m.ts || Date.now()) + ':' + suffix;
+        });
+      }
+      copy.exportIds = m.exportIds.slice();
+      copy.exportCount = m.exports.length;
+    }
+    delete copy.exports;
+
     return copy;
   });
 }
@@ -1229,6 +1396,7 @@ function chatSaveConvo() {
   }
   chatConvoId = id;
   chatIdbSaveConvoImages(id, chatHistory);
+  chatIdbSaveConvoExports(id, chatHistory);
   chatUpdateSaveBtn();
   chatNotifySuccess('Conversation saved to History.');
 }
@@ -1242,6 +1410,7 @@ function chatPersistConvo() {
     return;
   }
   chatIdbSaveConvoImages(chatConvoId, chatHistory);
+  chatIdbSaveConvoExports(chatConvoId, chatHistory);
   let list = chatReadIndex();
   let entry = chatFindEntry(list, chatConvoId);
   if (!entry) {
@@ -1255,7 +1424,7 @@ function chatPersistConvo() {
 
 function chatRemoveConvo(id) {
   chatStoreRemove(chatConvoPrefix + id);
-  chatIdbDeleteConvoImages(id);
+  chatIdbDeleteConvoAssets(id);
   let list = chatReadIndex().filter(function (entry) {
     return entry.id !== id;
   });
@@ -1282,7 +1451,7 @@ function chatRenameConvo(id, title) {
 function chatUpdateSaveBtn() {
   let saved = Boolean(chatConvoId);
   chatSaveBtn.disabled = saved || chatHistory.length === 0;
-  chatSaveBtn.textContent = saved ? 'Saved ✓' : 'Save to History';
+  chatSaveBtn.textContent = saved ? 'Saved \u2713' : 'Save to History';
   chatSaveBtn.title = saved ? 'Saved. New messages are added automatically.' : 'Save this conversation to History';
 }
 
@@ -1388,7 +1557,7 @@ function chatBuildHistItem(entry) {
   let when = new Date(entry.updatedAt || entry.createdAt || Date.now());
   let meta = document.createElement('div');
   meta.className = 'chat-hist-meta';
-  meta.textContent = count + (count === 1 ? ' message' : ' messages') + ' · ' +
+  meta.textContent = count + (count === 1 ? ' message' : ' messages') + ' \u00b7 ' +
     when.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
   main.appendChild(title);
@@ -1530,7 +1699,7 @@ function chatRequestDeleteAll() {
     for (let entry of chatReadIndex()) {
       chatStoreRemove(chatConvoPrefix + entry.id);
     }
-    chatIdbClearAllImages();
+    chatIdbClearAllAssets();
     chatWriteIndex([]);
     chatConvoId = null;
     chatUpdateSaveBtn();
@@ -1643,6 +1812,19 @@ function chatBuildRow(message) {
   if (Array.isArray(message.charts) && message.charts.length > 0) {
     row.chartSpecs = message.charts;
   }
+  let exportBox = row.querySelector('[data-cell="exports"]') || row.querySelector('[data-cell="charts"]');
+  if (Array.isArray(message.exports) && message.exports.length > 0) {
+    for (let spec of message.exports) {
+      renderChatExport(exportBox, spec);
+    }
+  } else if (message.exportCount > 0 && exportBox) {
+    let note = document.createElement('div');
+    note.className = 'chat-msg-imgnote text-xs text-slate-500';
+    note.textContent = '[' + message.exportCount + (message.exportCount === 1 ? ' Excel export' : ' Excel exports') + ' unavailable in local storage]';
+    exportBox.classList.remove('hidden');
+    exportBox.classList.add('flex');
+    exportBox.appendChild(note);
+  }
   return row;
 }
 
@@ -1742,7 +1924,14 @@ async function chatOpenConvo(id) {
     chatRenderHistList();
     return;
   }
-  await chatIdbLoadConvoImages(id, messages);
+  let mySeq = ++chatOpenSeq;
+  await Promise.all([
+    chatIdbLoadConvoImages(id, messages),
+    chatIdbLoadConvoExports(id, messages)
+  ]);
+  if (mySeq !== chatOpenSeq) {
+    return;
+  }
   resetConversation();
   chatHistory = messages;
   chatConvoId = id;
@@ -1898,7 +2087,8 @@ function applyNoHeaderMode(override) {
   }
 }
 
-//Chart Tools:// Fallback in case getCSSVar is not defined in base_headless.html
+// - Chart Tools -
+// Fallback in case getCSSVar is not defined in base_headless.html
 if (typeof window.getCSSVar === 'undefined') {
   window.getCSSVar = function (name) {
     let val = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -2002,6 +2192,229 @@ function renderChatChart(container, spec) {
   } catch (err) {
     console.error('Chart render error:', err);
   }
+}
+
+// - ExcelJS Export Tools -
+
+function excelColLetter(colNumber) {
+  let letter = '';
+  let n = colNumber;
+  while (n > 0) {
+    let rem = (n - 1) % 26;
+    letter = String.fromCharCode(65 + rem) + letter;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letter;
+}
+
+function applyExcelCellFormat(cell, format) {
+  if (format === 'currency') {
+    cell.numFmt = '"\u20b1"#,##0.00';
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  } else if (format === 'number') {
+    cell.numFmt = '#,##0.00';
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  } else if (format === 'integer') {
+    cell.numFmt = '#,##0';
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  } else if (format === 'percent') {
+    cell.numFmt = '0.00%';
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  } else {
+    cell.alignment = { horizontal: 'left', vertical: 'middle' };
+  }
+}
+
+async function downloadExcelFromSpec(spec) {
+  if (typeof ExcelJS === 'undefined') {
+    notifyError('ExcelJS library failed to load. Please refresh the page.');
+    return;
+  }
+  let workbook = new ExcelJS.Workbook();
+  workbook.creator = 'iCount Chatbot';
+  workbook.created = new Date();
+
+  let thinBorder = {
+    top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+  };
+
+  for (let sheetSpec of spec.sheets || []) {
+    let columns = sheetSpec.columns || [];
+    let rows = sheetSpec.rows || [];
+    if (!columns.length) {
+      continue;
+    }
+
+    let ws = workbook.addWorksheet(sheetSpec.name || 'Sheet');
+    let colCount = columns.length;
+    let lastColLetter = excelColLetter(colCount);
+    let currentRow = 1;
+
+    let bannerText = spec.title || sheetSpec.name || 'Export';
+    ws.mergeCells('A1:' + lastColLetter + '1');
+    let titleCell = ws.getCell('A1');
+    titleCell.value = bannerText;
+    titleCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF0F172A' } };
+    titleCell.alignment = { horizontal: 'left', vertical: 'middle' };
+    ws.getRow(1).height = 24;
+    currentRow += 1;
+
+    if (sheetSpec.subtitle) {
+      ws.mergeCells('A2:' + lastColLetter + '2');
+      let subCell = ws.getCell('A2');
+      subCell.value = sheetSpec.subtitle;
+      subCell.font = { name: 'Calibri', size: 10, italic: true, color: { argb: 'FF475569' } };
+      subCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      ws.getRow(2).height = 18;
+      currentRow += 1;
+    }
+
+    currentRow += 1;
+    let headerRowNum = currentRow;
+
+    let headerRow = ws.getRow(headerRowNum);
+    headerRow.height = 22;
+    columns.forEach(function (col, idx) {
+      let cell = headerRow.getCell(idx + 1);
+      cell.value = col.header || ('Column ' + (idx + 1));
+      cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      cell.alignment = { horizontal: col.format && col.format !== 'text' ? 'right' : 'left', vertical: 'middle' };
+      cell.border = thinBorder;
+    });
+
+    ws.views = [{ state: 'frozen', ySplit: headerRowNum }];
+    ws.autoFilter = {
+      from: { row: headerRowNum, column: 1 },
+      to: { row: headerRowNum, column: colCount }
+    };
+
+    let dataStartRow = headerRowNum + 1;
+    rows.forEach(function (rowVals, rIdx) {
+      let excelRow = ws.getRow(dataStartRow + rIdx);
+      excelRow.height = 19;
+      let isZebra = rIdx % 2 === 1;
+
+      columns.forEach(function (col, cIdx) {
+        let cell = excelRow.getCell(cIdx + 1);
+        cell.value = rowVals[cIdx] !== undefined ? rowVals[cIdx] : '';
+        cell.font = { name: 'Calibri', size: 10, color: { argb: 'FF1E293B' } };
+        applyExcelCellFormat(cell, col.format);
+        cell.border = thinBorder;
+        if (isZebra) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+        }
+      });
+    });
+
+    let dataEndRow = dataStartRow + rows.length - 1;
+
+    if (sheetSpec.show_totals && rows.length > 0) {
+      let totalRow = ws.getRow(dataEndRow + 1);
+      totalRow.height = 22;
+      columns.forEach(function (col, cIdx) {
+        let cell = totalRow.getCell(cIdx + 1);
+        let colLetter = excelColLetter(cIdx + 1);
+        if (cIdx === 0) {
+          cell.value = 'TOTAL';
+          cell.alignment = { horizontal: 'left', vertical: 'middle' };
+        } else if (col.format === 'integer' || col.format === 'number' || col.format === 'currency') {
+          cell.value = { formula: 'SUM(' + colLetter + dataStartRow + ':' + colLetter + dataEndRow + ')' };
+          applyExcelCellFormat(cell, col.format);
+        } else {
+          cell.value = '';
+        }
+        cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF0F172A' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+        cell.border = {
+          top: { style: 'medium', color: { argb: 'FF64748B' } },
+          bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+          left: thinBorder.left,
+          right: thinBorder.right
+        };
+      });
+    }
+
+    for (let cIdx = 0; cIdx < colCount; cIdx++) {
+      let maxLen = String(columns[cIdx].header || '').length;
+      for (let rIdx = 0; rIdx < rows.length; rIdx++) {
+        let rawVal = rows[rIdx][cIdx];
+        let textLen = rawVal === null || rawVal === undefined ? 0 : String(rawVal).length;
+        if (columns[cIdx].format === 'currency') {
+          textLen += 5;
+        }
+        if (textLen > maxLen) {
+          maxLen = textLen;
+        }
+      }
+      ws.getColumn(cIdx + 1).width = Math.min(45, Math.max(12, maxLen + 4));
+    }
+  }
+
+  let buffer = await workbook.xlsx.writeBuffer();
+  let blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  let url = URL.createObjectURL(blob);
+  let link = document.createElement('a');
+  link.href = url;
+  link.download = spec.filename || 'iCount_Export.xlsx';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(function () {
+    URL.revokeObjectURL(url);
+  }, 1500);
+}
+
+function renderChatExport(container, spec) {
+  if (!container || !spec) {
+    return;
+  }
+  let card = document.createElement('div');
+  card.id = spec.export_id || ('chat-excel-' + Date.now());
+  card.className = 'chat-export-card flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition-shadow';
+  card._excelSpec = spec;
+
+  let info = document.createElement('div');
+  info.className = 'flex items-center gap-3 min-w-0';
+
+  let badge = document.createElement('div');
+  badge.className = 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-xs font-black text-emerald-700 border border-emerald-200';
+  badge.textContent = 'XLSX';
+
+  let textWrap = document.createElement('div');
+  textWrap.className = 'min-w-0';
+
+  let titleEl = document.createElement('div');
+  titleEl.className = 'truncate text-sm font-semibold text-slate-800';
+  titleEl.textContent = spec.filename || 'iCount_Export.xlsx';
+
+  let sheets = spec.sheet_count || (spec.sheets ? spec.sheets.length : 1);
+  let rows = spec.total_rows || 0;
+  let metaEl = document.createElement('div');
+  metaEl.className = 'text-xs text-slate-500';
+  metaEl.textContent = sheets + (sheets === 1 ? ' sheet' : ' sheets') + ' \u00b7 ' + rows + (rows === 1 ? ' row' : ' rows');
+
+  textWrap.appendChild(titleEl);
+  textWrap.appendChild(metaEl);
+  info.appendChild(badge);
+  info.appendChild(textWrap);
+
+  let btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'chat-excel-download-btn fancy_button inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700';
+  btn.textContent = 'Download .xlsx';
+
+  card.appendChild(info);
+  card.appendChild(btn);
+
+  container.classList.remove('hidden');
+  container.classList.add('flex');
+  container.appendChild(card);
 }
 
 document.addEventListener('keydown', function (event) {

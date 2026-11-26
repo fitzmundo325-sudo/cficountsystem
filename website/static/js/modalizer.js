@@ -24,6 +24,20 @@ function preventDefaultForScrollKeys(e) {
   }
 }
 
+
+
+if(typeof(getparam) == 'undefined'){
+	var getparam = function(h){     
+		get_param = window.location.href
+
+		var url = new URL(get_param)
+		var param_value = url.searchParams.get(h);
+		return param_value;
+	}
+}
+
+
+
 // modern Chrome requires { passive: false } when adding event
 var supportsPassive = false;
 try {
@@ -100,8 +114,8 @@ function open_modal(link, custom_class=undefined, targetElm=undefined, dialog=fa
 		let win = modal_iframe.contentWindow;
 
 		win.addEventListener("pageswap", () => {
-			console.log("Page changed");
-			console.log(win);
+			// console.log("Page changed");
+			// console.log(win);
 			SPY.showLoader();
 			__PROGRESS_SPY_LOAD(true);
 		});
@@ -190,6 +204,7 @@ function open_modal(link, custom_class=undefined, targetElm=undefined, dialog=fa
 	opened_modal.push(pdata);
 
 	SPY.showLoader();
+	__PROGRESS_SPY_LOAD(true);
 	
 	//adds onremove Trigger if a function is passed
 	
@@ -513,7 +528,7 @@ let SPY = {
 	
 	updateProgress: function(prog){
 		if(this.started == false && ALLOW_PROGRESS_SPY){
-			return console.error("SPY PROGRESS Elm not started yet.");
+			return; // console.error("SPY PROGRESS Elm not started yet.");
 		}
 		
 		let elm = _("load_spy");
@@ -544,7 +559,7 @@ function __PROGRESS_SPY_LOAD(resets=false){
 
 	// console.log(__PROGRESS_HIDDEN__);
 	
-	if(__PROGRESS_HIDDEN__ >= 95){
+	if(__PROGRESS_HIDDEN__ >= 99){
 		__PROGRESS_HIDDEN__ = __PROGRESS_HIDDEN__;
 	}else{
 		__PROGRESS_HIDDEN__ = __PROGRESS_HIDDEN__+5;

@@ -638,12 +638,17 @@
         </div>
         <span class="nav-label whitespace-nowrap truncate">Daily Report</span>
       </a>
-      <a href="/store-manager/daily-report/pos-sold" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_pos_sold_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="POS Sold">
+	  
+      <a 
+	  onclick="showPOSSoldStoreUser(this)" id="_pos_sold_v2"
+	  href_="/store-manager/daily-report/pos-sold" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_pos_sold_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="POS Sold">
         <div class="shrink-0 {% if is_pos_sold_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18"/><path d="M5 7l1.2 12.4a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L19 7"/><path d="M9 11v6"/><path d="M15 11v6"/></svg>
         </div>
         <span class="nav-label whitespace-nowrap truncate">POS Sold</span>
       </a>
+	  
+	  
       <a href="/store-manager/delivery" class="nav-item w-full flex items-center gap-4 p-3 rounded-xl {% if is_delivery_active %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %} transition-all group" data-tooltip="Delivery">
         <div class="shrink-0 {% if is_delivery_active %}text-white{% else %}text-slate-400 group-hover:text-white{% endif %}">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>

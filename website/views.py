@@ -14759,6 +14759,14 @@ def daily_report_v2_page():
     return render_template("store_manager/daily_report_v2.html", user=current_user, page='daily_report_v2')
 
 
+       
+#v2 of Post Sold V2 on Store Manager
+@views.route('/store-manager/pos_sold_v2', methods=['GET'])
+@login_required
+def pos_sold_v2_page():
+    return render_template("store_manager/pos_sold_v2.html", user=current_user, page='pos_sold_v2')
+
+
 
 
 

@@ -1,0 +1,22 @@
+services:
+  web:
+    build: .
+    image: cfi-icount
+    container_name: cfi-icount
+    networks:
+      - appnet
+
+    ports:
+      - "5002:5002"
+    env_file:
+      - .env
+    volumes:
+      - ./instance:/app/instance
+      - ./uploads:/app/uploads
+      - ./certs:/app/certs:ro
+    restart: unless-stopped
+
+
+networks:
+  appnet:
+    external: true

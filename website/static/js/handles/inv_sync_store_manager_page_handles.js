@@ -378,9 +378,21 @@ async function renderTableBody(data) {
   
   let showTrace = !!data.show_trans_trace;
 
+	let extInd = 0;
+
   for (let group of categoryGroups) {
     if (!group.products.length) continue;
-    await sleep(170);
+	
+    let delayTime = 0;
+	if((extInd % 3 <= 0)){
+		delayTime = 120;
+	}else{
+		delay = 0;
+	}
+	
+	await sleep(delayTime);
+	extInd++;
+	
 	unblurProductTable();
 
     let catNode = categoryTemplate.content.cloneNode(true);
@@ -3499,6 +3511,9 @@ async function applyInventoryFilters() {
         visibleCountByCategory[row.dataset.categoryId] = (visibleCountByCategory[row.dataset.categoryId] || 0) + 1;
       }
     });
+	
+	
+	
     await sleep(40);
   }
 
@@ -3507,7 +3522,7 @@ async function applyInventoryFilters() {
     row.style.display = matchesCategory && visibleCountByCategory[row.dataset.category] ? '' : 'none';
   });
   
-  await sleep (100);
+  await sleep (50);
   
   unblurProductTable();
   

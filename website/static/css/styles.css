@@ -1097,7 +1097,7 @@ button:has(> .loading_overlay_ui) {
 	top:0;
 	left:0;
 	right:0;
-	height:5px;
+	height:3px;
 	display:flex;
 	align-items:left;
 	background:var(--primary_background_faded);

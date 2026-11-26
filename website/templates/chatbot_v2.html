@@ -199,7 +199,7 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
       </div>
       <p class="mt-1.5 text-xs text-slate-400">Enter to send, Shift+Enter for a new line. <i class="tiny secondary_color"> LLMs can make mistakes, always validate accuracy. 
 		
-		</i><span class="text-xs secondary_color" title="Current Version of the Chatbot engine."> (v1.1.9) </span></p>
+		</i><span class="text-xs secondary_color" title="Current Version of the Chatbot engine."> (v1.1.10) </span></p>
     </form>
 
   </section>
@@ -212,16 +212,19 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
   </div>
 </template>
 
+
+
 <template id="chatBotMessageTemplate">
   <div class="flex justify-start" data-cell="row">
     <div class="flex max-w-[85%] w-full flex-col items-start gap-2" data-cell="stack">
       <div class="hidden flex-col items-start gap-1.5" data-cell="tools"></div>
       <details class="hidden rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500" data-cell="thinking">
-        <summary class="cursor-pointer select-none font-semibold text-slate-600" data-cell="thinking-label">Thinking...</summary>
+        <summary class="cursor-pointer select-none font-semibold text-slate-600" data-cell="thinking-label">Processing...</summary>
         <div class="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words leading-relaxed" data-cell="thinking-text"></div>
       </details>
       <div class="max-w-full break-words rounded-2xl bg-slate-100 px-4 py-2.5 text-sm leading-relaxed text-slate-800" data-cell="bubble"></div>
       <div class="hidden w-full max-w-2xl flex-col gap-3" data-cell="charts"></div>
+      <div class="hidden w-full max-w-2xl flex-col gap-2" data-cell="exports"></div>
     </div>
   </div>
 </template>
@@ -237,6 +240,9 @@ let chatStatsEndpoint = {{ url_for('openrouter_chat.chat_rate_limit')|tojson }};
 <script defer src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+
+<script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+
 <script defer src="{{ url_for('static', filename='js/handles/chatbot_page_handles.js') }}?v=chatbot-v2-20261118-1"></script>
 <script defer src="{{ url_for('static', filename='js/modalizer.js') }}?v=chatbot-v2-20261104-5"></script>
 

@@ -1,0 +1,9 @@
+*
+
+!main.py
+!app.py
+!requirements.txt
+!website
+
+**/__pycache__
+**/*.pyc
