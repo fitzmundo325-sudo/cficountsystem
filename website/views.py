@@ -2372,6 +2372,174 @@ def _build_pos_sales_autofill_totals(pos_items):
     }
 
 
+def _parse_html_table_to_dataframe(raw_bytes):
+    from html.parser import HTMLParser
+
+    class _TableHTMLParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.tables = []
+            self._table_depth = 0
+            self._current_table = None
+            self._current_row = None
+            self._in_cell = False
+            self._cell_colspan = 1
+            self._cell_chunks = []
+
+        def handle_starttag(self, tag, attrs):
+            tag = tag.lower()
+            if tag == 'table':
+                self._table_depth += 1
+                if self._table_depth == 1:
+                    self._current_table = []
+            elif tag == 'tr' and self._table_depth == 1 and self._current_table is not None:
+                self._current_row = []
+            elif tag in ('td', 'th') and self._table_depth == 1 and self._current_row is not None:
+                self._in_cell = True
+                self._cell_chunks = []
+                attr_map = dict(attrs)
+                try:
+                    self._cell_colspan = max(1, int(attr_map.get('colspan') or 1))
+                except (TypeError, ValueError):
+                    self._cell_colspan = 1
+            elif tag == 'br' and self._in_cell:
+                self._cell_chunks.append(' ')
+
+        def handle_endtag(self, tag):
+            tag = tag.lower()
+            if tag in ('td', 'th') and self._in_cell:
+                text = ' '.join(''.join(self._cell_chunks).split())
+                value = text if text != '' else None
+                self._current_row.append(value)
+                for _ in range(self._cell_colspan - 1):
+                    self._current_row.append(None)
+                self._in_cell = False
+                self._cell_chunks = []
+            elif tag == 'tr' and self._table_depth == 1 and self._current_row is not None:
+                if any(cell is not None for cell in self._current_row):
+                    self._current_table.append(self._current_row)
+                self._current_row = None
+            elif tag == 'table' and self._table_depth > 0:
+                if self._table_depth == 1 and self._current_table:
+                    self.tables.append(self._current_table)
+                    self._current_table = None
+                self._table_depth -= 1
+
+        def handle_data(self, data):
+            if self._in_cell:
+                self._cell_chunks.append(data)
+
+    text = None
+    for encoding in ('utf-8-sig', 'utf-8', 'cp1252', 'latin-1'):
+        try:
+            text = raw_bytes.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        return None
+
+    parser = _TableHTMLParser()
+    parser.feed(text)
+    parser.close()
+
+    if not parser.tables:
+        return None
+
+    best_table = max(parser.tables, key=lambda tbl: (len(tbl), max((len(r) for r in tbl), default=0)))
+    max_cols = max((len(row) for row in best_table), default=0)
+    if max_cols == 0:
+        return None
+
+    padded_rows = [row + [None] * (max_cols - len(row)) for row in best_table]
+    return pd.DataFrame(padded_rows)
+
+
+def _parse_spreadsheetml_to_dataframe(raw_bytes):
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(raw_bytes)
+    except ET.ParseError:
+        return None
+
+    def _local_name(tag):
+        return tag.split('}', 1)[-1].lower() if '}' in tag else tag.lower()
+
+    if _local_name(root.tag) != 'workbook':
+        return None
+
+    best_rows = []
+    for elem in root.iter():
+        if _local_name(elem.tag) != 'table':
+            continue
+        rows = []
+        for row_elem in elem:
+            if _local_name(row_elem.tag) != 'row':
+                continue
+            row_cells = []
+            col_cursor = 0
+            for cell_elem in row_elem:
+                if _local_name(cell_elem.tag) != 'cell':
+                    continue
+                index_attr = None
+                for attr_k, attr_v in cell_elem.attrib.items():
+                    if _local_name(attr_k) == 'index':
+                        index_attr = attr_v
+                        break
+                if index_attr is not None:
+                    try:
+                        target_idx = int(index_attr) - 1
+                        while col_cursor < target_idx:
+                            row_cells.append(None)
+                            col_cursor += 1
+                    except ValueError:
+                        pass
+
+                cell_val = None
+                for child in cell_elem:
+                    if _local_name(child.tag) == 'data':
+                        cell_text = ''.join(child.itertext()).strip()
+                        cell_val = cell_text if cell_text != '' else None
+                        break
+                if cell_val is None and cell_elem.text and cell_elem.text.strip():
+                    cell_val = cell_elem.text.strip()
+
+                row_cells.append(cell_val)
+                col_cursor += 1
+            if any(c is not None for c in row_cells):
+                rows.append(row_cells)
+        if len(rows) > len(best_rows):
+            best_rows = rows
+
+    if not best_rows:
+        return None
+
+    max_cols = max((len(r) for r in best_rows), default=0)
+    if max_cols == 0:
+        return None
+    padded_rows = [r + [None] * (max_cols - len(r)) for r in best_rows]
+    return pd.DataFrame(padded_rows)
+
+
+def _read_uploaded_bytes(uploaded_file):
+    if isinstance(uploaded_file, (bytes, bytearray)):
+        return bytes(uploaded_file)
+    if isinstance(uploaded_file, str):
+        with open(uploaded_file, 'rb') as fh:
+            return fh.read()
+    try:
+        if hasattr(uploaded_file, 'stream') and hasattr(uploaded_file.stream, 'seek'):
+            uploaded_file.stream.seek(0)
+        elif hasattr(uploaded_file, 'seek'):
+            uploaded_file.seek(0)
+    except Exception:
+        pass
+    if hasattr(uploaded_file, 'read'):
+        return uploaded_file.read()
+    return None
+
+
 def _read_uploaded_excel(uploaded_file, upload_label):
     filename = (getattr(uploaded_file, 'filename', '') or '').lower()
     extension = ''
@@ -2380,20 +2548,50 @@ def _read_uploaded_excel(uploaded_file, upload_label):
             extension = ext
             break
 
-    read_kwargs = {'header': None}
-    if extension == '.xls':
-        read_kwargs['engine'] = 'xlrd'
-    elif extension in ('.xlsx', '.xlsm', '.xltx', '.xltm'):
-        read_kwargs['engine'] = 'openpyxl'
+    raw_bytes = _read_uploaded_bytes(uploaded_file)
+    if raw_bytes is not None and len(raw_bytes) == 0:
+        raise ValueError(f'The uploaded {upload_label} file is empty.')
+
+    header_bytes = (raw_bytes or b'')[:4096].lstrip()
+    header_lower = header_bytes.lower()
+    is_zip_ooxml = raw_bytes is not None and raw_bytes.startswith(b'PK\x03\x04')
+    is_ole_or_biff = raw_bytes is not None and (
+        raw_bytes.startswith(b'\xd0\xcf\x11\xe0')
+        or raw_bytes.startswith(b'\x09\x08')
+        or raw_bytes.startswith(b'\x09\x04')
+        or raw_bytes.startswith(b'\x09\x02')
+    )
+
+    last_exc = None
+
+    def _try_pandas_excel(engine_name, engine_kwargs=None):
+        kwargs = {'header': None, 'engine': engine_name}
+        if engine_kwargs:
+            kwargs['engine_kwargs'] = engine_kwargs
+        source = io.BytesIO(raw_bytes) if raw_bytes is not None else uploaded_file
+        return pd.read_excel(source, **kwargs)
 
     try:
-        if hasattr(uploaded_file, 'stream') and hasattr(uploaded_file.stream, 'seek'):
-            uploaded_file.stream.seek(0)
-    except Exception:
-        pass
-
-    try:
-        return pd.read_excel(uploaded_file, **read_kwargs)
+        if is_zip_ooxml or (extension in ('.xlsx', '.xlsm', '.xltx', '.xltm') and not is_ole_or_biff):
+            return _try_pandas_excel('openpyxl')
+        if is_ole_or_biff or extension == '.xls':
+            try:
+                return _try_pandas_excel('xlrd')
+            except ImportError as imp_exc:
+                # If the file is actually HTML/XML/text disguised as .xls, let the
+                # fallbacks below handle it; only fail if it's truly binary BIFF .xls.
+                if is_ole_or_biff:
+                    raise imp_exc
+                last_exc = imp_exc
+            except Exception as exc:
+                last_exc = exc
+                try:
+                    return _try_pandas_excel('xlrd', {'ignore_workbook_corruption': True})
+                except ImportError:
+                    if is_ole_or_biff:
+                        raise
+                except Exception as exc2:
+                    last_exc = exc2
     except ImportError as exc:
         error_text = str(exc).lower()
         if extension == '.xls' or 'xlrd' in error_text:
@@ -2411,9 +2609,50 @@ def _read_uploaded_excel(uploaded_file, upload_label):
             'Please re-save it as .xlsx from Excel and upload again.'
         ) from exc
     except Exception as exc:
-        raise ValueError(
-            'Unable to read this Excel file. Please re-save it as .xlsx from Excel and upload again.'
-        ) from exc
+        last_exc = exc
+
+    # Fallback for POS systems that export HTML tables, XML Spreadsheet 2003,
+    # or delimited text with a .xls extension.
+    if raw_bytes is not None:
+        if any(marker in header_lower for marker in (b'<html', b'<!doctype', b'<table', b'<meta', b'<head', b'<body', b'<tr')):
+            try:
+                html_df = _parse_html_table_to_dataframe(raw_bytes)
+                if html_df is not None and not html_df.empty:
+                    return html_df
+            except Exception as exc:
+                last_exc = exc
+
+        if b'<?xml' in header_lower or b'<workbook' in header_lower or b'<ss:workbook' in header_lower:
+            try:
+                xml_df = _parse_spreadsheetml_to_dataframe(raw_bytes)
+                if xml_df is not None and not xml_df.empty:
+                    return xml_df
+            except Exception as exc:
+                last_exc = exc
+
+        if b'\x00' not in header_bytes:
+            for sep in ('\t', ',', ';'):
+                if sep.encode('ascii') in header_bytes:
+                    try:
+                        text_df = pd.read_csv(io.BytesIO(raw_bytes), header=None, sep=sep, engine='python')
+                        if text_df is not None and not text_df.empty and text_df.shape[1] >= 2:
+                            return text_df
+                    except Exception as exc:
+                        last_exc = exc
+
+    try:
+        current_app.logger.warning(
+            'Failed to read %s Excel upload (%s): %r',
+            upload_label,
+            getattr(uploaded_file, 'filename', ''),
+            last_exc,
+        )
+    except Exception:
+        pass
+
+    raise ValueError(
+        'Unable to read this Excel file. Please re-save it as .xlsx from Excel and upload again.'
+    ) from last_exc
 
 
 def _parse_delivery_receipt_excel(uploaded_file, upload_label="Delivery Receipt"):
