@@ -509,7 +509,7 @@ document.addEventListener('keydown', function(e) {
 //Loader Spy Section
 
 
-let SPY = {
+var SPY = window.SPY = window.SPY || {
 	started: false,
 	
 	showLoader: function(){

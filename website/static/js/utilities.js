@@ -61,7 +61,7 @@ function begin(){
 }
 
 //Utilities
-const utility = {
+var utility = window.utility = window.utility || {
 	//Spam Detect
   lastClickTime: 0,
   timeThreshold: 500, // Adjust this threshold as needed (in milliseconds)
