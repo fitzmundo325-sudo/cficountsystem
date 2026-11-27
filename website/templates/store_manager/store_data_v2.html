@@ -1,0 +1,692 @@
+{% extends "base_headless.html" %}
+{% block title %}Store Data{% endblock %}
+
+{% block content %}
+
+<header class="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-20 flex items-center justify-between">
+  <div class="flex items-center gap-4">
+    <button id="toggle-mobile" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors" onclick="childViewToggleSidebar()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" x2="20" y1="12" y2="12" />
+        <line x1="4" x2="20" y1="6" y2="6" />
+        <line x1="4" x2="20" y1="18" y2="18" />
+      </svg>
+    </button>
+
+    <nav class="flex flex-wrap items-center text-sm font-medium text-slate-500">
+      <span class="hover:text-slate-900 cursor-pointer">Store Manager</span>
+      <span class="mx-2">/</span>
+      <span class="text-slate-900">Store Data</span>
+    </nav>
+  </div>
+
+  <div class="flex items-center gap-4">
+    <div class="text-sm font-medium text-slate-600">
+      <span id="header-store-name" class="text-slate-900">Loading...</span>
+    </div>
+    <button id="export-excel-btn" type="button" onclick="exportStoreData()" class="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-emerald-700 transition-all shadow-lg">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      <span>Export Excel</span>
+    </button>
+  </div>
+</header>
+
+<div id="store-data-shell" class="px-6 pt-4 pb-6 md:px-8 md:pt-6 md:pb-8 max-w-full w-full mx-auto">
+
+  <div id="store-data-skeleton" class="hidden">
+    <section class="animate-pulse">
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="skeleton" style="height:38px;width:130px;border-radius:10px;"></div>
+        <div class="skeleton" style="height:38px;width:130px;border-radius:10px;"></div>
+        <div class="skeleton" style="height:38px;width:100px;border-radius:10px;"></div>
+        <div class="skeleton" style="height:38px;width:80px;border-radius:10px;"></div>
+        <div class="skeleton" style="height:38px;width:90px;border-radius:10px;"></div>
+      </div>
+    </section>
+
+    <section class="mt-4 bg-gradient-to-br from-indigo-50 to-slate-50 rounded-2xl border border-indigo-100 shadow-sm overflow-hidden">
+      <div class="px-6 py-4 bg-white/60 border-b border-indigo-100 animate-pulse">
+        <div class="skeleton" style="height:20px;width:200px;border-radius:6px;"></div>
+      </div>
+      <div class="p-6">
+        <div id="skeleton-cards" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4"></div>
+      </div>
+    </section>
+
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden mt-6">
+      <div class="border-b border-slate-200 px-6 flex items-center gap-4 animate-pulse" style="height:52px;">
+        <div class="skeleton" style="height:14px;width:80px;border-radius:4px;"></div>
+        <div class="skeleton" style="height:14px;width:90px;border-radius:4px;"></div>
+        <div class="skeleton" style="height:14px;width:70px;border-radius:4px;"></div>
+        <div class="skeleton" style="height:14px;width:110px;border-radius:4px;"></div>
+        <div class="skeleton" style="height:14px;width:130px;border-radius:4px;"></div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-200 animate-pulse">
+              <th class="px-3 py-3"><div class="skeleton" style="height:14px;width:120px;border-radius:4px;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:14px;width:70px;border-radius:4px;margin:auto;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:14px;width:70px;border-radius:4px;margin:auto;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:14px;width:70px;border-radius:4px;margin:auto;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:14px;width:70px;border-radius:4px;margin:auto;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:14px;width:70px;border-radius:4px;margin:auto;"></div></th>
+              <th class="px-3 py-3"><div class="skeleton" style="height:14px;width:70px;border-radius:4px;margin:auto;"></div></th>
+            </tr>
+          </thead>
+          <tbody id="skeleton-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="store-data-content">
+
+    <section>
+      <form id="store-data-filter-form" method="GET" class="flex flex-wrap items-center gap-2">
+        <div id="filter-store-name" class="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-700">-</div>
+
+        <select id="filter-month" name="month" class="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+          <option value="01">January</option>
+          <option value="02">February</option>
+          <option value="03">March</option>
+          <option value="04">April</option>
+          <option value="05">May</option>
+          <option value="06">June</option>
+          <option value="07">July</option>
+          <option value="08">August</option>
+          <option value="09">September</option>
+          <option value="10">October</option>
+          <option value="11">November</option>
+          <option value="12">December</option>
+        </select>
+
+        <select id="filter-year" name="year" class="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+          <option value="2024">2024</option>
+          <option value="2025">2025</option>
+          <option value="2026">2026</option>
+          <option value="2027">2027</option>
+        </select>
+
+        <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 transition-all">
+          Filter
+        </button>
+        <button type="button" id="open-pos-sold-modal-btn" class="px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 transition-all">
+          POS Sold
+        </button>
+      </form>
+    </section>
+
+    <section class="mt-4 bg-gradient-to-br from-indigo-50 to-slate-50 rounded-2xl border border-indigo-100 shadow-sm overflow-hidden">
+      <div class="px-6 py-4 bg-white/60 backdrop-blur-sm border-b border-indigo-100">
+        <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <svg class="w-5 h-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="7" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+          Performance Overview
+        </h2>
+      </div>
+      <div class="p-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div class="bg-white rounded-xl p-4 border border-emerald-200 shadow-sm">
+            <div class="text-xs font-medium text-emerald-600 uppercase mb-1">MTD Sales</div>
+            <div id="mtd-sales-value" class="text-lg font-bold text-emerald-700" data-summary="overview.mtd_sales" data-format="peso"></div>
+          </div>
+
+          <div class="bg-white rounded-xl p-4 border border-indigo-200 shadow-sm">
+            <div class="text-xs font-medium text-indigo-600 uppercase mb-1">Target</div>
+            <div id="target-value" class="text-lg font-bold text-indigo-700" data-summary="overview.total_target" data-format="peso"></div>
+            <div id="target-variance" class="text-xs mt-1 font-semibold"></div>
+          </div>
+
+          <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <div class="text-xs font-medium text-slate-500 uppercase mb-1">Variance</div>
+            <div id="variance-value" class="text-lg font-bold" data-summary="overview.variance_amount" data-format="peso"></div>
+          </div>
+
+          <div class="bg-white rounded-xl p-4 border border-amber-200 shadow-sm">
+            <div class="text-xs font-medium text-amber-600 uppercase mb-1">SBI Sales</div>
+            <div id="performance-sbi-value" class="text-lg font-bold text-amber-700" data-summary="overview.sbi_sales" data-format="peso"></div>
+            <div id="performance-sbi-percentage" class="text-xs mt-1 text-amber-600 font-semibold" data-summary="overview.sbi_percent" data-format="p2"></div>
+          </div>
+
+          <div class="bg-white rounded-xl p-4 border border-red-200 shadow-sm">
+            <div class="text-xs font-medium text-red-600 uppercase mb-1">MTD Wastage</div>
+            <div id="performance-mtd-wastage" class="text-lg font-bold text-red-700" data-summary="overview.wastage_amount" data-format="peso"></div>
+            <div id="performance-mtd-wastage-percent" class="text-xs mt-1 font-semibold" data-summary="overview.wastage_percent" data-format="p2"></div>
+          </div>
+
+          <div class="bg-white rounded-xl p-4 border border-purple-200 shadow-sm">
+            <div class="text-xs font-medium text-purple-600 uppercase mb-1">MTD Discount</div>
+            <div id="performance-mtd-discount" class="text-lg font-bold text-purple-700" data-summary="overview.discount_amount" data-format="peso"></div>
+            <div id="performance-mtd-discount-percent" class="text-xs mt-1 font-semibold" data-summary="overview.discount_percent" data-format="p2"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div id="main-content" class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden mt-6">
+      <div class="border-b border-slate-200 flex items-center justify-between">
+        <nav class="flex px-6" role="tablist">
+          <button onclick="switchTab('sales')" id="tab-sales" class="tab-button px-4 py-3 text-sm font-medium border-b-2 border-indigo-600 text-indigo-600" role="tab">Sales Data</button>
+          <button onclick="switchTab('aggregators')" id="tab-aggregators" class="tab-button px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300" role="tab">Aggregators</button>
+          <button onclick="switchTab('sbi')" id="tab-sbi" class="tab-button px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300" role="tab">SBI</button>
+          <button onclick="switchTab('cost')" id="tab-cost" class="tab-button px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300" role="tab">Cost Monitoring</button>
+          <button onclick="switchTab('inventory')" id="tab-inventory" class="tab-button px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300" role="tab">Inventory Monitoring</button>
+        </nav>
+        <div class="px-6">
+          <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 transition-all">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+            </svg>
+            <span>Fullscreen</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="content-sales" class="tab-content">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-3 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sticky left-0 bg-slate-50 z-10">Date</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Gross Sales</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">C.I</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-indigo-50">Total Gross Sales</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Target (Net)</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Last Year (Net)</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">vs. Tgt</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Net Sales</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Acc Net Sales</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Acc Target Net</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Acc LY Net</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">MTD vs. Tgt</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">MTD vs. LY</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">GBI Target</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">GBI Acc</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">AR</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">vs. LY</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">AC</th>
+              </tr>
+            </thead>
+            <tbody id="sales-body" class="divide-y divide-slate-100 bg-white"></tbody>
+            <tfoot class="bg-slate-100 border-t-2 border-slate-300">
+              <tr class="font-bold">
+                <td class="px-3 py-3 text-sm text-slate-900 sticky left-0 bg-slate-100">TOTAL / AVG</td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.gross_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.ci_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-indigo-100" data-summary="sales.total_gross_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.target_net" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.last_year_net" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.vs_tgt_percent" data-format="p1"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100" data-summary="sales.net_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-700 text-right whitespace-nowrap" data-summary="sales.acc_net_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-700 text-right whitespace-nowrap" data-summary="sales.acc_target_net" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-700 text-right whitespace-nowrap" data-summary="sales.acc_ly_net" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.mtd_vs_tgt_percent" data-format="p1"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.mtd_vs_ly_percent" data-format="p1"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.gbi_target" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.acc_gbi" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.ar_percent" data-format="p1"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.vs_ly_percent" data-format="p1"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sales.ac" data-format="int"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div id="content-aggregators" class="tab-content hidden">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-3 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sticky left-0 bg-slate-50 z-10">Date</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">GDS</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Grabfood</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">FoodPanda</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Maxim</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-indigo-50">Total Agg</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-indigo-50">TC</th>
+              </tr>
+            </thead>
+            <tbody id="aggregators-body" class="divide-y divide-slate-100 bg-white"></tbody>
+            <tfoot class="bg-slate-100 border-t-2 border-slate-300">
+              <tr class="font-bold">
+                <td class="px-3 py-3 text-sm text-slate-900 sticky left-0 bg-slate-100">TOTAL / AVG</td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="aggregators.gds_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="aggregators.gds_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="aggregators.grab_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="aggregators.grab_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="aggregators.foodpanda_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="aggregators.foodpanda_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="aggregators.maxim_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="aggregators.maxim_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-indigo-100" data-summary="aggregators.total_agg_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-indigo-100" data-summary="aggregators.total_agg_tc" data-format="int"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div id="content-sbi" class="tab-content hidden">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-3 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sticky left-0 bg-slate-50 z-10">Date</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Booth Selling</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Bulk Order</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Reseller</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Company Tie-up</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">GOW</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Ambulant/OOT</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap">Other SBI</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider">TC</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-indigo-50">Total SBI</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-indigo-50">TC</th>
+              </tr>
+            </thead>
+            <tbody id="sbi-body" class="divide-y divide-slate-100 bg-white"></tbody>
+            <tfoot class="bg-slate-100 border-t-2 border-slate-300">
+              <tr class="font-bold">
+                <td class="px-3 py-3 text-sm text-slate-900 sticky left-0 bg-slate-100">TOTAL / AVG</td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.boothselling_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.boothselling_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.bulk_order_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.bulk_order_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.reseller_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.reseller_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.tieup_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.tieup_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.gow_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.gow_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.ambulant_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.ambulant_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.other_sbi_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap" data-summary="sbi.other_sbi_tc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-indigo-100" data-summary="sbi.total_sbi_sales" data-format="peso"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-indigo-100" data-summary="sbi.total_sbi_tc" data-format="int"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div id="content-cost" class="tab-content hidden">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-50">
+              <tr>
+                <th rowspan="2" class="px-3 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sticky left-0 bg-slate-50 z-10 border-r border-slate-200">Date</th>
+                <th colspan="2" class="px-3 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider bg-amber-50 border-r border-slate-200">Wastage Performance</th>
+                <th colspan="5" class="px-3 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">Discount Monitoring</th>
+              </tr>
+              <tr>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-amber-50">Amount</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-amber-50 border-r border-slate-200">Daily%</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Senior / PWD</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Promo (LDTS)</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Bulk Orders</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Total Disc Peso</th>
+                <th class="px-3 py-3 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider whitespace-nowrap bg-emerald-50">Daily %</th>
+              </tr>
+            </thead>
+            <tbody id="cost-body" class="divide-y divide-slate-100 bg-white"></tbody>
+            <tfoot class="bg-slate-50 font-semibold">
+              <tr>
+                <td class="px-3 py-3 text-sm font-semibold text-slate-900 sticky left-0 bg-slate-50 border-r border-slate-200">Total</td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right bg-amber-100" data-summary="cost.wastage_amount" data-format="plain2"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right bg-amber-100 border-r border-slate-200" data-summary="cost.wastage_daily_percent" data-format="p2"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right bg-emerald-100" data-summary="cost.senior_pwd_discount" data-format="plain2"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right bg-emerald-100" data-summary="cost.promo_ldts_discount" data-format="plain2"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right bg-emerald-100" data-summary="cost.bulk_orders_discount" data-format="plain2"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right bg-emerald-100" data-summary="cost.total_discount" data-format="plain2"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right bg-emerald-100" data-summary="cost.discount_daily_percent" data-format="p2"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div id="content-inventory" class="tab-content hidden">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-50">
+              <tr>
+                <th rowspan="2" class="px-3 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider sticky left-0 bg-slate-50 z-10 border-r border-slate-200">Date</th>
+                <th colspan="6" class="px-3 py-2 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider border-r border-slate-200 bg-emerald-50">QTY SOLD</th>
+                <th colspan="3" class="px-3 py-2 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider bg-amber-50">Ending Inventory</th>
+              </tr>
+              <tr>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">GC</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">Rolls</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">Premium</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">Cheesy Ensay</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-emerald-50">Slices</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider border-r border-slate-200 bg-emerald-50">Mamon Sold</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-amber-50">GC</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-amber-50">Rolls</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-slate-700 uppercase tracking-wider bg-amber-50">Premium</th>
+              </tr>
+            </thead>
+            <tbody id="inventory-body" class="divide-y divide-slate-100 bg-white"></tbody>
+            <tfoot class="bg-slate-100 border-t-2 border-slate-300">
+              <tr class="font-bold">
+                <td class="px-3 py-3 text-sm text-slate-900 sticky left-0 bg-slate-100 border-r border-slate-200">TOTAL / AVG</td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100" data-summary="inventory.pos_qty_gc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100" data-summary="inventory.pos_qty_rolls" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100" data-summary="inventory.pos_qty_premium" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100" data-summary="inventory.pos_qty_cheesy_ensay" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-emerald-100" data-summary="inventory.pos_qty_slices" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap border-r border-slate-200 bg-emerald-100" data-summary="inventory.pos_qty_mamon" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-amber-100" data-summary="inventory.ending_inv_gc" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-amber-100" data-summary="inventory.ending_inv_rolls" data-format="int"></td>
+                <td class="px-3 py-3 text-sm text-slate-900 text-right whitespace-nowrap bg-amber-100" data-summary="inventory.ending_inv_premium" data-format="int"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div id="pos-sold-modal" class="fixed inset-0 z-50 hidden">
+  <div id="pos-sold-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative z-10 min-h-full flex items-center justify-center p-4 md:p-6">
+    <div class="w-full max-w-4xl bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+      <div class="px-5 py-4 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-slate-200 flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-bold text-slate-900">POS Sold</h3>
+          <p id="pos-sold-caption" class="text-xs text-slate-500 mt-1">No submitted POS sold data yet</p>
+        </div>
+        <button id="pos-sold-close" type="button" class="p-2 rounded-lg hover:bg-slate-100 text-slate-600">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="px-5 py-4 space-y-4 overflow-y-auto min-h-0">
+        <div class="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <select id="pos-filter-month" class="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none">
+            <option value="1">January</option>
+            <option value="2">February</option>
+            <option value="3">March</option>
+            <option value="4">April</option>
+            <option value="5">May</option>
+            <option value="6">June</option>
+            <option value="7">July</option>
+            <option value="8">August</option>
+            <option value="9">September</option>
+            <option value="10">October</option>
+            <option value="11">November</option>
+            <option value="12">December</option>
+          </select>
+          <select id="pos-filter-day" class="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"></select>
+          <select id="pos-filter-year" class="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none"></select>
+          <button type="button" id="pos-filter-apply" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-all">Apply</button>
+          <button type="button" id="pos-filter-latest" class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-300 transition-all">Latest</button>
+        </div>
+
+        <div id="pos-sold-empty" class="hidden px-3 py-3 rounded-lg bg-slate-50 border border-slate-200 text-sm text-slate-600">
+          No submitted POS sold data available for selected date.
+        </div>
+        <div id="pos-sold-no-rows" class="hidden px-3 py-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800"></div>
+        <div id="pos-sold-table-wrap" class="hidden overflow-auto border border-slate-200 rounded-lg max-h-[56vh]">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-100 sticky top-0 z-10">
+              <tr>
+                <th class="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Product</th>
+                <th class="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase">Qty</th>
+              </tr>
+            </thead>
+            <tbody id="pos-sold-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="fullscreen-modal" class="hidden fixed inset-0 z-50 bg-white">
+  <div class="h-full flex flex-col">
+    <div class="flex-none bg-white border-b border-slate-200 px-6 h-16 flex items-center justify-between shadow-sm">
+      <div class="flex items-center gap-4">
+        <h2 class="text-lg font-bold text-slate-900 transition-all duration-300" id="fullscreen-title">Sales Data</h2>
+        <div class="text-sm text-slate-600" id="fullscreen-subtitle"></div>
+      </div>
+      <div class="flex items-center gap-3">
+        <button onclick="navigateTab('prev')" class="flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-xl text-sm font-medium hover:bg-indigo-200 transition-all">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+          <span>Previous</span>
+        </button>
+        <button onclick="navigateTab('next')" class="flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-xl text-sm font-medium hover:bg-indigo-200 transition-all">
+          <span>Next</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </button>
+        <button onclick="toggleFullscreen()" class="flex items-center gap-2 bg-slate-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-slate-700 transition-all">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+          </svg>
+          <span>Exit Fullscreen</span>
+        </button>
+      </div>
+    </div>
+    <div class="flex-1 overflow-auto bg-white">
+      <div id="modal-content" class="transition-all duration-300 ease-in-out"></div>
+    </div>
+  </div>
+</div>
+
+<div id="missing-dates-modal" class="fixed inset-0 z-50 hidden">
+  <div id="missing-dates-overlay" class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+    <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200">
+        <h3 class="text-lg font-bold text-slate-900">Missing Report Dates</h3>
+        <p id="missing-dates-count" class="text-sm text-red-600 mt-1"></p>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-sm text-slate-600 mb-3">Click <span class="font-semibold text-indigo-700">Go</span> to open Daily Report on the oldest missing date.</p>
+        <div id="missing-dates-list" class="max-h-56 overflow-y-auto rounded-xl border border-red-100 bg-red-50/40 divide-y divide-red-100"></div>
+      </div>
+      <div class="px-5 py-4 border-t border-slate-200 flex items-center justify-end">
+        <button id="missing-dates-go" type="button" class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm">
+          Go
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="hidden text-emerald-600 text-red-600 text-amber-600 text-emerald-700 text-red-700 text-slate-500 text-slate-700 hover:bg-slate-50 border-2 border-yellow-400 font-semibold"></div>
+
+<template id="tmpl-skeleton-card">
+  <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm animate-pulse">
+    <div class="skeleton" style="height:10px;width:60%;border-radius:4px;margin-bottom:10px;"></div>
+    <div class="skeleton" style="height:22px;width:80%;border-radius:6px;"></div>
+    <div class="skeleton" style="height:10px;width:40%;border-radius:4px;margin-top:8px;"></div>
+  </div>
+</template>
+
+<template id="tmpl-skeleton-row">
+  <tr class="animate-pulse border-b border-slate-100">
+    <td class="px-3 py-3"><div class="skeleton" style="height:13px;width:80%;border-radius:4px;"></div></td>
+    <td class="px-3 py-3"><div class="skeleton" style="height:13px;width:70%;border-radius:4px;margin:auto;"></div></td>
+    <td class="px-3 py-3"><div class="skeleton" style="height:13px;width:70%;border-radius:4px;margin:auto;"></div></td>
+    <td class="px-3 py-3"><div class="skeleton" style="height:13px;width:70%;border-radius:4px;margin:auto;"></div></td>
+    <td class="px-3 py-3"><div class="skeleton" style="height:13px;width:70%;border-radius:4px;margin:auto;"></div></td>
+    <td class="px-3 py-3"><div class="skeleton" style="height:13px;width:70%;border-radius:4px;margin:auto;"></div></td>
+    <td class="px-3 py-3"><div class="skeleton" style="height:13px;width:70%;border-radius:4px;margin:auto;"></div></td>
+  </tr>
+</template>
+
+<template id="tmpl-missing-row">
+  <div class="px-3 py-2 flex items-center justify-between">
+    <span data-cell="label" class="text-sm font-semibold text-red-700"></span>
+    <span data-cell="iso" class="text-xs text-red-500"></span>
+  </div>
+</template>
+
+<template id="tmpl-pos-row">
+  <tr class="odd:bg-white even:bg-slate-50">
+    <td data-cell="product" class="px-4 py-2 text-sm text-slate-700"></td>
+    <td data-cell="quantity" class="px-4 py-2 text-sm text-slate-900 text-right font-semibold"></td>
+  </tr>
+</template>
+
+<template id="tmpl-sales-row">
+  <tr class="transition-colors">
+    <td data-cell="date" class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white">
+      <div class="flex items-center gap-2">
+        <span data-cell="date-label"></span>
+        <span data-cell="missing-flag" class="hidden inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700" title="Missing report">?</span>
+      </div>
+    </td>
+    <td data-cell="pos_gross" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="ci" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="total_gross" class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50"></td>
+    <td data-cell="target_net" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="ly_net" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="vs_tgt" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="net_sales" class="px-3 py-2 text-sm font-semibold text-emerald-700 text-right whitespace-nowrap bg-emerald-50"></td>
+    <td data-cell="acc_net" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="acc_target" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="acc_ly" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="mtd_vs_tgt" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="mtd_vs_ly" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="gbi_target" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="gbi_acc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="ar" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="vs_ly" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="ac" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+  </tr>
+</template>
+
+<template id="tmpl-aggregators-row">
+  <tr class="transition-colors">
+    <td data-cell="date" class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white">
+      <div class="flex items-center gap-2">
+        <span data-cell="date-label"></span>
+        <span data-cell="missing-flag" class="hidden inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700" title="Missing report">?</span>
+      </div>
+    </td>
+    <td data-cell="gds_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="gds_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="grab_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="grab_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="foodpanda_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="foodpanda_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="maxim_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="maxim_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="total_sales" class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50"></td>
+    <td data-cell="total_tc" class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50"></td>
+  </tr>
+</template>
+
+<template id="tmpl-sbi-row">
+  <tr class="transition-colors">
+    <td data-cell="date" class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white">
+      <div class="flex items-center gap-2">
+        <span data-cell="date-label"></span>
+        <span data-cell="missing-flag" class="hidden inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700" title="Missing report">?</span>
+      </div>
+    </td>
+    <td data-cell="booth_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="booth_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="bulk_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="bulk_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="reseller_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="reseller_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="tieup_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="tieup_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="gow_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="gow_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="ambulant_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="ambulant_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="other_sales" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="other_tc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap"></td>
+    <td data-cell="total_sales" class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50"></td>
+    <td data-cell="total_tc" class="px-3 py-2 text-sm font-semibold text-slate-900 text-right whitespace-nowrap bg-indigo-50"></td>
+  </tr>
+</template>
+
+<template id="tmpl-cost-row">
+  <tr class="transition-colors">
+    <td data-cell="date" class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white border-r border-slate-100">
+      <div class="flex items-center gap-2">
+        <span data-cell="date-label"></span>
+        <span data-cell="missing-flag" class="hidden inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700" title="Missing report">?</span>
+      </div>
+    </td>
+    <td data-cell="wastage_amount" class="px-3 py-2 text-sm text-slate-900 text-right bg-amber-50"></td>
+    <td data-cell="wastage_percent" class="px-3 py-2 text-sm text-slate-900 text-right bg-amber-50 border-r border-slate-100"></td>
+    <td data-cell="senior" class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50"></td>
+    <td data-cell="promo" class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50"></td>
+    <td data-cell="bulk" class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50"></td>
+    <td data-cell="total_discount" class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50"></td>
+    <td data-cell="discount_percent" class="px-3 py-2 text-sm text-slate-900 text-right bg-emerald-50"></td>
+  </tr>
+</template>
+
+<template id="tmpl-inventory-row">
+  <tr class="transition-colors">
+    <td data-cell="date" class="px-3 py-2 text-sm font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white border-r border-slate-100">
+      <div class="flex items-center gap-2">
+        <span data-cell="date-label"></span>
+        <span data-cell="missing-flag" class="hidden inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700" title="Missing report">?</span>
+      </div>
+    </td>
+    <td data-cell="qty_gc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30"></td>
+    <td data-cell="qty_rolls" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30"></td>
+    <td data-cell="qty_premium" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30"></td>
+    <td data-cell="qty_cheesy_ensay" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30"></td>
+    <td data-cell="qty_slices" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-emerald-50/30"></td>
+    <td data-cell="qty_mamon" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap border-r border-slate-100 bg-emerald-50/30"></td>
+    <td data-cell="end_gc" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30"></td>
+    <td data-cell="end_rolls" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30"></td>
+    <td data-cell="end_premium" class="px-3 py-2 text-sm text-slate-700 text-right whitespace-nowrap bg-amber-50/30"></td>
+  </tr>
+</template>
+
+<script>
+  let STORE_DATA_ROUTES = {
+    data: '/apis/store_manager_store_data',
+    page: {{ url_for('views.store_data_v2_page')|tojson }},
+    dailyReport: {{ url_for('views.daily_report_v2_page')|tojson }},
+    home: {{ url_for('views.home')|tojson }},
+    export: ''
+  };
+  let STORE_DATA_INIT = {
+    month: {{ current_month|tojson }},
+    year: {{ current_year|tojson }}
+  };
+</script>
+<script defer src="{{ url_for('static', filename='js/handles/store_data_handles.js') }}"></script>
+
+<script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
+
+{% endblock %}
