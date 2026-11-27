@@ -533,6 +533,10 @@
 		}
 	}
 
+	function cleanTsvCell(val) {
+		return String(val ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+	}
+
 	function buildSelectionTSV() {
 		let a = getCellCoords(anchorCell || activeCell);
 		let b = getCellCoords(activeCell);
@@ -546,7 +550,7 @@
 			let headers = getVisibleHeaders(a.table);
 			let headerVals = [];
 			for (let c = cMin; c <= cMax; c++) {
-				headerVals.push(headers[c] ? (headers[c].textContent || '').trim() : '');
+				headerVals.push(headers[c] ? cleanTsvCell(headers[c].textContent) : '');
 			}
 			lines.push(headerVals.join('\t'));
 		}
@@ -554,7 +558,7 @@
 			let rowCells = getVisibleRowCells(a.rows[r]);
 			let vals = [];
 			for (let c = cMin; c <= cMax; c++) {
-				vals.push(rowCells[c] ? getCellValue(rowCells[c]) : '');
+				vals.push(rowCells[c] ? cleanTsvCell(getCellValue(rowCells[c])) : '');
 			}
 			lines.push(vals.join('\t'));
 		}

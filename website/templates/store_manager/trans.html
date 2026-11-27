@@ -103,18 +103,6 @@
 </div>
 
 <script>
-(function() {
-  tablePaginator({
-    tbodyId: 'trans-in-tbody',
-    paginationId: 'trans-in-pagination',
-    countLabelId: 'trans-in-count-label',
-    searchId: 'trans-in-search',
-    perPage: 15
-  });
-})();
-</script>
-
-<script>
 function tablePaginator(opts) {
   const tbody = document.getElementById(opts.tbodyId);
   const paginationEl = document.getElementById(opts.paginationId);
@@ -215,5 +203,15 @@ function tablePaginator(opts) {
 
   render();
 }
+
+(function() {
+  tablePaginator({
+    tbodyId: 'trans-in-tbody',
+    paginationId: 'trans-in-pagination',
+    countLabelId: 'trans-in-count-label',
+    searchId: 'trans-in-search',
+    perPage: 15
+  });
+})();
 </script>
 {% endblock %}

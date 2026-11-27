@@ -122,18 +122,6 @@
 </div>
 
 <script>
-(function() {
-  tablePaginator({
-    tbodyId: 'trans-out-tbody',
-    paginationId: 'trans-out-pagination',
-    countLabelId: 'trans-out-count-label',
-    searchId: 'trans-out-search',
-    perPage: 15
-  });
-})();
-</script>
-
-<script>
 function tablePaginator(opts) {
   const tbody = document.getElementById(opts.tbodyId);
   const paginationEl = document.getElementById(opts.paginationId);
@@ -207,5 +195,15 @@ function tablePaginator(opts) {
   if (searchInput) searchInput.addEventListener('input', function() { applySearch(this.value); });
   render();
 }
+
+(function() {
+  tablePaginator({
+    tbodyId: 'trans-out-tbody',
+    paginationId: 'trans-out-pagination',
+    countLabelId: 'trans-out-count-label',
+    searchId: 'trans-out-search',
+    perPage: 15
+  });
+})();
 </script>
 {% endblock %}

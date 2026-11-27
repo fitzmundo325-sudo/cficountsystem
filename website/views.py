@@ -8914,9 +8914,12 @@ def store_manager_incoming_transfer_view(transfer_id):
         and can_receive_action
         and str(getattr(transfer, 'status', '') or 'Pending').strip() == 'Pending'
     ):
-        transfer.receiver_live_user_id = current_user.id
-        transfer.receiver_live_at = datetime.utcnow()
-        db.session.commit()
+        try:
+            transfer.receiver_live_user_id = current_user.id
+            transfer.receiver_live_at = datetime.utcnow()
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
     return render_template(
         'store_manager/trans_view.html',
