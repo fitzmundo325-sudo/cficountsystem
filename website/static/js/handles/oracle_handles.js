@@ -114,6 +114,7 @@ function insertBeforeCell(parent, newEl, cellName) {
 }
 
 function addClasses(el, classString) {
+	if (!el) return;
 	let list = String(classString || '').split(' ').filter(Boolean);
 	if (list.length) el.classList.add(...list);
 }
@@ -155,7 +156,8 @@ function showToast(msg, type = 'info') {
 		info: 'bi-info-circle-fill'
 	};
 	addClasses(toastEl, styles[type] || styles.info);
-	getCell(toastEl, 'icon').classList.add(icons[type] || icons.info);
+	let iconEl = getCell(toastEl, 'icon');
+	if (iconEl) iconEl.classList.add(icons[type] || icons.info);
 	setCell(toastEl, 'message', msg);
 	container.appendChild(toastEl);
 	setTimeout(fadeOutToast.bind(null, toastEl), 3000);
@@ -166,7 +168,9 @@ let rowObserver = null;
 
 function onRowIntersect(entries) {
 	entries.forEach(entry => {
-		entry.target.classList.toggle('unrender', !entry.isIntersecting);
+		if (entry.target && entry.target.classList) {
+			entry.target.classList.toggle('unrender', !entry.isIntersecting);
+		}
 	});
 }
 
@@ -206,11 +210,14 @@ function applyViewVisibility() {
 
 function applyOrderModePanels() {
 	let weekly = orderMode === 'weekly';
+	let weeklyPanel = document.getElementById('weekly-order-panel');
+	if (weeklyPanel) weeklyPanel.classList.toggle('hidden', !weekly);
 	let singleView = document.getElementById('oracle-order-view');
-	document.getElementById('weekly-order-panel').classList.toggle('hidden', !weekly);
-	if (!singleView.classList.contains('oracle-fs')) singleView.classList.toggle('hidden', weekly);
-	document.getElementById('mode-weekly').className = weekly ? MODE_ON_CLASS : MODE_OFF_CLASS;
-	document.getElementById('mode-single').className = !weekly ? MODE_ON_CLASS : MODE_OFF_CLASS;
+	if (singleView && !singleView.classList.contains('oracle-fs')) singleView.classList.toggle('hidden', weekly);
+	let modeWeekly = document.getElementById('mode-weekly');
+	if (modeWeekly) modeWeekly.className = weekly ? MODE_ON_CLASS : MODE_OFF_CLASS;
+	let modeSingle = document.getElementById('mode-single');
+	if (modeSingle) modeSingle.className = !weekly ? MODE_ON_CLASS : MODE_OFF_CLASS;
 }
 
 // ---------------------------------------------------------------- Data loading
@@ -257,6 +264,7 @@ function normalizeProduct(p) {
 
 function buildCategoryButtons() {
 	let container = document.getElementById('category-filter-container');
+	if (!container) return;
 	container.querySelectorAll('[data-category-filter]:not([data-category-filter="all"])').forEach(removeElement);
 	CATEGORY_LIST.forEach(name => {
 		let hasProducts = PRODUCTS.some(p => p.category === name);
@@ -303,17 +311,21 @@ function applyOracleData(data) {
 	PRODUCTS.forEach(p => {
 		productBuffers[p.id] = (STORE_SAVED_BUFFERS && STORE_SAVED_BUFFERS[p.id] !== undefined) ? STORE_SAVED_BUFFERS[p.id] : p.buffer;
 	});
-	document.getElementById('oracle-store-name').textContent = STORE.name || '';
-	document.getElementById('oracle-fs-store-name').textContent = STORE.name || '';
-	document.getElementById('order-manager').value = ORACLE_USERNAME;
-	document.title = 'Oracle — ' + (STORE.name || '');
-	document.getElementById('topbar-date').textContent = (ORACLE_DATE ? new Date(ORACLE_DATE + 'T00:00:00') : new Date()).toLocaleDateString('en-PH', {
-		weekday: 'short',
-		month: 'short',
-		day: 'numeric',
-		year: 'numeric'
-	});
-	buildCategoryButtons();
+	let storeNameEl = document.getElementById('oracle-store-name');
+if (storeNameEl) storeNameEl.textContent = STORE.name || '';
+let fsStoreNameEl = document.getElementById('oracle-fs-store-name');
+if (fsStoreNameEl) fsStoreNameEl.textContent = STORE.name || '';
+let orderManagerEl = document.getElementById('order-manager');
+if (orderManagerEl) orderManagerEl.value = ORACLE_USERNAME;
+document.title = 'Oracle — ' + (STORE.name || '');
+let topbarDateEl = document.getElementById('topbar-date');
+if (topbarDateEl) topbarDateEl.textContent = (ORACLE_DATE ? new Date(ORACLE_DATE + 'T00:00:00') : new Date()).toLocaleDateString('en-PH', {
+	weekday: 'short',
+	month: 'short',
+	day: 'numeric',
+	year: 'numeric'
+});
+buildCategoryButtons();
 	renderOrderForm();
 	hideSkeletonRows();
 }
@@ -326,12 +338,16 @@ function hideSkeletonRows() {
 function showLoadError(message) {
 	let weeklyBody = document.getElementById('weekly-order-body');
 	let orderBody = document.getElementById('order-table-body');
-	unobserveRows(weeklyBody);
-	weeklyBody.innerHTML = '';
-	unobserveRows(orderBody);
-	orderBody.innerHTML = '';
-	weeklyBody.appendChild(buildMessageRow(message, 1));
-	orderBody.appendChild(buildMessageRow(message, 15));
+	if (weeklyBody) {
+		unobserveRows(weeklyBody);
+		weeklyBody.innerHTML = '';
+		weeklyBody.appendChild(buildMessageRow(message, 1));
+	}
+	if (orderBody) {
+		unobserveRows(orderBody);
+		orderBody.innerHTML = '';
+		orderBody.appendChild(buildMessageRow(message, 15));
+	}
 	showToast(message, 'error');
 }
 
@@ -396,12 +412,18 @@ function restoreWeeklyMemory() {
 	try {
 		let memory = JSON.parse(localStorage.getItem(ORACLE_MEMORY_KEY) || 'null');
 		if (!memory) return false;
-		if (memory.orderDate) document.getElementById('order-date').value = memory.orderDate;
-		if (memory.deliveryDate) document.getElementById('delivery-date').value = memory.deliveryDate;
-		if (memory.deliveryEndDate) document.getElementById('delivery-end-date').value = memory.deliveryEndDate;
-		if (memory.manager) document.getElementById('order-manager').value = memory.manager;
-		if (memory.forecast) document.getElementById('forecast-event').value = memory.forecast;
-		if (memory.targetSales !== undefined) document.getElementById('target-sales-input').value = memory.targetSales;
+		let orderDateEl = document.getElementById('order-date');
+		if (orderDateEl && memory.orderDate) orderDateEl.value = memory.orderDate;
+		let deliveryDateEl = document.getElementById('delivery-date');
+		if (deliveryDateEl && memory.deliveryDate) deliveryDateEl.value = memory.deliveryDate;
+		let deliveryEndDateEl = document.getElementById('delivery-end-date');
+		if (deliveryEndDateEl && memory.deliveryEndDate) deliveryEndDateEl.value = memory.deliveryEndDate;
+		let orderManagerEl = document.getElementById('order-manager');
+		if (orderManagerEl && memory.manager) orderManagerEl.value = memory.manager;
+		let forecastEventEl = document.getElementById('forecast-event');
+		if (forecastEventEl && memory.forecast) forecastEventEl.value = memory.forecast;
+		let targetSalesInputEl = document.getElementById('target-sales-input');
+		if (targetSalesInputEl && memory.targetSales !== undefined) targetSalesInputEl.value = memory.targetSales;
 		if (memory.orderMode === 'single' || memory.orderMode === 'weekly') orderMode = memory.orderMode;
 		if (Array.isArray(memory.productRows) && memory.productRows.length) weeklyProductRows = memory.productRows.map(String);
 		if (memory.finalQtys && typeof memory.finalQtys === 'object') weeklyFinalQtys = memory.finalQtys;
@@ -667,7 +689,8 @@ function onCategoryFilterClick(event) {
 }
 
 function onSearchInput() {
-	productSearchQuery = document.getElementById('product-search-input').value.trim().toLowerCase();
+	let searchInput = document.getElementById('product-search-input');
+	productSearchQuery = searchInput ? searchInput.value.trim().toLowerCase() : '';
 	renderOrderTable();
 	renderWeeklyOrderTable();
 }
@@ -687,28 +710,30 @@ function searchMatches(product) {
 
 // ---------------------------------------------------------------- Date and forecast handlers
 function onOrderDateChange() {
-	let od = document.getElementById('order-date').value;
+	let orderDateEl = document.getElementById('order-date');
+	let od = orderDateEl?.value;
 	if (!od) return;
 	let min = minDeliv(od);
 	let dd = document.getElementById('delivery-date');
 	let end = document.getElementById('delivery-end-date');
-	dd.min = min;
-	end.min = min;
-	if (!dd.value || dd.value < min) {
+	if (dd) dd.min = min;
+	if (end) end.min = min;
+	if (dd && (!dd.value || dd.value < min)) {
 		dd.value = min;
 		showToast('Delivery start auto-set: minimum is order + 2 days', 'info');
 	}
-	end.max = maxPlanEnd(dd.value);
-	if (!end.value || end.value < dd.value) end.value = dd.value;
-	if (end.value > end.max) end.value = end.max;
+	if (end && dd) end.max = maxPlanEnd(dd.value);
+	if (end && (!end.value || (dd && end.value < dd.value))) end.value = dd?.value || '';
+	if (end && end.value > end.max) end.value = end.max;
 	saveWeeklyMemory();
 	updateDelivDay();
 }
 
 function onDeliveryDateChange() {
-	let od = document.getElementById('order-date').value;
+	let od = document.getElementById('order-date')?.value;
 	let dd = document.getElementById('delivery-date');
 	let end = document.getElementById('delivery-end-date');
+	if (!dd || !end) return;
 	if (od && dd.value && dd.value < minDeliv(od)) {
 		dd.value = minDeliv(od);
 		showToast('Delivery must be at least 2 days after order date', 'error');
@@ -723,6 +748,7 @@ function onDeliveryDateChange() {
 function onDeliveryEndChange() {
 	let dd = document.getElementById('delivery-date');
 	let end = document.getElementById('delivery-end-date');
+	if (!dd || !end) return;
 	end.max = maxPlanEnd(dd.value);
 	if (dd.value && end.value < dd.value) {
 		end.value = dd.value;
@@ -738,7 +764,10 @@ function onDeliveryEndChange() {
 
 function updateDelivDay() {
 	let dates = getPlanDates();
-	document.getElementById('delivery-day').value = dates.length ? `${formatPlanDate(dates[0])} – ${formatPlanDate(dates[dates.length - 1])} (${dates.length} ${dates.length === 1 ? 'day' : 'days'})` : '';
+	let deliveryDayEl = document.getElementById('delivery-day');
+	if (deliveryDayEl) {
+		deliveryDayEl.value = dates.length ? `${formatPlanDate(dates[0])} – ${formatPlanDate(dates[dates.length - 1])} (${dates.length} ${dates.length === 1 ? 'day' : 'days'})` : '';
+	}
 	renderOrderTable();
 	renderWeeklyOrderTable();
 }
@@ -750,7 +779,11 @@ function onTargetSalesChange() {
 }
 
 function updateMultiplier() {
-	document.getElementById('eff-mult').textContent = (parseFloat(document.getElementById('forecast-event').value) || 1).toFixed(2) + '×';
+	let effMultEl = document.getElementById('eff-mult');
+	let forecastEventEl = document.getElementById('forecast-event');
+	if (effMultEl && forecastEventEl) {
+		effMultEl.textContent = (parseFloat(forecastEventEl.value) || 1).toFixed(2) + '×';
+	}
 	saveWeeklyMemory();
 	renderOrderTable();
 	renderWeeklyOrderTable();
@@ -760,18 +793,21 @@ function renderOrderForm() {
 	let today = ORACLE_DATE ? new Date(ORACLE_DATE + 'T00:00:00') : new Date();
 	let deliv = new Date(today);
 	deliv.setDate(today.getDate() + 2);
-	document.getElementById('order-date').value = fmt(today);
-	document.getElementById('delivery-date').value = fmt(deliv);
+	let orderDateEl = document.getElementById('order-date');
+	if (orderDateEl) orderDateEl.value = fmt(today);
+	let deliveryDateEl = document.getElementById('delivery-date');
+	if (deliveryDateEl) deliveryDateEl.value = fmt(deliv);
 	let end = new Date(deliv);
 	end.setDate(deliv.getDate() + 5);
-	document.getElementById('delivery-end-date').value = fmt(end);
-	document.getElementById('delivery-date').min = minDeliv(fmt(today));
-	document.getElementById('delivery-end-date').min = minDeliv(fmt(today));
-	document.getElementById('delivery-end-date').max = maxPlanEnd(fmt(deliv));
+	let deliveryEndDateEl = document.getElementById('delivery-end-date');
+	if (deliveryEndDateEl) deliveryEndDateEl.value = fmt(end);
+	if (deliveryDateEl) deliveryDateEl.min = minDeliv(fmt(today));
+	if (deliveryEndDateEl) deliveryEndDateEl.min = minDeliv(fmt(today));
+	if (deliveryEndDateEl) deliveryEndDateEl.max = maxPlanEnd(fmt(deliv));
 	let restored = restoreWeeklyMemory();
 	if (restored) {
-		document.getElementById('delivery-date').min = minDeliv(document.getElementById('order-date').value);
-		document.getElementById('delivery-end-date').min = document.getElementById('delivery-date').value;
+		if (deliveryDateEl) deliveryDateEl.min = minDeliv(orderDateEl?.value || '');
+		if (deliveryEndDateEl) deliveryEndDateEl.min = deliveryDateEl?.value || '';
 	}
 	updateDelivDay();
 	updateMultiplier();
@@ -781,15 +817,20 @@ function renderOrderForm() {
 // ---------------------------------------------------------------- Single-day order table
 function updateModeIndicator(ctx) {
 	let modeEl = document.getElementById('order-mode-indicator');
+	if (!modeEl) return;
 	modeEl.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ' + (ctx.useTarget ? 'bg-purple-900/50 border-purple-700 text-purple-300' : 'bg-emerald-900/50 border-emerald-700 text-emerald-300');
 	modeEl.innerHTML = ctx.useTarget ? `<i class="bi bi-bullseye"></i> Target ₱${ctx.tSales.toLocaleString()}` : '<i class="bi bi-bar-chart-fill"></i> Avg Consumption';
 }
 
 function setOrderSummary(skus, suggested, final, cost) {
-	document.getElementById('sum-skus').textContent = skus;
-	document.getElementById('sum-suggested').textContent = suggested;
-	document.getElementById('sum-final').textContent = final;
-	document.getElementById('sum-cost').textContent = '₱' + Math.round(cost).toLocaleString();
+	let sumSkus = document.getElementById('sum-skus');
+	if (sumSkus) sumSkus.textContent = skus;
+	let sumSuggested = document.getElementById('sum-suggested');
+	if (sumSuggested) sumSuggested.textContent = suggested;
+	let sumFinal = document.getElementById('sum-final');
+	if (sumFinal) sumFinal.textContent = final;
+	let sumCost = document.getElementById('sum-cost');
+	if (sumCost) sumCost.textContent = '₱' + Math.round(cost).toLocaleString();
 }
 
 function buildOrderRow(p, ctx) {
@@ -838,10 +879,12 @@ function buildOrderRow(p, ctx) {
 	let finalInput = getCell(row, 'final_input');
 	let finalReadonly = getCell(row, 'final_readonly');
 	if (CLUSTER_VIEW) {
-		finalInput.classList.add('hidden');
-		finalReadonly.classList.remove('hidden');
-		finalReadonly.textContent = sug;
-	} else {
+		if (finalInput) finalInput.classList.add('hidden');
+		if (finalReadonly) {
+			finalReadonly.classList.remove('hidden');
+			finalReadonly.textContent = sug;
+		}
+	} else if (finalInput) {
 		finalInput.value = fv;
 		finalInput.placeholder = sug;
 		finalInput.dataset.finalProductId = p.id;
@@ -866,9 +909,13 @@ function renderOrderTable() {
 	let mult = getEffMult();
 	let dayName = getDelivDayName();
 	let dayIdx = getDelivDayIdx();
-	let od = document.getElementById('order-date').value;
-	let dd = document.getElementById('delivery-date').value;
-	let tsRaw = document.getElementById('target-sales-input').value;
+	let orderDateEl = document.getElementById('order-date');
+	let deliveryDateEl = document.getElementById('delivery-date');
+	let targetSalesEl = document.getElementById('target-sales-input');
+	if (!orderDateEl || !deliveryDateEl || !targetSalesEl) return;
+	let od = orderDateEl.value;
+	let dd = deliveryDateEl.value;
+	let tsRaw = targetSalesEl.value;
 	let tSales = tsRaw !== '' ? parseFloat(tsRaw) : null;
 	let useTarget = tSales !== null && tSales > 0;
 	let ctx = {
@@ -884,6 +931,7 @@ function renderOrderTable() {
 	let filteredProducts = PRODUCTS.filter(p => categoryMatches(p) && searchMatches(p));
 	let tbody = document.getElementById('order-table-body');
 	let tfoot = document.getElementById('order-table-foot');
+	if (!tbody || !tfoot) return;
 	let totSug = 0,
 		totFinal = 0,
 		totPlant = 0,
@@ -1274,11 +1322,16 @@ function renderWeeklyOrderTable() {
 	});
 	setCell(footRow, 'week_total', totalFinal || '—');
 	foot.appendChild(footRow);
-	document.getElementById('weekly-plan-summary').textContent = `${dates.length} delivery days · ${formatPlanDate(dates[0])} to ${formatPlanDate(dates[dates.length - 1])}`;
-	document.getElementById('weekly-sum-skus').textContent = weeklyProductRows.filter(Boolean).length;
-	document.getElementById('weekly-sum-suggested').textContent = totalSuggested;
-	document.getElementById('weekly-sum-final').textContent = totalFinal;
-	document.getElementById('weekly-sum-cost').textContent = '₱' + Math.round(totalCost).toLocaleString();
+	let weeklyPlanSummary = document.getElementById('weekly-plan-summary');
+	if (weeklyPlanSummary) weeklyPlanSummary.textContent = `${dates.length} delivery days · ${formatPlanDate(dates[0])} to ${formatPlanDate(dates[dates.length - 1])}`;
+	let weeklySumSkus = document.getElementById('weekly-sum-skus');
+	if (weeklySumSkus) weeklySumSkus.textContent = weeklyProductRows.filter(Boolean).length;
+	let weeklySumSuggested = document.getElementById('weekly-sum-suggested');
+	if (weeklySumSuggested) weeklySumSuggested.textContent = totalSuggested;
+	let weeklySumFinal = document.getElementById('weekly-sum-final');
+	if (weeklySumFinal) weeklySumFinal.textContent = totalFinal;
+	let weeklySumCost = document.getElementById('weekly-sum-cost');
+	if (weeklySumCost) weeklySumCost.textContent = '₱' + Math.round(totalCost).toLocaleString();
 }
 
 // ---------------------------------------------------------------- Submit
@@ -1535,15 +1588,19 @@ function buildHistoryWeek(g) {
 	let deleteBtn = getCell(week, 'delete_btn');
 	deleteBtn.dataset.orderDate = g.date;
 	deleteBtn.addEventListener('click', onDeleteOrderDateClick);
-	getCell(week, 'table').style.minWidth = Math.max(760, 180 + dates.length * 145 + 100) + 'px';
+	let tableEl = getCell(week, 'table');
+	if (tableEl) tableEl.style.minWidth = Math.max(760, 180 + dates.length * 145 + 100) + 'px';
 	let headRow = getCell(week, 'head_row');
-	dates.forEach(date => {
-		let th = cloneTemplate('tmpl-history-head-date');
-		setCell(th, 'date_label', formatPlanDate(date));
-		insertBeforeCell(headRow, th, 'week_total_head');
-	});
+	if (headRow) {
+		dates.forEach(date => {
+			let th = cloneTemplate('tmpl-history-head-date');
+			setCell(th, 'date_label', formatPlanDate(date));
+			insertBeforeCell(headRow, th, 'week_total_head');
+		});
+	}
 	let body = getCell(week, 'body');
-	products.forEach(product => {
+	if (body) {
+		products.forEach(product => {
 		let row = cloneTemplate('tmpl-history-product-row');
 		setCell(row, 'name', product.productName);
 		setCell(row, 'code', product.productId);
@@ -1560,19 +1617,24 @@ function buildHistoryWeek(g) {
 			setCell(td, 'suggested', item.suggested);
 			setCell(td, 'max', item.max);
 			let finalEl = setCell(td, 'final', item.final);
+			if (!finalEl) return;
 			finalEl.dataset.quantity = item.final;
 			finalEl.dataset.orderId = item.orderId;
 			let approvalStatus = getCell(td, 'approval_status');
 			if (item.status === 'rejected') {
-				approvalStatus.textContent = 'Rejected';
-				approvalStatus.classList.remove('hidden');
+				if (approvalStatus) {
+					approvalStatus.textContent = 'Rejected';
+					approvalStatus.classList.remove('hidden');
+				}
 				finalEl.classList.remove('cursor-pointer', 'hover:ring-2', 'hover:ring-sky-300');
 				finalEl.classList.add('cursor-not-allowed', 'text-rose-700', 'bg-rose-50');
 				finalEl.title = 'Rejected orders cannot be edited';
 			} else {
 				if (item.status === 'pending') {
-					approvalStatus.textContent = 'Waiting for approval';
-					approvalStatus.classList.remove('hidden');
+					if (approvalStatus) {
+						approvalStatus.textContent = 'Waiting for approval';
+						approvalStatus.classList.remove('hidden');
+					}
 					finalEl.classList.add('text-amber-700', 'bg-amber-50');
 					finalEl.title = 'Click to edit quantity (Waiting for approval)';
 				} else {
@@ -1585,19 +1647,23 @@ function buildHistoryWeek(g) {
 		setCell(row, 'week_total', rowTotal);
 		appendObservedRow(body, row);
 	});
+	}
 	let footRow = getCell(week, 'foot_row');
-	dates.forEach(date => {
-		let total = g.items.filter(item => item.delivDate === date).reduce((sum, item) => sum + Number(item.finalOrder || 0), 0);
-		let td = cloneTemplate('tmpl-history-foot-cell');
-		setCell(td, 'total', total);
-		insertBeforeCell(footRow, td, 'week_total');
-	});
+	if (footRow) {
+		dates.forEach(date => {
+			let total = g.items.filter(item => item.delivDate === date).reduce((sum, item) => sum + Number(item.finalOrder || 0), 0);
+			let td = cloneTemplate('tmpl-history-foot-cell');
+			setCell(td, 'total', total);
+			insertBeforeCell(footRow, td, 'week_total');
+		});
+	}
 	setCell(week, 'week_total', g.finalTotal);
 	return week;
 }
 
 function renderHistory() {
 	let container = document.getElementById('history-weekly-container');
+	if (!container) return;
 	let detailPanel = document.getElementById('history-detail-panel');
 	if (detailPanel) {
 		detailPanel.classList.add('hidden');
@@ -1620,16 +1686,20 @@ function renderHistory() {
 		setCell(card, 'total_cost', '₱' + g.totalCost.toLocaleString());
 		setCell(card, 'suggested_total', g.suggestedTotal.toLocaleString());
 		let viewBtn = getCell(card, 'view_btn');
-		viewBtn.dataset.index = index;
-		viewBtn.addEventListener('click', onHistoryViewClick);
+		if (viewBtn) {
+			viewBtn.dataset.index = index;
+			viewBtn.addEventListener('click', onHistoryViewClick);
+		}
 		let editBtn = getCell(card, 'edit_btn');
 		if (editBtn) {
 			editBtn.dataset.index = index;
 			editBtn.addEventListener('click', onHistoryEditClick);
 		}
 		let deleteBtn = getCell(card, 'delete_btn');
-		deleteBtn.dataset.orderDate = g.date;
-		deleteBtn.addEventListener('click', onDeleteOrderDateClick);
+		if (deleteBtn) {
+			deleteBtn.dataset.orderDate = g.date;
+			deleteBtn.addEventListener('click', onDeleteOrderDateClick);
+		}
 		container.appendChild(card);
 	});
 }
@@ -1720,10 +1790,14 @@ function showHistoryWeek(index) {
 	let shell = cloneTemplate('tmpl-history-detail-shell');
 	setCell(shell, 'title', 'Order week · ' + g.date);
 	let exportBtn = getCell(shell, 'export_btn');
-	exportBtn.dataset.orderDate = g.date;
-	exportBtn.addEventListener('click', onExportHistoryClick);
-	getCell(shell, 'close_btn').addEventListener('click', closeHistoryModal);
-	getCell(shell, 'content').appendChild(buildHistoryWeek(g));
+	if (exportBtn) {
+		exportBtn.dataset.orderDate = g.date;
+		exportBtn.addEventListener('click', onExportHistoryClick);
+	}
+	let closeBtn = getCell(shell, 'close_btn');
+	if (closeBtn) closeBtn.addEventListener('click', closeHistoryModal);
+	let content = getCell(shell, 'content');
+	if (content) content.appendChild(buildHistoryWeek(g));
 	unobserveRows(detailPanel);
 	detailPanel.innerHTML = '';
 	detailPanel.appendChild(shell);
@@ -1732,7 +1806,8 @@ function showHistoryWeek(index) {
 }
 
 function closeHistoryModal() {
-	document.getElementById('history-detail-panel').classList.add('hidden');
+	let detailPanel = document.getElementById('history-detail-panel');
+	if (detailPanel) detailPanel.classList.add('hidden');
 	document.body.classList.remove('overflow-hidden');
 }
 
@@ -2104,6 +2179,7 @@ function toggleWeekCard(event) {
 	content.setAttribute('aria-hidden', String(!shouldExpand));
 	content.inert = !shouldExpand;
 	content.classList.toggle('is-open', shouldExpand);
+	content.classList.toggle('hidden', !shouldExpand);
 	icon.classList.toggle('bi-chevron-down', isExpanded);
 	icon.classList.toggle('bi-chevron-up', shouldExpand);
 	if (shouldExpand && card.dataset.loaded !== 'true') loadWeekCardDetails(card);
@@ -2129,11 +2205,12 @@ function buildWeekDayCell(p, w, di, m, reportDate, knownReports, weekSales, week
 		qtyEl.style.color = '#475569';
 	}
 	if (bulkQty > 0) {
-		getCell(td, 'tags').classList.remove('hidden');
+		let tagsEl = getCell(td, 'tags');
+		if (tagsEl) tagsEl.classList.remove('hidden');
 		let posEl = setCell(td, 'pos', 'POS ' + posQty);
-		posEl.title = `Actual POS Sold: ${posQty} qty (Total Sold ${totalQty} - Bulk Order ${bulkQty})`;
+		if (posEl) posEl.title = `Actual POS Sold: ${posQty} qty (Total Sold ${totalQty} - Bulk Order ${bulkQty})`;
 		let boEl = setCell(td, 'bo', 'BO ' + bulkQty);
-		boEl.title = `Bulk Order: ${bulkQty} qty${bulkCell.date ? ` • Uploaded ${bulkCell.date}` : ''}`;
+		if (boEl) boEl.title = `Bulk Order: ${bulkQty} qty${bulkCell.date ? ` • Uploaded ${bulkCell.date}` : ''}`;
 	}
 	return td;
 }
@@ -2163,12 +2240,13 @@ function renderWeekCardDetails(card, w, data) {
 		badges.appendChild(badge);
 	}
 	if (bulkInfo.has_bulk_order) {
-		getCell(card, 'bulk_detail').classList.remove('hidden');
+		let bulkDetailEl = getCell(card, 'bulk_detail');
+		if (bulkDetailEl) bulkDetailEl.classList.remove('hidden');
 		setCell(card, 'bulk_sales', '₱' + Number(bulkInfo.sales || 0).toLocaleString());
 		setCell(card, 'bulk_tc', Number(bulkInfo.tc || 0).toLocaleString());
 	}
 	let headRow = getCell(card, 'head_row');
-	if (headRow.dataset.daysBuilt !== 'true') {
+	if (headRow && headRow.dataset.daysBuilt !== 'true') {
 		DAYS_DISPLAY.forEach(d => {
 			let th = cloneTemplate('tmpl-week-day-head');
 			setCell(th, 'day', d.slice(0, 3));
@@ -2177,19 +2255,21 @@ function renderWeekCardDetails(card, w, data) {
 		headRow.dataset.daysBuilt = 'true';
 	}
 	let body = getCell(card, 'body');
-	body.replaceChildren();
-	PRODUCTS.forEach(p => {
-		let row = cloneTemplate('tmpl-week-product-row');
-		setCell(row, 'name', p.name);
-		DISP_TO_JS.forEach(di => {
-			let reportDate = weekDates.find(date => date.getDay() === di);
-			insertBeforeCell(row, buildWeekDayCell(p, w, di, m, reportDate, knownReports, weekSales, weekBulkProductData), 'total');
+	if (body) {
+		body.replaceChildren();
+		PRODUCTS.forEach(p => {
+			let row = cloneTemplate('tmpl-week-product-row');
+			setCell(row, 'name', p.name);
+			DISP_TO_JS.forEach(di => {
+				let reportDate = weekDates.find(date => date.getDay() === di);
+				insertBeforeCell(row, buildWeekDayCell(p, w, di, m, reportDate, knownReports, weekSales, weekBulkProductData), 'total');
+			});
+			let rTot = DISP_TO_JS.reduce((s, di) => s + Number(weekSales[String(p.id)]?.[di] || 0), 0);
+			setCell(row, 'total', rTot);
+			setCell(row, 'revenue', '₱' + (rTot * p.sellingPrice).toLocaleString());
+			body.appendChild(row);
 		});
-		let rTot = DISP_TO_JS.reduce((s, di) => s + Number(weekSales[String(p.id)]?.[di] || 0), 0);
-		setCell(row, 'total', rTot);
-		setCell(row, 'revenue', '₱' + (rTot * p.sellingPrice).toLocaleString());
-		body.appendChild(row);
-	});
+	}
 	let footRow = getCell(card, 'foot_row');
 	dTots.forEach(t => {
 		let td = cloneTemplate('tmpl-week-foot-cell');
@@ -2200,10 +2280,10 @@ function renderWeekCardDetails(card, w, data) {
 	setCell(card, 'week_revenue', '₱' + totRev.toLocaleString());
 	let loading = getCell(card, 'week_loading');
 	let table = getCell(card, 'week_table');
-	loading?.classList.add('hidden');
-	table?.classList.remove('hidden');
+	if (loading) loading.classList.add('hidden');
+	if (table) table.classList.remove('hidden');
 	let observer = getRowObserver();
-	if (observer) body.querySelectorAll('tr').forEach(row => observer.observe(row));
+	if (observer && body) body.querySelectorAll('tr').forEach(row => observer.observe(row));
 	card.dataset.loaded = 'true';
 }
 
@@ -2211,9 +2291,11 @@ async function loadWeekCardDetails(card) {
 	let weekIndex = Number(card.dataset.weekIndex);
 	let loading = getCell(card, 'week_loading');
 	let table = getCell(card, 'week_table');
-	loading?.classList.remove('hidden');
-	loading.textContent = 'Loading week data…';
-	table?.classList.add('hidden');
+	if (loading) {
+		loading.classList.remove('hidden');
+		loading.textContent = 'Loading week data…';
+	}
+	if (table) table.classList.add('hidden');
 	let cacheKey = `${DAILY_AVERAGE_END_DATE}|${weekIndex}`;
 	try {
 		let data = DAILY_AVERAGE_WEEK_CACHE.get(cacheKey);
@@ -2246,6 +2328,7 @@ async function loadWeekCardDetails(card) {
 
 async function renderWeeklyTables() {
 	let con = document.getElementById('weekly-sales-tables-container');
+	if (!con) return;
 	unobserveRows(con);
 	con.replaceChildren();
 	let weekCards = document.createDocumentFragment();
@@ -2259,10 +2342,11 @@ async function renderWeeklyTables() {
 		card.dataset.weekIndex = String(w);
 		header.addEventListener('click', toggleWeekCard);
 		addClasses(header, WEEK_META[w].hCls);
-		addClasses(getCell(card, 'foot_row'), WEEK_META[w].hCls);
+		let footRow = getCell(card, 'foot_row');
+		if (footRow) addClasses(footRow, WEEK_META[w].hCls);
 		setCell(card, 'label', WEEK_META[w].label);
 		let rangeEl = setCell(card, 'range', `${formatDailyAverageDate(weekDates[0])}–${formatDailyAverageDate(weekDates[6])} · Reports ${reportedDays}/7`);
-		if (reportedDays < 7) rangeEl.classList.add('text-amber-200');
+		if (rangeEl && reportedDays < 7) rangeEl.classList.add('text-amber-200');
 		setCell(card, 'units', Number(totals.units || 0).toLocaleString());
 		setCell(card, 'revenue', '₱' + Number(totals.revenue || 0).toLocaleString());
 		weekCards.appendChild(card);
@@ -2367,6 +2451,7 @@ function renderAvgSummary() {
 	let planSuggestions = getCurrentOraclePlanSuggestions();
 	let body = document.getElementById('avg-summary-body');
 	let foot = document.getElementById('avg-summary-foot');
+	if (!body || !foot) return;
 	unobserveRows(body);
 	body.innerHTML = '';
 	foot.innerHTML = '';

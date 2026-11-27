@@ -5310,6 +5310,8 @@ def store_manager_report():
         
     return redirect(url_for('views.v2_base_2', m='daily_report_v2'))
     
+    # Codes below is slated to be removed
+    
     # Get the store managed by this user
     store = Store.query.filter_by(manager_id=current_user.id).first()
     
