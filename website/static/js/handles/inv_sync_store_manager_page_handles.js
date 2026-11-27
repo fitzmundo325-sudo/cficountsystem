@@ -2820,8 +2820,8 @@ function updateCellColors(row, theoValue, varValue, varPesoValue) {
 		if (value === 0) {
 			// Green for zero
 			cell.classList.add('bg-green-100', 'text-green-800');
-		} else if (value >= 1) {
-			// Purple for values >= 1
+		} else if (value > 0) {
+			// Purple for positive values
 			cell.classList.add('bg-violet-100', 'text-violet-800');
 		} else if (value < 0) {
 			// Red for negative values

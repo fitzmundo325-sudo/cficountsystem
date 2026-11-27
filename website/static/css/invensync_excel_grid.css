@@ -104,6 +104,10 @@
 #main-content tbody tr[data-product-id] td[data-field].excel-cell-readonly,
 #fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-readonly {
   cursor: not-allowed !important;
+}
+
+#main-content tbody tr[data-product-id] td[data-field].excel-cell-readonly:not(.theo-ending):not(.variance):not(.variance-peso),
+#fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-readonly:not(.theo-ending):not(.variance):not(.variance-peso) {
   background-color: rgba(248, 250, 252, 0.85);
 }
 
@@ -168,8 +172,8 @@
   z-index: 10;
 }
 
-html.admin-dark #main-content tbody tr[data-product-id] td[data-field].excel-cell-readonly,
-html.admin-dark #fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-readonly {
+html.admin-dark #main-content tbody tr[data-product-id] td[data-field].excel-cell-readonly:not(.theo-ending):not(.variance):not(.variance-peso),
+html.admin-dark #fullscreen-modal tbody tr[data-product-id] td[data-field].excel-cell-readonly:not(.theo-ending):not(.variance):not(.variance-peso) {
   background-color: rgba(30, 41, 59, 0.55);
 }
 html.admin-dark #main-content tbody tr[data-product-id] td[data-field].excel-cell-active,
