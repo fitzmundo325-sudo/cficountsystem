@@ -676,7 +676,7 @@
   let STORE_DATA_ROUTES = {
     data: '/apis/store_manager_store_data',
     page: {{ url_for('views.store_data_v2_page')|tojson }},
-    dailyReport: {{ url_for('views.store_manager_report')|tojson }},
+    dailyReport: {{ url_for('views.daily_report_v2_page')|tojson }},
     home: {{ url_for('views.home')|tojson }},
     export: ''
   };
@@ -686,5 +686,7 @@
   };
 </script>
 <script defer src="{{ url_for('static', filename='js/handles/store_data_handles.js') }}"></script>
+
+<script defer src="{{ url_for('static', filename='js/modalizer.js') }}"></script>
 
 {% endblock %}
