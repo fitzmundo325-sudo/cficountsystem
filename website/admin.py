@@ -5777,6 +5777,7 @@ def invensync():
         {'value': 'trans_in_qty', 'label': 'Trans-In'},
         {'value': 'bo_qty', 'label': 'BO'},
         {'value': 'adv_del_qty', 'label': 'Booth Sales'},
+        {'value': 'starlink_sold_qty', 'label': 'Starlink Sold'},
         {'value': 'trans_out_qty', 'label': 'Trans-Out'},
         {'value': 'wastage_qty', 'label': 'Waste Qty'},
         {'value': 'wastage_amount', 'label': 'Waste Amt'},
@@ -5879,6 +5880,7 @@ def export_invensync_store_excel_v2(store_id):
             DailyEndingInventoryItem.trans_in_qty,
             DailyEndingInventoryItem.bo_qty,
             DailyEndingInventoryItem.adv_del_qty,
+            DailyEndingInventoryItem.starlink_sold_qty,
             DailyEndingInventoryItem.trans_out_qty,
             DailyEndingInventoryItem.wastage_qty,
             DailyEndingInventoryItem.wastage_amount,
@@ -6338,7 +6340,7 @@ def export_invensync_store_excel(store_id):
         if export_type in ('range', 'all'):
             headers = [
                 'Date', 'Product Code', 'Product', 'Category',
-                'Beginning', 'Delivery', 'Trans-In', 'BO', 'Adv Del',
+                'Beginning', 'Delivery', 'Trans-In', 'BO', 'Adv Del', 'Starlink Sold',
                 'Trans-Out', 'Waste Qty', 'Waste Amt', 'CSI', 'Sold',
                 'Ending D+5', 'Ending D+4', 'Ending D+3',
                 'Total Ending', 'Total Peso SRP', 'Theo Ending',
@@ -6347,7 +6349,7 @@ def export_invensync_store_excel(store_id):
         else:
             headers = [
                 'Product Code', 'Product', 'Category',
-                'Beginning', 'Delivery', 'Trans-In', 'BO', 'Adv Del',
+                'Beginning', 'Delivery', 'Trans-In', 'BO', 'Adv Del', 'Starlink Sold',
                 'Trans-Out', 'Waste Qty', 'Waste Amt', 'CSI', 'Sold',
                 'Ending D+5', 'Ending D+4', 'Ending D+3',
                 'Total Ending', 'Total Peso SRP', 'Theo Ending',
@@ -6381,6 +6383,7 @@ def export_invensync_store_excel(store_id):
                 item.trans_in_qty,
                 item.bo_qty,
                 item.adv_del_qty,
+                getattr(item, 'starlink_sold_qty', 0),
                 item.trans_out_qty,
                 item.wastage_qty,
                 item.wastage_amount,
@@ -6640,7 +6643,7 @@ def save_invensync_inventory_correction():
 
     editable_fields = {
         'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
-        'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+        'adv_del_qty', 'starlink_sold_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
         'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
         'ending_d3_qty', 'remarks',
     }
@@ -6743,7 +6746,7 @@ def update_invensync_unlock_scope():
 
         allowed_fields = {
             'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
-            'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+            'adv_del_qty', 'starlink_sold_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
             'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
             'ending_d3_qty', 'remarks',
         }

@@ -11,6 +11,7 @@
 		trans_in_qty: 'Trans-In',
 		bo_qty: 'BO',
 		adv_del_qty: 'Booth Sales',
+		starlink_sold_qty: 'Starlink Sold',
 		trans_out_qty: 'Trans-Out',
 		wastage_qty: 'Waste Qty',
 		wastage_amount: 'Waste Amt',

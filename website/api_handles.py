@@ -3772,6 +3772,7 @@ def get_invensync_data():
             {'value': 'trans_in_qty', 'label': 'Trans-In'},
             {'value': 'bo_qty', 'label': 'BO'},
             {'value': 'adv_del_qty', 'label': 'Booth Sales'},
+            {'value': 'starlink_sold_qty', 'label': 'Starlink Sold'},
             {'value': 'trans_out_qty', 'label': 'Trans-Out'},
             {'value': 'wastage_qty', 'label': 'Waste Qty'},
             {'value': 'wastage_amount', 'label': 'Waste Amt'},
@@ -3885,7 +3886,7 @@ def save_invensync_inventory_correction():
 
     editable_fields = {
         'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
-        'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+        'adv_del_qty', 'starlink_sold_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
         'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
         'ending_d3_qty', 'remarks',
     }
@@ -3985,7 +3986,7 @@ def update_invensync_unlock_scope():
 
         allowed_fields = {
             'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
-            'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+            'adv_del_qty', 'starlink_sold_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
             'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
             'ending_d3_qty', 'remarks',
         }
@@ -4263,6 +4264,7 @@ def _serialize_inventory_item(item):
         'trans_in_qty': item.trans_in_qty,
         'bo_qty': item.bo_qty,
         'adv_del_qty': item.adv_del_qty,
+        'starlink_sold_qty': getattr(item, 'starlink_sold_qty', 0),
         'trans_out_qty': item.trans_out_qty,
         'wastage_qty': item.wastage_qty,
         'wastage_amount': round(wastage_qty * srp_price, 2),
@@ -4948,6 +4950,7 @@ def _recalculate_inventory_item(item, sold_override=None):
         + int(item.trans_in_qty or 0)
         + int(item.bo_qty or 0)
         + int(item.adv_del_qty or 0)
+        + int(getattr(item, 'starlink_sold_qty', 0) or 0)
         - int(item.trans_out_qty or 0)
         - int(item.wastage_qty or 0)
         - int(item.csi_qty or 0)

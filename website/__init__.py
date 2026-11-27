@@ -233,6 +233,18 @@ def _ensure_maintenance_mode_table():
         MaintenanceMode.__table__.create(db.engine, checkfirst=True)
 
 
+def _ensure_daily_ending_inventory_item_starlink_column():
+    from sqlalchemy import inspect
+
+    inspector = inspect(db.engine)
+    if 'daily_ending_inventory_item' not in inspector.get_table_names():
+        return
+    existing_columns = {col['name'] for col in inspector.get_columns('daily_ending_inventory_item')}
+    if 'starlink_sold_qty' not in existing_columns:
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE daily_ending_inventory_item ADD COLUMN starlink_sold_qty INTEGER DEFAULT 0"))
+
+
 def _ensure_taf_transfer_live_lock_columns():
     from sqlalchemy import inspect
 
@@ -589,6 +601,7 @@ def create_app():
     with app.app_context():
         db.create_all()
         _ensure_taf_transfer_live_lock_columns()
+        _ensure_daily_ending_inventory_item_starlink_column()
         # _ensure_oracle_order_review_columns()
         # _ensure_api_usage_model()
         # _ensure_product_master_columns()

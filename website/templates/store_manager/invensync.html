@@ -13,8 +13,8 @@
 {% set is_beginning_locked = (inventory.is_beginning_finalized|default(false) or store_beginning_baseline_finalized|default(false)) and not can_enter_beginning_stock %}
 {% set hide_beginning_stock = 'beginning_qty' in global_config_data.get('hidden_columns', []) and not can_enter_beginning_stock %}
 {% set lock_beginning_stock = is_day_locked or is_beginning_locked or (not can_enter_beginning_stock and ('beginning_qty' not in global_config_data.get('editable_columns', []) or 'beginning_qty' in global_config_data.get('locked_columns', []))) %}
-{% set inventory_column_fields = ['beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'wastage_amount', 'csi_qty', 'quantity_sold', 'ending_d5_qty', 'ending_d4_qty', 'ending_d3_qty', 'total_ending_qty', 'total_peso_srp', 'theo_ending_qty', 'variance_qty', 'variance_peso', 'remarks'] %}
-{% set pre_ending_inventory_fields = ['beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'wastage_amount', 'csi_qty', 'quantity_sold'] %}
+{% set inventory_column_fields = ['beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty', 'starlink_sold_qty', 'trans_out_qty', 'wastage_qty', 'wastage_amount', 'csi_qty', 'quantity_sold', 'ending_d5_qty', 'ending_d4_qty', 'ending_d3_qty', 'total_ending_qty', 'total_peso_srp', 'theo_ending_qty', 'variance_qty', 'variance_peso', 'remarks'] %}
+{% set pre_ending_inventory_fields = ['beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty', 'starlink_sold_qty', 'trans_out_qty', 'wastage_qty', 'wastage_amount', 'csi_qty', 'quantity_sold'] %}
 {% set ending_inventory_fields = ['ending_d5_qty', 'ending_d4_qty', 'ending_d3_qty'] %}
 {% set post_ending_inventory_fields = ['total_ending_qty', 'total_peso_srp', 'theo_ending_qty', 'variance_qty', 'variance_peso', 'remarks'] %}
 {% set column_count = namespace(visible=0) %}
@@ -481,6 +481,7 @@
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'trans_in_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Trans-In</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'bo_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>BO</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'adv_del_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Booth Sales</th>
+            <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'starlink_sold_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Starlink Sold</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'trans_out_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Trans-Out</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'wastage_qty' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Waste Qty</th>
             <th class="px-2 py-2 text-center font-semibold bg-emerald-50 text-black border-r border-slate-300 sticky top-[42px] z-40"{% if 'wastage_amount' in global_config_data.get('hidden_columns', []) %} style="display:none;"{% endif %}>Waste Amt</th>
@@ -584,6 +585,14 @@
                   {% else %}
                     <input type="number" class="adv-del-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'adv_del_qty' not in global_config_data.get('editable_columns', []) or 'adv_del_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
                       value="{{ inv_item.adv_del_qty if inv_item and inv_item.adv_del_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'adv_del_qty' not in global_config_data.get('editable_columns', []) or 'adv_del_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
+                  {% endif %}
+                </td>
+                <td class="px-2 py-2" data-field="starlink_sold_qty">
+                  {% if 'starlink_sold_qty' in global_config_data.get('hidden_columns', []) %}
+                    <!-- Hidden -->
+                  {% else %}
+                    <input type="number" class="starlink-sold-input w-12 px-1.5 py-1.5 text-center bg-white border border-slate-200 rounded text-sm focus:ring-1 focus:ring-sky-400 outline-none{% if 'starlink_sold_qty' not in global_config_data.get('editable_columns', []) or 'starlink_sold_qty' in global_config_data.get('locked_columns', []) %} readonly cursor-not-allowed opacity-75{% endif %}"
+                      value="{{ inv_item.starlink_sold_qty if inv_item and inv_item.starlink_sold_qty else '' }}" onchange="updateInventoryRow(this)"{% if 'starlink_sold_qty' not in global_config_data.get('editable_columns', []) or 'starlink_sold_qty' in global_config_data.get('locked_columns', []) %} readonly{% endif %}>
                   {% endif %}
                 </td>
                 <td class="px-2 py-2" data-field="trans_out_qty">
@@ -1204,7 +1213,7 @@ function clearAdminSelection() {
   inputs.forEach(input => {
     unlockAdminInput(input);
     input.value = '';
-    if (input.classList.contains('sold-input') || input.classList.contains('beginning-input') || input.classList.contains('delivery-input') || input.classList.contains('trans-in-input') || input.classList.contains('bo-input') || input.classList.contains('adv-del-input') || input.classList.contains('trans-out-input') || input.classList.contains('wastage-input') || input.classList.contains('csi-input') || input.classList.contains('ending-d5-input') || input.classList.contains('ending-d4-input') || input.classList.contains('ending-d3-input')) {
+    if (input.classList.contains('sold-input') || input.classList.contains('beginning-input') || input.classList.contains('delivery-input') || input.classList.contains('trans-in-input') || input.classList.contains('bo-input') || input.classList.contains('adv-del-input') || input.classList.contains('starlink-sold-input') || input.classList.contains('trans-out-input') || input.classList.contains('wastage-input') || input.classList.contains('csi-input') || input.classList.contains('ending-d5-input') || input.classList.contains('ending-d4-input') || input.classList.contains('ending-d3-input')) {
       updateInventoryRow(input);
     }
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2694,6 +2703,7 @@ function updateInventoryRow(input) {
   const transIn = parseFloat(row.querySelector('.trans-in-input').value) || 0;
   const bo = parseFloat(row.querySelector('.bo-input').value) || 0;
   const advDel = parseFloat(row.querySelector('.adv-del-input').value) || 0;
+  const starlinkSold = parseFloat(row.querySelector('.starlink-sold-input')?.value) || 0;
   const transOut = parseFloat(row.querySelector('.trans-out-input').value) || 0;
   const wastage = parseFloat(row.querySelector('.wastage-input').value) || 0;
   const csi = parseFloat(row.querySelector('.csi-input').value) || 0;
@@ -2706,7 +2716,7 @@ function updateInventoryRow(input) {
   // Calculate values
   const totalEnding = endingD5 + endingD4 + endingD3;
   const totalPeso = totalEnding * srpPrice;
-  const theoEnding = beginning + delivery + transIn + bo + advDel - transOut - wastage - csi - sold;
+  const theoEnding = beginning + delivery + transIn + bo + advDel + starlinkSold - transOut - wastage - csi - sold;
   const wastageAmount = wastage * srpPrice;
 
   // Update display
@@ -2741,6 +2751,7 @@ function computeRowVariance(row) {
     const transIn = parseFloat(row.querySelector('.trans-in-input').value) || 0;
     const bo = parseFloat(row.querySelector('.bo-input').value) || 0;
     const advDel = parseFloat(row.querySelector('.adv-del-input').value) || 0;
+    const starlinkSold = parseFloat(row.querySelector('.starlink-sold-input')?.value) || 0;
     const transOut = parseFloat(row.querySelector('.trans-out-input').value) || 0;
     const wastage = parseFloat(row.querySelector('.wastage-input').value) || 0;
     const csi = parseFloat(row.querySelector('.csi-input').value) || 0;
@@ -2749,7 +2760,7 @@ function computeRowVariance(row) {
     const endingD4 = parseFloat(row.querySelector('.ending-d4-input').value) || 0;
     const endingD3 = parseFloat(row.querySelector('.ending-d3-input').value) || 0;
     totalEnding = endingD5 + endingD4 + endingD3;
-    theoEnding = beginning + delivery + transIn + bo + advDel - transOut - wastage - csi - sold;
+    theoEnding = beginning + delivery + transIn + bo + advDel + starlinkSold - transOut - wastage - csi - sold;
   }
   const srp = parseFloat(row.querySelector('.srp-price').value) || 0;
   return {
@@ -3495,6 +3506,7 @@ function saveInventory(isBeginningSave = false, finalizeDay = false) {
       trans_in_qty: parseInt(row.querySelector('.trans-in-input')?.value) || 0,
       bo_qty: parseInt(row.querySelector('.bo-input')?.value) || 0,
       adv_del_qty: parseInt(row.querySelector('.adv-del-input')?.value) || 0,
+      starlink_sold_qty: parseInt(row.querySelector('.starlink-sold-input')?.value) || 0,
       trans_out_qty: parseInt(row.querySelector('.trans-out-input')?.value) || 0,
       wastage_qty: parseInt(row.querySelector('.wastage-input')?.value) || 0,
       csi_qty: parseInt(row.querySelector('.csi-input')?.value) || 0,
@@ -4543,7 +4555,7 @@ function closeInvensyncExportModal() {
 </script>
 {% endif %}
 
-<script defer src="{{ url_for('static', filename='js/invensync_excel_grid.js') }}?v=20261126-10"></script>
+<script defer src="{{ url_for('static', filename='js/invensync_excel_grid.js') }}?v=20261127-2"></script>
 
 {% endblock %}
 

@@ -319,6 +319,7 @@ _INVENSYNC_MEANINGFUL_ITEM_FIELDS = (
     'trans_in_qty',
     'bo_qty',
     'adv_del_qty',
+    'starlink_sold_qty',
     'trans_out_qty',
     'wastage_qty',
     'wastage_amount',
@@ -11257,7 +11258,7 @@ def cluster_manager_save_invensync_inventory_correction():
 
     editable_fields = {
         'beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty',
-        'adv_del_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
+        'adv_del_qty', 'starlink_sold_qty', 'trans_out_qty', 'wastage_qty', 'csi_qty',
         'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
         'ending_d3_qty', 'remarks',
     }
@@ -12387,6 +12388,7 @@ def store_manager_data_export():
                     'Trans-In': item.trans_in_qty,
                     'BO': item.bo_qty,
                     'Booth Sales': item.adv_del_qty,
+                    'Starlink Sold': item.starlink_sold_qty,
                     'Trans-Out': item.trans_out_qty,
                     'Waste Qty': item.wastage_qty,
                     'Waste Amt': item.wastage_amount,
@@ -12579,7 +12581,7 @@ def save_daily_ending_inventory():
         
         # Update items
         editable_fields = [
-            'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty',
+            'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty', 'starlink_sold_qty',
             'trans_out_qty', 'wastage_qty', 'csi_qty', 'quantity_sold',
             'ending_d5_qty', 'ending_d4_qty', 'ending_d3_qty', 'remarks',
         ]
@@ -12619,6 +12621,7 @@ def save_daily_ending_inventory():
                 item.trans_in_qty = int(item_data.get('trans_in_qty', 0))
                 item.bo_qty = int(item_data.get('bo_qty', 0))
                 item.adv_del_qty = int(item_data.get('adv_del_qty', 0))
+                item.starlink_sold_qty = int(item_data.get('starlink_sold_qty', 0))
                 item.trans_out_qty = int(item_data.get('trans_out_qty', 0))
                 item.wastage_qty = int(item_data.get('wastage_qty', 0))
                 item.csi_qty = int(item_data.get('csi_qty', 0))
@@ -14428,6 +14431,7 @@ def _recalculate_inventory_item(item, sold_override=None):
         + int(item.trans_in_qty or 0)
         + int(item.bo_qty or 0)
         + int(item.adv_del_qty or 0)
+        + int(item.starlink_sold_qty or 0)
         - int(item.trans_out_qty or 0)
         - int(item.wastage_qty or 0)
         - int(item.csi_qty or 0)

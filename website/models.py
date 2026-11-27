@@ -535,6 +535,7 @@ class DailyEndingInventoryItem(db.Model):
     trans_in_qty = db.Column(db.Integer, default=0)
     bo_qty = db.Column(db.Integer, default=0)
     adv_del_qty = db.Column(db.Integer, default=0)
+    starlink_sold_qty = db.Column(db.Integer, default=0)
     
     # User inputs - Outgoing
     trans_out_qty = db.Column(db.Integer, default=0)

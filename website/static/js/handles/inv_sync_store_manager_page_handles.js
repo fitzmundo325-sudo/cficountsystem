@@ -253,6 +253,7 @@ function renderTableHead(data) {
 		['trans_in_qty', 'Trans-In'],
 		['bo_qty', 'BO'],
 		['adv_del_qty', 'Booth Sales'],
+		['starlink_sold_qty', 'Starlink Sold'],
 		['trans_out_qty', 'Trans-Out'],
 		['wastage_qty', 'Waste Qty'],
 		['wastage_amount', 'Waste Amt'],
@@ -458,7 +459,7 @@ async function renderTableBody(data) {
 				if (isLocked) input.classList.add('cursor-not-allowed', 'opacity-75');
 			};
 
-			['beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty', 'trans_out_qty',
+			['beginning_qty', 'delivery_qty', 'trans_in_qty', 'bo_qty', 'adv_del_qty', 'starlink_sold_qty', 'trans_out_qty',
 				'wastage_qty', 'csi_qty', 'quantity_sold', 'ending_d5_qty', 'ending_d4_qty',
 				'ending_d3_qty', 'remarks'
 			].forEach(setInputCell);
@@ -964,7 +965,7 @@ function clearAdminSelection() {
 	inputs.forEach(input => {
 		unlockAdminInput(input);
 		input.value = '';
-		if (input.classList.contains('sold-input') || input.classList.contains('beginning-input') || input.classList.contains('delivery-input') || input.classList.contains('trans-in-input') || input.classList.contains('bo-input') || input.classList.contains('adv-del-input') || input.classList.contains('trans-out-input') || input.classList.contains('wastage-input') || input.classList.contains('csi-input') || input.classList.contains('ending-d5-input') || input.classList.contains('ending-d4-input') || input.classList.contains('ending-d3-input')) {
+		if (input.classList.contains('sold-input') || input.classList.contains('beginning-input') || input.classList.contains('delivery-input') || input.classList.contains('trans-in-input') || input.classList.contains('bo-input') || input.classList.contains('adv-del-input') || input.classList.contains('starlink-sold-input') || input.classList.contains('trans-out-input') || input.classList.contains('wastage-input') || input.classList.contains('csi-input') || input.classList.contains('ending-d5-input') || input.classList.contains('ending-d4-input') || input.classList.contains('ending-d3-input')) {
 			updateInventoryRow(input);
 		}
 		input.dispatchEvent(new Event('input', {
@@ -2531,6 +2532,7 @@ function updateInventoryRow(input) {
 	let transIn = parseFloat(row.querySelector('.trans-in-input').value) || 0;
 	let bo = parseFloat(row.querySelector('.bo-input').value) || 0;
 	let advDel = parseFloat(row.querySelector('.adv-del-input').value) || 0;
+	let starlinkSold = parseFloat(row.querySelector('.starlink-sold-input')?.value) || 0;
 	let transOut = parseFloat(row.querySelector('.trans-out-input').value) || 0;
 	let wastage = parseFloat(row.querySelector('.wastage-input').value) || 0;
 	let csi = parseFloat(row.querySelector('.csi-input').value) || 0;
@@ -2543,7 +2545,7 @@ function updateInventoryRow(input) {
 	// Calculate values
 	let totalEnding = endingD5 + endingD4 + endingD3;
 	let totalPeso = totalEnding * srpPrice;
-	let theoEnding = beginning + delivery + transIn + bo + advDel - transOut - wastage - csi - sold;
+	let theoEnding = beginning + delivery + transIn + bo + advDel + starlinkSold - transOut - wastage - csi - sold;
 	let wastageAmount = wastage * srpPrice;
 
 	// Update display
@@ -2578,6 +2580,7 @@ function computeRowVariance(row) {
 		let transIn = parseFloat(row.querySelector('.trans-in-input').value) || 0;
 		let bo = parseFloat(row.querySelector('.bo-input').value) || 0;
 		let advDel = parseFloat(row.querySelector('.adv-del-input').value) || 0;
+		let starlinkSold = parseFloat(row.querySelector('.starlink-sold-input')?.value) || 0;
 		let transOut = parseFloat(row.querySelector('.trans-out-input').value) || 0;
 		let wastage = parseFloat(row.querySelector('.wastage-input').value) || 0;
 		let csi = parseFloat(row.querySelector('.csi-input').value) || 0;
@@ -2586,7 +2589,7 @@ function computeRowVariance(row) {
 		let endingD4 = parseFloat(row.querySelector('.ending-d4-input').value) || 0;
 		let endingD3 = parseFloat(row.querySelector('.ending-d3-input').value) || 0;
 		totalEnding = endingD5 + endingD4 + endingD3;
-		theoEnding = beginning + delivery + transIn + bo + advDel - transOut - wastage - csi - sold;
+		theoEnding = beginning + delivery + transIn + bo + advDel + starlinkSold - transOut - wastage - csi - sold;
 	}
 	let srp = parseFloat(row.querySelector('.srp-price').value) || 0;
 	return {
@@ -3374,6 +3377,7 @@ function saveInventory(isBeginningSave = false, finalizeDay = false) {
 			trans_in_qty: parseInt(row.querySelector('.trans-in-input')?.value) || 0,
 			bo_qty: parseInt(row.querySelector('.bo-input')?.value) || 0,
 			adv_del_qty: parseInt(row.querySelector('.adv-del-input')?.value) || 0,
+			starlink_sold_qty: parseInt(row.querySelector('.starlink-sold-input')?.value) || 0,
 			trans_out_qty: parseInt(row.querySelector('.trans-out-input')?.value) || 0,
 			wastage_qty: parseInt(row.querySelector('.wastage-input')?.value) || 0,
 			csi_qty: parseInt(row.querySelector('.csi-input')?.value) || 0,
