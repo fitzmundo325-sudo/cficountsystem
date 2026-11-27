@@ -5305,6 +5305,9 @@ def store_manager_report():
     if current_user.role != 'Store Manager':
         flash('Access denied. Only Store Managers can access this page.', category='error')
         return redirect(url_for('views.home'))
+        
+        
+    return redirect(url_for('views.v2_base_2', m='daily_report_v2'))
     
     # Get the store managed by this user
     store = Store.query.filter_by(manager_id=current_user.id).first()
