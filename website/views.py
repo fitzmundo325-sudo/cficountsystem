@@ -15111,14 +15111,7 @@ def cluster_data_v2_page():
 # Store Manager Section
 # ================================================
        
-#v2 of Cluster manager - Cluster Data page
-@views.route('/store-manager/store_data_v2', methods=['GET'])
-@login_required
-def store_data_v2_page():
-    return render_template("store_manager/store_data_v2.html", user=current_user, page='clusters')
 
-
-       
 #v2 of Daily Report
 @views.route('/store-manager/daily_report_v2', methods=['GET'])
 @login_required
@@ -15135,6 +15128,26 @@ def pos_sold_v2_page():
 
 
 
+
+@views.route('/store-manager/store_data_v2')
+@login_required
+def store_data_v2_page():
+    if current_user.role != 'Store Manager':
+        flash('Access denied. Only Store Managers can access this page.', category='error')
+        return redirect(url_for('views.home'))
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        flash('You are not assigned to any store yet.', category='error')
+        return redirect(url_for('views.home'))
+
+    today = date.today()
+    return render_template(
+        'store_manager/store_data_v2.html',
+        user=current_user,
+        current_month=request.args.get('month', today.strftime('%m')),
+        current_year=request.args.get('year', str(today.year))
+    )
 
 
     

@@ -8758,6 +8758,172 @@ def store_manager_pos_sold_data():
     }
 
 
+
+# Store Data v2 ==================
+
+SD_REPORT_FIELDS = (
+    'pos_gross_sales', 'ci_regular_gross_sales',
+    'gds_sales', 'gds_tc', 'grab_sales', 'grab_tc', 'foodpanda_sales', 'foodpanda_tc',
+    'boothselling_sales', 'boothselling_tc', 'bulk_order_sales', 'bulk_order_tc',
+    'reseller_sales', 'reseller_tc', 'tieup_sales', 'tieup_tc',
+    'ambulant_sales', 'ambulant_tc',
+    'senior_pwd_discount', 'promo_ldts_discount', 'bulk_orders_discount',
+    'pos_qty_gc', 'pos_qty_rolls', 'pos_qty_premium',
+    'pos_qty_cheesy_ensay', 'pos_qty_slices', 'pos_qty_mamon',
+    'ending_inv_gc', 'ending_inv_rolls', 'ending_inv_premium',
+)
+
+
+def _sd_clean(value):
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
+
+
+def _sd_serialize_report(report):
+    calc = getattr(report, 'calc', None) or {}
+    if not isinstance(calc, dict):
+        calc = dict(vars(calc))
+    row = {
+        'id': int(report.id),
+        'status': report.status or '',
+        'report_date': report.report_date.strftime('%Y-%m-%d') if report.report_date else '',
+        'calc': {key: _sd_clean(value) for key, value in calc.items()},
+    }
+    for field in SD_REPORT_FIELDS:
+        row[field] = _sd_clean(getattr(report, field, None)) or 0
+    return row
+
+
+@api_handles.route('/store_manager_store_data', methods=['GET', 'POST'])
+@login_required
+def store_manager_store_data_v2():
+    if current_user.role != 'Store Manager':
+        return {'type': 'error', 'message': 'Access denied. Only Store Managers can access this page.'}
+
+    store = Store.query.filter_by(manager_id=current_user.id).first()
+    if not store:
+        return {'type': 'error', 'message': 'You are not assigned to any store yet.'}
+
+    today = date.today()
+    try:
+        month_int = int(request.form.get('month') or request.args.get('month') or today.month)
+        year_int = int(request.form.get('year') or request.args.get('year') or today.year)
+        _, num_days = monthrange(year_int, month_int)
+        start_date = date(year_int, month_int, 1)
+        end_date = date(year_int, month_int, num_days)
+    except (ValueError, TypeError):
+        return {'type': 'error', 'message': 'Invalid month or year.'}
+
+    reports = DailyReport.query.filter(
+        DailyReport.store_id == store.id,
+        DailyReport.report_date >= start_date,
+        DailyReport.report_date <= end_date
+    ).all()
+    _coalesce_numeric_fields_for_reports(reports)
+    _apply_pos_qty_from_pos_categories(reports)
+    _apply_ending_inventory_from_invensync(reports)
+    approved_reports = [report for report in reports if (report.status or '') == 'Approved']
+
+    targets = StoreTarget.query.filter(
+        StoreTarget.store_id == store.id,
+        StoreTarget.target_date >= start_date,
+        StoreTarget.target_date <= end_date
+    ).all()
+
+    targets_by_date = {}
+    for target in targets:
+        targets_by_date[target.target_date.strftime('%Y-%m-%d')] = {
+            'target_net': target.target_net,
+            'last_year_net': target.last_year_net,
+            'gbi_target': target.gbi_target
+        }
+
+    daily_targets = _aggregate_targets_by_day(targets)
+    acc_daily_targets = _build_acc_targets_by_day(year_int, month_int, daily_targets)
+    acc_daily_sales = _build_acc_sales_by_day(year_int, month_int, approved_reports)
+    mtd_metrics_by_day = _build_mtd_metrics_by_day(year_int, month_int, acc_daily_sales, acc_daily_targets)
+    _attach_report_calc_fields(
+        reports,
+        daily_targets,
+        acc_targets_by_day=acc_daily_targets,
+        acc_sales_by_day=acc_daily_sales
+    )
+    summary = _build_cluster_manager_summary(approved_reports, targets)
+
+    reports_by_date = {
+        date_key: [_sd_serialize_report(report) for report in day_reports]
+        for date_key, day_reports in _group_reports_by_date(reports).items()
+    }
+
+    cutoff_date = end_date
+    if year_int == today.year and month_int == today.month:
+        cutoff_date = today - timedelta(days=1)
+
+    missing_dates = _build_missing_report_dates(store.id, start_date, cutoff_date)
+    next_missing_date = missing_dates[0]['iso'] if missing_dates else None
+
+    pos_reports = (
+        DailyReport.query
+        .join(PosSold, PosSold.daily_report_id == DailyReport.id)
+        .filter(DailyReport.store_id == store.id)
+        .group_by(DailyReport.id)
+        .order_by(DailyReport.report_date.desc(), DailyReport.id.desc())
+        .all()
+    )
+    pos_report_ids = [report.id for report in pos_reports]
+    pos_items_by_report = {}
+    if pos_report_ids:
+        pos_items = (
+            PosSold.query
+            .filter(PosSold.daily_report_id.in_(pos_report_ids))
+            .order_by(PosSold.daily_report_id.asc(), PosSold.id.asc())
+            .all()
+        )
+        for item in pos_items:
+            if _is_grand_total_product_name(item.product_name):
+                continue
+            pos_items_by_report.setdefault(int(item.daily_report_id), []).append({
+                'product_name': item.product_name,
+                'quantity': int(item.quantity or 0),
+                'net_sales': float(item.net_sales or 0.0),
+            })
+
+    pos_modal_payload = [
+        {
+            'report_id': int(report.id),
+            'date': report.report_date.strftime('%Y-%m-%d') if report.report_date else '',
+            'label': report.report_date.strftime('%B %d, %Y') if report.report_date else '',
+            'items': pos_items_by_report.get(int(report.id), []),
+        }
+        for report in pos_reports
+    ]
+
+    return {
+        'type': 'success',
+        'store': {'id': int(store.id), 'name': store.name},
+        'filters': {'month': month_int, 'year': year_int},
+        'days_in_month': num_days,
+        'today': {'year': today.year, 'month': today.month, 'day': today.day},
+        'summary': summary,
+        'reports_by_date': reports_by_date,
+        'targets_by_date': targets_by_date,
+        'daily_targets': daily_targets,
+        'acc_daily_targets': acc_daily_targets,
+        'acc_daily_sales': acc_daily_sales,
+        'mtd_metrics_by_day': mtd_metrics_by_day,
+        'total_reports': len(reports),
+        'approved_reports_count': len(approved_reports),
+        'missing_dates': missing_dates,
+        'next_missing_date': next_missing_date,
+        'pos_modal_payload': pos_modal_payload,
+    }
+
+
+
+
 # ================================
 # Store Manager Section End
 # ================================
