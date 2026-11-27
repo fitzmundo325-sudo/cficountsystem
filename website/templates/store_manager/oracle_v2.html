@@ -154,6 +154,25 @@
     max-height: min(52vh, 430px);
   }
 
+  [data-cell="week_content"] {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+  }
+
+  [data-cell="week_content"].is-open {
+    max-height: 600px;
+    overflow: auto;
+  }
+
+  [data-cell="header"] i[data-cell="toggle_icon"] {
+    transition: transform 0.2s ease;
+  }
+
+  [data-cell="header"][aria-expanded="true"] i[data-cell="toggle_icon"] {
+    transform: rotate(180deg);
+  }
+
   .weekly-average-scroll thead th {
     position: sticky;
     top: 0;
@@ -601,8 +620,14 @@
   <div class="view" id="view-daily-averages">
     <div class="mb-5">
       <h1 class="text-2xl font-bold text-slate-900">Daily Average Consumption</h1>
-      <p class="mt-1 text-sm text-slate-500">Based on POS Sold for the latest 4 weeks. You can adjust values before
-        ordering.</p>
+      <p class="mt-1 text-sm text-slate-500">Based on POS Sold for the latest 4 weeks. You can adjust values before ordering.</p>
+      <div class="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs">
+        <p id="daily-average-coverage" class="font-semibold text-slate-500">Loading reporting period…</p>
+        <p id="daily-average-missing-dates" class="mt-1 text-slate-500" aria-live="polite"></p>
+        <p id="daily-average-weekday-coverage" class="mt-1 text-slate-500"></p>
+        <p id="daily-average-previous-period" class="mt-1 text-slate-500"></p>
+        <p id="daily-average-low-coverage" class="mt-1 text-amber-700 hidden"></p>
+      </div>
     </div>
     <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3">
       <i class="bi bi-calendar3 text-sky-500"></i> Weekly Sales — Units Sold Per Product Per Day
@@ -610,6 +635,15 @@
     <div id="weekly-sales-tables-container" class="space-y-4"></div>
     <div class="text-base font-bold text-slate-800 border-b-2 border-sky-500 pb-2 mb-3 mt-8">
       <i class="bi bi-graph-up text-sky-500"></i> Average Daily Sold &amp; Product Share (4-Week Summary)
+    </div>
+    <div class="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3">
+      <label class="min-w-[220px] flex-1"><span class="sr-only">Search daily averages</span><input id="daily-average-search" type="search" placeholder="Search product or category…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"></label>
+      <label><span class="sr-only">Filter by category</span><select id="daily-average-category" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"><option value="all">All categories</option></select></label>
+      <label><span class="sr-only">Sort daily averages</span><select id="daily-average-sort" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"><option value="name">Product name A–Z</option><option value="units">Average units: high to low</option><option value="revenue">Average revenue: high to low</option></select></label>
+      <label><span class="sr-only">Analysis end date</span><input type="date" id="daily-average-end-date" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"></label>
+      <button id="daily-average-apply-date" type="button" class="rounded-lg bg-sky-600 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-700">Apply date range</button>
+      <span id="daily-average-result-count" class="text-xs text-slate-500"></span>
+      <button id="daily-average-export" type="button" title="Export the currently visible products to Excel" class="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700"><i class="bi bi-download"></i> Export Excel</button>
     </div>
     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
       <div class="oracle-scroll">
@@ -889,14 +923,16 @@
 <!-- Templates - daily averages -->
 <template id="tmpl-week-card">
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-    <div class="px-5 py-3 flex flex-wrap gap-2 items-center justify-between" data-cell="header">
+    <div class="px-5 py-3 flex flex-wrap gap-2 items-center justify-between cursor-pointer" data-cell="header" aria-expanded="false">
       <div class="flex flex-wrap items-center gap-2" data-cell="badges">
         <span class="text-sm font-bold text-white" data-cell="label"></span>
       </div>
       <span class="text-xs text-white/70">Units: <strong class="text-white" data-cell="units"></strong> | Rev: <strong class="text-white" data-cell="revenue"></strong><span class="hidden" data-cell="bulk_detail"> | Bulk: <strong class="text-white" data-cell="bulk_sales"></strong> / TC <strong class="text-white" data-cell="bulk_tc"></strong></span></span>
+      <i class="bi bi-chevron-down text-white/70" data-cell="toggle_icon"></i>
     </div>
-    <div class="oracle-scroll daily-average-scroll weekly-average-scroll">
-      <table class="w-full table-fixed border-collapse text-xs" style="min-width:1230px">
+    <div class="oracle-scroll daily-average-scroll weekly-average-scroll hidden" data-cell="week_content" aria-hidden="true" inert>
+      <div class="text-center py-8 text-slate-500" data-cell="week_loading">Loading week data…</div>
+      <table class="w-full table-fixed border-collapse text-xs hidden" data-cell="week_table" style="min-width:1230px">
         <thead class="bg-slate-100 text-slate-600">
           <tr data-cell="head_row">
             <th class="w-[180px] px-3 py-2 text-left font-semibold">Product</th>
@@ -1001,6 +1037,6 @@
 {% endblock %}
 
 {% block extra_js %}
-	<script defer src="{{ url_for('static', filename='js/handles/oracle_handles.js', v='oracle-edit-order-20261126-4') }}"></script>
+	<script defer src="{{ url_for('static', filename='js/handles/oracle_handles.js', v='oracle-edit-order-20261127-3') }}"></script>
 {% endblock %}
 	
