@@ -17,6 +17,12 @@ import pytz
 from werkzeug.utils import secure_filename
 from decimal import Decimal
 
+from difflib import get_close_matches
+from pathlib import Path
+
+LEET = str.maketrans('@$03457', 'asoeast')
+
+
 manila_tz = pytz.timezone("Asia/Manila")
 from dotenv import load_dotenv
 
@@ -7021,6 +7027,29 @@ def update_taf_edit(transfer_id):
 # Users Section Start
 # ================================
 
+_common_file = Path(__file__).parent / 'common_passwords.txt'
+if _common_file.exists():
+    COMMON_PASSWORDS = [l.strip().lower() for l in _common_file.read_text(encoding='utf-8').splitlines() if l.strip()]
+else:
+    COMMON_PASSWORDS = ['password', 'qwerty', 'letmein', 'welcome', 'admin', 'iloveyou', 'monkey', 'dragon', 'football', 'abc123']
+COMMON_SET = set(COMMON_PASSWORDS)
+
+
+
+def is_common_password(password):
+    lowered = password.lower()
+    core = re.sub(r'[^a-z]+$', '', lowered).translate(LEET)
+    core = re.sub(r'^[^a-z]+', '', core)
+
+    candidates = {lowered, lowered.translate(LEET), core}
+    candidates.discard('')
+
+    if any(c in COMMON_SET for c in candidates):
+        return True
+    return any(get_close_matches(c, COMMON_PASSWORDS, n=1, cutoff=0.85) for c in candidates if len(c) >= 4)
+    
+    
+
 @api_handles.route('/users', methods=['POST', 'GET'])
 @login_required
 def api_users():
@@ -7120,6 +7149,14 @@ def api_users():
         }
     }
 
+def is_strong_password(password):
+    return (
+        any(c.isdigit() for c in password)
+        and any(c.isupper() for c in password)
+        and any(c in string.punctuation for c in password)
+    )
+
+
 
 @api_handles.route('/users/create', methods=['POST'])
 @login_required
@@ -7141,6 +7178,13 @@ def api_create_user():
         if not full_name or not username or not email or not role or not password:
             return {'type': 'error', 'message': 'All required fields must be filled.'}, 400
 
+
+        if not is_strong_password(password):
+            return {'type': 'error', 'message': 'Password must contain a number, an uppercase letter, and a symbol.'}, 400
+        
+        if is_common_password(password):
+            return {'type': 'error', 'message': 'That password is too common. Please choose a different one.'}, 400
+        
         if password != confirm_password:
             return {'type': 'error', 'message': 'Passwords do not match.'}, 400
 
@@ -7286,7 +7330,16 @@ def api_update_user(user_id):
             if len(new_password) < 6:
                 return {'type': 'error', 'message': 'New password must be at least 6 characters.'}, 400
             user.password = generate_password_hash(new_password, method='pbkdf2:sha256')
+        
+        
 
+        if not is_strong_password(new_password):
+            return {'type': 'error', 'message': 'Password must contain a number, an uppercase letter, and a symbol.'}, 400
+        
+        if is_common_password(new_password):
+            return {'type': 'error', 'message': 'That password is too common. Please choose a different one.'}, 400
+        
+        
         # -- Audit ---------------------------------------------
         log_audit_event(
             action='admin.user.update',
