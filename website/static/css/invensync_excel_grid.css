@@ -191,3 +191,11 @@ html.admin-dark #fullscreen-modal tbody tr[data-product-id] td[data-field].excel
 html.admin-dark .excel-fill-handle {
   background-color: #22c55e;
 }
+
+
+#excel-formula-bar{
+	position:sticky;
+	top:55px;
+	z-index:100;
+	
+}

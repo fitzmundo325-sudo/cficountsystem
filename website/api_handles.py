@@ -49,6 +49,7 @@ from .views import (
     _apply_pos_qty_from_pos_categories,
     _build_missing_report_dates,
     _is_grand_total_product_name,
+    _build_drive_image_preview_url
 )
 
 from .admin import (

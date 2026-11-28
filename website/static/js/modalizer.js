@@ -9,35 +9,6 @@ if(typeof(opened_modal) == 'undefined'){
 	var opened_modal = [];
 }
 
-var SPY = window.SPY = window.SPY || {
-	started: false,
-	showLoader: function(){
-		if(typeof(_) !== 'function' || !_("load_spy")){
-			return console.warn("SPY PROGRESS Elm. not found, aborted");
-		}
-		let elm = _("load_spy");
-		elm.style.display = "flex";
-		let bar = elm.children[0];
-		if(bar) bar.style.width = "5%";
-		this.started = true;
-	},
-	updateProgress: function(prog){
-		if(this.started == false && typeof(ALLOW_PROGRESS_SPY) !== 'undefined' && ALLOW_PROGRESS_SPY){
-			return;
-		}
-		if(typeof(_) !== 'function' || !_("load_spy")) return;
-		let elm = _("load_spy");
-		let bar = elm.children[0];
-		if(bar) bar.style.width = parseInt(prog)+"%";
-	},
-	finishLoader: function(){
-		if(typeof(_) !== 'function' || !_("load_spy")) return;
-		let elm = _("load_spy");
-		elm.style.removeProperty("display");
-		this.started = false;
-	}
-};
-
 
 let REFRESH_HANDLER = undefined;
 let isMinimized = false;
@@ -535,11 +506,52 @@ document.addEventListener('keydown', function(e) {
 
 
 
-//Loader Spy Section (defined at top of file)
+//Loader Spy Section
+
+
+let SPY = {
+	started: false,
+	
+	showLoader: function(){
+		if(!_("load_spy")){
+			return console.warn("SPY PROGRESS Elm. not found, aborted");
+		}
+		
+		let elm = _("load_spy");
+			elm.style.display = "flex";
+			
+		let bar = elm.children[0];
+			bar.style.width = "5%";
+			
+		this.started = true;
+	},
+	
+	updateProgress: function(prog){
+		if(this.started == false && ALLOW_PROGRESS_SPY){
+			return; // console.error("SPY PROGRESS Elm not started yet.");
+		}
+		
+		let elm = _("load_spy");
+			// elm.style.display = "flex";
+			
+		let bar = elm.children[0];
+			bar.style.width = parseInt(prog)+"%";
+		
+	},
+	
+	finishLoader: function(){
+		let elm = _("load_spy");
+		elm.style.removeProperty("display");
+
+		this.started = false;
+	},
+		
+	
+}
 
 
 
-var __PROGRESS_HIDDEN__ = window.__PROGRESS_HIDDEN__ || 0;
+let __PROGRESS_HIDDEN__ = 0;
 function __PROGRESS_SPY_LOAD(resets=false){
 	if(resets){
 		__PROGRESS_HIDDEN__ = 0;
