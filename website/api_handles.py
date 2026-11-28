@@ -8566,6 +8566,7 @@ def daily_report_data():
     pos_staging = _get_pos_sold_staging(store.id, selected_date)
     pos_sold_items_for_autofill = _get_staged_pos_sold_items(pos_staging)
     if pos_sold_items_for_autofill:
+        from .views import _build_pos_sales_autofill_totals
         pos_sales_autofill.update(_build_pos_sales_autofill_totals(pos_sold_items_for_autofill))
         pos_sales_autofill['source'] = 'staged'
         pos_sales_autofill['label'] = 'Saved POS Sold data'
@@ -8576,6 +8577,7 @@ def daily_report_data():
             .all()
         )
         if saved_pos_items:
+            from .views import _build_pos_sales_autofill_totals
             pos_sales_autofill.update(_build_pos_sales_autofill_totals(saved_pos_items))
             pos_sales_autofill['source'] = 'saved'
             pos_sales_autofill['label'] = 'Submitted POS sold data'
